@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { getTeamId, resolveTeamIdLoose } from "../_shared/team";
 import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
+import { env } from "../_shared/convex-env";
 import { authMutation } from "./users/utils";
 import { mutation } from "./_generated/server";
 
@@ -105,7 +106,7 @@ async function findExistingActiveJob(
 }
 
 function getMorphApiKey(): string | null {
-  const key = process.env.MORPH_API_KEY;
+  const key = env.MORPH_API_KEY;
   if (!key || key.length === 0) {
     return null;
   }
