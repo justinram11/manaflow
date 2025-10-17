@@ -11,6 +11,48 @@ interface CommandOptions {
 
 const execFileAsync = promisify(execFile);
 
+type CallbackPayload =
+  | {
+      status: "success";
+      jobId: string;
+      sandboxInstanceId: string;
+      codeReviewOutput: Record<string, unknown>;
+    }
+  | {
+      status: "error";
+      jobId: string;
+      sandboxInstanceId?: string;
+      errorCode?: string;
+      errorDetail?: string;
+    };
+
+interface CallbackContext {
+  url: string;
+  token: string;
+  jobId: string;
+  sandboxInstanceId?: string;
+}
+
+async function sendCallback(
+  context: CallbackContext,
+  payload: CallbackPayload
+): Promise<void> {
+  const response = await fetch(context.url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${context.token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(
+      `Callback failed with status ${response.status}: ${text.slice(0, 2048)}`
+    );
+  }
+}
+
 async function runCommand(
   command: string,
   args: readonly string[],
@@ -306,8 +348,25 @@ async function main(): Promise<void> {
   const headRefName = requireEnv("GIT_BRANCH");
   const baseRepoUrl = requireEnv("BASE_REPO_URL");
   const baseRefName = requireEnv("BASE_REF_NAME");
+  const callbackUrl = process.env.CALLBACK_URL ?? null;
+  const callbackToken = process.env.CALLBACK_TOKEN ?? null;
+  const jobId = requireEnv("JOB_ID");
+  const sandboxInstanceId = requireEnv("SANDBOX_INSTANCE_ID");
   const logFilePath = process.env.LOG_FILE_PATH ?? null;
   const logSymlinkPath = process.env.LOG_SYMLINK_PATH ?? null;
+  const teamId = process.env.TEAM_ID ?? null;
+  const repoFullName = process.env.REPO_FULL_NAME ?? null;
+  const commitRef = process.env.COMMIT_REF ?? null;
+
+  const callbackContext: CallbackContext | null =
+    callbackUrl && callbackToken
+      ? {
+          url: callbackUrl,
+          token: callbackToken,
+          jobId,
+          sandboxInstanceId,
+        }
+      : null;
 
   if (logFilePath) {
     console.log(`[inject] Logging output to ${logFilePath}`);
@@ -327,120 +386,179 @@ async function main(): Promise<void> {
     `[inject] Base ${baseRepo.owner}/${baseRepo.name}@${baseRefName}`
   );
 
-  console.log(`[inject] Clearing workspace ${workspaceDir}...`);
-  await rm(workspaceDir, { recursive: true, force: true });
+  try {
+    console.log(`[inject] Clearing workspace ${workspaceDir}...`);
+    await rm(workspaceDir, { recursive: true, force: true });
 
-  const cloneAndCheckout = (async () => {
-    console.log(`[inject] Cloning ${headRepoUrl} into ${workspaceDir}...`);
-    await runCommand("git", ["clone", headRepoUrl, workspaceDir]);
-    console.log(`[inject] Checking out branch ${headRefName}...`);
-    await runCommand("git", ["checkout", headRefName], {
+    const cloneAndCheckout = (async () => {
+      console.log(`[inject] Cloning ${headRepoUrl} into ${workspaceDir}...`);
+      await runCommand("git", ["clone", headRepoUrl, workspaceDir]);
+      console.log(`[inject] Checking out branch ${headRefName}...`);
+      await runCommand("git", ["checkout", headRefName], {
+        cwd: workspaceDir,
+      });
+    })();
+
+    const installCodex = (async () => {
+      console.log("[inject] Installing @openai/codex globally...");
+      await runCommand("bun", [
+        "add",
+        "-g",
+        "@openai/codex@latest",
+        "@openai/codex-sdk@latest",
+      ]);
+    })();
+
+    await Promise.all([cloneAndCheckout, installCodex]);
+
+    if (logFilePath && logSymlinkPath) {
+      try {
+        await runCommand("ln", ["-sf", logFilePath, logSymlinkPath]);
+        console.log(
+          `[inject] Linked ${logSymlinkPath} -> ${logFilePath} for log access`
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : String(error ?? "unknown error");
+        console.warn(
+          `[inject] Failed to create workspace log symlink: ${message}`
+        );
+      }
+    }
+
+    const baseRemote =
+      headRepo.owner === baseRepo.owner && headRepo.name === baseRepo.name
+        ? "origin"
+        : "base";
+
+    if (baseRemote !== "origin") {
+      console.log(`[inject] Adding remote ${baseRemote} -> ${baseRepoUrl}`);
+      await runCommand("git", ["remote", "add", baseRemote, baseRepoUrl], {
+        cwd: workspaceDir,
+      });
+    }
+
+    console.log(`[inject] Fetching ${baseRemote}/${baseRefName}...`);
+    await runCommand("git", ["fetch", baseRemote, baseRefName], {
       cwd: workspaceDir,
     });
-  })();
 
-  const installCodex = (async () => {
-    console.log("[inject] Installing @openai/codex globally...");
-    await runCommand("bun", [
-      "add",
-      "-g",
-      "@openai/codex@latest",
-      "@openai/codex-sdk@latest",
-    ]);
-  })();
-
-  await Promise.all([cloneAndCheckout, installCodex]);
-
-  if (logFilePath && logSymlinkPath) {
-    try {
-      await runCommand("ln", ["-sf", logFilePath, logSymlinkPath]);
-      console.log(
-        `[inject] Linked ${logSymlinkPath} -> ${logFilePath} for log access`
-      );
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : String(error ?? "unknown error");
-      console.warn(
-        `[inject] Failed to create workspace log symlink: ${message}`
+    const baseRevision = `${baseRemote}/${baseRefName}`;
+    const mergeBaseRaw = await runCommandCapture(
+      "git",
+      ["merge-base", "HEAD", baseRevision],
+      { cwd: workspaceDir }
+    );
+    const mergeBaseRevision = mergeBaseRaw.split("\n")[0]?.trim();
+    if (!mergeBaseRevision) {
+      throw new Error(
+        `[inject] Unable to determine merge base between HEAD and ${baseRevision}`
       );
     }
-  }
-
-  const baseRemote =
-    headRepo.owner === baseRepo.owner && headRepo.name === baseRepo.name
-      ? "origin"
-      : "base";
-
-  if (baseRemote !== "origin") {
-    console.log(`[inject] Adding remote ${baseRemote} -> ${baseRepoUrl}`);
-    await runCommand("git", ["remote", "add", baseRemote, baseRepoUrl], {
-      cwd: workspaceDir,
-    });
-  }
-
-  console.log(`[inject] Fetching ${baseRemote}/${baseRefName}...`);
-  await runCommand("git", ["fetch", baseRemote, baseRefName], {
-    cwd: workspaceDir,
-  });
-
-  const baseRevision = `${baseRemote}/${baseRefName}`;
-  const mergeBaseRaw = await runCommandCapture(
-    "git",
-    ["merge-base", "HEAD", baseRevision],
-    { cwd: workspaceDir }
-  );
-  const mergeBaseRevision = mergeBaseRaw.split("\n")[0]?.trim();
-  if (!mergeBaseRevision) {
-    throw new Error(
-      `[inject] Unable to determine merge base between HEAD and ${baseRevision}`
+    console.log(
+      `[inject] Using merge-base ${mergeBaseRevision} for diff comparisons`
     );
-  }
-  console.log(
-    `[inject] Using merge-base ${mergeBaseRevision} for diff comparisons`
-  );
-  const [changedFilesOutput, modifiedFilesOutput] = await Promise.all([
-    runCommandCapture(
-      "git",
-      ["diff", "--name-only", `${mergeBaseRevision}..HEAD`],
-      {
-        cwd: workspaceDir,
+    const [changedFilesOutput, modifiedFilesOutput] = await Promise.all([
+      runCommandCapture(
+        "git",
+        ["diff", "--name-only", `${mergeBaseRevision}..HEAD`],
+        {
+          cwd: workspaceDir,
+        }
+      ),
+      runCommandCapture(
+        "git",
+        [
+          "diff",
+          "--diff-filter=M",
+          "--name-only",
+          `${mergeBaseRevision}..HEAD`,
+        ],
+        { cwd: workspaceDir }
+      ),
+    ]);
+
+    const changedFiles = parseFileList(changedFilesOutput);
+    const modifiedFiles = parseFileList(modifiedFilesOutput);
+
+    logFileSection("All changed files", changedFiles);
+    logFileSection("All modified files", modifiedFiles);
+
+    const [textChangedFiles, textModifiedFiles] = await Promise.all([
+      filterTextFiles(workspaceDir, mergeBaseRevision, changedFiles),
+      filterTextFiles(workspaceDir, mergeBaseRevision, modifiedFiles),
+    ]);
+
+    logFileSection("Changed text files", textChangedFiles);
+    logFileSection("Modified text files", textModifiedFiles);
+
+    await runCodexReviews({
+      workspaceDir,
+      baseRevision: mergeBaseRevision,
+      files: textChangedFiles,
+    });
+
+    console.log("[inject] Done with PR review.");
+
+    const reviewOutput: Record<string, unknown> = {
+      prUrl,
+      repoFullName:
+        repoFullName ?? `${headRepo.owner}/${headRepo.name}`,
+      headRefName,
+      baseRefName,
+      mergeBaseRevision,
+      changedTextFiles: textChangedFiles,
+      modifiedTextFiles: textModifiedFiles,
+      logFilePath,
+      logSymlinkPath,
+      commitRef,
+      teamId,
+    };
+
+    if (callbackContext) {
+      await sendCallback(callbackContext, {
+        status: "success",
+        jobId,
+        sandboxInstanceId,
+        codeReviewOutput: reviewOutput,
+      });
+      console.log("[inject] Success callback delivered.");
+    } else {
+      console.log("[inject] Callback disabled; skipping success callback.");
+    }
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : String(error ?? "unknown error");
+    console.error(`[inject] Error during review: ${message}`);
+    if (callbackContext) {
+      try {
+        await sendCallback(callbackContext, {
+          status: "error",
+          jobId,
+          sandboxInstanceId,
+          errorCode: "inject_failed",
+          errorDetail: message,
+        });
+        console.log("[inject] Failure callback delivered.");
+      } catch (callbackError) {
+        const callbackMessage =
+          callbackError instanceof Error
+            ? callbackError.message
+            : String(callbackError ?? "unknown callback error");
+        console.error(
+          `[inject] Failed to send error callback: ${callbackMessage}`
+        );
       }
-    ),
-    runCommandCapture(
-      "git",
-      [
-        "diff",
-        "--diff-filter=M",
-        "--name-only",
-        `${mergeBaseRevision}..HEAD`,
-      ],
-      { cwd: workspaceDir }
-    ),
-  ]);
-
-  const changedFiles = parseFileList(changedFilesOutput);
-  const modifiedFiles = parseFileList(modifiedFilesOutput);
-
-  logFileSection("All changed files", changedFiles);
-  logFileSection("All modified files", modifiedFiles);
-
-  const [textChangedFiles, textModifiedFiles] = await Promise.all([
-    filterTextFiles(workspaceDir, mergeBaseRevision, changedFiles),
-    filterTextFiles(workspaceDir, mergeBaseRevision, modifiedFiles),
-  ]);
-
-  logFileSection("Changed text files", textChangedFiles);
-  logFileSection("Modified text files", textModifiedFiles);
-
-  await runCodexReviews({
-    workspaceDir,
-    baseRevision: mergeBaseRevision,
-    files: textChangedFiles,
-  });
-
-  console.log("[inject] Done with PR review.");
+    } else {
+      console.log("[inject] Callback disabled; skipping error callback.");
+    }
+    throw error;
+  }
 }
 
-await main();
+await main().catch((error) => {
+  console.error(error instanceof Error ? error.stack ?? error.message : error);
+  process.exit(1);
+});

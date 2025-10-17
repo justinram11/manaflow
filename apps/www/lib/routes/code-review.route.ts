@@ -2,12 +2,15 @@ import { api } from "@cmux/convex/api";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import type { Id } from "@cmux/convex/dataModel";
 import { randomBytes, createHash } from "node:crypto";
-import { spawn } from "node:child_process";
 import { ConvexHttpClient } from "convex/browser";
 import { getConvex } from "../utils/get-convex";
 import { verifyTeamAccess } from "../utils/team-verification";
 import { stackServerAppJs } from "../utils/stack";
 import { env } from "../utils/www-env";
+import {
+  startAutomatedPrReview,
+  type PrReviewJobContext,
+} from "../../src/pr-review";
 
 const CALLBACK_BEARER_PREFIX = "bearer ";
 const CODE_REVIEW_STATES = ["pending", "running", "completed", "failed"] as const;
@@ -85,12 +88,6 @@ function getDeployConvexClient(): ConvexHttpClient {
   return client;
 }
 
-function getBunExecutable(): string {
-  return (
-    process.env.BUN_RUNTIME ?? process.env.BUN_BIN ?? "bun"
-  );
-}
-
 codeReviewRouter.openapi(
   createRoute({
     method: "post",
@@ -161,46 +158,46 @@ codeReviewRouter.openapi(
     const job = reserveResult.job;
     const callbackUrl = new URL("/api/code-review/callback", c.req.url).toString();
 
-    const runnerConfig = {
+    const runningJob = await convex.mutation(api.codeReview.markJobRunning, {
+      jobId: job.jobId,
+    });
+
+    const reviewConfig: PrReviewJobContext = {
       jobId: job.jobId,
       teamId: job.teamId,
       repoFullName: job.repoFullName,
       repoUrl: job.repoUrl,
       prNumber: job.prNumber,
+      prUrl: body.githubLink,
       commitRef: job.commitRef,
-      callbackUrl,
-      callbackToken,
+      callback: {
+        url: callbackUrl,
+        token: callbackToken,
+      },
     };
 
-    try {
-      const child = spawn(getBunExecutable(), [
-        "run",
-        "scripts/code-review-runner.ts",
-        JSON.stringify(runnerConfig),
-      ], {
-        stdio: "inherit",
-        env: {
-          ...process.env,
-          MORPH_API_KEY: env.MORPH_API_KEY,
-        },
-      });
-
-      if (!child.pid) {
-        throw new Error("Failed to spawn code review runner process");
-      }
-    } catch (error) {
+    void startAutomatedPrReview(reviewConfig).catch(async (error) => {
       const message =
         error instanceof Error ? error.message : String(error ?? "Unknown error");
-      await convex.mutation(api.codeReview.failJob, {
-        jobId: job.jobId,
-        errorCode: "runner_spawn_failed",
-        errorDetail: message,
-      });
-      return c.json({ error: message }, 500);
-    }
+      console.error("[code-review] Background review failed", message);
 
-    const runningJob = await convex.mutation(api.codeReview.markJobRunning, {
-      jobId: job.jobId,
+      const deployConvex = getDeployConvexClient();
+      try {
+        await deployConvex.mutation(api.codeReview.failJob, {
+          jobId: job.jobId as Id<"automatedCodeReviewJobs">,
+          errorCode: "pr_review_setup_failed",
+          errorDetail: message,
+        });
+      } catch (failError) {
+        const failMessage =
+          failError instanceof Error
+            ? failError.message
+            : String(failError ?? "Unknown failJob error");
+        console.error(
+          "[code-review] Failed to mark job as failed after background error",
+          failMessage,
+        );
+      }
     });
 
     return c.json(
