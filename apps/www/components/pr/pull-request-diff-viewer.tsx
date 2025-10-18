@@ -523,7 +523,7 @@ export function PullRequestDiffViewer({
     });
   }, []);
 
-  if (files.length === 0) {
+  if (totalFileCount === 0) {
     return (
       <div className="rounded-2xl border border-neutral-200 bg-white p-8 text-sm text-neutral-600 shadow-sm">
         This pull request does not introduce any file changes.
@@ -562,6 +562,83 @@ export function PullRequestDiffViewer({
             />
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ReviewProgressIndicator({
+  totalFileCount,
+  processedFileCount,
+  isLoading,
+}: {
+  totalFileCount: number;
+  processedFileCount: number | null;
+  isLoading: boolean;
+}) {
+  const pendingFileCount =
+    processedFileCount === null
+      ? Math.max(totalFileCount, 0)
+      : Math.max(totalFileCount - processedFileCount, 0);
+  const progressPercent =
+    processedFileCount === null || totalFileCount === 0
+      ? 0
+      : Math.min(100, (processedFileCount / totalFileCount) * 100);
+  const statusText =
+    processedFileCount === null
+      ? "Loading file progress..."
+      : pendingFileCount === 0
+        ? "All files processed"
+        : `${processedFileCount} processed • ${pendingFileCount} pending`;
+
+  const processedBadgeText =
+    processedFileCount === null ? "— done" : `${processedFileCount} done`;
+  const pendingBadgeText =
+    processedFileCount === null ? "— waiting" : `${pendingFileCount} waiting`;
+
+  return (
+    <div
+      className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm transition dark:border-neutral-800 dark:bg-neutral-900"
+      aria-live="polite"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <p className="text-sm font-medium text-neutral-700 dark:text-neutral-200">
+            Automated review progress
+          </p>
+          <p className="text-xs text-neutral-500 dark:text-neutral-400">
+            {statusText}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 text-xs font-semibold">
+          <span
+            className={cn(
+              "rounded-md bg-emerald-100 px-2 py-0.5 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300",
+              isLoading ? "animate-pulse" : undefined
+            )}
+          >
+            {processedBadgeText}
+          </span>
+          <span
+            className={cn(
+              "rounded-md bg-amber-100 px-2 py-0.5 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300",
+              isLoading ? "animate-pulse" : undefined
+            )}
+          >
+            {pendingBadgeText}
+          </span>
+        </div>
+      </div>
+      <div className="mt-3 h-2 rounded-full bg-neutral-200 dark:bg-neutral-800">
+        <div
+          className="h-full rounded-full bg-sky-500 transition-[width] duration-300 ease-out dark:bg-sky-400"
+          style={{ width: `${progressPercent}%` }}
+          role="progressbar"
+          aria-label="Automated review progress"
+          aria-valuemin={0}
+          aria-valuemax={totalFileCount}
+          aria-valuenow={processedFileCount ?? 0}
+        />
       </div>
     </div>
   );
