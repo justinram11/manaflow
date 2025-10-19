@@ -1,8 +1,9 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import {
+  ChevronLeft,
   ChevronDown,
   ChevronRight,
   FileCode,
@@ -20,6 +21,7 @@ import {
   computeNewLineNumber,
   parseDiff,
   pickRanges,
+  getChangeKey,
   tokenize,
   type ChangeData,
   type FileData,
@@ -42,7 +44,12 @@ import {
 } from "@/components/ui/tooltip";
 import { refractor } from "refractor/all";
 
-import { buildDiffHeatmap, parseReviewHeatmap } from "./heatmap";
+import {
+  buildDiffHeatmap,
+  parseReviewHeatmap,
+  type DiffHeatmap,
+  type ReviewHeatmapLine,
+} from "./heatmap";
 
 type PullRequestDiffViewerProps = {
   files: GithubPullRequestFile[];
@@ -198,6 +205,24 @@ type FileOutput = FunctionReturnType<
 type HeatmapTooltipMeta = {
   score: number;
   reason: string | null;
+};
+
+type FileDiffViewModel = {
+  entry: ParsedFileDiff;
+  review: FileOutput | null;
+  reviewHeatmap: ReviewHeatmapLine[];
+  diffHeatmap: DiffHeatmap | null;
+  changeKeyByLine: Map<number, string>;
+};
+
+type ReviewErrorTarget = {
+  id: string;
+  anchorId: string;
+  filePath: string;
+  lineNumber: number;
+  reason: string | null;
+  score: number | null;
+  changeKey: string | null;
 };
 
 type HeatmapTooltipTheme = {
@@ -389,6 +414,82 @@ export function PullRequestDiffViewer({
     });
   }, [files]);
 
+  const fileEntries = useMemo<FileDiffViewModel[]>(() => {
+    return parsedDiffs.map((entry) => {
+      const review = fileOutputIndex.get(entry.file.filename) ?? null;
+      const reviewHeatmap = review
+        ? parseReviewHeatmap(review.codexReviewOutput)
+        : [];
+      const diffHeatmap =
+        entry.diff && reviewHeatmap.length > 0
+          ? buildDiffHeatmap(entry.diff, reviewHeatmap)
+          : null;
+
+      return {
+        entry,
+        review,
+        reviewHeatmap,
+        diffHeatmap,
+        changeKeyByLine: buildChangeKeyIndex(entry.diff),
+      };
+    });
+  }, [parsedDiffs, fileOutputIndex]);
+
+  const errorTargets = useMemo<ReviewErrorTarget[]>(() => {
+    const targets: ReviewErrorTarget[] = [];
+
+    for (const fileEntry of fileEntries) {
+      const { entry, diffHeatmap, changeKeyByLine } = fileEntry;
+      if (!diffHeatmap || diffHeatmap.entries.size === 0) {
+        continue;
+      }
+
+      const sortedEntries = Array.from(diffHeatmap.entries.entries()).sort(
+        (a, b) => a[0] - b[0]
+      );
+
+      for (const [lineNumber, metadata] of sortedEntries) {
+        targets.push({
+          id: `${entry.anchorId}:${lineNumber}`,
+          anchorId: entry.anchorId,
+          filePath: entry.file.filename,
+          lineNumber,
+          reason: metadata.reason ?? null,
+          score: metadata.score ?? null,
+          changeKey: changeKeyByLine.get(lineNumber) ?? null,
+        });
+      }
+    }
+
+    return targets;
+  }, [fileEntries]);
+
+  const targetCount = errorTargets.length;
+
+  const [focusedErrorIndex, setFocusedErrorIndex] = useState<number | null>(
+    null
+  );
+
+  useEffect(() => {
+    if (targetCount === 0) {
+      setFocusedErrorIndex(null);
+      return;
+    }
+
+    setFocusedErrorIndex((previous) => {
+      if (previous === null) {
+        return 0;
+      }
+      if (previous >= targetCount) {
+        return 0;
+      }
+      return previous;
+    });
+  }, [targetCount]);
+
+  const focusedError =
+    focusedErrorIndex === null ? null : errorTargets[focusedErrorIndex] ?? null;
+
   const fileTree = useMemo(() => buildFileTree(files), [files]);
   const directoryPaths = useMemo(
     () => collectDirectoryPaths(fileTree),
@@ -509,6 +610,30 @@ export function PullRequestDiffViewer({
     window.location.hash = encodeURIComponent(path);
   }, []);
 
+  const handleFocusPrevious = useCallback(() => {
+    if (targetCount === 0) {
+      return;
+    }
+    setFocusedErrorIndex((previous) => {
+      if (previous === null) {
+        return targetCount - 1;
+      }
+      return (previous - 1 + targetCount) % targetCount;
+    });
+  }, [targetCount]);
+
+  const handleFocusNext = useCallback(() => {
+    if (targetCount === 0) {
+      return;
+    }
+    setFocusedErrorIndex((previous) => {
+      if (previous === null) {
+        return 0;
+      }
+      return (previous + 1) % targetCount;
+    });
+  }, [targetCount]);
+
   const handleToggleDirectory = useCallback((path: string) => {
     setExpandedPaths((previous) => {
       const next = new Set(previous);
@@ -520,6 +645,75 @@ export function PullRequestDiffViewer({
       return next;
     });
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (targetCount === 0) {
+      return;
+    }
+
+    const handleKeydown = (event: KeyboardEvent) => {
+      if (!event.shiftKey || event.metaKey || event.altKey || event.ctrlKey) {
+        return;
+      }
+
+      const activeElement = document.activeElement;
+      if (
+        activeElement &&
+        activeElement !== document.body &&
+        activeElement instanceof HTMLElement &&
+        (activeElement.tagName === "INPUT" ||
+          activeElement.tagName === "TEXTAREA" ||
+          activeElement.tagName === "SELECT" ||
+          activeElement.isContentEditable)
+      ) {
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      if (key === "j") {
+        event.preventDefault();
+        handleFocusNext();
+      } else if (key === "k") {
+        event.preventDefault();
+        handleFocusPrevious();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeydown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeydown);
+    };
+  }, [handleFocusNext, handleFocusPrevious, targetCount]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (!focusedError) {
+      return;
+    }
+
+    handleNavigate(focusedError.filePath);
+
+    if (focusedError.changeKey) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      const article = document.getElementById(focusedError.anchorId);
+      if (article) {
+        scrollElementToViewportCenter(article);
+      }
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [focusedError, handleNavigate]);
 
   if (totalFileCount === 0) {
     return (
@@ -539,6 +733,16 @@ export function PullRequestDiffViewer({
 
       <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:gap-10">
         <aside className="lg:sticky lg:top-6 lg:h-[calc(100vh-96px)] lg:w-72 lg:overflow-y-auto">
+          {targetCount > 0 ? (
+            <div className="mb-4 flex justify-center">
+              <ErrorNavigator
+                totalCount={targetCount}
+                currentIndex={focusedErrorIndex}
+                onPrevious={handleFocusPrevious}
+                onNext={handleFocusNext}
+              />
+            </div>
+          ) : null}
           <div className="rounded-xl border border-neutral-200 bg-white p-3 shadow-sm">
             <FileTreeNavigator
               nodes={fileTree}
@@ -551,14 +755,29 @@ export function PullRequestDiffViewer({
         </aside>
 
         <div className="flex-1 space-y-6">
-          {parsedDiffs.map((entry) => (
-            <FileDiffCard
-              key={entry.anchorId}
-              entry={entry}
-              isActive={entry.anchorId === activeAnchor}
-              review={fileOutputIndex.get(entry.file.filename) ?? null}
-            />
-          ))}
+          {fileEntries.map(({ entry, review, reviewHeatmap, diffHeatmap }) => {
+            const isFocusedFile =
+              focusedError?.filePath === entry.file.filename;
+            const focusedLineNumber = isFocusedFile
+              ? focusedError?.lineNumber ?? null
+              : null;
+            const focusedChangeKey = isFocusedFile
+              ? focusedError?.changeKey ?? null
+              : null;
+
+            return (
+              <FileDiffCard
+                key={entry.anchorId}
+                entry={entry}
+                isActive={entry.anchorId === activeAnchor}
+                review={review}
+                reviewHeatmap={reviewHeatmap}
+                diffHeatmap={diffHeatmap}
+                focusedLineNumber={focusedLineNumber}
+                focusedChangeKey={focusedChangeKey}
+              />
+            );
+          })}
         </div>
       </div>
     </div>
@@ -637,6 +856,102 @@ function ReviewProgressIndicator({
         />
       </div>
     </div>
+  );
+}
+
+type ErrorNavigatorProps = {
+  totalCount: number;
+  currentIndex: number | null;
+  onPrevious: () => void;
+  onNext: () => void;
+};
+
+function ErrorNavigator({
+  totalCount,
+  currentIndex,
+  onPrevious,
+  onNext,
+}: ErrorNavigatorProps) {
+  if (totalCount === 0) {
+    return null;
+  }
+
+  const hasSelection =
+    typeof currentIndex === "number" && currentIndex >= 0 && currentIndex < totalCount;
+  const displayIndex = hasSelection ? currentIndex + 1 : null;
+
+  return (
+    <TooltipProvider delayDuration={120} skipDelayDuration={120}>
+      <div className="inline-flex items-center gap-3 rounded-full border border-sky-200 bg-white/95 px-3 py-1 text-xs font-medium text-neutral-700 shadow-sm shadow-sky-200/60 backdrop-blur dark:border-sky-800/60 dark:bg-neutral-900/95 dark:text-neutral-200 dark:shadow-sky-900/40">
+        <span aria-live="polite" className="flex items-center gap-1">
+          {hasSelection && displayIndex !== null ? (
+            <>
+              <span>Error</span>
+              <span className="font-mono tabular-nums">{displayIndex}</span>
+              <span>of</span>
+              <span className="font-mono tabular-nums">{totalCount}</span>
+            </>
+          ) : (
+            <>
+              <span className="font-mono tabular-nums">{totalCount}</span>
+              <span>{totalCount === 1 ? "error" : "errors"}</span>
+            </>
+          )}
+        </span>
+        <div className="flex items-center gap-1">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={onPrevious}
+                className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                aria-label="Go to previous error (Shift+K)"
+                disabled={totalCount === 0}
+              >
+                <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent
+              side="bottom"
+              align="center"
+              className="flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-2 py-1 text-[11px] font-medium text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+            >
+              <span>
+                Previous error
+              </span>
+              <span className="rounded border border-neutral-200 bg-neutral-50 px-1 py-0.5 font-mono text-[10px] uppercase text-neutral-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+                ⇧ K
+              </span>
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={onNext}
+                className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                aria-label="Go to next error (Shift+J)"
+                disabled={totalCount === 0}
+              >
+                <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent
+              side="bottom"
+              align="center"
+              className="flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-2 py-1 text-[11px] font-medium text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+            >
+              <span>
+                Next error
+              </span>
+              <span className="rounded border border-neutral-200 bg-neutral-50 px-1 py-0.5 font-mono text-[10px] uppercase text-neutral-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+                ⇧ J
+              </span>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+      </div>
+    </TooltipProvider>
   );
 }
 
@@ -725,12 +1040,21 @@ function FileDiffCard({
   entry,
   isActive,
   review,
+  reviewHeatmap,
+  diffHeatmap,
+  focusedLineNumber,
+  focusedChangeKey,
 }: {
   entry: ParsedFileDiff;
   isActive: boolean;
   review: FileOutput | null;
+  reviewHeatmap: ReviewHeatmapLine[];
+  diffHeatmap: DiffHeatmap | null;
+  focusedLineNumber: number | null;
+  focusedChangeKey: string | null;
 }) {
   const { file, diff, anchorId, error } = entry;
+  const cardRef = useRef<HTMLElement | null>(null);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const language = useMemo(() => inferLanguage(file.filename), [file.filename]);
   const statusMeta = useMemo(
@@ -744,21 +1068,12 @@ function FileDiffCard({
     }
   }, [isActive]);
 
-  const reviewHeatmapLines = useMemo(() => {
-    if (!review) {
-      return [];
+  useEffect(() => {
+    if (!focusedChangeKey) {
+      return;
     }
-
-    return parseReviewHeatmap(review.codexReviewOutput);
-  }, [review]);
-
-  const diffHeatmap = useMemo(() => {
-    if (!diff || reviewHeatmapLines.length === 0) {
-      return null;
-    }
-
-    return buildDiffHeatmap(diff, reviewHeatmapLines);
-  }, [diff, reviewHeatmapLines]);
+    setIsCollapsed(false);
+  }, [focusedChangeKey]);
 
   useEffect(() => {
     if (!review) {
@@ -768,10 +1083,37 @@ function FileDiffCard({
     console.log("[diff-viewer] heatmap payload", {
       file: file.filename,
       raw: review.codexReviewOutput,
-      parsedHeatmap: reviewHeatmapLines,
+      parsedHeatmap: reviewHeatmap,
       hydrated: diffHeatmap,
     });
-  }, [review, reviewHeatmapLines, diffHeatmap, file.filename]);
+  }, [review, reviewHeatmap, diffHeatmap, file.filename]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (!focusedChangeKey) {
+      return;
+    }
+    const currentCard = cardRef.current;
+    if (!currentCard) {
+      return;
+    }
+
+    const targetCell = currentCard.querySelector<HTMLElement>(
+      `[data-change-key="${focusedChangeKey}"]`
+    );
+    if (!targetCell) {
+      return;
+    }
+
+    const targetRow = targetCell.closest("tr");
+    const scrollTarget =
+      targetRow instanceof HTMLElement ? targetRow : targetCell;
+    window.requestAnimationFrame(() => {
+      scrollElementToViewportCenter(scrollTarget);
+    });
+  }, [focusedChangeKey]);
 
   const lineTooltips = useMemo(() => {
     if (!diffHeatmap) {
@@ -961,6 +1303,7 @@ function FileDiffCard({
     >
       <article
         id={anchorId}
+        ref={cardRef}
         className={cn(
           "overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm transition focus:outline-none",
           isActive ? "ring-1 ring-sky-200" : "ring-0"
@@ -1040,6 +1383,15 @@ function FileDiffCard({
                 const normalizedChanges = changes.filter(
                   (change): change is ChangeData => Boolean(change)
                 );
+                const hasFocus =
+                  focusedLineNumber !== null &&
+                  normalizedChanges.some((change) => {
+                    const newLineNumber = computeNewLineNumber(change);
+                    return newLineNumber > 0 && newLineNumber === focusedLineNumber;
+                  });
+                if (hasFocus) {
+                  classNames.push("cmux-heatmap-focus");
+                }
                 if (diffHeatmap && diffHeatmap.lineClasses.size > 0) {
                   let bestHeatmapClass: string | null = null;
                   for (const change of normalizedChanges) {
@@ -1266,6 +1618,76 @@ function formatLineReviews(entries: unknown[]): string | null {
   }
 
   return summaries.join("\n\n");
+}
+
+function scrollElementToViewportCenter(
+  element: HTMLElement,
+  { behavior = "auto" }: { behavior?: ScrollBehavior } = {}
+): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const rect = element.getBoundingClientRect();
+  const viewportHeight =
+    window.innerHeight || document.documentElement?.clientHeight || 0;
+  if (viewportHeight === 0) {
+    console.log("[error-nav] skip scroll, zero viewport", {
+      tag: element.tagName,
+      rect,
+    });
+    return;
+  }
+
+  const currentScrollY =
+    window.scrollY ?? window.pageYOffset ?? document.documentElement?.scrollTop ?? 0;
+  const currentScrollX =
+    window.scrollX ?? window.pageXOffset ?? document.documentElement?.scrollLeft ?? 0;
+  const scrollHeight = document.documentElement?.scrollHeight ?? 0;
+
+  const halfViewport = Math.max((viewportHeight - rect.height) / 2, 0);
+  const rawTargetTop = rect.top + currentScrollY - halfViewport;
+  const maxScrollTop = Math.max(scrollHeight - viewportHeight, 0);
+  const targetTop = Math.max(0, Math.min(rawTargetTop, maxScrollTop));
+
+  console.log("[error-nav] scroll center", {
+    tag: element.tagName,
+    rect,
+    viewportHeight,
+    currentScrollY,
+    currentScrollX,
+    scrollHeight,
+    halfViewport,
+    rawTargetTop,
+    maxScrollTop,
+    targetTop,
+  });
+
+  window.scrollTo({
+    top: targetTop,
+    left: currentScrollX,
+    behavior,
+  });
+}
+
+function buildChangeKeyIndex(diff: FileData | null): Map<number, string> {
+  const map = new Map<number, string>();
+  if (!diff) {
+    return map;
+  }
+
+  for (const hunk of diff.hunks) {
+    for (const change of hunk.changes) {
+      const lineNumber = computeNewLineNumber(change);
+      if (lineNumber <= 0) {
+        continue;
+      }
+
+      map.set(lineNumber, getChangeKey(change));
+    }
+  }
+
+  return map;
 }
 
 function buildDiffText(file: GithubPullRequestFile): string {
