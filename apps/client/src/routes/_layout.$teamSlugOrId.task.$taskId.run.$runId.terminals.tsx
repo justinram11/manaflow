@@ -1,16 +1,27 @@
 import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
-import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
+import {
+  useQuery,
+  useQueryClient,
+  useSuspenseQuery,
+} from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Plus } from "lucide-react";
 import z from "zod";
 import {
   TaskRunTerminalSession,
   type TerminalConnectionState,
 } from "@/components/task-run-terminal-session";
 import { toMorphXtermBaseUrl } from "@/lib/toProxyWorkspaceUrl";
+import {
+  createTerminalTabQueryOptions,
+  terminalTabsQueryKey,
+  terminalTabsQueryOptions,
+} from "@/queries/terminals";
+import type { TerminalTabId } from "@/queries/terminals";
 
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
@@ -67,31 +78,13 @@ function TaskRunTerminals() {
 
   const hasTerminalBackend = Boolean(isMorphProvider && xtermBaseUrl);
 
-  const tabsQuery = useQuery({
-    queryKey: ["task-run-terminals", taskRunId, xtermBaseUrl],
-    enabled: hasTerminalBackend,
-    queryFn: async () => {
-      if (!xtermBaseUrl) {
-        return [] as string[];
-      }
-      const url = new URL("/api/tabs", xtermBaseUrl);
-      const response = await fetch(url, {
-        headers: {
-          Accept: "application/json",
-        },
-      });
-      if (!response.ok) {
-        throw new Error(`Failed to load terminals (${response.status})`);
-      }
-      const payload = await response.json();
-      if (!Array.isArray(payload)) {
-        return [] as string[];
-      }
-      return payload.map((value) => String(value));
-    },
-    refetchInterval: 10_000,
-    refetchOnWindowFocus: true,
-  });
+  const tabsQuery = useQuery(
+    terminalTabsQueryOptions({
+      baseUrl: xtermBaseUrl,
+      contextKey: taskRunId,
+      enabled: hasTerminalBackend,
+    })
+  );
 
   const terminalIds = useMemo(() => tabsQuery.data ?? [], [tabsQuery.data]);
 
@@ -99,6 +92,83 @@ function TaskRunTerminals() {
   const [connectionStates, setConnectionStates] = useState<
     Record<string, TerminalConnectionState>
   >({});
+
+  const queryClient = useQueryClient();
+
+  const [createTerminalRequestKey, setCreateTerminalRequestKey] = useState<
+    number | null
+  >(null);
+  const [createTerminalError, setCreateTerminalError] = useState<string | null>(
+    null
+  );
+
+  const createTerminalQuery = useQuery(
+    createTerminalTabQueryOptions({
+      baseUrl: xtermBaseUrl,
+      contextKey: taskRunId,
+      triggerKey: createTerminalRequestKey,
+      enabled: hasTerminalBackend && createTerminalRequestKey !== null,
+    })
+  );
+
+  const isCreatingTerminal = createTerminalQuery.fetchStatus === "fetching";
+
+  useEffect(() => {
+    if (!createTerminalRequestKey) {
+      return;
+    }
+    if (createTerminalQuery.status !== "success" || !createTerminalQuery.data) {
+      return;
+    }
+    const payload = createTerminalQuery.data;
+    setCreateTerminalError(null);
+    setCreateTerminalRequestKey(null);
+    setActiveTerminalId(payload.id);
+    setConnectionStates((prev) => ({
+      ...prev,
+      [payload.id]: prev[payload.id] ?? "connecting",
+    }));
+    queryClient.setQueryData<TerminalTabId[] | undefined>(
+      terminalTabsQueryKey(xtermBaseUrl, taskRunId),
+      (current) => {
+        if (!current) {
+          return [payload.id];
+        }
+        if (current.includes(payload.id)) {
+          return current;
+        }
+        return [...current, payload.id];
+      }
+    );
+    queryClient.invalidateQueries({
+      queryKey: terminalTabsQueryKey(xtermBaseUrl, taskRunId),
+    });
+  }, [
+    createTerminalQuery.data,
+    createTerminalQuery.status,
+    createTerminalRequestKey,
+    queryClient,
+    taskRunId,
+    xtermBaseUrl,
+  ]);
+
+  useEffect(() => {
+    if (!createTerminalRequestKey) {
+      return;
+    }
+    if (createTerminalQuery.status !== "error") {
+      return;
+    }
+    const error = createTerminalQuery.error;
+    setCreateTerminalRequestKey(null);
+    setCreateTerminalError(
+      error instanceof Error ? error.message : "Unable to create terminal."
+    );
+  }, [
+    createTerminalQuery.error,
+    createTerminalQuery.status,
+    createTerminalRequestKey,
+  ]);
 
   useEffect(() => {
     if (!hasTerminalBackend || terminalIds.length === 0) {
@@ -205,14 +275,36 @@ function TaskRunTerminals() {
               </span>
             )}
           </div>
-          <button
-            type="button"
-            onClick={() => tabsQuery.refetch()}
-            disabled={tabsQuery.isFetching}
-            className="rounded-md border border-neutral-200 px-2 py-1 text-xs font-medium text-neutral-600 transition hover:border-neutral-300 hover:text-neutral-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:border-neutral-600 dark:hover:text-neutral-100"
-          >
-            {tabsQuery.isFetching ? "Refreshing…" : "Refresh"}
-          </button>
+          <div className="flex flex-col items-end gap-1 py-2">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!hasTerminalBackend || isCreatingTerminal) {
+                    return;
+                  }
+                  setCreateTerminalError(null);
+                  setCreateTerminalRequestKey(Date.now());
+                }}
+                disabled={!hasTerminalBackend || isCreatingTerminal}
+                className="flex items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-xs font-medium text-neutral-600 transition hover:border-neutral-300 hover:text-neutral-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:border-neutral-600 dark:hover:text-neutral-100"
+              >
+                {isCreatingTerminal ? (
+                  "Creating…"
+                ) : (
+                  <>
+                    <Plus className="h-3.5 w-3.5" />
+                    <span>New Terminal</span>
+                  </>
+                )}
+              </button>
+            </div>
+            {createTerminalError ? (
+              <span className="text-xs text-red-500 dark:text-red-400">
+                {createTerminalError}
+              </span>
+            ) : null}
+          </div>
         </div>
         <div className="relative flex-1 min-h-0 bg-neutral-950">
           {tabsQuery.isLoading ? (

@@ -84,10 +84,13 @@ export function toMorphXtermBaseUrl(sourceUrl: string): string | null {
     return null;
   }
 
-  const baseUrl = createMorphPortUrl(components, 39383);
-  baseUrl.pathname = "/";
-  baseUrl.search = "";
-  baseUrl.hash = "";
+  const scope = "base";
+  const proxiedUrl = new URL(components.url.toString());
+  proxiedUrl.hostname = `cmux-${components.morphId}-${scope}-39383.cmux.app`;
+  proxiedUrl.port = "";
+  proxiedUrl.pathname = "/";
+  proxiedUrl.search = "";
+  proxiedUrl.hash = "";
 
-  return baseUrl.toString();
+  return proxiedUrl.toString();
 }
