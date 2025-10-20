@@ -1,5 +1,4 @@
 import { randomBytes, createHash } from "node:crypto";
-import { ConvexHttpClient } from "convex/browser";
 import { api } from "@cmux/convex/api";
 import type { Id } from "@cmux/convex/dataModel";
 
@@ -59,12 +58,6 @@ export function getConvexHttpActionBaseUrl(): string | null {
     return null;
   }
   return url.replace(".convex.cloud", ".convex.site").replace(/\/$/, "");
-}
-
-function getDeployConvexClient(): ConvexHttpClient {
-  const client = new ConvexHttpClient(env.NEXT_PUBLIC_CONVEX_URL);
-  client.setAuth(env.CONVEX_DEPLOY_KEY);
-  return client;
 }
 
 export async function startCodeReviewJob({
@@ -185,9 +178,8 @@ export async function startCodeReviewJob({
         error instanceof Error ? error.message : String(error ?? "Unknown error");
       console.error("[code-review] Background review failed", message);
 
-      const deployConvex = getDeployConvexClient();
       try {
-        await deployConvex.mutation(api.codeReview.failJob, {
+        await convex.mutation(api.codeReview.failJob, {
           jobId: job.jobId as Id<"automatedCodeReviewJobs">,
           errorCode: "pr_review_setup_failed",
           errorDetail: message,
