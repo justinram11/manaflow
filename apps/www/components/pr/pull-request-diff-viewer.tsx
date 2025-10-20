@@ -1,7 +1,14 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ReactElement } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type { ReactElement, ReactNode } from "react";
 import {
   ChevronLeft,
   ChevronDown,
@@ -232,6 +239,10 @@ type FocusNavigateOptions = {
 type ActiveTooltipTarget = {
   filePath: string;
   lineNumber: number;
+};
+
+type ShowAutoTooltipOptions = {
+  sticky?: boolean;
 };
 
 type HeatmapTooltipTheme = {
@@ -472,42 +483,52 @@ export function PullRequestDiffViewer({
   const autoTooltipTimeoutRef = useRef<number | null>(null);
 
   const clearAutoTooltip = useCallback(() => {
-    if (typeof window !== "undefined" && autoTooltipTimeoutRef.current !== null) {
+    if (
+      typeof window !== "undefined" &&
+      autoTooltipTimeoutRef.current !== null
+    ) {
       window.clearTimeout(autoTooltipTimeoutRef.current);
       autoTooltipTimeoutRef.current = null;
     }
     setAutoTooltipTarget(null);
   }, []);
 
-  const showAutoTooltipForTarget = useCallback((target: ReviewErrorTarget) => {
-    if (typeof window === "undefined") {
-      return;
-    }
+  const showAutoTooltipForTarget = useCallback(
+    (target: ReviewErrorTarget, options?: ShowAutoTooltipOptions) => {
+      if (typeof window === "undefined") {
+        return;
+      }
 
-    if (autoTooltipTimeoutRef.current !== null) {
-      window.clearTimeout(autoTooltipTimeoutRef.current);
-      autoTooltipTimeoutRef.current = null;
-    }
+      if (autoTooltipTimeoutRef.current !== null) {
+        window.clearTimeout(autoTooltipTimeoutRef.current);
+        autoTooltipTimeoutRef.current = null;
+      }
 
-    setAutoTooltipTarget({
-      filePath: target.filePath,
-      lineNumber: target.lineNumber,
-    });
-
-    autoTooltipTimeoutRef.current = window.setTimeout(() => {
-      setAutoTooltipTarget((current) => {
-        if (
-          current &&
-          current.filePath === target.filePath &&
-          current.lineNumber === target.lineNumber
-        ) {
-          return null;
-        }
-        return current;
+      setAutoTooltipTarget({
+        filePath: target.filePath,
+        lineNumber: target.lineNumber,
       });
-      autoTooltipTimeoutRef.current = null;
-    }, 1800);
-  }, []);
+
+      const shouldStick = options?.sticky ?? false;
+
+      if (!shouldStick) {
+        autoTooltipTimeoutRef.current = window.setTimeout(() => {
+          setAutoTooltipTarget((current) => {
+            if (
+              current &&
+              current.filePath === target.filePath &&
+              current.lineNumber === target.lineNumber
+            ) {
+              return null;
+            }
+            return current;
+          });
+          autoTooltipTimeoutRef.current = null;
+        }, 1800);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     if (targetCount === 0) {
@@ -543,7 +564,9 @@ export function PullRequestDiffViewer({
   }, []);
 
   const focusedError =
-    focusedErrorIndex === null ? null : errorTargets[focusedErrorIndex] ?? null;
+    focusedErrorIndex === null
+      ? null
+      : (errorTargets[focusedErrorIndex] ?? null);
 
   const fileTree = useMemo(() => buildFileTree(files), [files]);
   const directoryPaths = useMemo(
@@ -682,7 +705,7 @@ export function PullRequestDiffViewer({
 
         if (isKeyboard) {
           if (target) {
-            showAutoTooltipForTarget(target);
+            showAutoTooltipForTarget(target, { sticky: true });
           } else {
             clearAutoTooltip();
           }
@@ -705,13 +728,12 @@ export function PullRequestDiffViewer({
       const isKeyboard = options?.source === "keyboard";
 
       setFocusedErrorIndex((previous) => {
-        const nextIndex =
-          previous === null ? 0 : (previous + 1) % targetCount;
+        const nextIndex = previous === null ? 0 : (previous + 1) % targetCount;
         const target = errorTargets[nextIndex] ?? null;
 
         if (isKeyboard) {
           if (target) {
-            showAutoTooltipForTarget(target);
+            showAutoTooltipForTarget(target, { sticky: true });
           } else {
             clearAutoTooltip();
           }
@@ -784,6 +806,24 @@ export function PullRequestDiffViewer({
     if (typeof window === "undefined") {
       return;
     }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        clearAutoTooltip();
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+
+    return () => {
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [clearAutoTooltip]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
     if (!focusedError) {
       return;
     }
@@ -850,10 +890,10 @@ export function PullRequestDiffViewer({
             const isFocusedFile =
               focusedError?.filePath === entry.file.filename;
             const focusedLineNumber = isFocusedFile
-              ? focusedError?.lineNumber ?? null
+              ? (focusedError?.lineNumber ?? null)
               : null;
             const focusedChangeKey = isFocusedFile
-              ? focusedError?.changeKey ?? null
+              ? (focusedError?.changeKey ?? null)
               : null;
             const autoTooltipLineNumber =
               isFocusedFile &&
@@ -974,7 +1014,9 @@ function ErrorNavigator({
   }
 
   const hasSelection =
-    typeof currentIndex === "number" && currentIndex >= 0 && currentIndex < totalCount;
+    typeof currentIndex === "number" &&
+    currentIndex >= 0 &&
+    currentIndex < totalCount;
   const displayIndex = hasSelection ? currentIndex + 1 : null;
 
   return (
@@ -1013,9 +1055,7 @@ function ErrorNavigator({
               align="center"
               className="flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-2 py-1 text-[11px] font-medium text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
             >
-              <span>
-                Previous error
-              </span>
+              <span>Previous error</span>
               <span className="rounded border border-neutral-200 bg-neutral-50 px-1 py-0.5 font-mono text-[10px] uppercase text-neutral-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
                 ⇧ K
               </span>
@@ -1038,9 +1078,7 @@ function ErrorNavigator({
               align="center"
               className="flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-2 py-1 text-[11px] font-medium text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
             >
-              <span>
-                Next error
-              </span>
+              <span>Next error</span>
               <span className="rounded border border-neutral-200 bg-neutral-50 px-1 py-0.5 font-mono text-[10px] uppercase text-neutral-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
                 ⇧ J
               </span>
@@ -1309,35 +1347,17 @@ function FileDiffCard({
       }
 
       const isAutoTooltipOpen =
-        autoTooltipLineNumber !== null &&
-        lineNumber === autoTooltipLineNumber;
+        autoTooltipLineNumber !== null && lineNumber === autoTooltipLineNumber;
 
-      const tooltipNode = (
-        <Tooltip
+      return wrapInAnchor(
+        <HeatmapGutterTooltip
           key={`heatmap-gutter-${lineNumber}`}
-          delayDuration={120}
-          open={isAutoTooltipOpen ? true : undefined}
+          isAutoOpen={isAutoTooltipOpen}
+          tooltipMeta={tooltipMeta}
         >
-          <TooltipTrigger asChild>
-            <span className="cmux-heatmap-gutter">{content}</span>
-          </TooltipTrigger>
-          <TooltipContent
-            side="top"
-            align="start"
-            className={cn(
-              "max-w-xs space-y-1 text-left leading-relaxed border backdrop-blur",
-              getHeatmapTooltipTheme(tooltipMeta.score).contentClass
-            )}
-          >
-            <HeatmapTooltipBody
-              score={tooltipMeta.score}
-              reason={tooltipMeta.reason}
-            />
-          </TooltipContent>
-        </Tooltip>
+          {content}
+        </HeatmapGutterTooltip>
       );
-
-      return wrapInAnchor(tooltipNode);
     };
 
     return renderGutterWithTooltip;
@@ -1479,7 +1499,9 @@ function FileDiffCard({
                   focusedLineNumber !== null &&
                   normalizedChanges.some((change) => {
                     const newLineNumber = computeNewLineNumber(change);
-                    return newLineNumber > 0 && newLineNumber === focusedLineNumber;
+                    return (
+                      newLineNumber > 0 && newLineNumber === focusedLineNumber
+                    );
                   });
                 if (hasFocus) {
                   classNames.push("cmux-heatmap-focus");
@@ -1542,6 +1564,71 @@ function FileDiffCard({
   );
 }
 
+function HeatmapGutterTooltip({
+  children,
+  tooltipMeta,
+  isAutoOpen,
+}: {
+  children: ReactNode;
+  tooltipMeta: HeatmapTooltipMeta;
+  isAutoOpen: boolean;
+}) {
+  const [isManuallyOpen, setIsManuallyOpen] = useState(false);
+  const [isHovering, setIsHovering] = useState(false);
+  const wasAutoOpenRef = useRef(isAutoOpen);
+
+  const handleOpenChange = useCallback((nextOpen: boolean) => {
+    setIsManuallyOpen(nextOpen);
+  }, []);
+
+  useEffect(() => {
+    if (isAutoOpen) {
+      setIsManuallyOpen(false);
+    } else if (wasAutoOpenRef.current && isHovering) {
+      setIsManuallyOpen(true);
+    }
+    wasAutoOpenRef.current = isAutoOpen;
+  }, [isAutoOpen, isHovering]);
+
+  const handlePointerEnter = useCallback(() => {
+    setIsHovering(true);
+  }, []);
+
+  const handlePointerLeave = useCallback(() => {
+    setIsHovering(false);
+  }, []);
+
+  const isOpen = isAutoOpen || isManuallyOpen;
+  const theme = getHeatmapTooltipTheme(tooltipMeta.score);
+
+  return (
+    <Tooltip delayDuration={120} open={isOpen} onOpenChange={handleOpenChange}>
+      <TooltipTrigger asChild>
+        <span
+          className="cmux-heatmap-gutter"
+          onPointerEnter={handlePointerEnter}
+          onPointerLeave={handlePointerLeave}
+        >
+          {children}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent
+        side="top"
+        align="start"
+        className={cn(
+          "max-w-xs space-y-1 text-left leading-relaxed border backdrop-blur",
+          theme.contentClass
+        )}
+      >
+        <HeatmapTooltipBody
+          score={tooltipMeta.score}
+          reason={tooltipMeta.reason}
+        />
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 function HeatmapTooltipBody({
   score,
   reason,
@@ -1551,10 +1638,7 @@ function HeatmapTooltipBody({
 }) {
   const theme = getHeatmapTooltipTheme(score);
   return (
-    <div className="space-y-1 text-left text-xs leading-relaxed">
-      <p className={cn("font-semibold", theme.titleClass)}>
-        Worth a closer look
-      </p>
+    <div className="text-left text-xs leading-relaxed">
       {reason ? (
         <p className={cn("text-xs", theme.reasonClass)}>{reason}</p>
       ) : null}
@@ -1728,9 +1812,15 @@ function scrollElementToViewportCenter(
   }
 
   const currentScrollY =
-    window.scrollY ?? window.pageYOffset ?? document.documentElement?.scrollTop ?? 0;
+    window.scrollY ??
+    window.pageYOffset ??
+    document.documentElement?.scrollTop ??
+    0;
   const currentScrollX =
-    window.scrollX ?? window.pageXOffset ?? document.documentElement?.scrollLeft ?? 0;
+    window.scrollX ??
+    window.pageXOffset ??
+    document.documentElement?.scrollLeft ??
+    0;
   const scrollHeight = document.documentElement?.scrollHeight ?? 0;
 
   const halfViewport = Math.max((viewportHeight - rect.height) / 2, 0);
