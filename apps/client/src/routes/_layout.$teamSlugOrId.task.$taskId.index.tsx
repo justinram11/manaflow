@@ -23,9 +23,9 @@ import type { Id } from "@cmux/convex/dataModel";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import clsx from "clsx";
-import { Code2, Crown, Globe2, TerminalSquare } from "lucide-react";
+import { Code2, Globe2, TerminalSquare } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import z from "zod";
 
@@ -130,7 +130,6 @@ function TaskDetailPage() {
       id: taskId,
     }),
   );
-  const router = useRouter();
   const { data: taskRuns } = useSuspenseQuery(
     convexQuery(api.taskRuns.getByTask, {
       teamSlugOrId,
@@ -246,22 +245,6 @@ function TaskDetailPage() {
   const isEditorBusy = Boolean(selectedRun) && (!workspaceUrl || editorStatus !== "loaded");
   const isBrowserBusy = Boolean(selectedRun) && (!hasBrowserView || browserStatus !== "loaded");
 
-  const handleRunSelect = useCallback(
-    (runId: Id<"taskRuns"> | null) => {
-      if (runId === selectedRunId) {
-        return;
-      }
-      void router.navigate({
-        to: "/$teamSlugOrId/task/$taskId",
-        params: { teamSlugOrId, taskId },
-        search: {
-          runId: runId ?? undefined,
-        },
-      });
-    },
-    [router, selectedRunId, taskId, teamSlugOrId],
-  );
-
   const workspacePlaceholderMessage = useMemo(() => {
     if (!runsWithDepth.length) {
       return "Run the task to launch a workspace.";
@@ -283,54 +266,7 @@ function TaskDetailPage() {
           teamSlugOrId={teamSlugOrId}
         />
         <div className="flex flex-1 min-h-0 flex-col gap-3 px-3 py-3">
-          {runsWithDepth.length > 0 ? (
-            <div className="flex flex-col gap-1">
-              <span className="text-xs font-medium uppercase tracking-wide text-neutral-600 dark:text-neutral-400">
-                Runs
-              </span>
-              <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                {runsWithDepth.map((run, index) => {
-                  const isSelected = run._id === selectedRunId;
-                  const agentName = run.agentName?.trim();
-                  const runLabel = agentName && agentName.length > 0 ? agentName : `Run ${index + 1}`;
-                  return (
-                    <button
-                      key={run._id}
-                      type="button"
-                      onClick={() => handleRunSelect(run._id)}
-                      className={clsx(
-                        "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium transition-colors whitespace-nowrap",
-                        isSelected
-                          ? "border-neutral-900 bg-neutral-900 text-white shadow-sm dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900"
-                          : "border-neutral-200 text-neutral-600 hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-800 dark:text-neutral-300 dark:hover:border-neutral-600",
-                      )}
-                    >
-                      <span className="font-mono text-[10px] text-neutral-500 dark:text-neutral-500">
-                        #{index + 1}
-                      </span>
-                      {run.depth > 0 ? (
-                        <span className="text-neutral-300 dark:text-neutral-600">
-                          {"·".repeat(run.depth)}
-                        </span>
-                      ) : null}
-                      <span className="truncate max-w-[140px] text-left">
-                        {runLabel}
-                      </span>
-                      {run.isCrowned ? (
-                        <Crown className="size-3 text-amber-400" aria-label="Crowned run" />
-                      ) : null}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ) : (
-            <div className="text-xs text-neutral-500 dark:text-neutral-500">
-              No runs yet — start the task to launch a workspace.
-            </div>
-          )}
-
-          <div className="grid flex-1 min-h-0 gap-3 md:grid-cols-2 md:grid-rows-2">
+          <div className="grid flex-1 min-h-0 gap-3 md:grid-cols-[minmax(0,3fr)_minmax(0,5fr)] md:grid-rows-2">
             <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-950">
               <TaskRunChatPane
                 task={task}

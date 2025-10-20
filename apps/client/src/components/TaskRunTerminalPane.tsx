@@ -110,6 +110,7 @@ export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) 
     }
 
     let cancelled = false;
+    let tmuxReady = false;
     setStatus("connecting");
     setError(null);
 
@@ -160,9 +161,16 @@ export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) 
 
           socket.addEventListener("open", () => {
             if (cancelled) return;
-            setStatus("connected");
+            // Don't mark as connected yet - wait for first message indicating tmux is ready
             fitAddonRef.current?.fit();
             sendResize();
+          });
+
+          socket.addEventListener("message", () => {
+            if (cancelled || tmuxReady) return;
+            // First message indicates tmux has attached and is ready
+            tmuxReady = true;
+            setStatus("connected");
           });
 
           socket.addEventListener("close", () => {
