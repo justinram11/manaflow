@@ -27,7 +27,7 @@ export const diffColors: Record<"light" | "dark", DiffColorPalette> = {
     deletion: {
       lineBackground: "#ffebe9",
       gutterBackground: "#ffdcd7",
-      textBackground: "#ffdcd7",
+      textBackground: "#ffebe9",
       lineNumberForeground: "#a0111f",
     },
     collapsed: {
