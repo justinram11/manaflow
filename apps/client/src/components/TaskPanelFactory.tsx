@@ -1,4 +1,4 @@
-import React, { useState, type ReactNode } from "react";
+import React, { useState, useEffect, useRef, type ReactNode, useCallback } from "react";
 import { Code2, Globe2, TerminalSquare, GitCompare, GripVertical, X } from "lucide-react";
 import clsx from "clsx";
 import type { PanelType } from "@/lib/panel-config";
@@ -57,9 +57,67 @@ interface PanelFactoryProps {
   TASK_RUN_IFRAME_SANDBOX?: string;
 }
 
-export function RenderPanel(props: PanelFactoryProps): ReactNode {
+const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
   const { type, position, onSwap, onClose } = props;
   const [isDragOver, setIsDragOver] = useState(false);
+  const dragOverTimeoutRef = useRef<number | null>(null);
+  const isDraggingRef = useRef(false);
+  const restoreTimeoutRef = useRef<number | null>(null);
+
+  // Restore iframe pointer events helper - with force flag to always restore
+  const restoreIframePointerEvents = useCallback((force = false) => {
+    const iframes = Array.from(document.querySelectorAll("iframe"));
+    for (const el of iframes) {
+      if (el instanceof HTMLIFrameElement) {
+        if (force) {
+          // Force remove pointer-events restriction
+          el.style.removeProperty("pointer-events");
+          delete el.dataset.prevPointerEvents;
+        } else {
+          const prev = el.dataset.prevPointerEvents;
+          if (prev !== undefined) {
+            if (prev === "__unset__") el.style.removeProperty("pointer-events");
+            else el.style.pointerEvents = prev;
+            delete el.dataset.prevPointerEvents;
+          }
+        }
+      }
+    }
+  }, []);
+
+  // Cleanup drag state on unmount or when drag is abandoned
+  useEffect(() => {
+    const handleGlobalDragEnd = () => {
+      if (isDraggingRef.current) {
+        restoreIframePointerEvents();
+        isDraggingRef.current = false;
+
+        // Clear any existing restore timeout
+        if (restoreTimeoutRef.current !== null) {
+          window.clearTimeout(restoreTimeoutRef.current);
+          restoreTimeoutRef.current = null;
+        }
+      }
+    };
+
+    // Listen for global drag end events to ensure cleanup
+    window.addEventListener("dragend", handleGlobalDragEnd);
+    window.addEventListener("drop", handleGlobalDragEnd);
+
+    return () => {
+      window.removeEventListener("dragend", handleGlobalDragEnd);
+      window.removeEventListener("drop", handleGlobalDragEnd);
+      if (dragOverTimeoutRef.current !== null) {
+        window.clearTimeout(dragOverTimeoutRef.current);
+      }
+      if (restoreTimeoutRef.current !== null) {
+        window.clearTimeout(restoreTimeoutRef.current);
+      }
+      if (isDraggingRef.current) {
+        restoreIframePointerEvents(true); // Force restore on unmount
+      }
+    };
+  }, [restoreIframePointerEvents]);
 
   const handleDragStart = (e: React.DragEvent) => {
     e.dataTransfer.effectAllowed = "move";
@@ -67,26 +125,91 @@ export function RenderPanel(props: PanelFactoryProps): ReactNode {
     if (e.currentTarget instanceof HTMLElement) {
       e.currentTarget.style.opacity = "0.5";
     }
+
+    isDraggingRef.current = true;
+
+    // Disable pointer events on iframes while dragging to prevent interference
+    const iframes = Array.from(document.querySelectorAll("iframe"));
+    for (const el of iframes) {
+      if (el instanceof HTMLIFrameElement) {
+        const current = el.style.pointerEvents;
+        el.dataset.prevPointerEvents = current ? current : "__unset__";
+        el.style.pointerEvents = "none";
+      }
+    }
+
+    // Failsafe: force restore pointer events after 5 seconds in case drag end events fail
+    restoreTimeoutRef.current = window.setTimeout(() => {
+      if (isDraggingRef.current) {
+        console.warn("Drag operation timeout - forcing iframe pointer-events restore");
+        restoreIframePointerEvents(true);
+        isDraggingRef.current = false;
+      }
+      restoreTimeoutRef.current = null;
+    }, 5000);
   };
 
   const handleDragEnd = (e: React.DragEvent) => {
     if (e.currentTarget instanceof HTMLElement) {
       e.currentTarget.style.opacity = "1";
     }
+    // Ensure drag over state is cleared when drag ends
+    setIsDragOver(false);
+    if (dragOverTimeoutRef.current !== null) {
+      window.clearTimeout(dragOverTimeoutRef.current);
+      dragOverTimeoutRef.current = null;
+    }
+    if (restoreTimeoutRef.current !== null) {
+      window.clearTimeout(restoreTimeoutRef.current);
+      restoreTimeoutRef.current = null;
+    }
+
+    isDraggingRef.current = false;
+    restoreIframePointerEvents();
   };
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
-    setIsDragOver(true);
+
+    // Only update state if it's not already true to prevent unnecessary re-renders
+    setIsDragOver(prev => {
+      if (!prev) {
+        return true;
+      }
+      return prev;
+    });
+
+    // Clear any existing timeout
+    if (dragOverTimeoutRef.current !== null) {
+      window.clearTimeout(dragOverTimeoutRef.current);
+    }
+
+    // Auto-clear drag over state if drag events stop (in case dragLeave is missed)
+    dragOverTimeoutRef.current = window.setTimeout(() => {
+      setIsDragOver(false);
+      dragOverTimeoutRef.current = null;
+    }, 100);
   };
 
   const handleDragLeave = () => {
+    // Clear timeout if it exists
+    if (dragOverTimeoutRef.current !== null) {
+      window.clearTimeout(dragOverTimeoutRef.current);
+      dragOverTimeoutRef.current = null;
+    }
     setIsDragOver(false);
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
+
+    // Clear timeout
+    if (dragOverTimeoutRef.current !== null) {
+      window.clearTimeout(dragOverTimeoutRef.current);
+      dragOverTimeoutRef.current = null;
+    }
+
     setIsDragOver(false);
     const fromPosition = e.dataTransfer.getData("text/plain") as PanelPosition;
     if (fromPosition !== position && onSwap) {
@@ -193,6 +316,7 @@ export function RenderPanel(props: PanelFactoryProps): ReactNode {
         <div className="relative flex-1" aria-busy={isEditorBusy}>
           {workspaceUrl && workspacePersistKey ? (
             <PersistentWebView
+              key={workspacePersistKey}
               persistKey={workspacePersistKey}
               src={workspaceUrl}
               className="flex h-full"
@@ -260,6 +384,7 @@ export function RenderPanel(props: PanelFactoryProps): ReactNode {
         <div className="relative flex-1" aria-busy={isBrowserBusy}>
           {browserUrl && browserPersistKey ? (
             <PersistentWebView
+              key={browserPersistKey}
               persistKey={browserPersistKey}
               src={browserUrl}
               className="flex h-full"
@@ -310,4 +435,31 @@ export function RenderPanel(props: PanelFactoryProps): ReactNode {
     default:
       return null;
   }
-}
+};
+
+// Memoize to prevent unnecessary re-renders during drag operations
+// Only re-render when critical props actually change
+export const RenderPanel = React.memo(RenderPanelComponent, (prevProps, nextProps) => {
+  // Always re-render if type or position changes
+  if (prevProps.type !== nextProps.type || prevProps.position !== nextProps.position) {
+    return false;
+  }
+
+  // For iframe-based panels (workspace/browser), check persist keys
+  if (prevProps.type === "workspace" || prevProps.type === "browser") {
+    if (prevProps.workspacePersistKey !== nextProps.workspacePersistKey ||
+      prevProps.browserPersistKey !== nextProps.browserPersistKey ||
+      prevProps.workspaceUrl !== nextProps.workspaceUrl ||
+      prevProps.browserUrl !== nextProps.browserUrl) {
+      return false;
+    }
+  }
+
+  // Check if callbacks changed (using reference equality)
+  if (prevProps.onSwap !== nextProps.onSwap || prevProps.onClose !== nextProps.onClose) {
+    return false;
+  }
+
+  // If we got here, props are effectively the same - skip re-render
+  return true;
+});

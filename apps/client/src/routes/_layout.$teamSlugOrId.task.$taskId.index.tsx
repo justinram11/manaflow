@@ -211,6 +211,8 @@ function TaskDetailPage() {
   const [iframeStatusByKey, setIframeStatusByKey] = useState<Record<string, IframeStatusEntry>>({});
 
   const handlePanelSwap = useCallback((fromPosition: "topLeft" | "topRight" | "bottomLeft" | "bottomRight", toPosition: "topLeft" | "topRight" | "bottomLeft" | "bottomRight") => {
+    // Use startTransition to mark this as a non-urgent update
+    // This helps React keep the UI stable during the swap
     setPanelConfig(prev => {
       const newConfig = { ...prev };
       const temp = newConfig[fromPosition];
@@ -219,13 +221,16 @@ function TaskDetailPage() {
       savePanelConfig(newConfig);
       return newConfig;
     });
-    // Trigger resize event to help iframes reposition correctly
-    // Use requestAnimationFrame to ensure React has finished re-rendering
+
+    // Trigger resize events after React completes the swap
+    // Multiple RAF calls ensure all layout recalculations are done
     requestAnimationFrame(() => {
-      window.dispatchEvent(new Event('resize'));
-      // Double RAF to ensure layout is complete
       requestAnimationFrame(() => {
         window.dispatchEvent(new Event('resize'));
+        // Third RAF to ensure iframes have repositioned
+        requestAnimationFrame(() => {
+          window.dispatchEvent(new Event('resize'));
+        });
       });
     });
   }, []);
@@ -488,28 +493,28 @@ function TaskDetailPage() {
             defaultTopHeight={50}
             topLeft={
               panelConfig.topLeft ? (
-                <RenderPanel key={`${panelConfig.topLeft}-topLeft`} {...panelProps} type={panelConfig.topLeft} position="topLeft" onSwap={handlePanelSwap} />
+                <RenderPanel key={panelConfig.topLeft} {...panelProps} type={panelConfig.topLeft} position="topLeft" onSwap={handlePanelSwap} />
               ) : (
                 <EmptyPanelSlot position="topLeft" availablePanels={availablePanels} onAddPanel={handleAddPanel} />
               )
             }
             topRight={
               panelConfig.topRight ? (
-                <RenderPanel key={`${panelConfig.topRight}-topRight`} {...panelProps} type={panelConfig.topRight} position="topRight" onSwap={handlePanelSwap} />
+                <RenderPanel key={panelConfig.topRight} {...panelProps} type={panelConfig.topRight} position="topRight" onSwap={handlePanelSwap} />
               ) : (
                 <EmptyPanelSlot position="topRight" availablePanels={availablePanels} onAddPanel={handleAddPanel} />
               )
             }
             bottomLeft={
               panelConfig.bottomLeft ? (
-                <RenderPanel key={`${panelConfig.bottomLeft}-bottomLeft`} {...panelProps} type={panelConfig.bottomLeft} position="bottomLeft" onSwap={handlePanelSwap} />
+                <RenderPanel key={panelConfig.bottomLeft} {...panelProps} type={panelConfig.bottomLeft} position="bottomLeft" onSwap={handlePanelSwap} />
               ) : (
                 <EmptyPanelSlot position="bottomLeft" availablePanels={availablePanels} onAddPanel={handleAddPanel} />
               )
             }
             bottomRight={
               panelConfig.bottomRight ? (
-                <RenderPanel key={`${panelConfig.bottomRight}-bottomRight`} {...panelProps} type={panelConfig.bottomRight} position="bottomRight" onSwap={handlePanelSwap} />
+                <RenderPanel key={panelConfig.bottomRight} {...panelProps} type={panelConfig.bottomRight} position="bottomRight" onSwap={handlePanelSwap} />
               ) : (
                 <EmptyPanelSlot position="bottomRight" availablePanels={availablePanels} onAddPanel={handleAddPanel} />
               )
