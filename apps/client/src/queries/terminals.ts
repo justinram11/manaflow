@@ -98,103 +98,55 @@ export function terminalTabsQueryOptions({
   });
 }
 
-export function createTerminalTabQueryOptions({
+export async function createTerminalTab({
   baseUrl,
   request,
-  triggerKey,
-  contextKey,
-  enabled = false,
 }: {
   baseUrl: string | null | undefined;
   request?: CreateTerminalTabRequest;
-  triggerKey: number | string | null;
-  contextKey?: string | number | null;
-  enabled?: boolean;
-}) {
-  const queryKey = [
-    "terminal-tabs",
-    contextKey ?? NO_CONTEXT_PLACEHOLDER,
-    baseUrl ?? NO_BASE_PLACEHOLDER,
-    "create",
-    triggerKey ?? "idle",
-  ] as const;
-
-  const effectiveEnabled = Boolean(enabled && baseUrl && triggerKey !== null);
-
-  return queryOptions<CreateTerminalTabResponse>({
-    queryKey,
-    enabled: effectiveEnabled,
-    queryFn: async () => {
-      const resolvedBaseUrl = ensureBaseUrl(baseUrl);
-      const url = buildTerminalUrl(resolvedBaseUrl, "/api/tabs");
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(request ?? {}),
-      });
-      if (!response.ok) {
-        throw new Error(`Failed to create terminal (${response.status})`);
-      }
-      const payload: unknown = await response.json();
-      if (!isCreateTerminalTabHttpResponse(payload)) {
-        throw new Error("Unexpected response while creating terminal.");
-      }
-      return {
-        id: payload.id,
-        wsUrl: payload.ws_url,
-      };
+}): Promise<CreateTerminalTabResponse> {
+  const resolvedBaseUrl = ensureBaseUrl(baseUrl);
+  const url = buildTerminalUrl(resolvedBaseUrl, "/api/tabs");
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
     },
-    retry: false,
+    body: JSON.stringify(request ?? {}),
   });
+  if (!response.ok) {
+    throw new Error(`Failed to create terminal (${response.status})`);
+  }
+  const payload: unknown = await response.json();
+  if (!isCreateTerminalTabHttpResponse(payload)) {
+    throw new Error("Unexpected response while creating terminal.");
+  }
+  return {
+    id: payload.id,
+    wsUrl: payload.ws_url,
+  };
 }
 
-export function deleteTerminalTabQueryOptions({
+export async function deleteTerminalTab({
   baseUrl,
   tabId,
-  triggerKey,
-  contextKey,
-  enabled = false,
 }: {
   baseUrl: string | null | undefined;
   tabId: string;
-  triggerKey: number | string | null;
-  contextKey?: string | number | null;
-  enabled?: boolean;
-}) {
-  const queryKey = [
-    "terminal-tabs",
-    contextKey ?? NO_CONTEXT_PLACEHOLDER,
-    baseUrl ?? NO_BASE_PLACEHOLDER,
-    "delete",
-    tabId,
-    triggerKey ?? "idle",
-  ] as const;
-
-  const effectiveEnabled = Boolean(enabled && baseUrl && triggerKey !== null);
-
-  return queryOptions<boolean>({
-    queryKey,
-    enabled: effectiveEnabled,
-    queryFn: async () => {
-      const resolvedBaseUrl = ensureBaseUrl(baseUrl);
-      const url = buildTerminalUrl(
-        resolvedBaseUrl,
-        `/api/tabs/${encodeURIComponent(tabId)}`
-      );
-      const response = await fetch(url, {
-        method: "DELETE",
-        headers: {
-          Accept: "application/json",
-        },
-      });
-      if (!response.ok) {
-        throw new Error(`Failed to delete terminal (${response.status})`);
-      }
-      return true;
+}): Promise<void> {
+  const resolvedBaseUrl = ensureBaseUrl(baseUrl);
+  const url = buildTerminalUrl(
+    resolvedBaseUrl,
+    `/api/tabs/${encodeURIComponent(tabId)}`
+  );
+  const response = await fetch(url, {
+    method: "DELETE",
+    headers: {
+      Accept: "application/json",
     },
-    retry: false,
   });
+  if (!response.ok) {
+    throw new Error(`Failed to delete terminal (${response.status})`);
+  }
 }

@@ -2,6 +2,7 @@ import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
 import {
+  useMutation,
   useQuery,
   useQueryClient,
   useSuspenseQuery,
@@ -17,10 +18,11 @@ import {
 } from "@/components/task-run-terminal-session";
 import { toMorphXtermBaseUrl } from "@/lib/toProxyWorkspaceUrl";
 import {
-  createTerminalTabQueryOptions,
-  deleteTerminalTabQueryOptions,
+  createTerminalTab,
+  deleteTerminalTab,
   terminalTabsQueryKey,
   terminalTabsQueryOptions,
+  type CreateTerminalTabResponse,
   type TerminalTabId,
 } from "@/queries/terminals";
 
@@ -56,6 +58,52 @@ const CONNECTION_STATE_COLORS: Record<TerminalConnectionState, string> = {
   closed: "bg-neutral-400 dark:bg-neutral-600",
   error: "bg-red-500",
 };
+
+type DeleteTerminalMutationContext = {
+  previousTabs: TerminalTabId[];
+  previousActiveId: string | null;
+  previousConnectionState: TerminalConnectionState;
+};
+
+function getTabRemovalOutcome(
+  tabs: TerminalTabId[],
+  removedId: TerminalTabId,
+  currentActiveId: string | null
+): { nextTabs: TerminalTabId[]; nextActiveId: string | null } {
+  const nextTabs = tabs.filter((tabId) => tabId !== removedId);
+  if (nextTabs.length === 0) {
+    return { nextTabs, nextActiveId: null };
+  }
+
+  if (
+    currentActiveId &&
+    currentActiveId !== removedId &&
+    nextTabs.includes(currentActiveId)
+  ) {
+    return { nextTabs, nextActiveId: currentActiveId };
+  }
+
+  const removedIndex = tabs.findIndex((tabId) => tabId === removedId);
+  if (removedIndex !== -1) {
+    const rightCandidate = tabs
+      .slice(removedIndex + 1)
+      .find((tabId) => tabId !== removedId && nextTabs.includes(tabId));
+    if (rightCandidate) {
+      return { nextTabs, nextActiveId: rightCandidate };
+    }
+
+    for (let index = removedIndex - 1; index >= 0; index -= 1) {
+      const leftCandidate = tabs[index];
+      if (leftCandidate && leftCandidate !== removedId) {
+        if (nextTabs.includes(leftCandidate)) {
+          return { nextTabs, nextActiveId: leftCandidate };
+        }
+      }
+    }
+  }
+
+  return { nextTabs, nextActiveId: nextTabs[0] ?? null };
+}
 
 function TaskRunTerminals() {
   const { runId: taskRunId, teamSlugOrId } = Route.useParams();
@@ -96,155 +144,121 @@ function TaskRunTerminals() {
 
   const queryClient = useQueryClient();
 
-  const [createTerminalRequestKey, setCreateTerminalRequestKey] = useState<
-    number | null
-  >(null);
-  const [createTerminalError, setCreateTerminalError] = useState<string | null>(
-    null
-  );
-  const [deleteTerminalRequest, setDeleteTerminalRequest] = useState<{
-    id: TerminalTabId;
-    key: number;
-  } | null>(null);
-  const [deleteTerminalError, setDeleteTerminalError] = useState<string | null>(
-    null
-  );
-
-  const createTerminalQuery = useQuery(
-    createTerminalTabQueryOptions({
-      baseUrl: xtermBaseUrl,
-      contextKey: taskRunId,
-      triggerKey: createTerminalRequestKey,
-      enabled: hasTerminalBackend && createTerminalRequestKey !== null,
-    })
-  );
-
-  const deleteTerminalQuery = useQuery(
-    deleteTerminalTabQueryOptions({
-      baseUrl: xtermBaseUrl,
-      contextKey: taskRunId,
-      tabId: deleteTerminalRequest?.id ?? "",
-      triggerKey: deleteTerminalRequest?.key ?? null,
-      enabled: hasTerminalBackend && deleteTerminalRequest !== null,
-    })
-  );
-
-  const isCreatingTerminal = createTerminalQuery.fetchStatus === "fetching";
-  const deletingTerminalId = deleteTerminalRequest?.id ?? null;
-  const isDeletingTerminal = deleteTerminalQuery.fetchStatus === "fetching";
-
-  useEffect(() => {
-    if (!createTerminalRequestKey) {
-      return;
-    }
-    if (createTerminalQuery.status !== "success" || !createTerminalQuery.data) {
-      return;
-    }
-    const payload = createTerminalQuery.data;
-    setCreateTerminalError(null);
-    setCreateTerminalRequestKey(null);
-    setActiveTerminalId(payload.id);
-    setConnectionStates((prev) => ({
-      ...prev,
-      [payload.id]: prev[payload.id] ?? "connecting",
-    }));
-    queryClient.setQueryData<TerminalTabId[] | undefined>(
-      terminalTabsQueryKey(xtermBaseUrl, taskRunId),
-      (current) => {
-        if (!current) {
-          return [payload.id];
-        }
-        if (current.includes(payload.id)) {
-          return current;
-        }
-        return [...current, payload.id];
-      }
-    );
-    queryClient.invalidateQueries({
-      queryKey: terminalTabsQueryKey(xtermBaseUrl, taskRunId),
-    });
-  }, [
-    createTerminalQuery.data,
-    createTerminalQuery.status,
-    createTerminalRequestKey,
-    queryClient,
-    taskRunId,
-    xtermBaseUrl,
-  ]);
-
-  useEffect(() => {
-    if (!createTerminalRequestKey) {
-      return;
-    }
-    if (createTerminalQuery.status !== "error") {
-      return;
-    }
-    const error = createTerminalQuery.error;
-    setCreateTerminalRequestKey(null);
-    setCreateTerminalError(
-      error instanceof Error ? error.message : "Unable to create terminal."
-    );
-  }, [
-    createTerminalQuery.error,
-    createTerminalQuery.status,
-    createTerminalRequestKey,
-  ]);
-
-  useEffect(() => {
-    if (!deleteTerminalRequest) {
-      return;
-    }
-    if (deleteTerminalQuery.status !== "success") {
-      return;
-    }
-    const removedId = deleteTerminalRequest.id;
-    setDeleteTerminalError(null);
-    setConnectionStates((prev) => {
-      const { [removedId]: _removed, ...rest } = prev;
-      return rest;
-    });
-    const nextTabIds =
+  const createTerminalMutation = useMutation<
+    CreateTerminalTabResponse,
+    unknown,
+    void,
+    void
+  >({
+    mutationKey: ["terminal-tabs", taskRunId, xtermBaseUrl, "create"],
+    mutationFn: async () =>
+      createTerminalTab({
+        baseUrl: xtermBaseUrl,
+      }),
+    onSuccess: (payload) => {
+      const queryKey = terminalTabsQueryKey(xtermBaseUrl, taskRunId);
       queryClient.setQueryData<TerminalTabId[] | undefined>(
-        terminalTabsQueryKey(xtermBaseUrl, taskRunId),
+        queryKey,
         (current) => {
           if (!current) {
-            return [];
+            return [payload.id];
           }
-          return current.filter((id) => id !== removedId);
+          if (current.includes(payload.id)) {
+            return current;
+          }
+          return [...current, payload.id];
         }
-      ) ?? [];
-    setDeleteTerminalRequest(null);
-    setActiveTerminalId((current) => {
-      if (current && current !== removedId && nextTabIds.includes(current)) {
-        return current;
-      }
-      return nextTabIds.length > 0 ? nextTabIds[0] : null;
-    });
-  }, [
-    deleteTerminalQuery.status,
-    deleteTerminalRequest,
-    queryClient,
-    taskRunId,
-    xtermBaseUrl,
-  ]);
+      );
+      setActiveTerminalId(payload.id);
+      setConnectionStates((prev) => ({
+        ...prev,
+        [payload.id]: prev[payload.id] ?? "connecting",
+      }));
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({
+        queryKey: terminalTabsQueryKey(xtermBaseUrl, taskRunId),
+      });
+    },
+  });
 
-  useEffect(() => {
-    if (!deleteTerminalRequest) {
-      return;
-    }
-    if (deleteTerminalQuery.status !== "error") {
-      return;
-    }
-    const error = deleteTerminalQuery.error;
-    setDeleteTerminalRequest(null);
-    setDeleteTerminalError(
-      error instanceof Error ? error.message : "Unable to close terminal."
-    );
-  }, [
-    deleteTerminalQuery.error,
-    deleteTerminalQuery.status,
-    deleteTerminalRequest,
-  ]);
+  const deleteTerminalMutation = useMutation<
+    void,
+    unknown,
+    TerminalTabId,
+    DeleteTerminalMutationContext
+  >({
+    mutationKey: ["terminal-tabs", taskRunId, xtermBaseUrl, "delete"],
+    mutationFn: async (tabId) =>
+      deleteTerminalTab({
+        baseUrl: xtermBaseUrl,
+        tabId,
+      }),
+    onMutate: async (tabId) => {
+      const queryKey = terminalTabsQueryKey(xtermBaseUrl, taskRunId);
+      await queryClient.cancelQueries({ queryKey });
+      const cachedTabs =
+        queryClient.getQueryData<TerminalTabId[]>(queryKey) ?? terminalIds;
+      const previousTabs = [...cachedTabs];
+      const previousActiveId = activeTerminalId;
+      const previousConnectionState = connectionStates[tabId] ?? "connecting";
+      const { nextTabs, nextActiveId } = getTabRemovalOutcome(
+        previousTabs,
+        tabId,
+        activeTerminalId
+      );
+      queryClient.setQueryData(queryKey, nextTabs);
+      setActiveTerminalId(nextActiveId);
+      setConnectionStates((prev) => {
+        const { [tabId]: _removed, ...rest } = prev;
+        return rest;
+      });
+      return {
+        previousTabs,
+        previousActiveId,
+        previousConnectionState,
+      };
+    },
+    onError: (_error, tabId, context) => {
+      if (!context) {
+        return;
+      }
+      const queryKey = terminalTabsQueryKey(xtermBaseUrl, taskRunId);
+      queryClient.setQueryData(queryKey, context.previousTabs);
+      setActiveTerminalId(() => {
+        const desired = context.previousActiveId;
+        if (desired && context.previousTabs.includes(desired)) {
+          return desired;
+        }
+        return context.previousTabs[0] ?? null;
+      });
+      setConnectionStates((prev) => ({
+        ...prev,
+        [tabId]: context.previousConnectionState,
+      }));
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({
+        queryKey: terminalTabsQueryKey(xtermBaseUrl, taskRunId),
+      });
+    },
+  });
+
+  const isCreatingTerminal = createTerminalMutation.isPending;
+  const deletingTerminalId = deleteTerminalMutation.variables ?? null;
+  const isDeletingTerminal = deleteTerminalMutation.isPending;
+  const createTerminalErrorMessage =
+    createTerminalMutation.error instanceof Error
+      ? createTerminalMutation.error.message
+      : createTerminalMutation.error
+        ? "Unable to create terminal."
+        : null;
+  const deleteTerminalErrorMessage =
+    deleteTerminalMutation.error instanceof Error
+      ? deleteTerminalMutation.error.message
+      : deleteTerminalMutation.error
+        ? "Unable to close terminal."
+        : null;
 
   useEffect(() => {
     if (!hasTerminalBackend || terminalIds.length === 0) {
@@ -357,14 +371,10 @@ function TaskRunTerminals() {
                       onClick={(event) => {
                         event.stopPropagation();
                         event.preventDefault();
-                        if (isDeletingThis) {
+                        if (isDeletingThis || !hasTerminalBackend) {
                           return;
                         }
-                        setDeleteTerminalError(null);
-                        setDeleteTerminalRequest({
-                          id,
-                          key: Date.now(),
-                        });
+                        deleteTerminalMutation.mutate(id);
                       }}
                       disabled={isDeletingThis}
                       className={clsx(
@@ -401,8 +411,7 @@ function TaskRunTerminals() {
                   if (!hasTerminalBackend || isCreatingTerminal) {
                     return;
                   }
-                  setCreateTerminalError(null);
-                  setCreateTerminalRequestKey(Date.now());
+                  createTerminalMutation.mutate();
                 }}
                 disabled={!hasTerminalBackend || isCreatingTerminal}
                 className="flex items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-xs font-medium text-neutral-600 transition hover:border-neutral-300 hover:text-neutral-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:border-neutral-600 dark:hover:text-neutral-100"
@@ -418,14 +427,14 @@ function TaskRunTerminals() {
               </button>
             </div>
           </div>
-          {createTerminalError ? (
+          {createTerminalErrorMessage ? (
             <span className="text-xs text-red-500 dark:text-red-400">
-              {createTerminalError}
+              {createTerminalErrorMessage}
             </span>
           ) : null}
-          {deleteTerminalError ? (
+          {deleteTerminalErrorMessage ? (
             <span className="text-xs text-red-500 dark:text-red-400">
-              {deleteTerminalError}
+              {deleteTerminalErrorMessage}
             </span>
           ) : null}
         </div>
