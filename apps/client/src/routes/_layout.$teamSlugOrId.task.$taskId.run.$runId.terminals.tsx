@@ -441,7 +441,9 @@ function TaskRunTerminals() {
                 : "Unable to load terminals."
             )
           ) : terminalIds.length === 0 ? (
-            renderMessage("No terminal sessions are currently active.")
+            <div className="flex flex-1 items-center justify-center px-6 py-4 text-center text-sm text-neutral-400">
+              No terminal sessions are currently active.
+            </div>
           ) : (
             terminalIds.map((id) => (
               <TaskRunTerminalSession
