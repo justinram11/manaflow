@@ -361,7 +361,7 @@ function TaskDetailPage() {
           taskRunId={headerTaskRunId ?? ("" as Id<"taskRuns">)}
           teamSlugOrId={teamSlugOrId}
         />
-        <div className="flex flex-1 min-h-0 px-3 py-3">
+        <div className="flex flex-1 min-h-0 px-1 py-1">
           <ResizableGrid
             storageKey="taskDetailGrid"
             defaultLeftWidth={50}

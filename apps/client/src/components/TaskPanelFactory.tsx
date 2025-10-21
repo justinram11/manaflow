@@ -81,7 +81,17 @@ export function RenderPanel(props: PanelFactoryProps): ReactNode {
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
-    if (e.currentTarget === e.target) {
+    // Only clear if we're actually leaving the container (not entering a child)
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const x = e.clientX;
+    const y = e.clientY;
+
+    if (
+      x < rect.left ||
+      x >= rect.right ||
+      y < rect.top ||
+      y >= rect.bottom
+    ) {
       setIsDragOver(false);
     }
   };
@@ -111,13 +121,13 @@ export function RenderPanel(props: PanelFactoryProps): ReactNode {
         draggable
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
-        className="flex items-center gap-2 border-b border-neutral-200 px-3 py-2 dark:border-neutral-800 cursor-move group transition-opacity"
+        className="flex items-center gap-1.5 border-b border-neutral-200 px-2 py-1 dark:border-neutral-800 cursor-move group transition-opacity"
       >
-        <GripVertical className="size-4 text-neutral-400 dark:text-neutral-500 group-hover:text-neutral-600 dark:group-hover:text-neutral-300 transition-colors" />
-        <div className="flex size-6 items-center justify-center rounded-full bg-neutral-200 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200">
+        <GripVertical className="size-3.5 text-neutral-400 dark:text-neutral-500 group-hover:text-neutral-600 dark:group-hover:text-neutral-300 transition-colors" />
+        <div className="flex size-5 items-center justify-center rounded-full bg-neutral-200 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200">
           {icon}
         </div>
-        <h2 className="text-sm font-medium text-neutral-800 dark:text-neutral-100">
+        <h2 className="text-xs font-medium text-neutral-800 dark:text-neutral-100">
           {title}
         </h2>
       </div>
@@ -174,7 +184,7 @@ export function RenderPanel(props: PanelFactoryProps): ReactNode {
       if (!PersistentWebView || !WorkspaceLoadingIndicator) return null;
 
       return panelWrapper(
-        <Code2 className="size-3.5" aria-hidden />,
+        <Code2 className="size-3" aria-hidden />,
         PANEL_LABELS.workspace,
         <div className="relative flex-1" aria-busy={isEditorBusy}>
           {workspaceUrl && workspacePersistKey ? (
@@ -215,7 +225,7 @@ export function RenderPanel(props: PanelFactoryProps): ReactNode {
       if (!TaskRunTerminalPane) return null;
 
       return panelWrapper(
-        <TerminalSquare className="size-3.5" aria-hidden />,
+        <TerminalSquare className="size-3" aria-hidden />,
         PANEL_LABELS.terminal,
         <div className="flex-1 bg-black">
           <TaskRunTerminalPane workspaceUrl={rawWorkspaceUrl} />
@@ -241,7 +251,7 @@ export function RenderPanel(props: PanelFactoryProps): ReactNode {
       if (!PersistentWebView || !WorkspaceLoadingIndicator) return null;
 
       return panelWrapper(
-        <Globe2 className="size-3.5" aria-hidden />,
+        <Globe2 className="size-3" aria-hidden />,
         PANEL_LABELS.browser,
         <div className="relative flex-1" aria-busy={isBrowserBusy}>
           {browserUrl && browserPersistKey ? (
@@ -291,7 +301,7 @@ export function RenderPanel(props: PanelFactoryProps): ReactNode {
       if (!TaskRunGitDiffPanel) return null;
 
       return panelWrapper(
-        <GitCompare className="size-3.5" aria-hidden />,
+        <GitCompare className="size-3" aria-hidden />,
         PANEL_LABELS.gitDiff,
         <div className="flex-1 overflow-auto">
           <TaskRunGitDiffPanel task={task} selectedRun={selectedRun} />

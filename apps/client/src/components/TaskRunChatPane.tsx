@@ -35,17 +35,17 @@ export function TaskRunChatPane({
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
           className={clsx(
-            "flex items-center gap-2 border-b border-neutral-200 px-3 py-2 dark:border-neutral-800 transition-opacity",
+            "flex items-center gap-1.5 border-b border-neutral-200 px-2 py-1 dark:border-neutral-800 transition-opacity",
             onDragStart && "cursor-move group"
           )}
         >
           {onDragStart && (
-            <GripVertical className="size-4 text-neutral-400 dark:text-neutral-500 group-hover:text-neutral-600 dark:group-hover:text-neutral-300 transition-colors" />
+            <GripVertical className="size-3.5 text-neutral-400 dark:text-neutral-500 group-hover:text-neutral-600 dark:group-hover:text-neutral-300 transition-colors" />
           )}
-          <div className="flex size-6 items-center justify-center rounded-full bg-neutral-200 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200">
-            <MessageCircle className="size-3.5" aria-hidden />
+          <div className="flex size-5 items-center justify-center rounded-full bg-neutral-200 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200">
+            <MessageCircle className="size-3" aria-hidden />
           </div>
-          <h2 className="text-sm font-medium text-neutral-800 dark:text-neutral-100">
+          <h2 className="text-xs font-medium text-neutral-800 dark:text-neutral-100">
             Chat &amp; Activity
           </h2>
         </div>

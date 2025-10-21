@@ -172,7 +172,7 @@ export function ResizableGrid({
       <div className="h-full w-full grid" style={{
         gridTemplateColumns: `${leftWidth}% ${rightWidth}%`,
         gridTemplateRows: `${topHeight}% ${bottomHeight}%`,
-        gap: "12px",
+        gap: "4px",
       }}>
         {/* Top Left */}
         <div className="min-h-0 min-w-0">{topLeft}</div>
@@ -196,12 +196,12 @@ export function ResizableGrid({
           "group absolute top-0 bottom-0 cursor-col-resize bg-transparent transition-colors z-10",
         )}
         style={{
-          width: "12px",
-          left: `calc(${leftWidth}% - 6px)`,
+          width: "8px",
+          left: `calc(${leftWidth}% - 4px)`,
         }}
         title="Resize columns"
       >
-        <div className="absolute top-0 bottom-0 w-px bg-transparent group-hover:bg-neutral-400 dark:group-hover:bg-neutral-600 group-active:bg-neutral-500 dark:group-active:bg-neutral-500 transition-colors" style={{ left: "calc(50% + 6px)" }} />
+        <div className="absolute top-0 bottom-0 w-px bg-transparent group-hover:bg-neutral-400 dark:group-hover:bg-neutral-600 group-active:bg-neutral-500 dark:group-active:bg-neutral-500 transition-colors" style={{ left: "calc(50% + 4px)" }} />
       </div>
 
       {/* Vertical resize handle (horizontal separator between rows) */}
@@ -213,12 +213,12 @@ export function ResizableGrid({
           "group absolute left-0 right-0 cursor-row-resize bg-transparent transition-colors z-10",
         )}
         style={{
-          height: "12px",
-          top: `calc(${topHeight}% - 6px)`,
+          height: "8px",
+          top: `calc(${topHeight}% - 4px)`,
         }}
         title="Resize rows"
       >
-        <div className="absolute left-0 right-0 h-px bg-transparent group-hover:bg-neutral-400 dark:group-hover:bg-neutral-600 group-active:bg-neutral-500 dark:group-active:bg-neutral-500 transition-colors" style={{ top: "calc(50% + 6px)" }} />
+        <div className="absolute left-0 right-0 h-px bg-transparent group-hover:bg-neutral-400 dark:group-hover:bg-neutral-600 group-active:bg-neutral-500 dark:group-active:bg-neutral-500 transition-colors" style={{ top: "calc(50% + 4px)" }} />
       </div>
     </div>
   );

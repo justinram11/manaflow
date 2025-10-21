@@ -121,8 +121,8 @@ export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) 
     const signal = controller.signal;
 
     const createSession = async () => {
-      const maxAttempts = 4;
-      const baseDelayMs = 750;
+      const maxAttempts = 10;
+      const baseDelayMs = 1000;
 
       const lastIndex = serviceBaseUrls.length - 1;
 
