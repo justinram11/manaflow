@@ -32,7 +32,8 @@ const SetupInstanceBody = z
     instanceId: z.string().optional(), // Existing instance ID to reuse
     selectedRepos: z.array(z.string()).optional(), // Repositories to clone
     ttlSeconds: z.number().default(60 * 30), // 30 minutes default
-    snapshotId: SnapshotIdSchema.optional(),
+    // TODO: This is a temporary solution to allow both string and enum values since client values are diff from backend values
+    snapshotId: z.union([z.string(), SnapshotIdSchema]).optional(),
   })
   .openapi("SetupInstanceBody");
 

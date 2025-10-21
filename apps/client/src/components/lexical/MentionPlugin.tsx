@@ -20,7 +20,12 @@ import {
 import type { EditorState } from "lexical";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { getIconForFile } from "vscode-icons-js";
+import {
+  DEFAULT_FILE,
+  DEFAULT_FOLDER,
+  getIconForFile,
+  getIconForFolder,
+} from "vscode-icons-js";
 import { useSocket } from "../../contexts/socket/use-socket";
 
 const MENTION_TRIGGER = "@";
@@ -108,7 +113,14 @@ function MentionMenu({
           const rel = file.relativePath.replace(/\\/g, "/");
           const lastSlash = rel.lastIndexOf("/");
           const dirPath = lastSlash > -1 ? rel.slice(0, lastSlash) : "";
-          const fileName = file.name || (lastSlash > -1 ? rel.slice(lastSlash + 1) : rel);
+          const rawName = file.name || (lastSlash > -1 ? rel.slice(lastSlash + 1) : rel);
+          const displayName = file.isDirectory ? `${rawName}/` : rawName;
+          const iconName = file.isDirectory
+            ? getIconForFolder(rawName) || DEFAULT_FOLDER
+            : rawName === "Dockerfile"
+              ? "file_type_docker.svg"
+              : getIconForFile(rawName) || DEFAULT_FILE;
+          const iconSrc = `https://cdn.jsdelivr.net/gh/vscode-icons/vscode-icons/icons/${iconName}`;
           return (
           <button
             key={file.relativePath}
@@ -125,12 +137,12 @@ function MentionMenu({
             type="button"
           >
             <img
-              src={`https://cdn.jsdelivr.net/gh/vscode-icons/vscode-icons/icons/${file.name === "Dockerfile" ? "file_type_docker.svg" : getIconForFile(file.name)}`}
+              src={iconSrc}
               alt=""
               className="w-3 h-3 flex-shrink-0"
             />
             <div className="flex items-center gap-1 min-w-0 whitespace-nowrap">
-              <span className="truncate font-medium">{fileName}</span>
+              <span className="truncate font-medium">{displayName}</span>
               {dirPath ? (
                 <span className="truncate text-neutral-500 dark:text-neutral-400">{dirPath}</span>
               ) : null}
@@ -186,8 +198,7 @@ export function MentionPlugin({
       }) => {
         setIsLoading(false);
         if (!data.error) {
-          const fileList = data.files.filter((f) => !f.isDirectory);
-          setFiles(fileList);
+          setFiles(data.files);
         } else {
           setFiles([]);
         }
@@ -268,10 +279,20 @@ export function MentionPlugin({
         const deleteCount = Math.max(anchorOffset - mentionStartIndex, 0);
 
         if (deleteCount > 0) {
+          const relativePath = file.relativePath;
+          const hasBackslash = relativePath.includes("\\");
+          const directorySeparator = hasBackslash ? "\\" : "/";
+          const pathWithSeparator =
+            file.isDirectory &&
+            !relativePath.endsWith("/") &&
+            !relativePath.endsWith("\\")
+              ? `${relativePath}${directorySeparator}`
+              : relativePath;
+
           currentTriggerNode.spliceText(
             mentionStartIndex,
             deleteCount,
-            `@${file.relativePath} `,
+            `@${pathWithSeparator} `,
             true
           );
         }
