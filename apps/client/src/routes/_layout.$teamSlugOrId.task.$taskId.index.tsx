@@ -24,7 +24,6 @@ import {
   preloadTaskRunIframes,
 } from "../lib/preloadTaskRunIframes";
 import { api } from "@cmux/convex/api";
-import type { Id } from "@cmux/convex/dataModel";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
 import { useSuspenseQuery } from "@tanstack/react-query";
