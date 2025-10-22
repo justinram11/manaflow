@@ -197,7 +197,7 @@ function TaskTreeInner({
 
   const handleCopyDescription = useCallback(() => {
     if (navigator?.clipboard?.writeText) {
-      navigator.clipboard.writeText(task.text).catch(() => { });
+      navigator.clipboard.writeText(task.text).catch(() => {});
     }
   }, [task.text]);
 
@@ -220,8 +220,32 @@ function TaskTreeInner({
   const taskSecondary = taskSecondaryParts.join(" • ");
 
   const canExpand = true;
+  const isCrownEvaluating = task.crownEvaluationStatus === "in_progress";
 
   const taskLeadingIcon = (() => {
+    if (isCrownEvaluating) {
+      return (
+        <Tooltip delayDuration={0}>
+          <TooltipTrigger asChild>
+            <div className="relative flex items-center justify-center">
+              <Crown className="w-3 h-3 text-neutral-500 group-hover:animate-pulse group-hover:text-neutral-400" />
+              <span className="sr-only">Crown evaluation in progress</span>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent
+            side="right"
+            sideOffset={6}
+            className="max-w-sm p-3 text-left z-[var(--z-overlay)]"
+          >
+            <p className="font-medium text-sm">Selecting best implementation</p>
+            <p className="text-xs text-muted-foreground">
+              Evaluating runs to choose the best implementation...
+            </p>
+          </TooltipContent>
+        </Tooltip>
+      );
+    }
+
     if (task.mergeStatus && task.mergeStatus !== "none") {
       switch (task.mergeStatus) {
         case "pr_draft":
@@ -524,7 +548,9 @@ function TaskRunTreeInner({
           className="max-w-sm p-3 z-[var(--z-overlay)]"
         >
           <div className="space-y-1.5">
-            <p className="font-medium text-sm text-neutral-200">Evaluation Reason</p>
+            <p className="font-medium text-sm text-neutral-200">
+              Evaluation Reason
+            </p>
             <p className="text-xs text-neutral-400">{run.crownReason}</p>
           </div>
         </TooltipContent>
@@ -572,7 +598,7 @@ function TaskRunTreeInner({
   const shouldRenderTerminalLink = shouldRenderBrowserLink;
   const shouldRenderPullRequestLink = Boolean(
     (run.pullRequestUrl && run.pullRequestUrl !== "pending") ||
-    run.pullRequests?.some((pr) => pr.url)
+      run.pullRequests?.some((pr) => pr.url)
   );
   const shouldRenderPreviewLink = previewServices.length > 0;
   const hasOpenWithActions = openWithActions.length > 0;
@@ -801,7 +827,9 @@ function TaskRunDetails({
         className="max-w-sm p-3 z-[var(--z-overlay)]"
       >
         <div className="space-y-1.5">
-          <p className="font-medium text-sm text-neutral-200">Environment Issue</p>
+          <p className="font-medium text-sm text-neutral-200">
+            Environment Issue
+          </p>
           {environmentError?.maintenanceError && (
             <p className="text-xs text-neutral-400">
               Maintenance: {environmentError.maintenanceError}

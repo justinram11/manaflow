@@ -107,6 +107,14 @@ const convexSchema = defineSchema({
     userId: v.string(), // Link to user who created the task
     teamId: v.string(),
     environmentId: v.optional(v.id("environments")),
+    crownEvaluationStatus: v.optional(
+      v.union(
+        v.literal("pending"),
+        v.literal("in_progress"),
+        v.literal("succeeded"),
+        v.literal("error"),
+      ),
+    ), // State of crown evaluation workflow
     crownEvaluationError: v.optional(v.string()), // Error message if crown evaluation failed
     mergeStatus: v.optional(
       v.union(

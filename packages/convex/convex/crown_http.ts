@@ -226,9 +226,101 @@ export const crownEvaluate = httpAction(async (ctx, req) => {
     );
   }
 
-  if (!workerAuth) {
+  let teamContext: { teamId: string; userId: string } | null = null;
+
+  if (workerAuth) {
+    teamContext = {
+      teamId: workerAuth.payload.teamId,
+      userId: workerAuth.payload.userId,
+    };
+  } else {
     const membership = await ensureTeamMembership(ctx, teamSlugOrId);
     if (membership instanceof Response) return membership;
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      console.warn(
+        "[convex.crown] Missing identity during evaluation request",
+      );
+      return jsonResponse({ code: 401, message: "Unauthorized" }, 401);
+    }
+    teamContext = { teamId: membership.teamId, userId: identity.subject };
+  }
+
+  if (!teamContext) {
+    console.error("[convex.crown] Failed to resolve team context");
+    return jsonResponse({ code: 500, message: "Team resolution failed" }, 500);
+  }
+
+  let targetTaskId: Id<"tasks"> | null = null;
+
+  const candidateWithRunId = data.candidates.find(
+    (candidate) => candidate.runId,
+  );
+
+  if (candidateWithRunId?.runId) {
+    try {
+      const run = await ctx.runQuery(internal.taskRuns.getById, {
+        id: candidateWithRunId.runId as Id<"taskRuns">,
+      });
+      if (
+        run &&
+        run.teamId === teamContext.teamId &&
+        run.userId === teamContext.userId
+      ) {
+        targetTaskId = run.taskId;
+      }
+    } catch (error) {
+      console.error("[convex.crown] Failed to resolve task from candidate", {
+        runId: candidateWithRunId.runId,
+        error,
+      });
+    }
+  }
+
+  if (!targetTaskId && workerAuth?.payload.taskRunId) {
+    try {
+      const run = await ctx.runQuery(internal.taskRuns.getById, {
+        id: workerAuth.payload.taskRunId as Id<"taskRuns">,
+      });
+      if (run) {
+        targetTaskId = run.taskId;
+      }
+    } catch (error) {
+      console.error("[convex.crown] Failed to resolve task from worker run", {
+        taskRunId: workerAuth.payload.taskRunId,
+        error,
+      });
+    }
+  }
+
+  if (targetTaskId) {
+    try {
+      const task = await ctx.runQuery(internal.tasks.getByIdInternal, {
+        id: targetTaskId,
+      });
+      if (
+        task &&
+        task.teamId === teamContext.teamId &&
+        task.userId === teamContext.userId &&
+        task.crownEvaluationStatus !== "in_progress"
+      ) {
+        await ctx.runMutation(
+          internal.tasks.setCrownEvaluationStatusInternal,
+          {
+            taskId: targetTaskId,
+            teamId: teamContext.teamId,
+            userId: teamContext.userId,
+            status: "in_progress",
+            clearError: true,
+          },
+        );
+      }
+    } catch (error) {
+      console.error("[convex.crown] Failed to mark crown in progress", {
+        taskId: targetTaskId,
+        error,
+      });
+    }
   }
 
   try {
@@ -455,6 +547,9 @@ async function handleCrownCheckRequest(
     return jsonResponse({ code: 401, message: "Unauthorized" }, 401);
   }
 
+  let currentStatus = task.crownEvaluationStatus ?? null;
+  let currentError = task.crownEvaluationError ?? null;
+
   const [runsForTeam, workspaceSettings, existingEvaluation] =
     await Promise.all([
       ctx.runQuery(internal.taskRuns.listByTaskAndTeamInternal, {
@@ -492,6 +587,29 @@ async function handleCrownCheckRequest(
       ? completedRuns[0]._id
       : null;
 
+  if (
+    shouldEvaluate &&
+    currentStatus !== "pending" &&
+    currentStatus !== "in_progress"
+  ) {
+    try {
+      await ctx.runMutation(internal.tasks.setCrownEvaluationStatusInternal, {
+        taskId,
+        teamId: workerAuth.payload.teamId,
+        userId: workerAuth.payload.userId,
+        status: "pending",
+        clearError: true,
+      });
+      currentStatus = "pending";
+      currentError = null;
+    } catch (error) {
+      console.error("[convex.crown] Failed to mark crown pending", {
+        taskId,
+        error,
+      });
+    }
+  }
+
   const response = {
     ok: true,
     taskId,
@@ -507,7 +625,8 @@ async function handleCrownCheckRequest(
       : null,
     task: {
       text: task.text,
-      crownEvaluationError: task.crownEvaluationError ?? null,
+      crownEvaluationStatus: currentStatus,
+      crownEvaluationError: currentError,
       isCompleted: task.isCompleted,
       baseBranch: task.baseBranch ?? null,
       projectFullName: task.projectFullName ?? null,

@@ -73,11 +73,11 @@ export const evaluateAndCrownWinner = authMutation({
 
       // Check if already marked for evaluation
       if (
-        task.crownEvaluationError === "pending_evaluation" ||
-        task.crownEvaluationError === "in_progress"
+        task.crownEvaluationStatus === "pending" ||
+        task.crownEvaluationStatus === "in_progress"
       ) {
         console.log(
-          `[Crown] Task ${args.taskId} already marked for evaluation (${task.crownEvaluationError})`
+          `[Crown] Task ${args.taskId} already marked for evaluation (${task.crownEvaluationStatus})`
         );
         return "pending";
       }
@@ -85,7 +85,8 @@ export const evaluateAndCrownWinner = authMutation({
       // Mark that crown evaluation is needed
       // The server will handle the actual evaluation using Claude Code
       await ctx.db.patch(args.taskId, {
-        crownEvaluationError: "pending_evaluation",
+        crownEvaluationStatus: "pending",
+        crownEvaluationError: undefined,
         updatedAt: Date.now(),
       });
 
@@ -149,6 +150,7 @@ export const setCrownWinner = authMutation({
 
     // Clear crown evaluation error
     await ctx.db.patch(taskRun.taskId, {
+      crownEvaluationStatus: "succeeded",
       crownEvaluationError: undefined,
       updatedAt: Date.now(),
     });
@@ -350,6 +352,7 @@ export const workerFinalize = internalMutation({
     }
 
     await ctx.db.patch(args.taskId, {
+      crownEvaluationStatus: "succeeded",
       crownEvaluationError: undefined,
       isCompleted: true,
       updatedAt: now,
