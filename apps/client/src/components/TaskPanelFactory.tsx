@@ -237,6 +237,7 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
         >
           {renderDropOverlay()}
           <TaskRunChatPane
+            key={task?._id}
             task={task}
             taskRuns={taskRuns}
             crownEvaluation={crownEvaluation}
@@ -316,7 +317,7 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
         <TerminalSquare className="size-3" aria-hidden />,
         PANEL_LABELS.terminal,
         <div className="flex-1 bg-black">
-          <TaskRunTerminalPane workspaceUrl={rawWorkspaceUrl} />
+          <TaskRunTerminalPane key={rawWorkspaceUrl} workspaceUrl={rawWorkspaceUrl} />
         </div>
       );
     }
@@ -385,7 +386,7 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
         <GitCompare className="size-3" aria-hidden />,
         PANEL_LABELS.gitDiff,
         <div className="flex-1 overflow-auto">
-          <TaskRunGitDiffPanel task={task} selectedRun={selectedRun} />
+          <TaskRunGitDiffPanel key={selectedRun?._id} task={task} selectedRun={selectedRun} />
         </div>
       );
     }
@@ -411,7 +412,32 @@ export const RenderPanel = React.memo(RenderPanelComponent, (prevProps, nextProp
     if (prevProps.workspacePersistKey !== nextProps.workspacePersistKey ||
       prevProps.browserPersistKey !== nextProps.browserPersistKey ||
       prevProps.workspaceUrl !== nextProps.workspaceUrl ||
-      prevProps.browserUrl !== nextProps.browserUrl) {
+      prevProps.browserUrl !== nextProps.browserUrl ||
+      prevProps.selectedRun?._id !== nextProps.selectedRun?._id) {
+      return false;
+    }
+  }
+
+  // For terminal panel, check workspace URL
+  if (prevProps.type === "terminal") {
+    if (prevProps.rawWorkspaceUrl !== nextProps.rawWorkspaceUrl) {
+      return false;
+    }
+  }
+
+  // For chat panel, check task and run changes
+  if (prevProps.type === "chat") {
+    if (prevProps.task?._id !== nextProps.task?._id ||
+      prevProps.taskRuns !== nextProps.taskRuns ||
+      prevProps.crownEvaluation !== nextProps.crownEvaluation) {
+      return false;
+    }
+  }
+
+  // For gitDiff panel, check task and selectedRun changes
+  if (prevProps.type === "gitDiff") {
+    if (prevProps.task?._id !== nextProps.task?._id ||
+      prevProps.selectedRun?._id !== nextProps.selectedRun?._id) {
       return false;
     }
   }

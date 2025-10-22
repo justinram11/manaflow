@@ -389,7 +389,7 @@ function TaskDetailPage() {
         : "Browser preview becomes available once a run starts.";
     }
     if (!isMorphProvider) {
-      return "Browser preview requires a cloud workspace. Switch to cloud mode to view it.";
+      return "Browser preview is loading. Note that browser preview is only supported in cloud mode.";
     }
     if (!hasBrowserView) {
       return "Waiting for the workspace to expose a browser preview...";

@@ -587,7 +587,7 @@ export const Route = createFileRoute(
 
 function RunDiffPage() {
   const { taskId, teamSlugOrId, runId } = Route.useParams();
-  const [diffControls, setDiffControls] = useState<DiffControls | null>(null);
+  const [, setDiffControls] = useState<DiffControls | null>(null);
   const task = useQuery(api.tasks.getById, {
     teamSlugOrId,
     id: taskId,
@@ -610,23 +610,6 @@ function RunDiffPage() {
   // Track expanded state for each PR's checks
   const [checksExpandedByRepo, setChecksExpandedByRepo] = useState<Record<string, boolean | null>>({});
 
-  const expandAllChecks = useCallback(() => {
-    if (!pullRequests) return;
-    const newState: Record<string, boolean | null> = {};
-    for (const pr of pullRequests) {
-      newState[pr.repoFullName] = true;
-    }
-    setChecksExpandedByRepo(newState);
-  }, [pullRequests]);
-
-  const collapseAllChecks = useCallback(() => {
-    if (!pullRequests) return;
-    const newState: Record<string, boolean | null> = {};
-    for (const pr of pullRequests) {
-      newState[pr.repoFullName] = false;
-    }
-    setChecksExpandedByRepo(newState);
-  }, [pullRequests]);
   const restartProvider = selectedRun?.vscode?.provider;
   const restartRunEnvironmentId = selectedRun?.environmentId;
   const taskEnvironmentId = task?.environmentId;
@@ -732,10 +715,6 @@ function RunDiffPage() {
             taskRuns={taskRuns ?? null}
             selectedRun={selectedRun ?? null}
             taskRunId={taskRunId}
-            onExpandAll={diffControls?.expandAll}
-            onCollapseAll={diffControls?.collapseAll}
-            onExpandAllChecks={expandAllChecks}
-            onCollapseAllChecks={collapseAllChecks}
             teamSlugOrId={teamSlugOrId}
           />
           {task?.text && (

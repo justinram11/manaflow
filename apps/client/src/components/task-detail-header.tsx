@@ -33,7 +33,6 @@ import {
   ChevronDown,
   Copy,
   Crown,
-  EllipsisVertical,
   ExternalLink,
   GitBranch,
   GitMerge,
@@ -66,10 +65,6 @@ interface TaskDetailHeaderProps {
   totalAdditions?: number;
   totalDeletions?: number;
   taskRunId: Id<"taskRuns">;
-  onExpandAll?: () => void;
-  onCollapseAll?: () => void;
-  onExpandAllChecks?: () => void;
-  onCollapseAllChecks?: () => void;
   onPanelSettings?: () => void;
   teamSlugOrId: string;
 }
@@ -201,10 +196,6 @@ export function TaskDetailHeader({
   taskRuns,
   selectedRun,
   taskRunId,
-  onExpandAll,
-  onCollapseAll,
-  onExpandAllChecks,
-  onCollapseAllChecks,
   onPanelSettings,
   teamSlugOrId,
 }: TaskDetailHeaderProps) {
@@ -357,37 +348,6 @@ export function TaskDetailHeader({
           <button className="p-1 text-neutral-400 hover:text-neutral-700 dark:hover:text-white select-none hidden">
             <Trash2 className="w-3.5 h-3.5" />
           </button>
-          <Dropdown.Root>
-            <Dropdown.Trigger
-              className="p-1 text-neutral-400 hover:text-neutral-700 dark:hover:text-white select-none"
-              aria-label="More actions"
-            >
-              <EllipsisVertical className="w-3.5 h-3.5" />
-            </Dropdown.Trigger>
-            <Dropdown.Portal>
-              <Dropdown.Positioner sideOffset={5}>
-                <Dropdown.Popup>
-                  <Dropdown.Arrow />
-                  <Dropdown.Item
-                    onClick={() => {
-                      onExpandAll?.();
-                      onExpandAllChecks?.();
-                    }}
-                  >
-                    Expand all
-                  </Dropdown.Item>
-                  <Dropdown.Item
-                    onClick={() => {
-                      onCollapseAll?.();
-                      onCollapseAllChecks?.();
-                    }}
-                  >
-                    Collapse all
-                  </Dropdown.Item>
-                </Dropdown.Popup>
-              </Dropdown.Positioner>
-            </Dropdown.Portal>
-          </Dropdown.Root>
         </div>
 
         {/* Branch row (second line, spans first two columns) */}
