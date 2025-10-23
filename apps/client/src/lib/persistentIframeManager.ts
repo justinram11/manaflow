@@ -165,7 +165,6 @@ class PersistentIframeManager {
       transform: translate(-100vw, -100vh);
       width: 100vw;
       height: 100vh;
-      will-change: transform;
       backface-visibility: hidden;
       z-index: var(--z-floating-high, 999999);
     `;
@@ -254,7 +253,6 @@ class PersistentIframeManager {
       entry.wrapper.style.visibility = "visible";
       entry.wrapper.style.pointerEvents = "auto";
       entry.wrapper.style.overflow = "hidden";
-      entry.wrapper.style.willChange = "transform";
       entry.wrapper.style.backfaceVisibility = "hidden";
 
       // Apply custom styles (including z-index if provided)

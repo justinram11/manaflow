@@ -88,7 +88,7 @@ export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) 
 
   const attemptAutoCreate = useCallback(
     (options?: { manual?: boolean }) => {
-      if (!workspaceUrl || !baseUrl || !hasTerminalBackend) {
+      if (!workspaceUrl || !baseUrl) {
         return;
       }
 
@@ -174,7 +174,6 @@ export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) 
     },
     [
       baseUrl,
-      hasTerminalBackend,
       queryClient,
       resetAutoCreate,
       tabsQueryKey,
