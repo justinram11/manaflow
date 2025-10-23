@@ -17,7 +17,15 @@ function serializeJob(job: JobDoc) {
     repoUrl: job.repoUrl,
     prNumber: job.prNumber,
     commitRef: job.commitRef,
+    headCommitRef: job.headCommitRef ?? job.commitRef,
+    baseCommitRef: job.baseCommitRef ?? null,
     requestedByUserId: job.requestedByUserId,
+    jobType: job.jobType ?? "pull_request",
+    comparisonSlug: job.comparisonSlug ?? null,
+    comparisonBaseOwner: job.comparisonBaseOwner ?? null,
+    comparisonBaseRef: job.comparisonBaseRef ?? null,
+    comparisonHeadOwner: job.comparisonHeadOwner ?? null,
+    comparisonHeadRef: job.comparisonHeadRef ?? null,
     state: job.state,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
@@ -56,6 +64,21 @@ function parseGithubLink(link: string): {
   }
 }
 
+function isSameCommitContext(
+  job: JobDoc,
+  requestedHead: string,
+  requestedBase: string | null
+): boolean {
+  const jobHead = job.headCommitRef ?? job.commitRef ?? null;
+  if (!jobHead || jobHead !== requestedHead) {
+    return false;
+  }
+  if (requestedBase === null) {
+    return true;
+  }
+  return job.baseCommitRef === requestedBase;
+}
+
 async function hashSha256(value: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(value);
@@ -76,23 +99,201 @@ async function findExistingActiveJob(
   db: MutationCtx["db"],
   teamId: string | undefined,
   repoFullName: string,
-  prNumber: number
+  jobType: "pull_request" | "comparison",
+  options: {
+    prNumber?: number;
+    comparisonSlug?: string;
+    headCommitRef?: string;
+    baseCommitRef?: string;
+  }
 ): Promise<JobDoc | null> {
-  const job = await db
+  const requestedHeadCommitRef = options.headCommitRef ?? null;
+  const requestedBaseCommitRef = options.baseCommitRef ?? null;
+
+  if (jobType === "comparison") {
+    if (!options.comparisonSlug) {
+      return null;
+    }
+    const candidates = await db
+      .query("automatedCodeReviewJobs")
+      .withIndex("by_team_repo_comparison_updated", (q) =>
+        q
+          .eq("teamId", teamId ?? undefined)
+          .eq("repoFullName", repoFullName)
+          .eq("comparisonSlug", options.comparisonSlug)
+      )
+      .order("desc")
+      .take(20);
+
+    for (const job of candidates) {
+      const normalizedJobType = job.jobType ?? "pull_request";
+      if (normalizedJobType !== "comparison") {
+        continue;
+      }
+      if (job.state !== "pending" && job.state !== "running") {
+        continue;
+      }
+      const jobHead = job.headCommitRef ?? job.commitRef ?? null;
+      const jobBase = job.baseCommitRef ?? null;
+      if (
+        requestedHeadCommitRef &&
+        jobHead &&
+        jobHead !== requestedHeadCommitRef
+      ) {
+        continue;
+      }
+      if (
+        requestedBaseCommitRef &&
+        jobBase &&
+        jobBase !== requestedBaseCommitRef
+      ) {
+        continue;
+      }
+      if (requestedHeadCommitRef && !jobHead) {
+        continue;
+      }
+      if (requestedBaseCommitRef && !jobBase) {
+        continue;
+      }
+      return job;
+    }
+    return null;
+  }
+
+  if (!options.prNumber) {
+    return null;
+  }
+
+  const candidates = await db
     .query("automatedCodeReviewJobs")
     .withIndex("by_team_repo_pr_updated", (q) =>
       q
         .eq("teamId", teamId ?? undefined)
         .eq("repoFullName", repoFullName)
-        .eq("prNumber", prNumber)
+        .eq("prNumber", options.prNumber)
     )
     .order("desc")
-    .filter((q) =>
-      q.or(q.eq("state", "pending"), q.eq("state", "running"))
-    )
-    .first();
+    .take(20);
 
-  return job ?? null;
+  for (const job of candidates) {
+    const normalizedJobType = job.jobType ?? "pull_request";
+    if (normalizedJobType !== "pull_request") {
+      continue;
+    }
+    if (job.state !== "pending" && job.state !== "running") {
+      continue;
+    }
+    const jobHead = job.headCommitRef ?? job.commitRef ?? null;
+    const jobBase = job.baseCommitRef ?? null;
+    if (
+      requestedHeadCommitRef &&
+      jobHead &&
+      jobHead !== requestedHeadCommitRef
+    ) {
+      continue;
+    }
+    if (
+      requestedBaseCommitRef &&
+      jobBase &&
+      jobBase !== requestedBaseCommitRef
+    ) {
+      continue;
+    }
+    if (requestedHeadCommitRef && !jobHead) {
+      continue;
+    }
+    if (requestedBaseCommitRef && !jobBase) {
+      continue;
+    }
+    return job;
+  }
+  return null;
+}
+
+async function findLatestCompletedJob(
+  db: MutationCtx["db"],
+  teamId: string | undefined,
+  repoFullName: string,
+  jobType: "pull_request" | "comparison",
+  options: {
+    prNumber?: number;
+    comparisonSlug?: string;
+  }
+): Promise<JobDoc | null> {
+  if (jobType === "comparison") {
+    if (!options.comparisonSlug) {
+      return null;
+    }
+    const completed = await db
+      .query("automatedCodeReviewJobs")
+      .withIndex("by_team_repo_comparison_updated", (q) =>
+        q
+          .eq("teamId", teamId ?? undefined)
+          .eq("repoFullName", repoFullName)
+          .eq("comparisonSlug", options.comparisonSlug)
+      )
+      .order("desc")
+      .filter((q) => q.eq("state", "completed"))
+      .first();
+    return completed ?? null;
+  }
+
+  if (!options.prNumber) {
+    return null;
+  }
+
+  const completed = await db
+    .query("automatedCodeReviewJobs")
+    .withIndex("by_team_repo_pr_updated", (q) =>
+      q
+        .eq("teamId", teamId ?? undefined)
+        .eq("repoFullName", repoFullName)
+        .eq("prNumber", options.prNumber)
+    )
+    .order("desc")
+    .filter((q) => q.eq("state", "completed"))
+    .first();
+  return completed ?? null;
+}
+
+async function findComparisonJobByCommit(
+  db: MutationCtx["db"],
+  repoFullName: string,
+  comparisonSlug: string,
+  commitRef: string,
+  teamId: string | undefined,
+  baseCommitRef?: string
+): Promise<JobDoc | null> {
+  const candidates = await db
+    .query("automatedCodeReviewJobs")
+    .withIndex("by_repo_comparison_commit", (q) =>
+      q
+        .eq("repoFullName", repoFullName)
+        .eq("comparisonSlug", comparisonSlug)
+        .eq("commitRef", commitRef)
+    )
+    .order("desc")
+    .take(10);
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const normalizedTeamId = teamId ?? null;
+  for (const job of candidates) {
+    if ((job.teamId ?? null) !== normalizedTeamId) {
+      continue;
+    }
+    const jobBase = job.baseCommitRef ?? null;
+    if (baseCommitRef && jobBase && jobBase !== baseCommitRef) {
+      continue;
+    }
+    if (baseCommitRef && !jobBase) {
+      continue;
+    }
+    return job;
+  }
+  return null;
 }
 
 async function schedulePauseMorphInstance(
@@ -112,16 +313,35 @@ export const reserveJob = authMutation({
   args: {
     teamSlugOrId: v.optional(v.string()),
     githubLink: v.string(),
-    prNumber: v.number(),
+    prNumber: v.optional(v.number()),
     commitRef: v.optional(v.string()),
+    headCommitRef: v.optional(v.string()),
+    baseCommitRef: v.optional(v.string()),
     callbackTokenHash: v.string(),
     force: v.optional(v.boolean()),
+    comparison: v.optional(
+      v.object({
+        slug: v.string(),
+        baseOwner: v.string(),
+        baseRef: v.string(),
+        headOwner: v.string(),
+        headRef: v.string(),
+      })
+    ),
   },
   handler: async (ctx, args) => {
     const { identity } = ctx;
     const { repoFullName, repoUrl } = parseGithubLink(args.githubLink);
     const repoOwner = repoFullName.split("/")[0] ?? "unknown-owner";
     const teamKey = args.teamSlugOrId ?? repoOwner;
+    const jobType = args.comparison ? "comparison" : "pull_request";
+
+    if (jobType === "pull_request" && typeof args.prNumber !== "number") {
+      throw new ConvexError("prNumber is required for pull_request jobs");
+    }
+    if (jobType === "comparison" && !args.comparison) {
+      throw new ConvexError("comparison metadata is required for comparison jobs");
+    }
 
     let teamId: string;
     try {
@@ -140,14 +360,158 @@ export const reserveJob = authMutation({
         resolvedTeamId: teamId,
       });
     }
+    console.info("[codeReview.reserveJob] Resolved team context", {
+      requestedTeamKey: teamKey,
+      resolvedTeamId: teamId,
+      repoFullName,
+      jobType,
+    });
 
-    const existing = await findExistingActiveJob(
-      ctx.db,
+    let pullRequestDoc: Doc<"pullRequests"> | null = null;
+    let headCommitRef =
+      args.headCommitRef ?? args.commitRef ?? null;
+    let baseCommitRef = args.baseCommitRef ?? null;
+
+    if (jobType === "pull_request") {
+      pullRequestDoc = await ctx.db
+        .query("pullRequests")
+        .withIndex("by_team_repo_number", (q) =>
+          q
+            .eq("teamId", teamId)
+            .eq("repoFullName", repoFullName)
+            .eq("number", args.prNumber!)
+        )
+        .first();
+
+      if (!headCommitRef) {
+        headCommitRef =
+          pullRequestDoc?.headSha ??
+          pullRequestDoc?.mergeCommitSha ??
+          null;
+      }
+      if (!baseCommitRef) {
+        baseCommitRef = pullRequestDoc?.baseSha ?? null;
+      }
+      if (!headCommitRef) {
+        throw new ConvexError("headCommitRef is required for pull_request jobs");
+      }
+      if (!baseCommitRef) {
+        throw new ConvexError("baseCommitRef is required for pull_request jobs");
+      }
+    } else {
+      if (!headCommitRef) {
+        headCommitRef = args.commitRef ?? null;
+      }
+      if (!headCommitRef) {
+        throw new ConvexError("headCommitRef is required for comparison jobs");
+      }
+      if (!baseCommitRef) {
+        baseCommitRef = args.baseCommitRef ?? null;
+      }
+      if (!baseCommitRef) {
+        throw new ConvexError("baseCommitRef is required for comparison jobs");
+      }
+    }
+
+    const commitRef = headCommitRef;
+
+    console.info("[codeReview.reserveJob] Commit context", {
+      jobType,
+      prNumber: args.prNumber ?? null,
+      comparisonSlug: args.comparison?.slug ?? null,
+      headCommitRef,
+      baseCommitRef,
+    });
+
+    console.info("[codeReview.reserveJob] Looking for active job", {
       teamId,
       repoFullName,
-      args.prNumber
-    );
+      jobType,
+      prNumber: args.prNumber ?? null,
+      comparisonSlug: args.comparison?.slug ?? null,
+    });
+    let existing = await findExistingActiveJob(ctx.db, teamId, repoFullName, jobType, {
+      prNumber: args.prNumber ?? undefined,
+      comparisonSlug: args.comparison?.slug,
+      headCommitRef,
+      baseCommitRef,
+    });
+    if (existing) {
+      console.info("[codeReview.reserveJob] Active job candidate found", {
+        jobId: existing._id,
+        state: existing.state,
+        jobType: existing.jobType ?? "pull_request",
+        commitRef: existing.commitRef,
+        headCommitRef: existing.headCommitRef ?? existing.commitRef,
+        baseCommitRef: existing.baseCommitRef ?? null,
+        teamId: existing.teamId ?? null,
+        repoFullName: existing.repoFullName,
+        prNumber: existing.prNumber ?? null,
+        comparisonSlug: existing.comparisonSlug ?? null,
+      });
+    } else {
+      console.info("[codeReview.reserveJob] No active job candidate found", {
+        teamId,
+        repoFullName,
+        jobType,
+        prNumber: args.prNumber ?? null,
+        comparisonSlug: args.comparison?.slug ?? null,
+        expectedHeadCommitRef: headCommitRef,
+        expectedBaseCommitRef: baseCommitRef,
+      });
+      if (jobType === "pull_request" && args.prNumber !== undefined) {
+        const debugJobs = await ctx.db
+          .query("automatedCodeReviewJobs")
+          .withIndex("by_team_repo_pr_updated", (q) =>
+            q
+              .eq("teamId", teamId ?? undefined)
+              .eq("repoFullName", repoFullName)
+              .eq("prNumber", args.prNumber!)
+          )
+          .order("desc")
+          .collect();
+        console.info("[codeReview.reserveJob] Active job scan snapshot", {
+          jobCount: debugJobs.length,
+          jobs: debugJobs.slice(0, 5).map((job) => ({
+            jobId: job._id,
+            state: job.state,
+            teamId: job.teamId ?? null,
+            repoFullName: job.repoFullName,
+            prNumber: job.prNumber ?? null,
+            commitRef: job.commitRef,
+            headCommitRef: job.headCommitRef ?? job.commitRef,
+            baseCommitRef: job.baseCommitRef ?? null,
+            jobType: job.jobType ?? "pull_request",
+            updatedAt: job.updatedAt,
+          })),
+        });
+      }
+    }
+    if (existing && existing.jobType !== jobType) {
+      await ctx.db.patch(existing._id, {
+        jobType,
+      });
+      const refreshed = await ctx.db.get(existing._id);
+      if (refreshed) {
+        existing = refreshed;
+      }
+    }
     if (existing && !args.force) {
+      if (
+        jobType === "comparison" &&
+        args.comparison &&
+        existing.comparisonSlug &&
+        existing.comparisonSlug !== args.comparison.slug
+      ) {
+        console.warn(
+          "[codeReview.reserveJob] Comparison slug mismatch with existing job; proceeding with existing job",
+          {
+            jobId: existing._id,
+            existingSlug: existing.comparisonSlug,
+            requestedSlug: args.comparison.slug,
+          }
+        );
+      }
       console.info("[codeReview.reserveJob] Reusing existing active job", {
         jobId: existing._id,
         repoFullName,
@@ -177,30 +541,154 @@ export const reserveJob = authMutation({
       });
     }
 
-    const pullRequest = await ctx.db
-      .query("pullRequests")
-      .withIndex("by_team_repo_number", (q) =>
-        q
-          .eq("teamId", teamId)
-          .eq("repoFullName", repoFullName)
-          .eq("number", args.prNumber)
-      )
-      .first();
+    if (jobType === "comparison" && args.comparison && !args.force) {
+      const matchingComparisonJob = await findComparisonJobByCommit(
+        ctx.db,
+        repoFullName,
+        args.comparison.slug,
+        commitRef,
+        teamId,
+        baseCommitRef
+      );
 
-    const commitRef =
-      args.commitRef ??
-      pullRequest?.headSha ??
-      pullRequest?.mergeCommitSha ??
-      "unknown";
+      if (matchingComparisonJob) {
+        if (
+          matchingComparisonJob.state === "completed" ||
+          matchingComparisonJob.state === "pending" ||
+          matchingComparisonJob.state === "running"
+        ) {
+          console.info("[codeReview.reserveJob] Reusing comparison job by commit", {
+            jobId: matchingComparisonJob._id,
+            repoFullName,
+            comparisonSlug: args.comparison.slug,
+            commitRef,
+            baseCommitRef,
+            state: matchingComparisonJob.state,
+          });
+          return {
+            wasCreated: false as const,
+            job: serializeJob(matchingComparisonJob),
+          };
+        }
+      }
+    }
+
+    if (jobType === "pull_request") {
+      const latestCompleted = await findLatestCompletedJob(
+        ctx.db,
+        teamId,
+        repoFullName,
+        jobType,
+        {
+          prNumber: args.prNumber ?? undefined,
+        }
+      );
+
+      if (!latestCompleted) {
+        console.info("[codeReview.reserveJob] No completed job found", {
+          repoFullName,
+          jobType,
+          prNumber: args.prNumber ?? null,
+          comparisonSlug: null,
+        });
+      }
+
+      if (
+        latestCompleted &&
+        isSameCommitContext(latestCompleted, commitRef, baseCommitRef) &&
+        !args.force
+      ) {
+        console.info("[codeReview.reserveJob] Skipping job; commit unchanged", {
+          repoFullName,
+          jobType,
+          prNumber: args.prNumber ?? null,
+          comparisonSlug: null,
+          commitRef,
+          baseCommitRef,
+        });
+        return {
+          wasCreated: false as const,
+          job: serializeJob(latestCompleted),
+        };
+      }
+      if (latestCompleted) {
+        console.info("[codeReview.reserveJob] Latest completed job found", {
+          repoFullName,
+          jobType,
+          prNumber: args.prNumber ?? null,
+          comparisonSlug: null,
+          latestCommitRef: latestCompleted.commitRef,
+          requestedCommitRef: commitRef,
+          latestBaseCommitRef: latestCompleted.baseCommitRef ?? null,
+          requestedBaseCommitRef: baseCommitRef,
+          matches: isSameCommitContext(
+            latestCompleted,
+            commitRef,
+            baseCommitRef
+          ),
+        });
+      }
+    } else if (jobType === "comparison" && args.comparison && !args.force) {
+      const latestCompleted = await findLatestCompletedJob(
+        ctx.db,
+        teamId,
+        repoFullName,
+        jobType,
+        {
+          comparisonSlug: args.comparison.slug,
+        }
+      );
+
+      if (!latestCompleted) {
+        console.info("[codeReview.reserveJob] No completed job found", {
+          repoFullName,
+          jobType,
+          comparisonSlug: args.comparison.slug,
+          prNumber: null,
+        });
+      } else if (
+        isSameCommitContext(latestCompleted, commitRef, baseCommitRef)
+      ) {
+        console.info("[codeReview.reserveJob] Reusing latest completed comparison job", {
+          jobId: latestCompleted._id,
+          repoFullName,
+          comparisonSlug: args.comparison.slug,
+          commitRef,
+          baseCommitRef,
+        });
+        return {
+          wasCreated: false as const,
+          job: serializeJob(latestCompleted),
+        };
+      } else {
+        console.info("[codeReview.reserveJob] Latest completed comparison differs", {
+          jobId: latestCompleted._id,
+          repoFullName,
+          comparisonSlug: args.comparison.slug,
+          latestCommitRef: latestCompleted.commitRef,
+          requestedCommitRef: commitRef,
+          latestBaseCommitRef: latestCompleted.baseCommitRef ?? null,
+          requestedBaseCommitRef: baseCommitRef,
+        });
+      }
+    }
 
     const now = Date.now();
     const jobId = await ctx.db.insert("automatedCodeReviewJobs", {
       teamId,
       repoFullName,
       repoUrl,
-      prNumber: args.prNumber,
+      prNumber: jobType === "pull_request" ? args.prNumber : undefined,
       commitRef,
+      headCommitRef: commitRef,
+      baseCommitRef,
       requestedByUserId: identity.subject,
+      jobType,
+      comparisonSlug: args.comparison?.slug,
+      comparisonBaseOwner: args.comparison?.baseOwner,
+      comparisonBaseRef: args.comparison?.baseRef,
+      comparisonHeadOwner: args.comparison?.headOwner,
+      comparisonHeadRef: args.comparison?.headRef,
       state: "pending",
       createdAt: now,
       updatedAt: now,
@@ -338,7 +826,15 @@ export const upsertFileOutputFromCallback = mutation({
       await ctx.db.patch(existing._id, {
         codexReviewOutput: args.codexReviewOutput,
         commitRef,
+        headCommitRef: job.headCommitRef ?? job.commitRef,
+        baseCommitRef: job.baseCommitRef,
         sandboxInstanceId,
+        jobType: job.jobType,
+        comparisonSlug: job.comparisonSlug,
+        comparisonBaseOwner: job.comparisonBaseOwner,
+        comparisonBaseRef: job.comparisonBaseRef,
+        comparisonHeadOwner: job.comparisonHeadOwner,
+        comparisonHeadRef: job.comparisonHeadRef,
         updatedAt: now,
       });
     } else {
@@ -348,6 +844,14 @@ export const upsertFileOutputFromCallback = mutation({
         repoFullName: job.repoFullName,
         prNumber: job.prNumber,
         commitRef,
+        headCommitRef: job.headCommitRef ?? job.commitRef,
+        baseCommitRef: job.baseCommitRef,
+        jobType: job.jobType,
+        comparisonSlug: job.comparisonSlug,
+        comparisonBaseOwner: job.comparisonBaseOwner,
+        comparisonBaseRef: job.comparisonBaseRef,
+        comparisonHeadOwner: job.comparisonHeadOwner,
+        comparisonHeadRef: job.comparisonHeadRef,
         sandboxInstanceId,
         filePath: args.filePath,
         codexReviewOutput: args.codexReviewOutput,
@@ -416,6 +920,14 @@ export const completeJobFromCallback = mutation({
       repoUrl: job.repoUrl,
       prNumber: job.prNumber,
       commitRef: job.commitRef,
+      headCommitRef: job.headCommitRef ?? job.commitRef,
+      baseCommitRef: job.baseCommitRef,
+      jobType: job.jobType,
+      comparisonSlug: job.comparisonSlug,
+      comparisonBaseOwner: job.comparisonBaseOwner,
+      comparisonBaseRef: job.comparisonBaseRef,
+      comparisonHeadOwner: job.comparisonHeadOwner,
+      comparisonHeadRef: job.comparisonHeadRef,
       sandboxInstanceId,
       codeReviewOutput: args.codeReviewOutput,
       createdAt: now,
@@ -486,6 +998,7 @@ export const listFileOutputsForPr = authQuery({
     repoFullName: v.string(),
     prNumber: v.number(),
     commitRef: v.optional(v.string()),
+    baseCommitRef: v.optional(v.string()),
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
@@ -505,6 +1018,11 @@ export const listFileOutputsForPr = authQuery({
     if (args.commitRef) {
       query = query.filter((q) => q.eq(q.field("commitRef"), args.commitRef));
     }
+    if (args.baseCommitRef) {
+      query = query.filter((q) =>
+        q.eq(q.field("baseCommitRef"), args.baseCommitRef)
+      );
+    }
 
     const outputs = await query.take(limit);
 
@@ -515,6 +1033,60 @@ export const listFileOutputsForPr = authQuery({
       repoFullName: output.repoFullName,
       prNumber: output.prNumber,
       commitRef: output.commitRef,
+      headCommitRef: output.headCommitRef ?? output.commitRef,
+      baseCommitRef: output.baseCommitRef ?? null,
+      sandboxInstanceId: output.sandboxInstanceId ?? null,
+      filePath: output.filePath,
+      codexReviewOutput: output.codexReviewOutput,
+      createdAt: output.createdAt,
+      updatedAt: output.updatedAt,
+    }));
+  },
+});
+
+export const listFileOutputsForComparison = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    repoFullName: v.string(),
+    comparisonSlug: v.string(),
+    commitRef: v.optional(v.string()),
+    baseCommitRef: v.optional(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+    const limit = Math.min(args.limit ?? 200, 500);
+
+    let query = ctx.db
+      .query("automatedCodeReviewFileOutputs")
+      .withIndex("by_team_repo_comparison_commit", (q) =>
+        q
+          .eq("teamId", teamId)
+          .eq("repoFullName", args.repoFullName)
+          .eq("comparisonSlug", args.comparisonSlug)
+      )
+      .order("desc");
+
+    if (args.commitRef) {
+      query = query.filter((q) => q.eq(q.field("commitRef"), args.commitRef));
+    }
+    if (args.baseCommitRef) {
+      query = query.filter((q) =>
+        q.eq(q.field("baseCommitRef"), args.baseCommitRef)
+      );
+    }
+
+    const outputs = await query.take(limit);
+
+    return outputs.map((output) => ({
+      id: output._id,
+      jobId: output.jobId,
+      teamId: output.teamId,
+      repoFullName: output.repoFullName,
+      prNumber: output.prNumber ?? null,
+      commitRef: output.commitRef,
+      headCommitRef: output.headCommitRef ?? output.commitRef,
+      baseCommitRef: output.baseCommitRef ?? null,
       sandboxInstanceId: output.sandboxInstanceId ?? null,
       filePath: output.filePath,
       codexReviewOutput: output.codexReviewOutput,

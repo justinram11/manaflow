@@ -14,6 +14,7 @@ const DEFAULT_PR_URL = "https://github.com/manaflow-ai/cmux/pull/661";
 type CliOptions = {
   prUrl: string;
   commitRef?: string;
+  baseCommitRef?: string;
   teamSlugOrId?: string;
   force?: boolean;
 };
@@ -29,6 +30,7 @@ function parseArgs(): CliOptions {
   let prUrl = DEFAULT_PR_URL;
   let commitRef: string | undefined;
   let teamSlugOrId: string | undefined;
+  let baseCommitRef: string | undefined;
   let force: boolean | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -48,6 +50,11 @@ function parseArgs(): CliOptions {
       index += 1;
       continue;
     }
+    if (arg === "--base-commit" || arg === "--base-ref") {
+      baseCommitRef = args[index + 1];
+      index += 1;
+      continue;
+    }
     if (arg === "--force") {
       force = true;
       continue;
@@ -63,7 +70,7 @@ function parseArgs(): CliOptions {
     console.warn(`[cli] Unrecognized argument ignored: ${arg}`);
   }
 
-  return { prUrl, commitRef, teamSlugOrId, force };
+  return { prUrl, commitRef, baseCommitRef, teamSlugOrId, force };
 }
 
 function parsePrUrl(prUrl: string): ParsedPrUrl {
@@ -99,7 +106,10 @@ function getGithubToken(): string | null {
   return token && token.length > 0 ? token : null;
 }
 
-async function fetchHeadCommitSha(pr: ParsedPrUrl): Promise<string | undefined> {
+async function fetchCommitRefs(pr: ParsedPrUrl): Promise<{
+  head?: string;
+  base?: string;
+}> {
   const token = getGithubToken();
   const octokit = new Octokit(token ? { auth: token } : {});
   try {
@@ -108,24 +118,35 @@ async function fetchHeadCommitSha(pr: ParsedPrUrl): Promise<string | undefined> 
       repo: pr.repo,
       pull_number: pr.number,
     });
-    const sha = data.head?.sha;
-    if (typeof sha === "string" && sha.length > 0) {
-      return sha;
+    const headSha = data.head?.sha;
+    const baseSha = data.base?.sha;
+    if (!headSha) {
+      console.warn("[cli] Pull request response missing head.sha", {
+        owner: pr.owner,
+        repo: pr.repo,
+        number: pr.number,
+      });
     }
-    console.warn("[cli] Pull request response missing head.sha; falling back to unknown", {
-      owner: pr.owner,
-      repo: pr.repo,
-      number: pr.number,
-    });
+    if (!baseSha) {
+      console.warn("[cli] Pull request response missing base.sha", {
+        owner: pr.owner,
+        repo: pr.repo,
+        number: pr.number,
+      });
+    }
+    return {
+      head: headSha && headSha.length > 0 ? headSha : undefined,
+      base: baseSha && baseSha.length > 0 ? baseSha : undefined,
+    };
   } catch (error) {
-    console.warn("[cli] Failed to fetch PR metadata for commit ref", {
+    console.warn("[cli] Failed to fetch PR metadata for commit refs", {
       owner: pr.owner,
       repo: pr.repo,
       number: pr.number,
       error,
     });
   }
-  return undefined;
+  return {};
 }
 
 async function main(): Promise<void> {
@@ -139,15 +160,16 @@ async function main(): Promise<void> {
   const teamSlugOrId = cliOptions.teamSlugOrId;
   const inferredTeam = teamSlugOrId ?? pr.owner;
 
-  const commitRef =
-    cliOptions.commitRef ??
-    (await fetchHeadCommitSha(pr));
+  const { head: fetchedHeadRef, base: fetchedBaseRef } = await fetchCommitRefs(pr);
+  const commitRef = cliOptions.commitRef ?? fetchedHeadRef;
+  const baseCommitRef = cliOptions.baseCommitRef ?? fetchedBaseRef;
 
   console.info("[cli] Starting production-style code review", {
     prUrl,
     teamParam: teamSlugOrId ?? "(not provided)",
     inferredTeam,
     commitRef: commitRef ?? "(unknown)",
+    baseCommitRef: baseCommitRef ?? "(unknown)",
     force: cliOptions.force ?? false,
   });
 
@@ -158,7 +180,11 @@ async function main(): Promise<void> {
   }
 
   if (!commitRef) {
-    console.warn("[cli] Proceeding without commit ref; Convex job will infer or store 'unknown'.");
+    throw new Error("Unable to determine head commit SHA for the pull request.");
+  }
+
+  if (!baseCommitRef) {
+    throw new Error("Unable to determine base commit SHA for the pull request.");
   }
 
   const { job, deduplicated, backgroundTask } = await startCodeReviewJob({
@@ -169,6 +195,8 @@ async function main(): Promise<void> {
       githubLink: prUrl,
       prNumber: pr.number,
       commitRef,
+      headCommitRef: commitRef,
+      baseCommitRef,
       force: cliOptions.force,
     },
   });

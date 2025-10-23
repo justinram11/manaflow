@@ -1,17 +1,15 @@
 import { Suspense, use } from "react";
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { waitUntil } from "@vercel/functions";
-import { ExternalLink, GitPullRequest } from "lucide-react";
 import { type Team } from "@stackframe/stack";
 
-import { PullRequestDiffViewer } from "@/components/pr/pull-request-diff-viewer";
 import {
   fetchPullRequest,
   fetchPullRequestFiles,
+  toGithubFileChange,
   type GithubPullRequest,
-  type GithubPullRequestFile,
+  type GithubFileChange,
 } from "@/lib/github/fetch-pull-request";
 import { isGithubApiError } from "@/lib/github/errors";
 import { cn } from "@/lib/utils";
@@ -20,6 +18,14 @@ import {
   getConvexHttpActionBaseUrl,
   startCodeReviewJob,
 } from "@/lib/services/code-review/start-code-review";
+import {
+  DiffViewerSkeleton,
+  ErrorPanel,
+  ReviewChangeSummary,
+  ReviewDiffContent,
+  ReviewGitHubLinkButton,
+  summarizeFiles,
+} from "../../_components/review-diff-content";
 
 type PageParams = {
   teamSlugOrId: string;
@@ -108,7 +114,7 @@ export default async function PullRequestPage({ params }: PageProps) {
     githubOwner,
     repo,
     pullNumber
-  );
+  ).then((files) => files.map(toGithubFileChange));
 
   scheduleCodeReviewStart({
     teamSlugOrId: selectedTeam.id,
@@ -171,6 +177,34 @@ function scheduleCodeReviewStart({
           pullRequest.html_url ??
           `https://github.com/${fallbackRepoFullName}/pull/${pullNumber}`;
         const commitRef = pullRequest.head?.sha ?? undefined;
+        const baseCommitRef = pullRequest.base?.sha ?? undefined;
+
+        if (!commitRef) {
+          console.error("[code-review] Missing head commit SHA; skipping schedule", {
+            githubOwner,
+            repo,
+            pullNumber,
+          });
+          return;
+        }
+        if (!baseCommitRef) {
+          console.error("[code-review] Missing base commit SHA; skipping schedule", {
+            githubOwner,
+            repo,
+            pullNumber,
+          });
+          return;
+        }
+
+        const dedupeMetadata = {
+          teamSlugOrId,
+          repoFullName: fallbackRepoFullName,
+          prNumber: pullNumber,
+          commitRef,
+          baseCommitRef,
+          force: false,
+        };
+        console.info("[code-review] Scheduling automated review", dedupeMetadata);
 
         const callbackBaseUrl = getConvexHttpActionBaseUrl();
         if (!callbackBaseUrl) {
@@ -188,7 +222,7 @@ function scheduleCodeReviewStart({
           return;
         }
 
-        const { backgroundTask } = await startCodeReviewJob({
+        const { job, deduplicated, backgroundTask } = await startCodeReviewJob({
           accessToken,
           callbackBaseUrl,
           payload: {
@@ -196,8 +230,20 @@ function scheduleCodeReviewStart({
             githubLink,
             prNumber: pullNumber,
             commitRef,
+            headCommitRef: commitRef,
+            baseCommitRef,
             force: false,
           },
+        });
+        console.info("[code-review] Reservation result", {
+          jobId: job.jobId,
+          deduplicated,
+          jobState: job.state,
+          repoFullName: job.repoFullName,
+          prNumber: job.prNumber,
+          commitRef: job.commitRef,
+          baseCommitRef: job.baseCommitRef,
+          teamId: job.teamId,
         });
 
         if (backgroundTask) {
@@ -404,52 +450,17 @@ function PullRequestHeaderActions({
 }) {
   return (
     <aside className="flex flex-wrap items-center gap-3 text-xs">
-      <PullRequestChangeSummary
+      <ReviewChangeSummary
         changedFiles={changedFiles}
         additions={additions}
         deletions={deletions}
       />
-      {githubUrl ? <GitHubLinkButton href={githubUrl} /> : null}
+      {githubUrl ? <ReviewGitHubLinkButton href={githubUrl} /> : null}
     </aside>
   );
 }
 
-function PullRequestChangeSummary({
-  changedFiles,
-  additions,
-  deletions,
-}: {
-  changedFiles: number;
-  additions: number;
-  deletions: number;
-}) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="text-neutral-600">
-        <GitPullRequest className="inline h-3 w-3" /> {changedFiles}
-      </span>
-      <span className="text-neutral-400">•</span>
-      <span className="text-emerald-700">+{additions}</span>
-      <span className="text-rose-700">-{deletions}</span>
-    </div>
-  );
-}
-
-function GitHubLinkButton({ href }: { href: string }) {
-  return (
-    <a
-      className="inline-flex items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 py-1.5 font-medium text-neutral-700 transition hover:border-neutral-400 hover:text-neutral-900"
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-    >
-      GitHub
-      <ExternalLink className="h-3 w-3" />
-    </a>
-  );
-}
-
-type PullRequestFilesPromise = ReturnType<typeof fetchPullRequestFiles>;
+type PullRequestFilesPromise = Promise<GithubFileChange[]>;
 
 function PullRequestDiffSection({
   filesPromise,
@@ -475,17 +486,19 @@ function PullRequestDiffSection({
       pullRequest.head?.repo?.full_name ??
       `${githubOwner}/${repo}`;
     const commitRef = pullRequest.head?.sha ?? undefined;
+    const baseCommitRef = pullRequest.base?.sha ?? undefined;
 
     return (
-      <PullRequestDiffContent
+      <ReviewDiffContent
         files={files}
         fileCount={totals.fileCount}
         additions={totals.additions}
         deletions={totals.deletions}
         teamSlugOrId={teamSlugOrId}
         repoFullName={fallbackRepoFullName}
-        pullNumber={pullNumber}
+        reviewTarget={{ type: "pull_request", prNumber: pullNumber }}
         commitRef={commitRef}
+        baseCommitRef={baseCommitRef}
       />
     );
   } catch (error) {
@@ -506,107 +519,6 @@ function PullRequestDiffSection({
 
     throw error;
   }
-}
-
-function summarizeFiles(files: GithubPullRequestFile[]): {
-  fileCount: number;
-  additions: number;
-  deletions: number;
-} {
-  return files.reduce(
-    (acc, file) => {
-      acc.fileCount += 1;
-      acc.additions += file.additions;
-      acc.deletions += file.deletions;
-      return acc;
-    },
-    { fileCount: 0, additions: 0, deletions: 0 }
-  );
-}
-
-function PullRequestDiffContent({
-  files,
-  fileCount,
-  additions,
-  deletions,
-  teamSlugOrId,
-  repoFullName,
-  pullNumber,
-  commitRef,
-}: {
-  files: GithubPullRequestFile[];
-  fileCount: number;
-  additions: number;
-  deletions: number;
-  teamSlugOrId: string;
-  repoFullName: string;
-  pullNumber: number;
-  commitRef?: string;
-}) {
-  return (
-    <section className="flex flex-col gap-4">
-      <PullRequestDiffSummary
-        fileCount={fileCount}
-        additions={additions}
-        deletions={deletions}
-      />
-      <PullRequestDiffViewerWrapper
-        files={files}
-        teamSlugOrId={teamSlugOrId}
-        repoFullName={repoFullName}
-        pullNumber={pullNumber}
-        commitRef={commitRef}
-      />
-    </section>
-  );
-}
-
-function PullRequestDiffSummary({
-  fileCount,
-  additions,
-  deletions,
-}: {
-  fileCount: number;
-  additions: number;
-  deletions: number;
-}) {
-  return (
-    <header className="flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <h2 className="text-lg font-semibold text-neutral-900">
-          Files changed
-        </h2>
-        <p className="text-sm text-neutral-600">
-          {fileCount} file{fileCount === 1 ? "" : "s"}, {additions} additions,{" "}
-          {deletions} deletions
-        </p>
-      </div>
-    </header>
-  );
-}
-
-function PullRequestDiffViewerWrapper({
-  files,
-  teamSlugOrId,
-  repoFullName,
-  pullNumber,
-  commitRef,
-}: {
-  files: GithubPullRequestFile[];
-  teamSlugOrId: string;
-  repoFullName: string;
-  pullNumber: number;
-  commitRef?: string;
-}) {
-  return (
-    <PullRequestDiffViewer
-      files={files}
-      teamSlugOrId={teamSlugOrId}
-      repoFullName={repoFullName}
-      prNumber={pullNumber}
-      commitRef={commitRef}
-    />
-  );
 }
 
 function getStatusBadge(pullRequest: GithubPullRequest): {
@@ -649,46 +561,6 @@ function PullRequestHeaderSkeleton() {
         <div className="h-4 w-1/2 rounded bg-neutral-200" />
         <div className="h-4 w-full rounded bg-neutral-200" />
       </div>
-    </div>
-  );
-}
-
-function DiffViewerSkeleton() {
-  return (
-    <div className="space-y-4">
-      <div className="h-6 w-48 rounded bg-neutral-200" />
-      <div className="space-y-3">
-        {Array.from({ length: 3 }).map((_, index) => (
-          <div
-            key={index}
-            className="h-32 rounded-xl border border-neutral-200 bg-neutral-100"
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ErrorPanel({
-  title,
-  message,
-  documentationUrl,
-}: {
-  title: string;
-  message: string;
-  documentationUrl?: string;
-}) {
-  return (
-    <div className="rounded-xl border border-rose-200 bg-rose-50 p-6 text-sm text-rose-700">
-      <p className="font-semibold">{title}</p>
-      <p className="mt-2 leading-relaxed">{message}</p>
-      {documentationUrl ? (
-        <p className="mt-3 text-xs text-rose-600 underline">
-          <Link href={documentationUrl} target="_blank" rel="noreferrer">
-            View GitHub documentation
-          </Link>
-        </p>
-      ) : null}
     </div>
   );
 }

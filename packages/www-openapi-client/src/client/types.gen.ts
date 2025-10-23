@@ -530,8 +530,16 @@ export type CodeReviewStartResponse = {
         teamId: string | null;
         repoFullName: string;
         repoUrl: string;
-        prNumber: number;
+        prNumber: number | null;
         commitRef: string;
+        headCommitRef: string;
+        baseCommitRef: string | null;
+        jobType: 'pull_request' | 'comparison';
+        comparisonSlug: string | null;
+        comparisonBaseOwner: string | null;
+        comparisonBaseRef: string | null;
+        comparisonHeadOwner: string | null;
+        comparisonHeadRef: string | null;
         requestedByUserId: string;
         state: 'pending' | 'running' | 'completed' | 'failed';
         createdAt: number;
@@ -551,9 +559,26 @@ export type CodeReviewStartResponse = {
 export type CodeReviewStartBody = {
     teamSlugOrId?: string;
     githubLink: string;
-    prNumber: number;
+    prNumber?: number;
     commitRef?: string;
+    headCommitRef?: string;
+    baseCommitRef?: string;
     force?: boolean;
+    comparison?: {
+        slug: string;
+        base: {
+            owner: string;
+            repo: string;
+            ref: string;
+            label: string;
+        };
+        head: {
+            owner: string;
+            repo: string;
+            ref: string;
+            label: string;
+        };
+    };
 };
 
 export type GetApiHealthData = {

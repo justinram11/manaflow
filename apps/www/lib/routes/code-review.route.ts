@@ -12,8 +12,16 @@ const CodeReviewJobSchema = z.object({
   teamId: z.string().nullable(),
   repoFullName: z.string(),
   repoUrl: z.string(),
-  prNumber: z.number(),
+  prNumber: z.number().nullable(),
   commitRef: z.string(),
+  headCommitRef: z.string(),
+  baseCommitRef: z.string().nullable(),
+  jobType: z.enum(["pull_request", "comparison"]),
+  comparisonSlug: z.string().nullable(),
+  comparisonBaseOwner: z.string().nullable(),
+  comparisonBaseRef: z.string().nullable(),
+  comparisonHeadOwner: z.string().nullable(),
+  comparisonHeadRef: z.string().nullable(),
   requestedByUserId: z.string(),
   state: z.enum(CODE_REVIEW_STATES),
   createdAt: z.number(),
@@ -30,9 +38,28 @@ const StartBodySchema = z
   .object({
     teamSlugOrId: z.string().optional(),
     githubLink: z.string().url(),
-    prNumber: z.number().int().positive(),
+    prNumber: z.number().int().positive().optional(),
     commitRef: z.string().optional(),
+    headCommitRef: z.string().optional(),
+    baseCommitRef: z.string().optional(),
     force: z.boolean().optional(),
+    comparison: z
+      .object({
+        slug: z.string(),
+        base: z.object({
+          owner: z.string(),
+          repo: z.string(),
+          ref: z.string(),
+          label: z.string(),
+        }),
+        head: z.object({
+          owner: z.string(),
+          repo: z.string(),
+          ref: z.string(),
+          label: z.string(),
+        }),
+      })
+      .optional(),
   })
   .openapi("CodeReviewStartBody");
 
@@ -91,6 +118,33 @@ codeReviewRouter.openapi(
     if (!convexHttpBase) {
       return c.json({ error: "Convex HTTP base URL is not configured" }, 500);
     }
+    if (!body.prNumber && !body.comparison) {
+      return c.json(
+        { error: "Either prNumber or comparison metadata is required" },
+        400,
+      );
+    }
+    const jobType = body.comparison ? "comparison" : "pull_request";
+    const headCommitProvided = Boolean(body.headCommitRef ?? body.commitRef);
+    if (!headCommitProvided) {
+      return c.json(
+        { error: "headCommitRef is required to start a code review run" },
+        400,
+      );
+    }
+    if (jobType === "pull_request" && !body.baseCommitRef) {
+      return c.json(
+        { error: "baseCommitRef is required when starting a pull request review" },
+        400,
+      );
+    }
+    if (jobType === "comparison" && !body.baseCommitRef) {
+      return c.json(
+        { error: "baseCommitRef is required when starting a comparison review" },
+        400,
+      );
+    }
+
     const { job, deduplicated, backgroundTask } = await startCodeReviewJob({
       accessToken,
       callbackBaseUrl: convexHttpBase,
@@ -99,7 +153,16 @@ codeReviewRouter.openapi(
         githubLink: body.githubLink,
         prNumber: body.prNumber,
         commitRef: body.commitRef,
+        headCommitRef: body.headCommitRef,
+        baseCommitRef: body.baseCommitRef,
         force: body.force,
+        comparison: body.comparison
+          ? {
+              slug: body.comparison.slug,
+              base: body.comparison.base,
+              head: body.comparison.head,
+            }
+          : undefined,
       },
       request: c.req.raw,
     });

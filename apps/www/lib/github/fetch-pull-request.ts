@@ -1,5 +1,3 @@
-import { cache } from "react";
-
 import { GithubApiError } from "./errors";
 import { createGitHubClient } from "./octokit";
 
@@ -17,6 +15,10 @@ type PullRequestResponse = Awaited<
 
 type PullRequestFilesResponse = Awaited<
   ReturnType<OctokitInstance["rest"]["pulls"]["listFiles"]>
+>;
+
+type CompareCommitsResponse = Awaited<
+  ReturnType<OctokitInstance["rest"]["repos"]["compareCommitsWithBasehead"]>
 >;
 
 export type GithubPullRequest = PullRequestResponse["data"];
@@ -61,43 +63,87 @@ function isRequestErrorShape(error: unknown): error is RequestErrorShape {
   );
 }
 
-export const fetchPullRequest = cache(
-  async (
-    owner: string,
-    repo: string,
-    pullNumber: number,
-  ): Promise<GithubPullRequest> => {
-    try {
-      const octokit = createGitHubClient();
-      const response = await octokit.rest.pulls.get({
-        owner,
-        repo,
-        pull_number: pullNumber,
-      });
-      return response.data;
-    } catch (error) {
-      throw toGithubApiError(error);
-    }
-  },
-);
+export async function fetchPullRequest(
+  owner: string,
+  repo: string,
+  pullNumber: number,
+): Promise<GithubPullRequest> {
+  try {
+    const octokit = createGitHubClient();
+    const response = await octokit.rest.pulls.get({
+      owner,
+      repo,
+      pull_number: pullNumber,
+    });
+    return response.data;
+  } catch (error) {
+    throw toGithubApiError(error);
+  }
+}
 
-export const fetchPullRequestFiles = cache(
-  async (
-    owner: string,
-    repo: string,
-    pullNumber: number,
-  ): Promise<GithubPullRequestFile[]> => {
-    try {
-      const octokit = createGitHubClient();
-      const files = await octokit.paginate(octokit.rest.pulls.listFiles, {
-        owner,
-        repo,
-        pull_number: pullNumber,
-        per_page: 100,
-      });
-      return files;
-    } catch (error) {
-      throw toGithubApiError(error);
-    }
-  },
-);
+export async function fetchPullRequestFiles(
+  owner: string,
+  repo: string,
+  pullNumber: number,
+): Promise<GithubPullRequestFile[]> {
+  try {
+    const octokit = createGitHubClient();
+    const files = await octokit.paginate(octokit.rest.pulls.listFiles, {
+      owner,
+      repo,
+      pull_number: pullNumber,
+      per_page: 100,
+    });
+    return files;
+  } catch (error) {
+    throw toGithubApiError(error);
+  }
+}
+
+type GithubComparisonFile = NonNullable<CompareCommitsResponse["data"]["files"]>[number];
+
+export type GithubComparison = CompareCommitsResponse["data"];
+
+export type GithubFileChange = {
+  filename: GithubPullRequestFile["filename"];
+  status: GithubPullRequestFile["status"];
+  additions: GithubPullRequestFile["additions"];
+  deletions: GithubPullRequestFile["deletions"];
+  changes: GithubPullRequestFile["changes"];
+  previous_filename?: GithubPullRequestFile["previous_filename"];
+  patch?: GithubPullRequestFile["patch"];
+};
+
+export function toGithubFileChange(
+  file: GithubPullRequestFile | GithubComparisonFile,
+): GithubFileChange {
+  return {
+    filename: file.filename,
+    status: file.status,
+    additions: file.additions,
+    deletions: file.deletions,
+    changes: file.changes,
+    previous_filename: file.previous_filename,
+    patch: file.patch,
+  };
+}
+
+export async function fetchComparison(
+  owner: string,
+  repo: string,
+  baseRef: string,
+  headRef: string,
+): Promise<GithubComparison> {
+  try {
+    const octokit = createGitHubClient();
+    const response = await octokit.rest.repos.compareCommitsWithBasehead({
+      owner,
+      repo,
+      basehead: `${baseRef}...${headRef}`,
+      per_page: 100,
+    });
+    return response.data;
+  } catch (error) {
+    throw toGithubApiError(error);
+  }
+}

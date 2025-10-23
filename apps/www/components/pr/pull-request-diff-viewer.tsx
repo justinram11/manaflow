@@ -41,7 +41,7 @@ import "react-diff-view/style/index.css";
 import { api } from "@cmux/convex/api";
 import { useConvexQuery } from "@convex-dev/react-query";
 import type { FunctionReturnType } from "convex/server";
-import type { GithubPullRequestFile } from "@/lib/github/fetch-pull-request";
+import type { GithubFileChange } from "@/lib/github/fetch-pull-request";
 import { cn } from "@/lib/utils";
 import {
   Tooltip,
@@ -59,15 +59,18 @@ import {
 } from "./heatmap";
 
 type PullRequestDiffViewerProps = {
-  files: GithubPullRequestFile[];
+  files: GithubFileChange[];
   teamSlugOrId: string;
   repoFullName: string;
-  prNumber: number;
+  prNumber?: number | null;
+  comparisonSlug?: string | null;
+  jobType?: "pull_request" | "comparison";
   commitRef?: string;
+  baseCommitRef?: string;
 };
 
 type ParsedFileDiff = {
-  file: GithubPullRequestFile;
+  file: GithubFileChange;
   anchorId: string;
   diff: FileData | null;
   error?: string;
@@ -205,9 +208,9 @@ function createRefractorAdapter(base: RefractorLike) {
 
 const refractorAdapter = createRefractorAdapter(refractor);
 
-type FileOutput = FunctionReturnType<
-  typeof api.codeReview.listFileOutputsForPr
->[number];
+type FileOutput =
+  | FunctionReturnType<typeof api.codeReview.listFileOutputsForPr>[number]
+  | FunctionReturnType<typeof api.codeReview.listFileOutputsForComparison>[number];
 
 type HeatmapTooltipMeta = {
   score: number;
@@ -281,7 +284,7 @@ type FileTreeNode = {
   name: string;
   path: string;
   children: FileTreeNode[];
-  file?: GithubPullRequestFile;
+  file?: GithubFileChange;
 };
 
 type FileStatusMeta = {
@@ -291,7 +294,7 @@ type FileStatusMeta = {
 };
 
 function getFileStatusMeta(
-  status: GithubPullRequestFile["status"] | undefined
+  status: GithubFileChange["status"] | undefined
 ): FileStatusMeta {
   const iconClassName = "h-3.5 w-3.5";
 
@@ -341,22 +344,67 @@ export function PullRequestDiffViewer({
   teamSlugOrId,
   repoFullName,
   prNumber,
+  comparisonSlug,
+  jobType,
   commitRef,
+  baseCommitRef,
 }: PullRequestDiffViewerProps) {
-  const fileOutputArgs = useMemo(
-    () => ({
+  const normalizedJobType: "pull_request" | "comparison" =
+    jobType ?? (comparisonSlug ? "comparison" : "pull_request");
+
+  const prQueryArgs = useMemo(
+    () =>
+      normalizedJobType !== "pull_request" || prNumber === null || prNumber === undefined
+        ? ("skip" as const)
+        : {
+            teamSlugOrId,
+            repoFullName,
+            prNumber,
+            ...(commitRef ? { commitRef } : {}),
+            ...(baseCommitRef ? { baseCommitRef } : {}),
+          },
+    [
+      normalizedJobType,
       teamSlugOrId,
       repoFullName,
       prNumber,
-      ...(commitRef ? { commitRef } : {}),
-    }),
-    [teamSlugOrId, repoFullName, prNumber, commitRef]
+      commitRef,
+      baseCommitRef,
+    ]
   );
 
-  const fileOutputs = useConvexQuery(
-    api.codeReview.listFileOutputsForPr,
-    fileOutputArgs
+  const comparisonQueryArgs = useMemo(
+    () =>
+      normalizedJobType !== "comparison" || !comparisonSlug
+        ? ("skip" as const)
+        : {
+            teamSlugOrId,
+            repoFullName,
+            comparisonSlug,
+            ...(commitRef ? { commitRef } : {}),
+            ...(baseCommitRef ? { baseCommitRef } : {}),
+          },
+    [
+      normalizedJobType,
+      teamSlugOrId,
+      repoFullName,
+      comparisonSlug,
+      commitRef,
+      baseCommitRef,
+    ]
   );
+
+  const prFileOutputs = useConvexQuery(
+    api.codeReview.listFileOutputsForPr,
+    prQueryArgs
+  );
+  const comparisonFileOutputs = useConvexQuery(
+    api.codeReview.listFileOutputsForComparison,
+    comparisonQueryArgs
+  );
+
+  const fileOutputs =
+    normalizedJobType === "comparison" ? comparisonFileOutputs : prFileOutputs;
 
   const fileOutputIndex = useMemo(() => {
     if (!fileOutputs) {
@@ -1855,7 +1903,7 @@ function buildChangeKeyIndex(diff: FileData | null): Map<number, string> {
   return map;
 }
 
-function buildDiffText(file: GithubPullRequestFile): string {
+function buildDiffText(file: GithubFileChange): string {
   const oldPath =
     file.status === "added"
       ? "/dev/null"
@@ -1876,7 +1924,7 @@ function buildDiffText(file: GithubPullRequestFile): string {
   ].join("\n");
 }
 
-function buildFileTree(files: GithubPullRequestFile[]): FileTreeNode[] {
+function buildFileTree(files: GithubFileChange[]): FileTreeNode[] {
   const root: FileTreeNode = {
     name: "",
     path: "",

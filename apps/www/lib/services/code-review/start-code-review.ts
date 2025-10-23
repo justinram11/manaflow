@@ -9,13 +9,19 @@ import {
   startAutomatedPrReview,
   type PrReviewJobContext,
 } from "@/src/pr-review";
+import type { ComparisonJobDetails } from "./comparison";
+
+type ComparisonJobPayload = Pick<ComparisonJobDetails, "slug" | "base" | "head">;
 
 type StartCodeReviewPayload = {
   teamSlugOrId?: string;
   githubLink: string;
-  prNumber: number;
+  prNumber?: number;
   commitRef?: string;
+  headCommitRef?: string;
+  baseCommitRef?: string;
   force?: boolean;
+  comparison?: ComparisonJobPayload;
 };
 
 type StartCodeReviewOptions = {
@@ -31,8 +37,10 @@ type StartCodeReviewResult = {
     teamId: string | null;
     repoFullName: string;
     repoUrl: string;
-    prNumber: number;
+    prNumber: number | null;
     commitRef: string;
+    headCommitRef: string;
+    baseCommitRef: string | null;
     requestedByUserId: string;
     state: string;
     createdAt: number;
@@ -43,6 +51,12 @@ type StartCodeReviewResult = {
     errorCode: string | null;
     errorDetail: string | null;
     codeReviewOutput: Record<string, unknown> | null;
+    jobType: "pull_request" | "comparison";
+    comparisonSlug: string | null;
+    comparisonBaseOwner: string | null;
+    comparisonBaseRef: string | null;
+    comparisonHeadOwner: string | null;
+    comparisonHeadRef: string | null;
   };
   deduplicated: boolean;
   backgroundTask: Promise<void> | null;
@@ -66,6 +80,17 @@ export async function startCodeReviewJob({
   payload,
   request,
 }: StartCodeReviewOptions): Promise<StartCodeReviewResult> {
+  const jobType: "pull_request" | "comparison" = payload.comparison
+    ? "comparison"
+    : "pull_request";
+
+  if (jobType === "pull_request" && typeof payload.prNumber !== "number") {
+    throw new Error("prNumber is required for pull request code review jobs");
+  }
+  if (jobType === "comparison" && !payload.comparison) {
+    throw new Error("comparison metadata is required for comparison jobs");
+  }
+
   if (payload.teamSlugOrId) {
     try {
       await verifyTeamAccess({
@@ -88,6 +113,22 @@ export async function startCodeReviewJob({
     });
   }
 
+  const rawHeadCommitRef = payload.headCommitRef ?? payload.commitRef ?? null;
+  const rawBaseCommitRef = payload.baseCommitRef ?? null;
+
+  if (!rawHeadCommitRef) {
+    throw new Error("headCommitRef is required to start a code review");
+  }
+  if (jobType === "pull_request" && !rawBaseCommitRef) {
+    throw new Error("baseCommitRef is required for pull request code reviews");
+  }
+  if (jobType === "comparison" && !rawBaseCommitRef) {
+    throw new Error("baseCommitRef is required for comparison code reviews");
+  }
+
+  const headCommitRef = rawHeadCommitRef;
+  const baseCommitRef = rawBaseCommitRef as string;
+
   const convex = getConvex({ accessToken });
   const callbackToken = randomBytes(32).toString("hex");
   const callbackTokenHash = hashCallbackToken(callbackToken);
@@ -100,9 +141,20 @@ export async function startCodeReviewJob({
     teamSlugOrId: payload.teamSlugOrId,
     githubLink: payload.githubLink,
     prNumber: payload.prNumber,
-    commitRef: payload.commitRef,
+    commitRef: headCommitRef,
+    headCommitRef,
+    baseCommitRef,
     callbackTokenHash,
     force: payload.force,
+    comparison: payload.comparison
+      ? {
+          slug: payload.comparison.slug,
+          baseOwner: payload.comparison.base.owner,
+          baseRef: payload.comparison.base.ref,
+          headOwner: payload.comparison.head.owner,
+          headRef: payload.comparison.head.ref,
+        }
+      : undefined,
   });
 
   if (!reserveResult.wasCreated) {
@@ -110,6 +162,8 @@ export async function startCodeReviewJob({
       jobId: reserveResult.job.jobId,
       repoFullName: reserveResult.job.repoFullName,
       prNumber: reserveResult.job.prNumber,
+      commitRef: reserveResult.job.commitRef,
+      baseCommitRef: reserveResult.job.baseCommitRef,
     });
     return {
       job: normalizeJob(reserveResult.job),
@@ -122,6 +176,8 @@ export async function startCodeReviewJob({
     jobId: reserveResult.job.jobId,
     repoFullName: reserveResult.job.repoFullName,
     prNumber: reserveResult.job.prNumber,
+    commitRef: reserveResult.job.commitRef,
+    baseCommitRef: reserveResult.job.baseCommitRef,
   });
 
   const rawJob = reserveResult.job;
@@ -150,9 +206,10 @@ export async function startCodeReviewJob({
     teamId: job.teamId ?? undefined,
     repoFullName: job.repoFullName,
     repoUrl: job.repoUrl,
-    prNumber: job.prNumber,
+    prNumber: job.prNumber ?? undefined,
     prUrl: payload.githubLink,
     commitRef: job.commitRef,
+    comparison: deriveComparisonContext(job),
     callback: {
       url: callbackUrl,
       token: callbackToken,
@@ -214,5 +271,64 @@ function normalizeJob(job: RawJob): StartCodeReviewResult["job"] {
   return {
     ...job,
     teamId: job.teamId ?? null,
+    prNumber: (job.prNumber as number | undefined) ?? null,
+    headCommitRef:
+      (job.headCommitRef as string | undefined) ??
+      (job.commitRef as string),
+    baseCommitRef:
+      (job.baseCommitRef as string | null | undefined) ?? null,
+    jobType:
+      (job.jobType as StartCodeReviewResult["job"]["jobType"]) ?? "pull_request",
+    comparisonSlug:
+      (job.comparisonSlug as string | null | undefined) ?? null,
+    comparisonBaseOwner:
+      (job.comparisonBaseOwner as string | null | undefined) ?? null,
+    comparisonBaseRef:
+      (job.comparisonBaseRef as string | null | undefined) ?? null,
+    comparisonHeadOwner:
+      (job.comparisonHeadOwner as string | null | undefined) ?? null,
+    comparisonHeadRef:
+      (job.comparisonHeadRef as string | null | undefined) ?? null,
   } as StartCodeReviewResult["job"];
+}
+
+function deriveComparisonContext(
+  job: StartCodeReviewResult["job"]
+): PrReviewJobContext["comparison"] {
+  if (job.jobType !== "comparison") {
+    return undefined;
+  }
+
+  const baseOwner =
+    job.comparisonBaseOwner ??
+    job.repoFullName.split("/")[0] ??
+    undefined;
+  const baseRef = job.comparisonBaseRef ?? undefined;
+  const headOwner =
+    job.comparisonHeadOwner ?? baseOwner ?? undefined;
+  const headRef = job.comparisonHeadRef ?? undefined;
+  const slug = job.comparisonSlug ?? undefined;
+
+  if (!baseOwner || !baseRef || !headOwner || !headRef || !slug) {
+    console.warn(
+      "[code-review] Comparison job missing required fields; skipping comparison context",
+      {
+        jobId: job.jobId,
+        baseOwner,
+        baseRef,
+        headOwner,
+        headRef,
+        slug,
+      }
+    );
+    return undefined;
+  }
+
+  return {
+    slug,
+    baseOwner,
+    baseRef,
+    headOwner,
+    headRef,
+  };
 }
