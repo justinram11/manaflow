@@ -18,6 +18,12 @@ function serializeJob(job: JobDoc) {
     prNumber: job.prNumber,
     commitRef: job.commitRef,
     requestedByUserId: job.requestedByUserId,
+    jobType: job.jobType ?? "pull_request",
+    comparisonSlug: job.comparisonSlug ?? null,
+    comparisonBaseOwner: job.comparisonBaseOwner ?? null,
+    comparisonBaseRef: job.comparisonBaseRef ?? null,
+    comparisonHeadOwner: job.comparisonHeadOwner ?? null,
+    comparisonHeadRef: job.comparisonHeadRef ?? null,
     state: job.state,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
@@ -76,7 +82,8 @@ async function findExistingActiveJob(
   db: MutationCtx["db"],
   teamId: string | undefined,
   repoFullName: string,
-  prNumber: number
+  prNumber: number,
+  jobType: "pull_request" | "comparison"
 ): Promise<JobDoc | null> {
   const job = await db
     .query("automatedCodeReviewJobs")
@@ -88,7 +95,18 @@ async function findExistingActiveJob(
     )
     .order("desc")
     .filter((q) =>
-      q.or(q.eq("state", "pending"), q.eq("state", "running"))
+      jobType === "comparison"
+        ? q.and(
+            q.or(q.eq("state", "pending"), q.eq("state", "running")),
+            q.eq("jobType", "comparison")
+          )
+        : q.and(
+            q.or(q.eq("state", "pending"), q.eq("state", "running")),
+            q.or(
+              q.eq("jobType", "pull_request"),
+              q.eq(q.field("jobType"), undefined)
+            )
+          )
     )
     .first();
 
@@ -116,12 +134,22 @@ export const reserveJob = authMutation({
     commitRef: v.optional(v.string()),
     callbackTokenHash: v.string(),
     force: v.optional(v.boolean()),
+    comparison: v.optional(
+      v.object({
+        slug: v.string(),
+        baseOwner: v.string(),
+        baseRef: v.string(),
+        headOwner: v.string(),
+        headRef: v.string(),
+      })
+    ),
   },
   handler: async (ctx, args) => {
     const { identity } = ctx;
     const { repoFullName, repoUrl } = parseGithubLink(args.githubLink);
     const repoOwner = repoFullName.split("/")[0] ?? "unknown-owner";
     const teamKey = args.teamSlugOrId ?? repoOwner;
+    const jobType = args.comparison ? "comparison" : "pull_request";
 
     let teamId: string;
     try {
@@ -141,13 +169,38 @@ export const reserveJob = authMutation({
       });
     }
 
-    const existing = await findExistingActiveJob(
-      ctx.db,
-      teamId,
-      repoFullName,
-      args.prNumber
-    );
+  let existing = await findExistingActiveJob(
+    ctx.db,
+    teamId,
+    repoFullName,
+    args.prNumber,
+    jobType
+  );
+  if (existing && !existing.jobType) {
+    await ctx.db.patch(existing._id, {
+      jobType: "pull_request",
+    });
+    const refreshed = await ctx.db.get(existing._id);
+    if (refreshed) {
+      existing = refreshed;
+    }
+  }
     if (existing && !args.force) {
+      if (
+        jobType === "comparison" &&
+        args.comparison &&
+        existing.comparisonSlug &&
+        existing.comparisonSlug !== args.comparison.slug
+      ) {
+        console.warn(
+          "[codeReview.reserveJob] Comparison slug mismatch with existing job; proceeding with existing job",
+          {
+            jobId: existing._id,
+            existingSlug: existing.comparisonSlug,
+            requestedSlug: args.comparison.slug,
+          }
+        );
+      }
       console.info("[codeReview.reserveJob] Reusing existing active job", {
         jobId: existing._id,
         repoFullName,
@@ -201,6 +254,12 @@ export const reserveJob = authMutation({
       prNumber: args.prNumber,
       commitRef,
       requestedByUserId: identity.subject,
+      jobType,
+      comparisonSlug: args.comparison?.slug,
+      comparisonBaseOwner: args.comparison?.baseOwner,
+      comparisonBaseRef: args.comparison?.baseRef,
+      comparisonHeadOwner: args.comparison?.headOwner,
+      comparisonHeadRef: args.comparison?.headRef,
       state: "pending",
       createdAt: now,
       updatedAt: now,
@@ -339,6 +398,12 @@ export const upsertFileOutputFromCallback = mutation({
         codexReviewOutput: args.codexReviewOutput,
         commitRef,
         sandboxInstanceId,
+        jobType: job.jobType,
+        comparisonSlug: job.comparisonSlug,
+        comparisonBaseOwner: job.comparisonBaseOwner,
+        comparisonBaseRef: job.comparisonBaseRef,
+        comparisonHeadOwner: job.comparisonHeadOwner,
+        comparisonHeadRef: job.comparisonHeadRef,
         updatedAt: now,
       });
     } else {
@@ -348,6 +413,12 @@ export const upsertFileOutputFromCallback = mutation({
         repoFullName: job.repoFullName,
         prNumber: job.prNumber,
         commitRef,
+        jobType: job.jobType,
+        comparisonSlug: job.comparisonSlug,
+        comparisonBaseOwner: job.comparisonBaseOwner,
+        comparisonBaseRef: job.comparisonBaseRef,
+        comparisonHeadOwner: job.comparisonHeadOwner,
+        comparisonHeadRef: job.comparisonHeadRef,
         sandboxInstanceId,
         filePath: args.filePath,
         codexReviewOutput: args.codexReviewOutput,
@@ -416,6 +487,12 @@ export const completeJobFromCallback = mutation({
       repoUrl: job.repoUrl,
       prNumber: job.prNumber,
       commitRef: job.commitRef,
+      jobType: job.jobType,
+      comparisonSlug: job.comparisonSlug,
+      comparisonBaseOwner: job.comparisonBaseOwner,
+      comparisonBaseRef: job.comparisonBaseRef,
+      comparisonHeadOwner: job.comparisonHeadOwner,
+      comparisonHeadRef: job.comparisonHeadRef,
       sandboxInstanceId,
       codeReviewOutput: args.codeReviewOutput,
       createdAt: now,

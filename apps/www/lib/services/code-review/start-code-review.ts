@@ -9,6 +9,12 @@ import {
   startAutomatedPrReview,
   type PrReviewJobContext,
 } from "@/src/pr-review";
+import type { ComparisonJobDetails } from "./comparison";
+
+type ComparisonJobPayload = Pick<
+  ComparisonJobDetails,
+  "slug" | "base" | "head" | "virtualPrNumber"
+>;
 
 type StartCodeReviewPayload = {
   teamSlugOrId?: string;
@@ -16,6 +22,7 @@ type StartCodeReviewPayload = {
   prNumber: number;
   commitRef?: string;
   force?: boolean;
+  comparison?: ComparisonJobPayload;
 };
 
 type StartCodeReviewOptions = {
@@ -43,6 +50,12 @@ type StartCodeReviewResult = {
     errorCode: string | null;
     errorDetail: string | null;
     codeReviewOutput: Record<string, unknown> | null;
+    jobType: "pull_request" | "comparison";
+    comparisonSlug: string | null;
+    comparisonBaseOwner: string | null;
+    comparisonBaseRef: string | null;
+    comparisonHeadOwner: string | null;
+    comparisonHeadRef: string | null;
   };
   deduplicated: boolean;
   backgroundTask: Promise<void> | null;
@@ -96,6 +109,15 @@ export async function startCodeReviewJob({
     tokenPreview: callbackToken.slice(0, 8),
   });
 
+  if (
+    payload.comparison &&
+    payload.comparison.virtualPrNumber !== payload.prNumber
+  ) {
+    throw new Error(
+      "Comparison virtual PR number does not match provided prNumber"
+    );
+  }
+
   const reserveResult = await convex.mutation(api.codeReview.reserveJob, {
     teamSlugOrId: payload.teamSlugOrId,
     githubLink: payload.githubLink,
@@ -103,6 +125,15 @@ export async function startCodeReviewJob({
     commitRef: payload.commitRef,
     callbackTokenHash,
     force: payload.force,
+    comparison: payload.comparison
+      ? {
+          slug: payload.comparison.slug,
+          baseOwner: payload.comparison.base.owner,
+          baseRef: payload.comparison.base.ref,
+          headOwner: payload.comparison.head.owner,
+          headRef: payload.comparison.head.ref,
+        }
+      : undefined,
   });
 
   if (!reserveResult.wasCreated) {
@@ -153,6 +184,7 @@ export async function startCodeReviewJob({
     prNumber: job.prNumber,
     prUrl: payload.githubLink,
     commitRef: job.commitRef,
+    comparison: deriveComparisonContext(job),
     callback: {
       url: callbackUrl,
       token: callbackToken,
@@ -214,5 +246,58 @@ function normalizeJob(job: RawJob): StartCodeReviewResult["job"] {
   return {
     ...job,
     teamId: job.teamId ?? null,
+    jobType:
+      (job.jobType as StartCodeReviewResult["job"]["jobType"]) ?? "pull_request",
+    comparisonSlug:
+      (job.comparisonSlug as string | null | undefined) ?? null,
+    comparisonBaseOwner:
+      (job.comparisonBaseOwner as string | null | undefined) ?? null,
+    comparisonBaseRef:
+      (job.comparisonBaseRef as string | null | undefined) ?? null,
+    comparisonHeadOwner:
+      (job.comparisonHeadOwner as string | null | undefined) ?? null,
+    comparisonHeadRef:
+      (job.comparisonHeadRef as string | null | undefined) ?? null,
   } as StartCodeReviewResult["job"];
+}
+
+function deriveComparisonContext(
+  job: StartCodeReviewResult["job"]
+): PrReviewJobContext["comparison"] {
+  if (job.jobType !== "comparison") {
+    return undefined;
+  }
+
+  const baseOwner =
+    job.comparisonBaseOwner ??
+    job.repoFullName.split("/")[0] ??
+    undefined;
+  const baseRef = job.comparisonBaseRef ?? undefined;
+  const headOwner =
+    job.comparisonHeadOwner ?? baseOwner ?? undefined;
+  const headRef = job.comparisonHeadRef ?? undefined;
+  const slug = job.comparisonSlug ?? undefined;
+
+  if (!baseOwner || !baseRef || !headOwner || !headRef || !slug) {
+    console.warn(
+      "[code-review] Comparison job missing required fields; skipping comparison context",
+      {
+        jobId: job.jobId,
+        baseOwner,
+        baseRef,
+        headOwner,
+        headRef,
+        slug,
+      }
+    );
+    return undefined;
+  }
+
+  return {
+    slug,
+    baseOwner,
+    baseRef,
+    headOwner,
+    headRef,
+  };
 }

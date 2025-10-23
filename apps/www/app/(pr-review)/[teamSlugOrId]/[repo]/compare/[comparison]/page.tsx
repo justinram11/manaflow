@@ -1,6 +1,7 @@
 import { Suspense, use } from "react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { waitUntil } from "@vercel/functions";
 import { type Team } from "@stackframe/stack";
 
 import {
@@ -20,6 +21,14 @@ import {
 import { isGithubApiError } from "@/lib/github/errors";
 import { cn } from "@/lib/utils";
 import { stackServerApp } from "@/lib/utils/stack";
+import {
+  getConvexHttpActionBaseUrl,
+  startCodeReviewJob,
+} from "@/lib/services/code-review/start-code-review";
+import {
+  buildComparisonJobDetails,
+} from "@/lib/services/code-review/comparison";
+import type { ComparisonJobDetails } from "@/lib/services/code-review/comparison";
 
 type PageParams = {
   teamSlugOrId: string;
@@ -118,6 +127,13 @@ export default async function ComparisonPage({ params }: PageProps) {
     notFound();
   }
 
+  const comparisonDetails = buildComparisonJobDetails({
+    repoOwner: githubOwner,
+    repoName: repo,
+    baseRef: refs.base,
+    headRef: refs.head,
+  });
+
   const comparisonPromise = fetchComparison(
     githubOwner,
     repo,
@@ -127,6 +143,12 @@ export default async function ComparisonPage({ params }: PageProps) {
   const comparisonFilesPromise: Promise<GithubFileChange[]> = comparisonPromise
     .then((data) => data.files ?? [])
     .then((files) => files.map(toGithubFileChange));
+
+  scheduleComparisonCodeReviewStart({
+    teamSlugOrId: selectedTeam.id,
+    comparisonPromise,
+    comparisonDetails,
+  });
 
   return (
     <div className="min-h-dvh bg-neutral-50 text-neutral-900">
@@ -149,6 +171,7 @@ export default async function ComparisonPage({ params }: PageProps) {
             githubOwner={githubOwner}
             repo={repo}
             teamSlugOrId={selectedTeam.id}
+            comparisonDetails={comparisonDetails}
           />
         </Suspense>
       </div>
@@ -319,12 +342,14 @@ function ComparisonDiffSection({
   githubOwner,
   repo,
   teamSlugOrId,
+  comparisonDetails,
 }: {
   filesPromise: ComparisonFilesPromise;
   comparisonPromise: ComparisonPromise;
   githubOwner: string;
   repo: string;
   teamSlugOrId: string;
+  comparisonDetails: ComparisonJobDetails;
 }) {
   try {
     const files = use(filesPromise);
@@ -343,7 +368,7 @@ function ComparisonDiffSection({
         deletions={totals.deletions}
         teamSlugOrId={teamSlugOrId}
         repoFullName={repoFullName}
-        pullNumber={null}
+        pullNumber={comparisonDetails.virtualPrNumber}
         commitRef={commitRef}
       />
     );
@@ -365,6 +390,83 @@ function ComparisonDiffSection({
 
     throw error;
   }
+}
+
+function scheduleComparisonCodeReviewStart({
+  teamSlugOrId,
+  comparisonPromise,
+  comparisonDetails,
+}: {
+  teamSlugOrId: string;
+  comparisonPromise: ComparisonPromise;
+  comparisonDetails: ComparisonJobDetails;
+}): void {
+  waitUntil(
+    (async () => {
+      try {
+        const comparison = await comparisonPromise;
+        const commits = comparison.commits ?? [];
+        const headCommit =
+          commits.length > 0 ? commits[commits.length - 1] : null;
+        const commitRef = headCommit?.sha ?? undefined;
+
+        const callbackBaseUrl = getConvexHttpActionBaseUrl();
+        if (!callbackBaseUrl) {
+          console.error(
+            "[code-review] Convex HTTP base URL is not configured for compare view"
+          );
+          return;
+        }
+
+        const user = await stackServerApp.getUser({ or: "return-null" });
+        if (!user) {
+          return;
+        }
+
+        const { accessToken } = await user.getAuthJson();
+        if (!accessToken) {
+          return;
+        }
+
+        const githubLink =
+          comparison.html_url ??
+          comparison.permalink_url ??
+          comparisonDetails.compareUrl;
+
+        const { backgroundTask } = await startCodeReviewJob({
+          accessToken,
+          callbackBaseUrl,
+          payload: {
+            teamSlugOrId,
+            githubLink,
+            prNumber: comparisonDetails.virtualPrNumber,
+            commitRef,
+            force: false,
+            comparison: {
+              slug: comparisonDetails.slug,
+              base: comparisonDetails.base,
+              head: comparisonDetails.head,
+              virtualPrNumber: comparisonDetails.virtualPrNumber,
+            },
+          },
+        });
+
+        if (backgroundTask) {
+          await backgroundTask;
+        }
+      } catch (error) {
+        console.error(
+          "[code-review] Skipping auto-start due to comparison fetch error",
+          {
+            teamSlugOrId,
+            repoFullName: comparisonDetails.repoFullName,
+            comparisonSlug: comparisonDetails.slug,
+          },
+          error
+        );
+      }
+    })()
+  );
 }
 
 function ComparisonHeaderSkeleton() {

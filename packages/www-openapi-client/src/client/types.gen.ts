@@ -532,6 +532,12 @@ export type CodeReviewStartResponse = {
         repoUrl: string;
         prNumber: number;
         commitRef: string;
+        jobType: 'pull_request' | 'comparison';
+        comparisonSlug: string | null;
+        comparisonBaseOwner: string | null;
+        comparisonBaseRef: string | null;
+        comparisonHeadOwner: string | null;
+        comparisonHeadRef: string | null;
         requestedByUserId: string;
         state: 'pending' | 'running' | 'completed' | 'failed';
         createdAt: number;
@@ -554,6 +560,22 @@ export type CodeReviewStartBody = {
     prNumber: number;
     commitRef?: string;
     force?: boolean;
+    comparison?: {
+        slug: string;
+        base: {
+            owner: string;
+            repo: string;
+            ref: string;
+            label: string;
+        };
+        head: {
+            owner: string;
+            repo: string;
+            ref: string;
+            label: string;
+        };
+        virtualPrNumber: number;
+    };
 };
 
 export type GetApiHealthData = {

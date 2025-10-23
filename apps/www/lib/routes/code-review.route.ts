@@ -14,6 +14,12 @@ const CodeReviewJobSchema = z.object({
   repoUrl: z.string(),
   prNumber: z.number(),
   commitRef: z.string(),
+  jobType: z.enum(["pull_request", "comparison"]),
+  comparisonSlug: z.string().nullable(),
+  comparisonBaseOwner: z.string().nullable(),
+  comparisonBaseRef: z.string().nullable(),
+  comparisonHeadOwner: z.string().nullable(),
+  comparisonHeadRef: z.string().nullable(),
   requestedByUserId: z.string(),
   state: z.enum(CODE_REVIEW_STATES),
   createdAt: z.number(),
@@ -33,6 +39,24 @@ const StartBodySchema = z
     prNumber: z.number().int().positive(),
     commitRef: z.string().optional(),
     force: z.boolean().optional(),
+    comparison: z
+      .object({
+        slug: z.string(),
+        base: z.object({
+          owner: z.string(),
+          repo: z.string(),
+          ref: z.string(),
+          label: z.string(),
+        }),
+        head: z.object({
+          owner: z.string(),
+          repo: z.string(),
+          ref: z.string(),
+          label: z.string(),
+        }),
+        virtualPrNumber: z.number().int().positive(),
+      })
+      .optional(),
   })
   .openapi("CodeReviewStartBody");
 
@@ -100,6 +124,14 @@ codeReviewRouter.openapi(
         prNumber: body.prNumber,
         commitRef: body.commitRef,
         force: body.force,
+        comparison: body.comparison
+          ? {
+              slug: body.comparison.slug,
+              base: body.comparison.base,
+              head: body.comparison.head,
+              virtualPrNumber: body.comparison.virtualPrNumber,
+            }
+          : undefined,
       },
       request: c.req.raw,
     });
