@@ -137,6 +137,80 @@ async function findExistingActiveJob(
   return job ?? null;
 }
 
+async function findLatestCompletedJob(
+  db: MutationCtx["db"],
+  teamId: string | undefined,
+  repoFullName: string,
+  jobType: "pull_request" | "comparison",
+  options: {
+    prNumber?: number;
+    comparisonSlug?: string;
+  }
+): Promise<JobDoc | null> {
+  if (jobType === "comparison") {
+    if (!options.comparisonSlug) {
+      return null;
+    }
+    const completed = await db
+      .query("automatedCodeReviewJobs")
+      .withIndex("by_team_repo_comparison_updated", (q) =>
+        q
+          .eq("teamId", teamId ?? undefined)
+          .eq("repoFullName", repoFullName)
+          .eq("comparisonSlug", options.comparisonSlug)
+      )
+      .order("desc")
+      .filter((q) => q.eq("state", "completed"))
+      .first();
+    return completed ?? null;
+  }
+
+  if (!options.prNumber) {
+    return null;
+  }
+
+  const completed = await db
+    .query("automatedCodeReviewJobs")
+    .withIndex("by_team_repo_pr_updated", (q) =>
+      q
+        .eq("teamId", teamId ?? undefined)
+        .eq("repoFullName", repoFullName)
+        .eq("prNumber", options.prNumber)
+    )
+    .order("desc")
+    .filter((q) => q.eq("state", "completed"))
+    .first();
+  return completed ?? null;
+}
+
+async function findComparisonJobByCommit(
+  db: MutationCtx["db"],
+  repoFullName: string,
+  comparisonSlug: string,
+  commitRef: string,
+  teamId: string | undefined
+): Promise<JobDoc | null> {
+  const candidates = await db
+    .query("automatedCodeReviewJobs")
+    .withIndex("by_repo_comparison_commit", (q) =>
+      q
+        .eq("repoFullName", repoFullName)
+        .eq("comparisonSlug", comparisonSlug)
+        .eq("commitRef", commitRef)
+    )
+    .order("desc")
+    .take(10);
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const normalizedTeamId = teamId ?? null;
+  return (
+    candidates.find((job) => (job.teamId ?? null) === normalizedTeamId) ?? null
+  );
+}
+
 async function schedulePauseMorphInstance(
   ctx: MutationCtx,
   sandboxInstanceId: string
@@ -277,6 +351,126 @@ export const reserveJob = authMutation({
         "unknown";
     } else {
       commitRef = args.commitRef ?? "unknown";
+    }
+
+    if (jobType === "comparison" && args.comparison && !args.force) {
+      if (commitRef !== "unknown") {
+        const matchingComparisonJob = await findComparisonJobByCommit(
+          ctx.db,
+          repoFullName,
+          args.comparison.slug,
+          commitRef,
+          teamId
+        );
+
+        if (matchingComparisonJob) {
+          if (
+            matchingComparisonJob.state === "completed" ||
+            matchingComparisonJob.state === "pending" ||
+            matchingComparisonJob.state === "running"
+          ) {
+            console.info("[codeReview.reserveJob] Reusing comparison job by commit", {
+              jobId: matchingComparisonJob._id,
+              repoFullName,
+              comparisonSlug: args.comparison.slug,
+              commitRef,
+              state: matchingComparisonJob.state,
+            });
+            return {
+              wasCreated: false as const,
+              job: serializeJob(matchingComparisonJob),
+            };
+          }
+        }
+      }
+    }
+
+    if (jobType === "pull_request") {
+      const latestCompleted = await findLatestCompletedJob(
+        ctx.db,
+        teamId,
+        repoFullName,
+        jobType,
+        {
+          prNumber: args.prNumber ?? undefined,
+        }
+      );
+
+      if (!latestCompleted) {
+        console.info("[codeReview.reserveJob] No completed job found", {
+          repoFullName,
+          jobType,
+          prNumber: args.prNumber ?? null,
+          comparisonSlug: null,
+        });
+      }
+
+      if (
+        latestCompleted &&
+        latestCompleted.commitRef === commitRef &&
+        !args.force
+      ) {
+        console.info("[codeReview.reserveJob] Skipping job; commit unchanged", {
+          repoFullName,
+          jobType,
+          prNumber: args.prNumber ?? null,
+          comparisonSlug: null,
+          commitRef,
+        });
+        return {
+          wasCreated: false as const,
+          job: serializeJob(latestCompleted),
+        };
+      }
+      if (latestCompleted) {
+        console.info("[codeReview.reserveJob] Latest completed job found", {
+          repoFullName,
+          jobType,
+          prNumber: args.prNumber ?? null,
+          comparisonSlug: null,
+          latestCommitRef: latestCompleted.commitRef,
+          requestedCommitRef: commitRef,
+          matches: latestCompleted.commitRef === commitRef,
+        });
+      }
+    } else if (jobType === "comparison" && args.comparison && !args.force) {
+      const latestCompleted = await findLatestCompletedJob(
+        ctx.db,
+        teamId,
+        repoFullName,
+        jobType,
+        {
+          comparisonSlug: args.comparison.slug,
+        }
+      );
+
+      if (!latestCompleted) {
+        console.info("[codeReview.reserveJob] No completed job found", {
+          repoFullName,
+          jobType,
+          comparisonSlug: args.comparison.slug,
+          prNumber: null,
+        });
+      } else if (latestCompleted.commitRef === commitRef) {
+        console.info("[codeReview.reserveJob] Reusing latest completed comparison job", {
+          jobId: latestCompleted._id,
+          repoFullName,
+          comparisonSlug: args.comparison.slug,
+          commitRef,
+        });
+        return {
+          wasCreated: false as const,
+          job: serializeJob(latestCompleted),
+        };
+      } else {
+        console.info("[codeReview.reserveJob] Latest completed comparison differs", {
+          jobId: latestCompleted._id,
+          repoFullName,
+          comparisonSlug: args.comparison.slug,
+          latestCommitRef: latestCompleted.commitRef,
+          requestedCommitRef: commitRef,
+        });
+      }
     }
 
     const now = Date.now();

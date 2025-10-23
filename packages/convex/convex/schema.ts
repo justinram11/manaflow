@@ -326,6 +326,12 @@ const convexSchema = defineSchema({
       "comparisonSlug",
       "updatedAt",
     ])
+    .index("by_repo_comparison_commit", [
+      "repoFullName",
+      "comparisonSlug",
+      "commitRef",
+      "updatedAt",
+    ])
     .index("by_state_updated", ["state", "updatedAt"])
     .index("by_team_created", ["teamId", "createdAt"]),
 
