@@ -416,7 +416,7 @@ jobs:
           bunx electron-builder \
             --config electron-builder.json \
             --mac dmg zip \
-            --arch universal \
+            --universal \
             --publish never \
             --config.mac.forceCodeSigning=true \
             --config.mac.entitlements="$ENTITLEMENTS" \
