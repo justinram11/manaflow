@@ -214,7 +214,7 @@ jobs:
     name: macOS arm64
     needs: prepare-release
     environment: electron
-    runs-on: self-hosted
+    runs-on: cmuxs-Mac-mini-2
     defaults:
       run:
         working-directory: ./
@@ -318,7 +318,7 @@ jobs:
     name: macOS universal
     needs: prepare-release
     environment: electron
-    runs-on: self-hosted
+    runs-on: cmuxs-Mac-mini
     defaults:
       run:
         working-directory: ./
