@@ -13,6 +13,7 @@ import {
   StartTaskSchema,
   CreateLocalWorkspaceSchema,
   type CreateLocalWorkspaceResponse,
+  generateWorkspaceName,
   type AvailableEditors,
   type FileInfo,
   isLoopbackHostname,
@@ -78,6 +79,42 @@ const GitSocketDiffRequestSchema = z.object({
 const IframePreflightRequestSchema = z.object({
   url: z.string().url(),
 });
+
+function deriveRepoBaseName({
+  projectFullName,
+  repoUrl,
+}: {
+  projectFullName?: string;
+  repoUrl?: string;
+}): string | undefined {
+  if (projectFullName) {
+    const split = splitRepoFullName(projectFullName);
+    if (split) {
+      return split.repo;
+    }
+  }
+
+  if (repoUrl) {
+    const trimmed = repoUrl.trim();
+    if (trimmed) {
+      try {
+        const parsed = new URL(trimmed);
+        const segments = parsed.pathname.split("/").filter(Boolean);
+        if (segments.length > 0) {
+          const lastSegment = segments[segments.length - 1];
+          return lastSegment.replace(/\.git$/i, "");
+        }
+      } catch {
+        const fallbackMatch = trimmed.match(/([^/]+)\/([^/]+?)(?:\.git)?$/i);
+        if (fallbackMatch) {
+          return fallbackMatch[2];
+        }
+      }
+    }
+  }
+
+  return undefined;
+}
 
 export function setupSocketHandlers(
   rt: RealtimeServer,
@@ -622,20 +659,24 @@ export function setupSocketHandlers(
           (projectFullName
             ? `https://github.com/${projectFullName}.git`
             : undefined);
+        const repoName = deriveRepoBaseName({ projectFullName, repoUrl });
 
         try {
-          const { name: workspaceName } = await getConvex().mutation(
+          const { sequence } = await getConvex().mutation(
             api.localWorkspaces.reserve,
             {
               teamSlugOrId,
             },
           );
+          const workspaceName = generateWorkspaceName({
+            repoName,
+            sequence,
+          });
 
           const workspaceRoot = process.env.CMUX_WORKSPACE_DIR
             ? path.resolve(process.env.CMUX_WORKSPACE_DIR)
             : path.join(os.homedir(), "cmux", "local-workspaces");
-          const workspaceDirName = `workspace-${workspaceName}`;
-          const workspacePath = path.join(workspaceRoot, workspaceDirName);
+          const workspacePath = path.join(workspaceRoot, workspaceName);
 
           await fs.mkdir(workspaceRoot, { recursive: true });
           try {
@@ -701,7 +742,7 @@ export function setupSocketHandlers(
           });
 
           const folderParam = process.env.CMUX_WORKSPACE_DIR
-            ? `/$CMUX_WORKSPACE_DIR/${workspaceDirName}`
+            ? `/$CMUX_WORKSPACE_DIR/${workspaceName}`
             : workspacePath;
           const folderForUrl = folderParam.replace(/\\/g, "/");
           const workspaceUrl = `http://localhost:39384/?folder=${encodeURIComponent(

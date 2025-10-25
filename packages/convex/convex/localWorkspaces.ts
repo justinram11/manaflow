@@ -20,7 +20,7 @@ export const reserve = authMutation({
 
     const now = Date.now();
     const sequence = existing?.nextLocalWorkspaceSequence ?? 0;
-    const name = workspaceSequenceToName(sequence);
+    const suffix = workspaceSequenceToName(sequence);
 
     if (existing) {
       await ctx.db.patch(existing._id, {
@@ -39,6 +39,6 @@ export const reserve = authMutation({
       });
     }
 
-    return { name, sequence };
+    return { suffix, sequence };
   },
 });

@@ -112,6 +112,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   >("root");
   const [isCreatingLocalWorkspace, setIsCreatingLocalWorkspace] =
     useState(false);
+  const [selectedValue, setSelectedValue] = useState<string | null>(null);
   const openRef = useRef<boolean>(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   // Used only in non-Electron fallback
@@ -138,6 +139,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     setSearch("");
     setOpenedWithShift(false);
     setActivePage("root");
+    setSelectedValue(null);
   }, [setOpen, setSearch, setOpenedWithShift, setActivePage]);
 
   const stackUser = useUser({ or: "return-null" });
@@ -262,6 +264,39 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   useEffect(() => {
     openRef.current = open;
   }, [open]);
+
+  useEffect(() => {
+    if (!open) {
+      setSelectedValue(null);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (activePage !== "local-workspaces") {
+      setSelectedValue((current) => (current === null ? current : null));
+      return;
+    }
+
+    if (localWorkspaceOptions.length === 0) {
+      return;
+    }
+
+    setSelectedValue((current) => {
+      if (current?.startsWith("local-workspace:")) {
+        return current;
+      }
+      return `local-workspace:${localWorkspaceOptions[0].fullName}`;
+    });
+  }, [activePage, localWorkspaceOptions]);
+
+  const handleCommandValueChange = useCallback(
+    (value: string) => {
+      if (activePage === "local-workspaces") {
+        setSelectedValue(value);
+      }
+    },
+    [activePage],
+  );
 
   const createLocalWorkspace = useCallback(
     async (projectFullName: string) => {
@@ -766,6 +801,12 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         label="Command Menu"
         title="Command Menu"
         loop
+        value={
+          activePage === "local-workspaces"
+            ? selectedValue ?? undefined
+            : undefined
+        }
+        onValueChange={handleCommandValueChange}
         className="fixed inset-0 z-[var(--z-commandbar)] flex items-start justify-center pt-[20vh] pointer-events-none"
         onKeyDown={(e) => {
           if (e.key === "Escape") {
