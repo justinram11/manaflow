@@ -199,7 +199,7 @@ function TaskTreeInner({
 
   const handleCopyDescription = useCallback(() => {
     if (navigator?.clipboard?.writeText) {
-      navigator.clipboard.writeText(task.text).catch(() => { });
+      navigator.clipboard.writeText(task.text).catch(() => {});
     }
   }, [task.text]);
 
@@ -223,6 +223,7 @@ function TaskTreeInner({
 
   const canExpand = true;
   const isCrownEvaluating = task.crownEvaluationStatus === "in_progress";
+  const isLocalWorkspace = task.isLocalWorkspace;
 
   const taskLeadingIcon = (() => {
     if (isCrownEvaluating) {
@@ -307,6 +308,10 @@ function TaskTreeInner({
         default:
           return null;
       }
+    }
+
+    if (isLocalWorkspace) {
+      return null;
     }
 
     return task.isCompleted ? (
@@ -559,7 +564,11 @@ function TaskRunTreeInner({
   const hasExpandedManually = useRef<Id<"taskRuns"> | null>(null);
 
   useEffect(() => {
-    if (isRunSelected && !isExpanded && hasExpandedManually.current !== run._id) {
+    if (
+      isRunSelected &&
+      !isExpanded &&
+      hasExpandedManually.current !== run._id
+    ) {
       setRunExpanded(run._id, true);
     }
   }, [isExpanded, isRunSelected, run._id, setRunExpanded]);
@@ -585,6 +594,8 @@ function TaskRunTreeInner({
     [isExpanded, run._id, setRunExpanded]
   );
 
+  const isLocalWorkspaceRunEntry = run.isLocalWorkspace;
+
   const statusIcon = {
     pending: <Circle className="w-3 h-3 text-neutral-400" />,
     running: <Loader2 className="w-3 h-3 text-blue-500 animate-spin" />,
@@ -592,10 +603,16 @@ function TaskRunTreeInner({
     failed: <XCircle className="w-3 h-3 text-red-500" />,
   }[run.status];
 
+  const shouldHideStatusIcon =
+    isLocalWorkspaceRunEntry && run.status !== "failed";
+  const resolvedStatusIcon = shouldHideStatusIcon ? null : statusIcon;
+
   const runLeadingIcon =
     run.status === "failed" && run.errorMessage ? (
       <Tooltip>
-        <TooltipTrigger asChild>{statusIcon}</TooltipTrigger>
+        <TooltipTrigger asChild>
+          {resolvedStatusIcon ?? statusIcon}
+        </TooltipTrigger>
         <TooltipContent
           side="right"
           className="max-w-xs whitespace-pre-wrap break-words"
@@ -604,7 +621,7 @@ function TaskRunTreeInner({
         </TooltipContent>
       </Tooltip>
     ) : (
-      statusIcon
+      resolvedStatusIcon
     );
 
   const crownIcon = run.isCrowned ? (
@@ -669,7 +686,7 @@ function TaskRunTreeInner({
   const shouldRenderTerminalLink = shouldRenderBrowserLink;
   const shouldRenderPullRequestLink = Boolean(
     (run.pullRequestUrl && run.pullRequestUrl !== "pending") ||
-    run.pullRequests?.some((pr) => pr.url)
+      run.pullRequests?.some((pr) => pr.url)
   );
   const shouldRenderPreviewLink = previewServices.length > 0;
   const hasOpenWithActions = openWithActions.length > 0;

@@ -26,7 +26,7 @@
     "lint": "eslint .",
     "preview": "vite preview --port 5173",
     "preview:electron": "electron-vite preview -c electron.vite.config.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "bun run ./scripts/typecheck-parallel.ts",
     "generate-routes": "tsr generate",
     "test": "vitest run"
   },

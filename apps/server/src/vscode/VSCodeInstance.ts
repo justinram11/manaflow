@@ -1,4 +1,4 @@
-import { Id } from "@cmux/convex/dataModel";
+import type { Id } from "@cmux/convex/dataModel";
 import { connectToWorkerManagement } from "@cmux/shared/socket";
 import { EventEmitter } from "node:events";
 import { dockerLogger } from "../utils/fileLogger";

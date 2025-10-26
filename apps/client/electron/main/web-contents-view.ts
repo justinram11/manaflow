@@ -2,8 +2,6 @@ import {
   BrowserWindow,
   WebContentsView,
   ipcMain,
-  type OnCompletedListener,
-  type OnDidGetResponseDetailsListener,
   type Rectangle,
   type Session,
   type WebContents,
@@ -103,11 +101,13 @@ function buildErrorUrl(params: {
   if (params.type === "navigation") {
     if (params.code !== undefined)
       url.searchParams.set("code", String(params.code));
-    if (params.description) url.searchParams.set("description", params.description);
+    if (params.description)
+      url.searchParams.set("description", params.description);
   } else if (params.type === "http") {
     if (params.statusCode !== undefined)
       url.searchParams.set("statusCode", String(params.statusCode));
-    if (params.statusText) url.searchParams.set("statusText", params.statusText);
+    if (params.statusText)
+      url.searchParams.set("statusText", params.statusText);
   }
   return url.toString();
 }
@@ -115,7 +115,7 @@ function buildErrorUrl(params: {
 function sendEventToOwner(
   entry: Entry,
   payload: ElectronWebContentsEvent,
-  logger: Logger,
+  logger: Logger
 ) {
   logger.log("Forwarding WebContentsView event", {
     id: entry.id,
@@ -195,7 +195,7 @@ function setupEventForwarders(entry: Entry, logger: Logger) {
     _event: Electron.Event,
     url: string,
     httpResponseCode: number,
-    httpStatusText: string,
+    httpStatusText: string
   ) => {
     // Check for HTTP errors (4xx, 5xx)
     if (httpResponseCode >= 400) {
@@ -258,7 +258,7 @@ function setupEventForwarders(entry: Entry, logger: Logger) {
     errorCode: number,
     errorDescription: string,
     validatedURL: string,
-    isMainFrame: boolean,
+    isMainFrame: boolean
   ) => {
     if (isMainFrame) {
       const errorUrl = buildErrorUrl({
@@ -282,33 +282,6 @@ function setupEventForwarders(entry: Entry, logger: Logger) {
     webContents.removeListener("did-fail-load", onDidFailLoad);
   });
 
-  const onDidGetResponseDetails: OnDidGetResponseDetailsListener = (
-    _event,
-    _status,
-    newURL,
-    _originalURL,
-    httpResponseCode,
-    _requestMethod,
-    _referrer,
-    _responseHeaders,
-    resourceType,
-  ) => {
-    logger.log("did-get-response-details", {
-      id: entry.id,
-      url: newURL,
-      httpResponseCode,
-      resourceType,
-    });
-    // Error handling is done in onDidNavigate
-  };
-  webContents.on("did-get-response-details", onDidGetResponseDetails);
-  cleanup.push(() => {
-    webContents.removeListener(
-      "did-get-response-details",
-      onDidGetResponseDetails,
-    );
-  });
-
   entry.eventCleanup = cleanup;
   sendState(entry, logger, "initialized");
 }
@@ -317,13 +290,10 @@ const registeredSessions = new WeakSet<Session>();
 
 function ensureWebRequestListener(targetSession: Session, _logger: Logger) {
   if (registeredSessions.has(targetSession)) return;
-  const listener: OnCompletedListener = () => {
+  const listener = () => {
     // Error handling is done in onDidNavigate
   };
-  targetSession.webRequest.onCompleted(
-    { urls: ["*://*/*"] },
-    listener as OnCompletedListener,
-  );
+  targetSession.webRequest.onCompleted({ urls: ["*://*/*"] }, listener);
   registeredSessions.add(targetSession);
 }
 
@@ -399,7 +369,7 @@ function evictExcessSuspended(logger: Logger) {
 function suspendEntriesForDestroyedOwner(
   windowId: number,
   webContentsId: number,
-  logger: Logger,
+  logger: Logger
 ) {
   logger.log("Renderer destroyed; evaluating owned WebContentsViews", {
     windowId,
@@ -420,7 +390,7 @@ function suspendEntriesForDestroyedOwner(
         {
           id: entry.id,
           webContentsId: entry.view.webContents.id,
-        },
+        }
       );
       destroyView(entry.id);
       suspendedAny = true;
@@ -501,7 +471,7 @@ function destroyView(id: number): boolean {
 function destroyConflictingEntries(
   persistKey: string,
   windowId: number,
-  logger: Logger,
+  logger: Logger
 ): void {
   for (const entry of Array.from(viewEntries.values())) {
     if (entry.persistKey !== persistKey) {
@@ -539,7 +509,7 @@ function evaluateVisibility(bounds: Rectangle, explicit?: boolean): boolean {
 
 function applyBackgroundColor(
   view: Electron.WebContentsView,
-  color: string | undefined,
+  color: string | undefined
 ) {
   if (!color) return;
   try {
@@ -551,7 +521,7 @@ function applyBackgroundColor(
 
 function applyBorderRadius(
   view: Electron.WebContentsView,
-  radius: number | undefined,
+  radius: number | undefined
 ) {
   if (typeof radius !== "number" || Number.isNaN(radius)) return;
   const safe = Math.max(0, Math.round(radius));
@@ -615,7 +585,7 @@ export function registerWebContentsViewHandlers({
             } catch (error) {
               logger.error(
                 "Failed to reattach suspended WebContentsView",
-                error,
+                error
               );
               destroyView(candidate.id);
               throw error;
@@ -632,7 +602,7 @@ export function registerWebContentsViewHandlers({
                 {
                   error,
                   id: candidate.id,
-                },
+                }
               );
             }
 
@@ -683,13 +653,16 @@ export function registerWebContentsViewHandlers({
           }
 
           if (candidate && sameWindow && !(sameSender || canAdopt)) {
-            logger.warn("Unable to reattach WebContentsView despite matching persistKey", {
-              persistKey,
-              candidateId: candidate.id,
-              candidateOwnerWebContentsId: candidate.ownerWebContentsId,
-              requestWebContentsId: sender.id,
-              ownerDestroyed: candidate.ownerWebContentsDestroyed,
-            });
+            logger.warn(
+              "Unable to reattach WebContentsView despite matching persistKey",
+              {
+                persistKey,
+                candidateId: candidate.id,
+                candidateOwnerWebContentsId: candidate.ownerWebContentsId,
+                requestWebContentsId: sender.id,
+                ownerDestroyed: candidate.ownerWebContentsDestroyed,
+              }
+            );
           }
 
           destroyConflictingEntries(persistKey, win.id, logger);
@@ -721,7 +694,7 @@ export function registerWebContentsViewHandlers({
         } catch (error) {
           logger.warn(
             "Failed to set initial bounds for WebContentsView",
-            error,
+            error
           );
         }
 
@@ -730,7 +703,7 @@ export function registerWebContentsViewHandlers({
           logger.warn("WebContentsView initial load failed", {
             url: finalUrl,
             error,
-          }),
+          })
         );
 
         const id = nextViewId++;
@@ -777,7 +750,7 @@ export function registerWebContentsViewHandlers({
         logger.error("webcontents-view:create failed", error);
         throw error;
       }
-    },
+    }
   );
 
   ipcMain.handle(
@@ -802,7 +775,7 @@ export function registerWebContentsViewHandlers({
         entry.view.setVisible(false);
         return { ok: false, error: String(error) };
       }
-    },
+    }
   );
 
   ipcMain.handle(
@@ -829,7 +802,7 @@ export function registerWebContentsViewHandlers({
         logger.warn("Failed to load URL", { id, url, error });
         return { ok: false, error: String(error) };
       }
-    },
+    }
   );
 
   ipcMain.handle("cmux:webcontents:go-back", (event, id: number) => {
@@ -951,7 +924,7 @@ export function registerWebContentsViewHandlers({
       evictExcessSuspended(logger);
 
       return { ok: true, suspended: true };
-    },
+    }
   );
 
   ipcMain.handle("cmux:webcontents:destroy", (event, id: number) => {
@@ -985,7 +958,7 @@ export function registerWebContentsViewHandlers({
       applyBackgroundColor(entry.view, backgroundColor);
       applyBorderRadius(entry.view, borderRadius);
       return { ok: true };
-    },
+    }
   );
 
   ipcMain.handle("cmux:webcontents:get-state", (event, id: number) => {
@@ -1082,7 +1055,7 @@ export function registerWebContentsViewHandlers({
         });
         return { ok: false, error: String(error) };
       }
-    },
+    }
   );
 
   ipcMain.handle("cmux:webcontents:close-devtools", (event, id: number) => {
@@ -1108,7 +1081,7 @@ export function registerWebContentsViewHandlers({
 }
 
 export function getWebContentsLayoutSnapshot(
-  id: number,
+  id: number
 ): WebContentsLayoutActualState | null {
   const entry = viewEntries.get(id);
   if (!entry) return null;
