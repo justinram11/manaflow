@@ -210,109 +210,109 @@ jobs:
   #           fi
   #         done
 
-  # mac-arm64:
-  #   name: macOS arm64
-  #   needs: prepare-release
-  #   environment: electron
-  #   runs-on: self-hosted
-  #   defaults:
-  #     run:
-  #       working-directory: ./
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #       with:
-  #         ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
-  #     - uses: actions/setup-node@v4
-  #       with:
-  #         node-version: ${{ env.NODE_VERSION }}
-  #     - name: Setup Bun
-  #       uses: oven-sh/setup-bun@v2
-  #       with:
-  #         bun-version: 1.2.21
-  #     - name: Install Rust toolchain
-  #       uses: dtolnay/rust-toolchain@stable
-  #       with:
-  #         toolchain: stable
-  #         profile: minimal
-  #         targets: aarch64-apple-darwin
-  #     - name: Install dependencies (bun)
-  #       run: bun install --frozen-lockfile
-  #     - name: Install app deps in apps/client (bun)
-  #       working-directory: apps/client
-  #       run: bun install --frozen-lockfile
-  #     - name: Ensure local production node_modules (apps/client)
-  #       working-directory: apps/client
-  #       run: |
-  #         set -euo pipefail
-  #         echo "Ensuring local node_modules in $(pwd)..."
-  #         bun install --frozen-lockfile --production || true
-  #         if [ ! -d node_modules ]; then
-  #           echo "Local node_modules missing; copying production deps from workspace root..."
-  #           mkdir -p node_modules
-  #           rsync -aL --delete \
-  #             --exclude='electron' \
-  #             --exclude='electron-builder' \
-  #             --exclude='electron-vite' \
-  #             --exclude='@electron' \
-  #             --exclude='@electron-toolkit' \
-  #             ../../node_modules/ node_modules/ || true
-  #         fi
-  #         if [ ! -d node_modules ]; then
-  #           echo "ERROR: apps/client/node_modules still missing after attempts." >&2
-  #           exit 1
-  #         fi
-  #     - name: Write .env for build
-  #       shell: bash
-  #       run: |
-  #         cat > .env <<EOF
-  #         NEXT_PUBLIC_CONVEX_URL=${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
-  #         NEXT_PUBLIC_STACK_PROJECT_ID=${{ secrets.NEXT_PUBLIC_STACK_PROJECT_ID }}
-  #         NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY=${{ secrets.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY }}
-  #         NEXT_PUBLIC_WWW_ORIGIN=${{ secrets.NEXT_PUBLIC_WWW_ORIGIN }}
-  #         NEXT_PUBLIC_GITHUB_APP_SLUG=${{ secrets.NEXT_PUBLIC_GITHUB_APP_SLUG }}
-  #         EOF
-  #     - name: Build native Rust addon
-  #       working-directory: apps/server/native/core
-  #       shell: bash
-  #       run: bunx --bun @napi-rs/cli build --platform --release
-  #     - name: Build, sign, and notarize (arm64) via publish script
-  #       env:
-  #         MAC_CERT_BASE64: ${{ secrets.MAC_CERT_BASE64 }}
-  #         MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
-  #         APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-  #         APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-  #         APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-  #       run: bash scripts/publish-build-mac-arm64.sh --skip-install
-  #     - name: Publish notarized macOS arm64 artifacts to GitHub Releases
-  #       env:
-  #         GH_TOKEN: ${{ github.token }}
-  #         RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
-  #         REPO: ${{ github.repository }}
-  #       working-directory: apps/client
-  #       shell: bash
-  #       run: |
-  #         set -euo pipefail
-  #         shopt -s nullglob
-  #         artifacts=(
-  #           dist-electron/*.dmg
-  #           dist-electron/*.zip
-  #           dist-electron/latest-*.yml
-  #           dist-electron/*.blockmap
-  #         )
-  #         if [[ ${#artifacts[@]} -eq 0 ]]; then
-  #           echo "No notarized macOS arm64 artifacts found in dist-electron" >&2
-  #           exit 1
-  #         fi
-  #         release_tag="${RELEASE_TAG:-}"
-  #         if [[ -z "$release_tag" ]]; then
-  #           echo "Release tag not provided" >&2
-  #           exit 1
-  #         fi
-  #         repo="${REPO}"
-  #         for artifact in "${artifacts[@]}"; do
-  #           echo "Uploading $artifact to $repo@$release_tag"
-  #           gh release upload "$release_tag" "$artifact" --repo "$repo" --clobber
-  #         done
+  mac-arm64:
+    name: macOS arm64
+    needs: prepare-release
+    environment: electron
+    runs-on: self-hosted
+    defaults:
+      run:
+        working-directory: ./
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.21
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          profile: minimal
+          targets: aarch64-apple-darwin
+      - name: Install dependencies (bun)
+        run: bun install --frozen-lockfile
+      - name: Install app deps in apps/client (bun)
+        working-directory: apps/client
+        run: bun install --frozen-lockfile
+      - name: Ensure local production node_modules (apps/client)
+        working-directory: apps/client
+        run: |
+          set -euo pipefail
+          echo "Ensuring local node_modules in $(pwd)..."
+          bun install --frozen-lockfile --production || true
+          if [ ! -d node_modules ]; then
+            echo "Local node_modules missing; copying production deps from workspace root..."
+            mkdir -p node_modules
+            rsync -aL --delete \
+              --exclude='electron' \
+              --exclude='electron-builder' \
+              --exclude='electron-vite' \
+              --exclude='@electron' \
+              --exclude='@electron-toolkit' \
+              ../../node_modules/ node_modules/ || true
+          fi
+          if [ ! -d node_modules ]; then
+            echo "ERROR: apps/client/node_modules still missing after attempts." >&2
+            exit 1
+          fi
+      - name: Write .env for build
+        shell: bash
+        run: |
+          cat > .env <<EOF
+          NEXT_PUBLIC_CONVEX_URL=${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
+          NEXT_PUBLIC_STACK_PROJECT_ID=${{ secrets.NEXT_PUBLIC_STACK_PROJECT_ID }}
+          NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY=${{ secrets.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY }}
+          NEXT_PUBLIC_WWW_ORIGIN=${{ secrets.NEXT_PUBLIC_WWW_ORIGIN }}
+          NEXT_PUBLIC_GITHUB_APP_SLUG=${{ secrets.NEXT_PUBLIC_GITHUB_APP_SLUG }}
+          EOF
+      - name: Build native Rust addon
+        working-directory: apps/server/native/core
+        shell: bash
+        run: bunx --bun @napi-rs/cli build --platform --release
+      - name: Build, sign, and notarize (arm64) via publish script
+        env:
+          MAC_CERT_BASE64: ${{ secrets.MAC_CERT_BASE64 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: bash scripts/publish-build-mac-arm64.sh --skip-install
+      - name: Publish notarized macOS arm64 artifacts to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+          REPO: ${{ github.repository }}
+        working-directory: apps/client
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          artifacts=(
+            dist-electron/*.dmg
+            dist-electron/*.zip
+            dist-electron/latest-*.yml
+            dist-electron/*.blockmap
+          )
+          if [[ ${#artifacts[@]} -eq 0 ]]; then
+            echo "No notarized macOS arm64 artifacts found in dist-electron" >&2
+            exit 1
+          fi
+          release_tag="${RELEASE_TAG:-}"
+          if [[ -z "$release_tag" ]]; then
+            echo "Release tag not provided" >&2
+            exit 1
+          fi
+          repo="${REPO}"
+          for artifact in "${artifacts[@]}"; do
+            echo "Uploading $artifact to $repo@$release_tag"
+            gh release upload "$release_tag" "$artifact" --repo "$repo" --clobber
+          done
 
   mac-universal:
     name: macOS universal
