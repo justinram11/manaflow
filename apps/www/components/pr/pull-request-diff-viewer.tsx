@@ -418,7 +418,11 @@ export function PullRequestDiffViewer({
     return map;
   }, [fileOutputs]);
 
-  const totalFileCount = files.length;
+  const sortedFiles = useMemo(() => {
+    return [...files].sort((a, b) => a.filename.localeCompare(b.filename));
+  }, [files]);
+
+  const totalFileCount = sortedFiles.length;
 
   const processedFileCount = useMemo(() => {
     if (fileOutputs === undefined) {
@@ -426,19 +430,19 @@ export function PullRequestDiffViewer({
     }
 
     let count = 0;
-    for (const file of files) {
+    for (const file of sortedFiles) {
       if (fileOutputIndex.has(file.filename)) {
         count += 1;
       }
     }
 
     return count;
-  }, [fileOutputs, fileOutputIndex, files]);
+  }, [fileOutputs, fileOutputIndex, sortedFiles]);
 
   const isLoadingFileOutputs = fileOutputs === undefined;
 
   const parsedDiffs = useMemo<ParsedFileDiff[]>(() => {
-    return files.map((file) => {
+    return sortedFiles.map((file) => {
       if (!file.patch) {
         return {
           file,
@@ -469,7 +473,7 @@ export function PullRequestDiffViewer({
         };
       }
     });
-  }, [files]);
+  }, [sortedFiles]);
 
   const fileEntries = useMemo<FileDiffViewModel[]>(() => {
     return parsedDiffs.map((entry) => {
@@ -616,7 +620,7 @@ export function PullRequestDiffViewer({
       ? null
       : (errorTargets[focusedErrorIndex] ?? null);
 
-  const fileTree = useMemo(() => buildFileTree(files), [files]);
+  const fileTree = useMemo(() => buildFileTree(sortedFiles), [sortedFiles]);
   const directoryPaths = useMemo(
     () => collectDirectoryPaths(fileTree),
     [fileTree]
@@ -630,7 +634,7 @@ export function PullRequestDiffViewer({
   const firstPath = parsedDiffs[0]?.file.filename ?? "";
   const initialPath =
     hydratedInitialPath &&
-    files.some((file) => file.filename === hydratedInitialPath)
+    sortedFiles.some((file) => file.filename === hydratedInitialPath)
       ? hydratedInitialPath
       : firstPath;
 
@@ -657,11 +661,11 @@ export function PullRequestDiffViewer({
 
   useEffect(() => {
     const hash = decodeURIComponent(window.location.hash.slice(1));
-    if (hash && files.some((file) => file.filename === hash)) {
+    if (hash && sortedFiles.some((file) => file.filename === hash)) {
       setActivePath(hash);
       setActiveAnchor(hash);
     }
-  }, [files]);
+  }, [sortedFiles]);
 
   useEffect(() => {
     setExpandedPaths((previous) => {
