@@ -16,6 +16,7 @@ import {
   type MorphSnapshotId,
 } from "@cmux/shared";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { ArrowLeft } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -38,6 +39,31 @@ const searchSchema = z.object({
   snapshotId: z.enum(morphSnapshotIds).default(DEFAULT_MORPH_SNAPSHOT_ID),
 });
 
+const haveSameRepos = (
+  a: readonly string[],
+  b: readonly string[],
+): boolean => {
+  if (a.length !== b.length) {
+    return false;
+  }
+  const counts = new Map<string, number>();
+  for (const repo of a) {
+    counts.set(repo, (counts.get(repo) ?? 0) + 1);
+  }
+  for (const repo of b) {
+    const next = counts.get(repo);
+    if (!next) {
+      return false;
+    }
+    if (next === 1) {
+      counts.delete(repo);
+    } else {
+      counts.set(repo, next - 1);
+    }
+  }
+  return counts.size === 0;
+};
+
 export const Route = createFileRoute("/_layout/$teamSlugOrId/environments/new")(
   {
     component: EnvironmentsPage,
@@ -57,7 +83,7 @@ function EnvironmentsPage() {
   const draft = useEnvironmentDraft(teamSlugOrId);
   const [headerActions, setHeaderActions] = useState<ReactNode | null>(null);
 
-  const activeStep = draft?.step === "configure" ? "configure" : stepFromSearch;
+  const activeStep = draft?.step ?? stepFromSearch;
   const activeSelectedRepos = draft?.selectedRepos ?? urlSelectedRepos;
   const activeInstanceId = draft?.instanceId ?? urlInstanceId;
   const activeSnapshotId = draft?.snapshotId ?? searchSnapshotId;
@@ -92,7 +118,7 @@ function EnvironmentsPage() {
         instanceId: activeInstanceId,
         snapshotId: activeSnapshotId,
       },
-      { resetConfig: false },
+      { resetConfig: false, step: "configure" },
     );
   }, [
     activeInstanceId,
@@ -109,6 +135,13 @@ function EnvironmentsPage() {
       instanceId?: string;
       snapshotId?: MorphSnapshotId;
     }) => {
+      const existingRepos = draft?.selectedRepos ?? [];
+      const reposChanged = !haveSameRepos(existingRepos, payload.selectedRepos);
+      const instanceChanged = draft?.instanceId !== payload.instanceId;
+      const snapshotChanged = draft?.snapshotId !== payload.snapshotId;
+      const shouldResetConfig =
+        !draft || reposChanged || instanceChanged || snapshotChanged;
+
       persistEnvironmentDraftMetadata(
         teamSlugOrId,
         {
@@ -116,10 +149,10 @@ function EnvironmentsPage() {
           instanceId: payload.instanceId,
           snapshotId: payload.snapshotId,
         },
-        { resetConfig: true },
+        { resetConfig: shouldResetConfig, step: "configure" },
       );
     },
-    [teamSlugOrId],
+    [draft, teamSlugOrId],
   );
 
   const handlePersistConfig = useCallback(
@@ -132,6 +165,18 @@ function EnvironmentsPage() {
     },
     [teamSlugOrId, activeInstanceId, activeSelectedRepos, activeSnapshotId],
   );
+
+  const handleBackToRepositorySelection = useCallback(() => {
+    persistEnvironmentDraftMetadata(
+      teamSlugOrId,
+      {
+        selectedRepos: activeSelectedRepos,
+        instanceId: activeInstanceId,
+        snapshotId: activeSnapshotId,
+      },
+      { resetConfig: false, step: "select" },
+    );
+  }, [activeInstanceId, activeSelectedRepos, activeSnapshotId, teamSlugOrId]);
 
   const handleResetDraft = useCallback(() => {
     clearEnvironmentDraft(teamSlugOrId);
@@ -159,6 +204,16 @@ function EnvironmentsPage() {
       <div className="flex flex-col grow select-none relative h-full overflow-hidden">
         {activeStep === "select" ? (
           <div className="p-6 max-w-3xl w-full mx-auto overflow-auto">
+            <div className="mb-4">
+              <button
+                type="button"
+                onClick={handleDiscardAndExit}
+                className="inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-1.5 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition-colors"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                Back to environments
+              </button>
+            </div>
             <RepositoryPicker
               teamSlugOrId={teamSlugOrId}
               instanceId={activeInstanceId}
@@ -181,7 +236,7 @@ function EnvironmentsPage() {
             onHeaderControlsChange={setHeaderActions}
             persistedState={draft?.config}
             onPersistStateChange={handlePersistConfig}
-            onDiscardDraft={handleDiscardAndExit}
+            onBackToRepositorySelection={handleBackToRepositorySelection}
             onEnvironmentSaved={handleResetDraft}
           />
         )}

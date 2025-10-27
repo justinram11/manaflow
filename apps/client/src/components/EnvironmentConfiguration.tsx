@@ -65,7 +65,7 @@ export function EnvironmentConfiguration({
   onHeaderControlsChange,
   persistedState = null,
   onPersistStateChange,
-  onDiscardDraft,
+  onBackToRepositorySelection,
   onEnvironmentSaved,
 }: {
   selectedRepos: string[];
@@ -84,7 +84,7 @@ export function EnvironmentConfiguration({
   onHeaderControlsChange?: (controls: ReactNode | null) => void;
   persistedState?: EnvironmentConfigDraft | null;
   onPersistStateChange?: (partial: Partial<EnvironmentConfigDraft>) => void;
-  onDiscardDraft?: () => void;
+  onBackToRepositorySelection?: () => void;
   onEnvironmentSaved?: () => void;
 }) {
   const navigate = useNavigate();
@@ -641,6 +641,7 @@ export function EnvironmentConfiguration({
         {mode === "new" ? (
           <button
             onClick={async () => {
+              onBackToRepositorySelection?.();
               await navigate({
                 to: "/$teamSlugOrId/environments/new",
                 params: { teamSlugOrId },
@@ -683,16 +684,6 @@ export function EnvironmentConfiguration({
           >
             <ArrowLeft className="w-4 h-4" />
             Back to environment
-          </button>
-        ) : null}
-        {mode === "new" && onDiscardDraft ? (
-          <button
-            type="button"
-            onClick={onDiscardDraft}
-            className="inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-1.5 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to environments
           </button>
         ) : null}
       </div>
