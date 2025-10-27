@@ -1,9 +1,65 @@
+import {
+  LOCAL_VSCODE_PLACEHOLDER_HOST,
+  isLoopbackHostname,
+} from "@cmux/shared";
+
 const MORPH_HOST_REGEX = /^port-(\d+)-morphvm-([^.]+)\.http\.cloud\.morph\.so$/;
 
 interface MorphUrlComponents {
   url: URL;
   morphId: string;
   port: number;
+}
+
+export function normalizeWorkspaceOrigin(origin: string | null): string | null {
+  if (!origin) {
+    return null;
+  }
+
+  try {
+    const url = new URL(origin);
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return null;
+  }
+}
+
+export function rewriteLocalWorkspaceUrlIfNeeded(
+  url: string,
+  preferredOrigin?: string | null
+): string {
+  if (!shouldRewriteUrl(url)) {
+    return url;
+  }
+
+  const origin = normalizeWorkspaceOrigin(preferredOrigin ?? null);
+  if (!origin) {
+    return url;
+  }
+
+  try {
+    const target = new URL(url);
+    const originUrl = new URL(origin);
+    target.protocol = originUrl.protocol;
+    target.hostname = originUrl.hostname;
+    target.port = originUrl.port;
+    return target.toString();
+  } catch {
+    return url;
+  }
+}
+
+function shouldRewriteUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname;
+    return (
+      isLoopbackHostname(hostname) ||
+      hostname.toLowerCase() === LOCAL_VSCODE_PLACEHOLDER_HOST
+    );
+  } catch {
+    return false;
+  }
 }
 
 function parseMorphUrl(input: string): MorphUrlComponents | null {
@@ -45,11 +101,18 @@ function createMorphPortUrl(
   return url;
 }
 
-export function toProxyWorkspaceUrl(workspaceUrl: string): string {
-  const components = parseMorphUrl(workspaceUrl);
+export function toProxyWorkspaceUrl(
+  workspaceUrl: string,
+  preferredOrigin?: string | null
+): string {
+  const normalizedUrl = rewriteLocalWorkspaceUrlIfNeeded(
+    workspaceUrl,
+    preferredOrigin
+  );
+  const components = parseMorphUrl(normalizedUrl);
 
   if (!components) {
-    return workspaceUrl;
+    return normalizedUrl;
   }
 
   const scope = "base"; // Default scope

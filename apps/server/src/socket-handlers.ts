@@ -17,6 +17,7 @@ import {
   type AvailableEditors,
   type FileInfo,
   isLoopbackHostname,
+  LOCAL_VSCODE_PLACEHOLDER_ORIGIN,
   type IframePreflightResult,
 } from "@cmux/shared";
 import {
@@ -53,6 +54,7 @@ import { runWithAuth, runWithAuthToken } from "./utils/requestContext";
 import { DockerVSCodeInstance } from "./vscode/DockerVSCodeInstance";
 import {
   getVSCodeServeWebBaseUrl,
+  getVSCodeServeWebPort,
   waitForVSCodeServeWebBaseUrl,
 } from "./vscode/serveWeb";
 import { getProjectPaths } from "./workspace";
@@ -91,6 +93,10 @@ function buildServeWebWorkspaceUrl(
   const workspaceUrl = new URL(baseUrl);
   workspaceUrl.searchParams.set("folder", folderPath);
   return workspaceUrl.toString();
+}
+
+function buildPlaceholderWorkspaceUrl(folderPath: string): string {
+  return buildServeWebWorkspaceUrl(LOCAL_VSCODE_PLACEHOLDER_ORIGIN, folderPath);
 }
 
 export function setupSocketHandlers(
@@ -586,6 +592,32 @@ export function setupSocketHandlers(
     });
 
     socket.on(
+      "get-local-vscode-serve-web-origin",
+      (
+        callback?: (response: { baseUrl: string | null; port: number | null }) => void
+      ) => {
+        if (!callback) {
+          return;
+        }
+        try {
+          callback({
+            baseUrl: getVSCodeServeWebBaseUrl(),
+            port: getVSCodeServeWebPort(),
+          });
+        } catch (error) {
+          serverLogger.error(
+            "Failed to handle get-local-vscode-serve-web-origin:",
+            error
+          );
+          callback({
+            baseUrl: null,
+            port: null,
+          });
+        }
+      }
+    );
+
+    socket.on(
       "create-local-workspace",
       async (
         rawData,
@@ -709,10 +741,8 @@ export function setupSocketHandlers(
           }
 
           const folderForUrl = resolvedWorkspacePath.replace(/\\/g, "/");
-          const workspaceUrl = buildServeWebWorkspaceUrl(
-            baseServeWebUrl,
-            folderForUrl
-          );
+          const placeholderWorkspaceUrl =
+            buildPlaceholderWorkspaceUrl(folderForUrl);
           const now = Date.now();
 
           try {
@@ -734,8 +764,8 @@ export function setupSocketHandlers(
             vscode: {
               provider: "other",
               status: "starting",
-              url: baseServeWebUrl,
-              workspaceUrl,
+              url: LOCAL_VSCODE_PLACEHOLDER_ORIGIN,
+              workspaceUrl: placeholderWorkspaceUrl,
               startedAt: now,
             },
           });
@@ -753,7 +783,7 @@ export function setupSocketHandlers(
             taskRunId,
             workspaceName,
             workspacePath: resolvedWorkspacePath,
-            workspaceUrl,
+            workspaceUrl: placeholderWorkspaceUrl,
           });
           responded = true;
 

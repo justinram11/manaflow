@@ -16,6 +16,10 @@ import {
   preloadTaskRunIframes,
 } from "../lib/preloadTaskRunIframes";
 import { shouldUseServerIframePreflight } from "@/hooks/useIframePreflight";
+import {
+  localVSCodeServeWebQueryOptions,
+  useLocalVSCodeServeWebQuery,
+} from "@/queries/local-vscode-serve-web";
 
 export const Route = createFileRoute(
   "/_layout/$teamSlugOrId/task/$taskId/run/$runId/"
@@ -26,17 +30,24 @@ export const Route = createFileRoute(
     taskRunId: typedZid("taskRuns").parse(params.runId),
   }),
   loader: async (opts) => {
-    const result = await opts.context.queryClient.ensureQueryData(
-      convexQuery(api.taskRuns.get, {
-        teamSlugOrId: opts.params.teamSlugOrId,
-        id: opts.params.taskRunId,
-      })
-    );
+    const [result, localServeWeb] = await Promise.all([
+      opts.context.queryClient.ensureQueryData(
+        convexQuery(api.taskRuns.get, {
+          teamSlugOrId: opts.params.teamSlugOrId,
+          id: opts.params.taskRunId,
+        })
+      ),
+      opts.context.queryClient.ensureQueryData(
+        localVSCodeServeWebQueryOptions()
+      ),
+    ]);
     if (result) {
       const workspaceUrl = result.vscode?.workspaceUrl;
       void preloadTaskRunIframes([
         {
-          url: workspaceUrl ? toProxyWorkspaceUrl(workspaceUrl) : "",
+          url: workspaceUrl
+            ? toProxyWorkspaceUrl(workspaceUrl, localServeWeb.baseUrl)
+            : "",
           taskRunId: opts.params.taskRunId,
         },
       ]);
@@ -46,6 +57,7 @@ export const Route = createFileRoute(
 
 function TaskRunComponent() {
   const { taskRunId, teamSlugOrId } = Route.useParams();
+  const localServeWeb = useLocalVSCodeServeWebQuery();
   const taskRun = useSuspenseQuery(
     convexQuery(api.taskRuns.get, {
       teamSlugOrId,
@@ -55,7 +67,7 @@ function TaskRunComponent() {
 
   const rawWorkspaceUrl = taskRun?.data?.vscode?.workspaceUrl ?? null;
   const workspaceUrl = rawWorkspaceUrl
-    ? toProxyWorkspaceUrl(rawWorkspaceUrl)
+    ? toProxyWorkspaceUrl(rawWorkspaceUrl, localServeWeb.data?.baseUrl)
     : null;
   const disablePreflight = rawWorkspaceUrl
     ? shouldUseServerIframePreflight(rawWorkspaceUrl)

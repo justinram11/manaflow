@@ -3,6 +3,7 @@ import type { ChildProcess } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import { access } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
+import { createServer } from "node:net";
 import { promisify } from "node:util";
 
 type Logger = {
@@ -14,13 +15,13 @@ type Logger = {
 
 const execFileAsync = promisify(execFile);
 export const LOCAL_VSCODE_HOST = "localhost";
-export const VSCODE_SERVE_WEB_PORT = 39_384;
-export const LOCAL_VSCODE_HOST_WITH_PORT = `${LOCAL_VSCODE_HOST}:${VSCODE_SERVE_WEB_PORT}`;
-export const LOCAL_VSCODE_ORIGIN = `http://${LOCAL_VSCODE_HOST_WITH_PORT}`;
+const SERVE_WEB_PORT_START = 39_400;
+const SERVE_WEB_MAX_PORT_ATTEMPTS = 200;
 const SERVER_READY_TIMEOUT_MS = 15_000;
 
 let resolvedVSCodeExecutable: string | null = null;
 let currentServeWebBaseUrl: string | null = null;
+let currentServeWebPort: number | null = null;
 
 export type VSCodeServeWebHandle = {
   process: ChildProcess;
@@ -30,6 +31,10 @@ export type VSCodeServeWebHandle = {
 
 export function getVSCodeServeWebBaseUrl(): string | null {
   return currentServeWebBaseUrl;
+}
+
+export function getVSCodeServeWebPort(): number | null {
+  return currentServeWebPort;
 }
 
 export async function waitForVSCodeServeWebBaseUrl(
@@ -63,13 +68,12 @@ export async function ensureVSCodeServeWeb(
     return null;
   }
 
-  await killProcessOnPort(VSCODE_SERVE_WEB_PORT, logger);
-
   let child: ChildProcess | null = null;
 
   try {
+    const port = await claimServeWebPort(logger);
     logger.info(
-      `Starting VS Code serve-web using executable ${executable} on port ${VSCODE_SERVE_WEB_PORT}...`
+      `Starting VS Code serve-web using executable ${executable} on port ${port}...`
     );
 
     child = spawn(
@@ -81,7 +85,7 @@ export async function ensureVSCodeServeWeb(
         "--host",
         "127.0.0.1",
         "--port",
-        String(VSCODE_SERVE_WEB_PORT),
+        String(port),
       ],
       {
         detached: false,
@@ -108,23 +112,25 @@ export async function ensureVSCodeServeWeb(
         logger.info("Clearing cached VS Code serve-web base URL");
         currentServeWebBaseUrl = null;
       }
+      currentServeWebPort = null;
     });
 
-    await waitForServeWebPort(logger);
+    await waitForServeWebPort(port, logger);
 
-    currentServeWebBaseUrl = LOCAL_VSCODE_ORIGIN;
+    currentServeWebBaseUrl = `http://${LOCAL_VSCODE_HOST}:${port}`;
+    currentServeWebPort = port;
     const baseUrl = currentServeWebBaseUrl;
 
     logger.info(
       `VS Code serve-web ready at ${baseUrl} (pid ${child.pid ?? "unknown"}).`
     );
 
-    await warmUpVSCodeServeWeb(logger);
+    await warmUpVSCodeServeWeb(port, logger);
 
     return {
       process: child!,
       executable,
-      port: VSCODE_SERVE_WEB_PORT,
+      port,
     };
   } catch (error) {
     logger.error("Failed to launch VS Code serve-web:", error);
@@ -139,6 +145,7 @@ export async function ensureVSCodeServeWeb(
       }
     }
     currentServeWebBaseUrl = null;
+    currentServeWebPort = null;
     return null;
   }
 }
@@ -154,6 +161,7 @@ export function stopVSCodeServeWeb(
   const { process: child } = handle;
 
   currentServeWebBaseUrl = null;
+  currentServeWebPort = null;
 
   if (child.killed || child.exitCode !== null || child.signalCode !== null) {
     return;
@@ -244,12 +252,12 @@ async function resolveVSCodeExecutable(logger: Logger) {
   return resolvedVSCodeExecutable;
 }
 
-async function warmUpVSCodeServeWeb(logger: Logger) {
+async function warmUpVSCodeServeWeb(port: number, logger: Logger) {
   const warmupDeadline = Date.now() + 10_000;
 
   while (Date.now() < warmupDeadline) {
     try {
-      await performServeWebRequest("GET");
+      await performServeWebRequest("GET", port);
       logger.info("VS Code serve-web warm-up succeeded.");
       return;
     } catch (error) {
@@ -304,12 +312,12 @@ function pipeStreamLines(
   });
 }
 
-async function waitForServeWebPort(logger: Logger) {
+async function waitForServeWebPort(port: number, logger: Logger) {
   const deadline = Date.now() + SERVER_READY_TIMEOUT_MS;
 
   while (Date.now() < deadline) {
     try {
-      await performServeWebRequest("HEAD");
+      await performServeWebRequest("HEAD", port);
       return;
     } catch (error) {
       logger.debug?.("VS Code serve-web readiness check failed:", error);
@@ -318,20 +326,23 @@ async function waitForServeWebPort(logger: Logger) {
   }
 
   throw new Error(
-    `VS Code serve-web port ${VSCODE_SERVE_WEB_PORT} was not ready within ${SERVER_READY_TIMEOUT_MS} ms`
+    `VS Code serve-web port ${port} was not ready within ${SERVER_READY_TIMEOUT_MS} ms`
   );
 }
 
-async function performServeWebRequest(method: "GET" | "HEAD"): Promise<void> {
+async function performServeWebRequest(
+  method: "GET" | "HEAD",
+  port: number
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const req = httpRequest(
       {
         host: "127.0.0.1",
-        port: VSCODE_SERVE_WEB_PORT,
+        port,
         method,
         path: "/",
         headers: {
-          host: LOCAL_VSCODE_HOST_WITH_PORT,
+          host: `${LOCAL_VSCODE_HOST}:${port}`,
         },
       },
       (res) => {
@@ -344,102 +355,46 @@ async function performServeWebRequest(method: "GET" | "HEAD"): Promise<void> {
   });
 }
 
-async function killProcessOnPort(port: number, logger: Logger): Promise<void> {
-  const pids = new Set<number>();
-
-  if (process.platform === "win32") {
-    try {
-      const { stdout } = await execFileAsync("netstat", ["-ano", "-p", "TCP"]);
-      const lines = stdout.split(/\r?\n/);
-      for (const rawLine of lines) {
-        const line = rawLine.trim();
-        if (!line) continue;
-        const parts = line.split(/\s+/);
-        if (parts.length < 5) continue;
-        const localAddress = parts[1] ?? "";
-        if (!localAddress.endsWith(`:${port}`)) continue;
-        const state = parts[3];
-        if (state.toUpperCase() !== "LISTENING") continue;
-        const pidStr = parts[parts.length - 1];
-        const pid = Number.parseInt(pidStr, 10);
-        if (!Number.isFinite(pid)) continue;
-        pids.add(pid);
-      }
-    } catch (error) {
-      logger.debug?.(
-        `Failed to inspect netstat output for port ${port}:`,
-        error
-      );
+async function claimServeWebPort(logger: Logger): Promise<number> {
+  for (let attempt = 0; attempt < SERVE_WEB_MAX_PORT_ATTEMPTS; attempt += 1) {
+    const port = SERVE_WEB_PORT_START + attempt;
+    // eslint-disable-next-line no-await-in-loop
+    const isAvailable = await isPortAvailable(port);
+    if (isAvailable) {
+      return port;
     }
+    logger.debug?.(
+      `VS Code serve-web port ${port} unavailable, trying next candidate...`
+    );
+  }
 
-    for (const pid of pids) {
-      try {
-        await execFileAsync("taskkill", ["/PID", String(pid), "/F"]);
-        logger.info(`Terminated process ${pid} using port ${port}`);
-      } catch (error) {
-        logger.warn(
-          `Failed to terminate process ${pid} using port ${port}:`,
-          error
-        );
+  throw new Error(
+    `Unable to find an available port for VS Code serve-web after ${SERVE_WEB_MAX_PORT_ATTEMPTS} attempts starting at ${SERVE_WEB_PORT_START}`
+  );
+}
+
+function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const tester = createServer();
+    tester.unref();
+
+    const onError = (error: NodeJS.ErrnoException) => {
+      if (error.code === "EADDRINUSE" || error.code === "EACCES") {
+        resolve(false);
+        return;
       }
-    }
+      resolve(false);
+    };
 
-    return;
-  }
+    tester.once("error", onError);
+    tester.once("listening", () => {
+      tester.close(() => resolve(true));
+    });
 
-  try {
-    const { stdout } = await execFileAsync("lsof", [
-      "-nP",
-      "-i",
-      `:${port}`,
-      "-sTCP:LISTEN",
-      "-t",
-    ]);
-    stdout
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-      .forEach((line) => {
-        const pid = Number.parseInt(line, 10);
-        if (Number.isFinite(pid)) {
-          pids.add(pid);
-        }
-      });
-  } catch (error) {
-    logger.debug?.(`lsof failed while checking port ${port}:`, error);
-  }
-
-  for (const pid of pids) {
     try {
-      process.kill(pid, "SIGTERM");
-    } catch (error) {
-      logger.debug?.(
-        `SIGTERM failed for process ${pid} on port ${port}:`,
-        error
-      );
-    }
-  }
-
-  if (pids.size === 0) {
-    return;
-  }
-
-  await new Promise((resolve) => setTimeout(resolve, 200));
-
-  for (const pid of pids) {
-    try {
-      process.kill(pid, 0);
-      try {
-        process.kill(pid, "SIGKILL");
-        logger.info(`Force killed process ${pid} using port ${port}`);
-      } catch (error) {
-        logger.warn(
-          `Failed to force kill process ${pid} on port ${port}:`,
-          error
-        );
-      }
+      tester.listen(port, "127.0.0.1");
     } catch {
-      // process already exited
+      resolve(false);
     }
-  }
+  });
 }

@@ -539,6 +539,9 @@ export interface ClientToServerEvents {
   "check-provider-status": (
     callback: (response: ProviderStatusResponse) => void
   ) => void;
+  "get-local-vscode-serve-web-origin": (
+    callback: (response: { baseUrl: string | null; port: number | null }) => void
+  ) => void;
   "archive-task": (
     data: ArchiveTask,
     callback: (response: { success: boolean; error?: string }) => void
