@@ -105,6 +105,11 @@ export interface RepositoryPickerProps {
   headerTitle?: string;
   headerDescription?: string;
   className?: string;
+  onStartConfigure?: (payload: {
+    selectedRepos: string[];
+    instanceId?: string;
+    snapshotId?: MorphSnapshotId;
+  }) => void;
 }
 
 export function RepositoryPicker({
@@ -120,6 +125,7 @@ export function RepositoryPicker({
   headerTitle = "Select Repositories",
   headerDescription = "Choose repositories to include in your environment.",
   className = "",
+  onStartConfigure,
 }: RepositoryPickerProps) {
   const router = useRouter();
   const navigate = useNavigate();
@@ -179,14 +185,17 @@ export function RepositoryPicker({
   }, [handleConnectionsInvalidated]);
 
   const goToConfigure = useCallback(
-    async (repos: string[], maybeInstanceId?: string): Promise<void> => {
+    async (
+      repos: string[],
+      maybeInstanceId?: string
+    ): Promise<string | undefined> => {
       await navigate({
         to: "/$teamSlugOrId/environments/new",
         params: { teamSlugOrId },
         search: (prev) => ({
           step: "configure",
           selectedRepos: repos,
-          instanceId: prev.instanceId,
+          instanceId: prev.instanceId ?? instanceId ?? maybeInstanceId,
           connectionLogin: prev.connectionLogin,
           repoSearch: prev.repoSearch,
           snapshotId: selectedSnapshotId,
@@ -206,7 +215,9 @@ export function RepositoryPicker({
           }),
           replace: true,
         });
+        return maybeInstanceId;
       }
+      return instanceId ?? maybeInstanceId ?? undefined;
     },
     [instanceId, navigate, selectedSnapshotId, teamSlugOrId]
   );
@@ -226,7 +237,12 @@ export function RepositoryPicker({
         },
         {
           onSuccess: async (data) => {
-            await goToConfigure(repos, data.instanceId);
+            const finalInstanceId = await goToConfigure(repos, data.instanceId);
+            onStartConfigure?.({
+              selectedRepos: repos,
+              instanceId: finalInstanceId ?? data.instanceId,
+              snapshotId: selectedSnapshotId,
+            });
             console.log("Cloned repos:", data.clonedRepos);
             console.log("Removed repos:", data.removedRepos);
           },
@@ -239,6 +255,7 @@ export function RepositoryPicker({
     [
       goToConfigure,
       instanceId,
+      onStartConfigure,
       selectedSnapshotId,
       setupInstanceMutation,
       setupManualInstanceMutation,
