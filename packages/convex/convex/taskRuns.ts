@@ -1146,35 +1146,6 @@ export const updateNetworking = authMutation({
   },
 });
 
-// Update environment error for a task run
-export const updateEnvironmentError = authMutation({
-  args: {
-    teamSlugOrId: v.string(),
-    id: v.id("taskRuns"),
-    maintenanceError: v.optional(v.string()),
-    devError: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const userId = ctx.identity.subject;
-    const run = await ctx.db.get(args.id);
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
-
-    if (!run || run.teamId !== teamId || run.userId !== userId) {
-      throw new Error("Task run not found or unauthorized");
-    }
-
-    const environmentError = normalizeEnvironmentErrorPayload(
-      args.maintenanceError,
-      args.devError,
-    );
-
-    await ctx.db.patch(args.id, {
-      environmentError,
-      updatedAt: Date.now(),
-    });
-  },
-});
-
 export const updateEnvironmentErrorFromWorker = internalMutation({
   args: {
     id: v.id("taskRuns"),

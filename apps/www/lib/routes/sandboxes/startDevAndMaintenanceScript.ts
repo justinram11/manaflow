@@ -32,11 +32,6 @@ export const allocateScriptIdentifiers = (): ScriptIdentifiers => {
   };
 };
 
-type ScriptResult = {
-  maintenanceError: string | null;
-  devError: string | null;
-};
-
 const ORCHESTRATOR_TEMPLATE = `#!/usr/bin/env bun
 /**
  * Orchestrator script for running maintenance and dev scripts in sequence.
@@ -360,21 +355,17 @@ export async function runMaintenanceAndDevScripts({
   identifiers?: ScriptIdentifiers;
   convexUrl?: string;
   taskRunJwt?: string;
-}): Promise<ScriptResult> {
+}): Promise<void> {
   const ids = identifiers ?? allocateScriptIdentifiers();
 
-  if (
-    (!maintenanceScript || maintenanceScript.trim().length === 0) &&
-    (!devScript || devScript.trim().length === 0)
-  ) {
-    return {
-      maintenanceError: "Both maintenance and dev scripts are empty",
-      devError: null,
-    };
-  }
+  const hasMaintenanceScript = Boolean(
+    maintenanceScript && maintenanceScript.trim().length > 0,
+  );
+  const hasDevScript = Boolean(devScript && devScript.trim().length > 0);
 
-  let maintenanceError: string | null = null;
-  let devError: string | null = null;
+  if (!hasMaintenanceScript && !hasDevScript) {
+    throw new Error("Both maintenance and dev scripts are empty");
+  }
 
   // Generate unique run IDs for this execution
   const runId = `${Date.now().toString(36)}_${Math.random()
@@ -387,7 +378,7 @@ export async function runMaintenanceAndDevScripts({
   const devErrorLogPath = `${CMUX_RUNTIME_DIR}/dev_${runId}.log`;
 
   // Create maintenance script if provided
-  const maintenanceScriptContent = maintenanceScript && maintenanceScript.trim().length > 0
+  const maintenanceScriptContent = hasMaintenanceScript
     ? `#!/bin/zsh
 set -eux
 cd ${WORKSPACE_ROOT}
@@ -399,7 +390,7 @@ echo "=== Maintenance Script Completed at \\$(date) ==="
     : null;
 
   // Create dev script if provided
-  const devScriptContent = devScript && devScript.trim().length > 0
+  const devScriptContent = hasDevScript
     ? `#!/bin/zsh
 set -ux
 cd ${WORKSPACE_ROOT}
@@ -423,8 +414,8 @@ ${devScript}
     .replace(/{{DEV_ERROR_LOG_PATH}}/g, devErrorLogPath)
     .replace(/{{HAS_MAINTENANCE_SCRIPT}}/g, String(maintenanceScriptContent !== null))
     .replace(/{{HAS_DEV_SCRIPT}}/g, String(devScriptContent !== null))
-    .replace(/{{CONVEX_URL}}/g, convexUrl || '')
-    .replace(/{{TASK_RUN_JWT}}/g, taskRunJwt || '');
+    .replace(/{{CONVEX_URL}}/g, convexUrl || "")
+    .replace(/{{TASK_RUN_JWT}}/g, taskRunJwt || "");
 
   // Create the command that sets up all scripts and starts the orchestrator in background
   const setupAndRunCommand = `set -eu
@@ -471,26 +462,24 @@ fi
       `zsh -lc ${singleQuote(setupAndRunCommand)}`,
     );
 
-    // Check if orchestrator started successfully
-    const stdout = result.stdout?.trim() || "";
-    const stderr = result.stderr?.trim() || "";
+    const stdout = result.stdout?.trim() ?? "";
+    const stderr = result.stderr?.trim() ?? "";
 
     if (result.exit_code !== 0) {
-      devError = `Failed to start orchestrator: exit code ${result.exit_code}`;
-      if (stderr) {
-        devError += ` | stderr: ${stderr}`;
-      }
-    } else if (!stdout.includes("[ORCHESTRATOR] Started successfully in background (PID:")) {
-      devError = "Orchestrator did not confirm successful start";
-    } else {
-      console.log(`[runMaintenanceAndDevScripts] Orchestrator started successfully`);
+      const message =
+        `Failed to start orchestrator: exit code ${result.exit_code}` +
+        (stderr ? ` | stderr: ${stderr}` : "");
+      throw new Error(message);
     }
-  } catch (error) {
-    devError = `Failed to start orchestrator: ${error instanceof Error ? error.message : String(error)}`;
-  }
 
-  return {
-    maintenanceError,
-    devError,
-  };
+    if (!stdout.includes("[ORCHESTRATOR] Started successfully in background (PID:")) {
+      throw new Error("Orchestrator did not confirm successful start");
+    }
+
+    console.log(`[runMaintenanceAndDevScripts] Orchestrator started successfully`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[runMaintenanceAndDevScripts] Failed to start orchestrator: ${message}`);
+    throw new Error(message);
+  }
 }
