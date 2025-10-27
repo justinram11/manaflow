@@ -275,6 +275,7 @@
         "@cmux/convex": "workspace:*",
         "@cmux/shared": "workspace:*",
         "@openai/codex-sdk": "^0.47.0",
+        "@playwright/mcp": "^0.0.44",
         "@xterm/addon-serialize": "^0.13.0",
         "@xterm/headless": "^5.5.0",
         "chromium-bidi": "^10.6.0",
@@ -1482,6 +1483,8 @@
     "@pinojs/redact": ["@pinojs/redact@0.4.0", "", {}, "sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg=="],
 
     "@pkgjs/parseargs": ["@pkgjs/parseargs@0.11.0", "", {}, "sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg=="],
+
+    "@playwright/mcp": ["@playwright/mcp@0.0.44", "", { "dependencies": { "playwright": "1.57.0-alpha-2025-10-24", "playwright-core": "1.57.0-alpha-2025-10-24" }, "bin": { "mcp-server-playwright": "cli.js" } }, "sha512-QkJd/qUxbw9MY5Vy5TMC6EmK2VSTBJ0+NOx/wTat5W7ycj8s19tweYRJI+33Ix8SMdf6aaG9pIaY0AZGfnK0oA=="],
 
     "@posthog/core": ["@posthog/core@1.3.1", "", {}, "sha512-sGKVHituJ8L/bJxVV4KamMFp+IBWAZyCiYunFawJZ4cc59PCtLnKFIMEV6kn7A4eZQcQ6EKV5Via4sF3Z7qMLQ=="],
 
@@ -3941,7 +3944,9 @@
 
     "pkg-types": ["pkg-types@1.3.1", "", { "dependencies": { "confbox": "^0.1.8", "mlly": "^1.7.4", "pathe": "^2.0.1" } }, "sha512-/Jm5M4RvtBFVkKWRu2BLUTNP8/M2a+UwuAX+ae4770q1qVGtfjG+WTCupoZixokjmHiry8uI+dlY8KXYV5HVVQ=="],
 
-    "playwright": ["patchright@1.56.1", "", { "dependencies": { "patchright-core": "1.56.1" }, "optionalDependencies": { "fsevents": "2.3.2" }, "bin": { "patchright": "cli.js" } }, "sha512-HY4s3vJNPVoasoy0X7sOm2dufQwlicvXoCpoINYFUWYkEaSBM2l4UtSOdI4/MYQHNskfOFpIqE+Usj748qbtYg=="],
+    "playwright": ["playwright@1.57.0-alpha-2025-10-24", "", { "dependencies": { "playwright-core": "1.57.0-alpha-2025-10-24" }, "optionalDependencies": { "fsevents": "2.3.2" }, "bin": { "playwright": "cli.js" } }, "sha512-h7BK38U0t7ylKUftTHaL8erydzhwSstQco24OuEtoYS0xX67QHwc9fEQW2x6Rmnd8vT0RuD9ePuP3lDl2AmPDQ=="],
+
+    "playwright-core": ["playwright-core@1.57.0-alpha-2025-10-24", "", { "bin": { "playwright-core": "cli.js" } }, "sha512-OXTMR6QjnUleUYLmEsZcKEvTaxik+6WEJgr6JXNxrD8DleV5U8+Hv5A1EDUfq3SpvUKstBnJEJwX7lyLHUKD2Q=="],
 
     "plist": ["plist@3.1.0", "", { "dependencies": { "@xmldom/xmldom": "^0.8.8", "base64-js": "^1.5.1", "xmlbuilder": "^15.1.1" } }, "sha512-uysumyrvkUX0rX/dEVqt8gC3sTBzd4zoWfLeS29nb53imdaXVvLINYXTI2GNqzaMuvacNx4uJQ8+b3zXR0pkgQ=="],
 
@@ -5397,6 +5402,8 @@
 
     "magnitude-core/eventemitter3": ["eventemitter3@5.0.1", "", {}, "sha512-GWkBvjiSZK87ELrYOSESUYeVIc9mvLLf/nXalMOS5dYrgZq9o5OVkbZAVM06CVxYsCwH9BDZFPlQTlPA1j4ahA=="],
 
+    "magnitude-core/playwright": ["patchright@1.56.1", "", { "dependencies": { "patchright-core": "1.56.1" }, "optionalDependencies": { "fsevents": "2.3.2" }, "bin": { "patchright": "cli.js" } }, "sha512-HY4s3vJNPVoasoy0X7sOm2dufQwlicvXoCpoINYFUWYkEaSBM2l4UtSOdI4/MYQHNskfOFpIqE+Usj748qbtYg=="],
+
     "magnitude-core/zod": ["zod@3.25.76", "", {}, "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="],
 
     "magnitude-extract/cheerio": ["cheerio@1.1.2", "", { "dependencies": { "cheerio-select": "^2.1.0", "dom-serializer": "^2.0.0", "domhandler": "^5.0.3", "domutils": "^3.2.2", "encoding-sniffer": "^0.2.1", "htmlparser2": "^10.0.0", "parse5": "^7.3.0", "parse5-htmlparser2-tree-adapter": "^7.1.0", "parse5-parser-stream": "^7.1.2", "undici": "^7.12.0", "whatwg-mimetype": "^4.0.0" } }, "sha512-IkxPpb5rS/d1IiLbHMgfPuS0FgiWTtFIm/Nj+2woXDLTZ7fOT2eqzgYbdMlLweqlHbsZjxEChoVK+7iph7jyQg=="],
@@ -6078,6 +6085,8 @@
     "lazystream/readable-stream/safe-buffer": ["safe-buffer@5.1.2", "", {}, "sha512-Gd2UZBJDkXlY7GbJxfsE8/nvKkUEU1G38c1siN6QP6a9PT9MmHB8GnpscSmMJSoF8LOIrt8ud/wPtojys4G6+g=="],
 
     "lazystream/readable-stream/string_decoder": ["string_decoder@1.1.1", "", { "dependencies": { "safe-buffer": "~5.1.0" } }, "sha512-n/ShnvDi6FHbbVfviro+WojiFzv+s8MPMHBczVePfUpDJLwoLT0ht1l4YwBCbi8pJAveEEdnkHyPyTP/mzRfwg=="],
+
+    "magnitude-core/playwright/fsevents": ["fsevents@2.3.2", "", { "os": "darwin" }, "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA=="],
 
     "magnitude-extract/cheerio/dom-serializer": ["dom-serializer@2.0.0", "", { "dependencies": { "domelementtype": "^2.3.0", "domhandler": "^5.0.2", "entities": "^4.2.0" } }, "sha512-wIkAryiqt/nV5EQKqQpo3SToSOV9J0DnbJqwK7Wv/Trc92zIAYZ4FlMu+JPFW1DfGFt81ZTCGgDEabffXeLyJg=="],
 
