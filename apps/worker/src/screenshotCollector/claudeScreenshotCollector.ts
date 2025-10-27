@@ -6,6 +6,42 @@ import { log } from "../logger";
 import { logToScreenshotCollector } from "./logger";
 import { formatClaudeMessage } from "./claudeMessageFormatter";
 
+export const SCREENSHOT_STORAGE_ROOT = "/root/screenshots";
+
+const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
+
+function isScreenshotFile(fileName: string): boolean {
+  return IMAGE_EXTENSIONS.has(path.extname(fileName).toLowerCase());
+}
+
+async function collectScreenshotFiles(
+  directory: string
+): Promise<{ files: string[]; hasNestedDirectories: boolean }> {
+  const entries = await fs.readdir(directory, { withFileTypes: true });
+  const files: string[] = [];
+  let hasNestedDirectories = false;
+
+  for (const entry of entries) {
+    const fullPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      hasNestedDirectories = true;
+      const nested = await collectScreenshotFiles(fullPath);
+      files.push(...nested.files);
+    } else if (entry.isFile() && isScreenshotFile(entry.name)) {
+      files.push(fullPath);
+    }
+  }
+
+  return { files, hasNestedDirectories };
+}
+
+export function normalizeScreenshotOutputDir(outputDir: string): string {
+  if (path.isAbsolute(outputDir)) {
+    return path.normalize(outputDir);
+  }
+  return path.resolve(SCREENSHOT_STORAGE_ROOT, outputDir);
+}
+
 export type ClaudeCodeAuthConfig =
   | { auth: { taskRunJwt: string } }
   | { auth: { anthropicApiKey: string } };
@@ -58,9 +94,10 @@ export async function captureScreenshotsForBranch(
     prTitle,
     prDescription,
     branch,
-    outputDir,
+    outputDir: requestedOutputDir,
     auth,
   } = options;
+  const outputDir = normalizeScreenshotOutputDir(requestedOutputDir);
   const useTaskRunJwt = isTaskRunJwtAuth(auth);
   const providedApiKey = !useTaskRunJwt ? auth.anthropicApiKey : undefined;
 
@@ -82,7 +119,7 @@ Please:
 2. Wait for the server to be ready
 3. Navigate to the pages/components that were modified in the PR
 4. Take full-page screenshots as well as element-specific screenshots of each relevant UI view that was changed
-5. Save screenshots to ${outputDir} with descriptive names like "homepage-${branch}.png"
+5. Save every screenshot directly inside ${outputDir} (no subdirectories) with descriptive names like "homepage-${branch}.png"
 
 <IMPORTANT>
 Focus on capturing visual changes. If no UI changes are present, just let me know.
@@ -202,14 +239,19 @@ If you can't install dependencies/start the dev server, just let me know. Do not
 
     // Find all screenshot files in the output directory
     try {
-      const files = await fs.readdir(outputDir);
-      const screenshots = files.filter(
-        (f) =>
-          f.includes(branch) &&
-          (f.endsWith(".png") || f.endsWith(".jpg") || f.endsWith(".jpeg"))
-      );
+      const { files, hasNestedDirectories } =
+        await collectScreenshotFiles(outputDir);
 
-      screenshotPaths.push(...screenshots.map((f) => path.join(outputDir, f)));
+      if (hasNestedDirectories) {
+        await logToScreenshotCollector(
+          `Detected nested screenshot folders under ${outputDir}. Please keep all screenshots directly in the output directory.`
+        );
+      }
+
+      const uniqueScreens = Array.from(
+        new Set(files.map((filePath) => path.normalize(filePath)))
+      ).sort();
+      screenshotPaths.push(...uniqueScreens);
     } catch (readError) {
       log("WARN", "Could not read screenshot directory", {
         outputDir,
@@ -260,9 +302,10 @@ export async function claudeCodeCapturePRScreenshots(
     prDescription,
     baseBranch,
     headBranch,
-    outputDir,
+    outputDir: requestedOutputDir,
     auth,
   } = options;
+  const outputDir = normalizeScreenshotOutputDir(requestedOutputDir);
 
   try {
     await logToScreenshotCollector(

@@ -11,11 +11,11 @@ import {
 } from "./logger";
 import { readPrDescription } from "./context";
 import {
+  SCREENSHOT_STORAGE_ROOT,
   claudeCodeCapturePRScreenshots,
+  normalizeScreenshotOutputDir,
   type ClaudeCodeAuthConfig,
 } from "./claudeScreenshotCollector";
-
-const SCREENSHOT_OUTPUT_DIR = "/root/workspace/.cmux/screenshots";
 
 export interface StartScreenshotCollectionOptions {
   anthropicApiKey?: string | null;
@@ -108,20 +108,20 @@ function resolveOutputDirectory(
     const trimmed = requestedPath.trim();
     if (trimmed.length > 0) {
       if (trimmed.endsWith(".png")) {
+        const normalizedCopyTarget = normalizeScreenshotOutputDir(trimmed);
         return {
-          outputDir: path.dirname(trimmed),
-          copyTarget: trimmed,
+          outputDir: path.dirname(normalizedCopyTarget),
+          copyTarget: normalizedCopyTarget,
         };
       }
-      return { outputDir: trimmed };
+      return { outputDir: normalizeScreenshotOutputDir(trimmed) };
     }
   }
 
   return {
     outputDir: path.join(
-      SCREENSHOT_OUTPUT_DIR,
-      sanitizeSegment(headBranch),
-      Date.now().toString()
+      SCREENSHOT_STORAGE_ROOT,
+      `${Date.now()}-${sanitizeSegment(headBranch)}`
     ),
   };
 }

@@ -44,13 +44,13 @@ async function uploadScreenshotFile(params: {
     contentType,
   });
 
-  const fileBuffer = await fs.readFile(screenshotPath, { encoding: "binary" });
+  const bytes = await fs.readFile(screenshotPath);
   const uploadResponse = await fetch(uploadUrl, {
     method: "POST",
     headers: {
       "Content-Type": contentType,
     },
-    body: new Blob([fileBuffer]),
+    body: bytes,
   });
 
   if (!uploadResponse.ok) {
