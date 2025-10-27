@@ -16,6 +16,10 @@ import {
   TASK_RUN_IFRAME_SANDBOX,
 } from "../lib/preloadTaskRunIframes";
 import { shouldUseServerIframePreflight } from "@/hooks/useIframePreflight";
+import {
+  localVSCodeServeWebQueryOptions,
+  useLocalVSCodeServeWebQuery,
+} from "@/queries/local-vscode-serve-web";
 
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
@@ -36,17 +40,24 @@ export const Route = createFileRoute(
     },
   },
   loader: async (opts) => {
-    const result = await opts.context.queryClient.ensureQueryData(
-      convexQuery(api.taskRuns.get, {
-        teamSlugOrId: opts.params.teamSlugOrId,
-        id: opts.params.runId,
-      })
-    );
+    const [result, localServeWeb] = await Promise.all([
+      opts.context.queryClient.ensureQueryData(
+        convexQuery(api.taskRuns.get, {
+          teamSlugOrId: opts.params.teamSlugOrId,
+          id: opts.params.runId,
+        })
+      ),
+      opts.context.queryClient.ensureQueryData(
+        localVSCodeServeWebQueryOptions()
+      ),
+    ]);
     if (result) {
       const workspaceUrl = result.vscode?.workspaceUrl;
       void preloadTaskRunIframes([
         {
-          url: workspaceUrl ? toProxyWorkspaceUrl(workspaceUrl) : "",
+          url: workspaceUrl
+            ? toProxyWorkspaceUrl(workspaceUrl, localServeWeb.baseUrl)
+            : "",
           taskRunId: opts.params.runId,
         },
       ]);
@@ -56,6 +67,7 @@ export const Route = createFileRoute(
 
 function VSCodeComponent() {
   const { runId: taskRunId, teamSlugOrId } = Route.useParams();
+  const localServeWeb = useLocalVSCodeServeWebQuery();
   const taskRun = useSuspenseQuery(
     convexQuery(api.taskRuns.get, {
       teamSlugOrId,
@@ -64,7 +76,10 @@ function VSCodeComponent() {
   );
 
   const workspaceUrl = taskRun?.data?.vscode?.workspaceUrl
-    ? toProxyWorkspaceUrl(taskRun.data.vscode.workspaceUrl)
+    ? toProxyWorkspaceUrl(
+        taskRun.data.vscode.workspaceUrl,
+        localServeWeb.data?.baseUrl
+      )
     : null;
   const disablePreflight = taskRun?.data?.vscode?.workspaceUrl
     ? shouldUseServerIframePreflight(taskRun.data.vscode.workspaceUrl)

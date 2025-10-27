@@ -7,9 +7,11 @@ import { copyAllElectronLogs } from "@/lib/electron-logs/electron-logs";
 import { setLastTeamSlugOrId } from "@/lib/lastTeam";
 import { stackClientApp } from "@/lib/stack";
 import { preloadTaskRunIframes } from "@/lib/preloadTaskRunIframes";
-import { rewriteLocalWorkspaceUrlIfNeeded } from "@/lib/localServeWebOrigin";
+import {
+  rewriteLocalWorkspaceUrlIfNeeded,
+  toProxyWorkspaceUrl,
+} from "@/lib/toProxyWorkspaceUrl";
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
-import { toProxyWorkspaceUrl } from "@/lib/toProxyWorkspaceUrl";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
 import type { CreateLocalWorkspaceResponse } from "@cmux/shared";
@@ -364,13 +366,17 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                     : `${effectiveWorkspaceName} is ready`,
                 );
 
+                const normalizedWorkspaceUrl = response.workspaceUrl
+                  ? rewriteLocalWorkspaceUrlIfNeeded(
+                      response.workspaceUrl,
+                      localServeWeb.data?.baseUrl,
+                    )
+                  : null;
+
                 if (response.workspaceUrl && effectiveTaskRunId) {
-                  const normalizedWorkspaceUrl = rewriteLocalWorkspaceUrlIfNeeded(
+                  const proxiedUrl = toProxyWorkspaceUrl(
                     response.workspaceUrl,
                     localServeWeb.data?.baseUrl,
-                  );
-                  const proxiedUrl = toProxyWorkspaceUrl(
-                    normalizedWorkspaceUrl,
                   );
                   if (proxiedUrl) {
                     void preloadTaskRunIframes([
@@ -398,13 +404,8 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                       runId: effectiveTaskRunId,
                     },
                   });
-                } else if (response.workspaceUrl) {
-                  window.location.assign(
-                    rewriteLocalWorkspaceUrlIfNeeded(
-                      response.workspaceUrl,
-                      localServeWeb.data?.baseUrl,
-                    ),
-                  );
+                } else if (normalizedWorkspaceUrl) {
+                  window.location.assign(normalizedWorkspaceUrl);
                 }
               } catch (callbackError) {
                 const message =

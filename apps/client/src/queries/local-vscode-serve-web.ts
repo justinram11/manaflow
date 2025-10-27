@@ -1,5 +1,5 @@
 import { waitForConnectedSocket } from "@/contexts/socket/socket-boot";
-import { setLocalServeWebOrigin } from "@/lib/localServeWebOrigin";
+import { normalizeWorkspaceOrigin } from "@/lib/toProxyWorkspaceUrl";
 import { queryOptions, useQuery } from "@tanstack/react-query";
 
 export type LocalVSCodeServeWebInfo = {
@@ -34,14 +34,13 @@ export function localVSCodeServeWebQueryOptions() {
               settled = true;
               clearTimeout(timer);
               const normalized: LocalVSCodeServeWebInfo = {
-                baseUrl: response?.baseUrl ?? null,
+                baseUrl: normalizeWorkspaceOrigin(response?.baseUrl ?? null),
                 port:
                   typeof response?.port === "number" &&
                   Number.isFinite(response.port)
                     ? response.port
                     : null,
               };
-              setLocalServeWebOrigin(normalized.baseUrl);
               resolve(normalized);
             }
           );

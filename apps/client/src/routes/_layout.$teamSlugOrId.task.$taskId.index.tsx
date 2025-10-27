@@ -38,6 +38,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Code2, Globe2, TerminalSquare, GitCompare, MessageCircle } from "lucide-react";
 import z from "zod";
+import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 
 type TaskRunListItem = (typeof api.taskRuns.getByTask._returnType)[number];
 type IframeStatusEntry = {
@@ -249,6 +250,7 @@ function EmptyPanelSlot({ position, availablePanels, onAddPanel }: EmptyPanelSlo
 function TaskDetailPage() {
   const { taskId, teamSlugOrId } = Route.useParams();
   const search = Route.useSearch();
+  const localServeWeb = useLocalVSCodeServeWebQuery();
   const { data: task } = useSuspenseQuery(
     convexQuery(api.tasks.getById, {
       teamSlugOrId,
@@ -369,7 +371,9 @@ function TaskDetailPage() {
   const headerTaskRunId = selectedRunId ?? taskRuns?.[0]?._id ?? null;
 
   const rawWorkspaceUrl = selectedRun?.vscode?.workspaceUrl ?? null;
-  const workspaceUrl = rawWorkspaceUrl ? toProxyWorkspaceUrl(rawWorkspaceUrl) : null;
+  const workspaceUrl = rawWorkspaceUrl
+    ? toProxyWorkspaceUrl(rawWorkspaceUrl, localServeWeb.data?.baseUrl)
+    : null;
   const workspacePersistKey = selectedRunId
     ? getTaskRunPersistKey(selectedRunId)
     : null;

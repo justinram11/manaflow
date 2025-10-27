@@ -3,7 +3,7 @@ import type { Doc } from "@cmux/convex/dataModel";
 import { editorIcons, type EditorType } from "@/components/ui/dropdown-types";
 import { useCallback, useEffect, useMemo } from "react";
 import { toast } from "sonner";
-import { rewriteLocalWorkspaceUrlIfNeeded } from "@/lib/localServeWebOrigin";
+import { rewriteLocalWorkspaceUrlIfNeeded } from "@/lib/toProxyWorkspaceUrl";
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 
 type NetworkingInfo = Doc<"taskRuns">["networking"];
