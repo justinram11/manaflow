@@ -1,6 +1,5 @@
 import type { Instance } from "morphcloud";
 import { MorphCloudClient } from "morphcloud";
-import { Octokit } from "octokit";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
@@ -10,6 +9,9 @@ import {
   codeReviewCallbackSchema,
   type CodeReviewCallbackPayload,
 } from "@cmux/shared/codeReview/callback-schemas";
+import { fetchPullRequest } from "@/lib/github/fetch-pull-request";
+import type { GithubPullRequest } from "@/lib/github/fetch-pull-request";
+import { isGithubApiError } from "@/lib/github/errors";
 
 const DEFAULT_MORPH_SNAPSHOT_ID = "snapshot_vb7uqz8o";
 const OPEN_VSCODE_PORT = 39378;
@@ -148,9 +150,9 @@ async function getInjectScriptSource(productionMode: boolean): Promise<string> {
       } catch (error) {
         const maybeCode =
           typeof error === "object" &&
-          error !== null &&
-          "code" in error &&
-          typeof (error as { code?: unknown }).code === "string"
+            error !== null &&
+            "code" in error &&
+            typeof (error as { code?: unknown }).code === "string"
             ? (error as { code: string }).code
             : null;
         if (maybeCode === "ENOENT") {
@@ -211,11 +213,7 @@ interface PrMetadata extends ParsedPrUrl {
   baseRefName: string;
 }
 
-type OctokitClient = InstanceType<typeof Octokit>;
-type PullRequestGetResponse = Awaited<
-  ReturnType<OctokitClient["rest"]["pulls"]["get"]>
->;
-type GithubApiPullResponse = PullRequestGetResponse["data"];
+type GithubApiPullResponse = GithubPullRequest;
 
 function ensureMorphClient(): MorphCloudClient {
   const apiKey = process.env.MORPH_API_KEY;
@@ -253,15 +251,6 @@ async function sendCallback(
   }
 }
 
-function getGithubToken(): string | null {
-  const token =
-    process.env.GITHUB_TOKEN ??
-    process.env.GH_TOKEN ??
-    process.env.GITHUB_PERSONAL_ACCESS_TOKEN ??
-    null;
-  return token && token.length > 0 ? token : null;
-}
-
 function parsePrUrl(prUrl: string): ParsedPrUrl {
   let url: URL;
   try {
@@ -288,18 +277,20 @@ function parsePrUrl(prUrl: string): ParsedPrUrl {
 
 async function fetchPrMetadata(prUrl: string): Promise<PrMetadata> {
   const parsed = parsePrUrl(prUrl);
-  const token = getGithubToken();
-  const octokit = new Octokit(token ? { auth: token } : {});
 
   let data: GithubApiPullResponse;
   try {
-    const response = await octokit.rest.pulls.get({
-      owner: parsed.owner,
-      repo: parsed.repo,
-      pull_number: parsed.number,
-    });
-    data = response.data;
+    data = await fetchPullRequest(parsed.owner, parsed.repo, parsed.number);
   } catch (error) {
+    if (isGithubApiError(error)) {
+      const documentation = error.documentationUrl
+        ? ` - ${error.documentationUrl}`
+        : "";
+      throw new Error(
+        `Failed to fetch PR metadata via GitHub API: ${error.message}${documentation}`.trim()
+      );
+    }
+
     const message =
       error instanceof Error ? error.message : String(error ?? "unknown error");
     throw new Error(
