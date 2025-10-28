@@ -21,6 +21,7 @@ import {
   AlertTriangle,
   Archive as ArchiveIcon,
   ArchiveRestore as ArchiveRestoreIcon,
+  CheckCircle,
   Circle,
   Copy as CopyIcon,
   Crown,
@@ -313,13 +314,11 @@ function TaskTreeInner({
       return null;
     }
 
-    if (task.isCompleted) {
-      return (
-        <GitPullRequest className="w-3 h-3 text-[#1f883d] dark:text-[#238636]" />
-      );
-    }
-
-    return <Circle className="w-3 h-3 text-neutral-400 animate-pulse" />;
+    return task.isCompleted ? (
+      <CheckCircle className="w-3 h-3 text-green-500" />
+    ) : (
+      <Circle className="w-3 h-3 text-neutral-400 animate-pulse" />
+    );
   })();
 
   return (
@@ -600,9 +599,7 @@ function TaskRunTreeInner({
   const statusIcon = {
     pending: <Circle className="w-3 h-3 text-neutral-400" />,
     running: <Loader2 className="w-3 h-3 text-blue-500 animate-spin" />,
-    completed: (
-      <GitPullRequest className="w-3 h-3 text-[#1f883d] dark:text-[#238636]" />
-    ),
+    completed: <CheckCircle className="w-3 h-3 text-green-500" />,
     failed: <XCircle className="w-3 h-3 text-red-500" />,
   }[run.status];
 
