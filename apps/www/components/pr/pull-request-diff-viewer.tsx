@@ -258,6 +258,11 @@ type HeatmapTooltipTheme = {
   reasonClass: string;
 };
 
+type NavigateOptions = {
+  updateAnchor?: boolean;
+  updateHash?: boolean;
+};
+
 type DiffLineSide = "new" | "old";
 
 type DiffLineLocation = {
@@ -432,7 +437,39 @@ export function PullRequestDiffViewer({
   }, [fileOutputs]);
 
   const sortedFiles = useMemo(() => {
-    return [...files].sort((a, b) => a.filename.localeCompare(b.filename));
+    // Sort files to match the tree structure order
+    // The tree displays files depth-first, so we need to sort by path segments
+    return [...files].sort((a, b) => {
+      const aSegments = a.filename.split("/");
+      const bSegments = b.filename.split("/");
+      const minLength = Math.min(aSegments.length, bSegments.length);
+
+      // Compare segment by segment
+      for (let i = 0; i < minLength; i++) {
+        const aSegment = aSegments[i]!;
+        const bSegment = bSegments[i]!;
+
+        // At the last segment for one of the paths
+        const aIsLast = i === aSegments.length - 1;
+        const bIsLast = i === bSegments.length - 1;
+
+        if (aSegment === bSegment) {
+          // Same segment, continue to next level
+          continue;
+        }
+
+        // If one is a file and one is a directory at this level, directory comes first
+        if (aIsLast && !bIsLast) return 1; // a is file, b is directory
+        if (!aIsLast && bIsLast) return -1; // a is directory, b is file
+
+        // Both are directories or both are files at this level, sort alphabetically
+        return aSegment.localeCompare(bSegment);
+      }
+
+      // One path is a prefix of the other
+      // Shorter path (file in parent dir) comes before longer path (file in subdir)
+      return aSegments.length - bSegments.length;
+    });
   }, [files]);
 
   const totalFileCount = sortedFiles.length;
@@ -560,6 +597,7 @@ export function PullRequestDiffViewer({
   const [autoTooltipTarget, setAutoTooltipTarget] =
     useState<ActiveTooltipTarget | null>(null);
   const autoTooltipTimeoutRef = useRef<number | null>(null);
+  const focusChangeOriginRef = useRef<"user" | "auto">("auto");
 
   const clearAutoTooltip = useCallback(() => {
     if (
@@ -613,16 +651,18 @@ export function PullRequestDiffViewer({
 
   useEffect(() => {
     if (targetCount === 0) {
+      focusChangeOriginRef.current = "auto";
       setFocusedErrorIndex(null);
       return;
     }
 
+    focusChangeOriginRef.current = "auto";
     setFocusedErrorIndex((previous) => {
       if (previous === null) {
-        return 0;
+        return previous;
       }
       if (previous >= targetCount) {
-        return 0;
+        return targetCount - 1;
       }
       return previous;
     });
@@ -716,33 +756,24 @@ export function PullRequestDiffViewer({
 
     const observer = new IntersectionObserver(
       (entries) => {
+        // Find all visible entries and sort by their position from the top
         const visible = entries
           .filter((entry) => entry.isIntersecting)
-          .sort(
-            (a, b) =>
-              a.target.getBoundingClientRect().top -
-              b.target.getBoundingClientRect().top
-          );
-
-        if (visible[0]?.target.id) {
-          setActiveAnchor(visible[0].target.id);
-          return;
-        }
-
-        const nearest = entries
           .map((entry) => ({
             id: entry.target.id,
             top: entry.target.getBoundingClientRect().top,
           }))
-          .sort((a, b) => Math.abs(a.top) - Math.abs(b.top))[0];
+          .sort((a, b) => a.top - b.top);
 
-        if (nearest?.id) {
-          setActiveAnchor(nearest.id);
+        // Set the active anchor to the topmost visible file
+        if (visible.length > 0 && visible[0]?.id) {
+          setActiveAnchor(visible[0].id);
         }
       },
       {
-        rootMargin: "-128px 0px -55% 0px",
-        threshold: [0, 0.2, 0.4, 0.6, 1],
+        // Consider a file active when it's in the top 40% of the viewport
+        rootMargin: "0px 0px -60% 0px",
+        threshold: 0,
       }
     );
 
@@ -758,16 +789,26 @@ export function PullRequestDiffViewer({
     };
   }, [parsedDiffs]);
 
-  const handleNavigate = useCallback((path: string) => {
-    setActivePath(path);
-    setActiveAnchor(path);
+  const handleNavigate = useCallback(
+    (path: string, options?: NavigateOptions) => {
+      setActivePath(path);
 
-    if (typeof window === "undefined") {
-      return;
-    }
+      const shouldUpdateAnchor = options?.updateAnchor ?? true;
+      if (shouldUpdateAnchor) {
+        setActiveAnchor(path);
+      }
 
-    window.location.hash = encodeURIComponent(path);
-  }, []);
+      if (typeof window === "undefined") {
+        return;
+      }
+
+      const shouldUpdateHash = options?.updateHash ?? true;
+      if (shouldUpdateHash) {
+        window.location.hash = encodeURIComponent(path);
+      }
+    },
+    []
+  );
 
   const handleFocusPrevious = useCallback(
     (options?: FocusNavigateOptions) => {
@@ -775,6 +816,7 @@ export function PullRequestDiffViewer({
         return;
       }
 
+      focusChangeOriginRef.current = "user";
       const isKeyboard = options?.source === "keyboard";
 
       setFocusedErrorIndex((previous) => {
@@ -806,6 +848,7 @@ export function PullRequestDiffViewer({
         return;
       }
 
+      focusChangeOriginRef.current = "user";
       const isKeyboard = options?.source === "keyboard";
 
       setFocusedErrorIndex((previous) => {
@@ -909,7 +952,18 @@ export function PullRequestDiffViewer({
       return;
     }
 
-    handleNavigate(focusedError.filePath);
+    const origin = focusChangeOriginRef.current;
+    focusChangeOriginRef.current = "auto";
+    const isUserInitiated = origin === "user";
+
+    handleNavigate(focusedError.filePath, {
+      updateAnchor: isUserInitiated,
+      updateHash: isUserInitiated,
+    });
+
+    if (!isUserInitiated) {
+      return;
+    }
 
     if (focusedError.changeKey) {
       return;
