@@ -59,6 +59,7 @@ import {
   type ReviewHeatmapLine,
   type ResolvedHeatmapLine,
 } from "./heatmap";
+import clsx from "clsx";
 
 type PullRequestDiffViewerProps = {
   files: GithubFileChange[];
@@ -1170,7 +1171,7 @@ function ErrorNavigator({
 
   return (
     <TooltipProvider delayDuration={120} skipDelayDuration={120}>
-      <div className="inline-flex items-center gap-3 rounded-full border border-sky-200 bg-white/95 px-3 py-1 text-xs font-medium text-neutral-700 shadow-sm shadow-sky-200/60 backdrop-blur dark:border-sky-800/60 dark:bg-neutral-900/95 dark:text-neutral-200 dark:shadow-sky-900/40">
+      <div className="inline-flex items-center gap-3 rounded-full border border-sky-200 bg-white/95 px-3 py-1 text-xs font-medium text-neutral-700 backdrop-blur dark:border-sky-800/60 dark:bg-neutral-900/95 dark:text-neutral-200">
         <span aria-live="polite" className="flex items-center gap-1">
           {hasSelection && displayIndex !== null ? (
             <>
@@ -1270,7 +1271,7 @@ function FileTreeNavigator({
                 type="button"
                 onClick={() => onToggleDirectory(node.path)}
                 className={cn(
-                  "flex w-full items-center gap-1.5 rounded-md px-2.5 py-1 text-left text-sm font-medium transition hover:bg-neutral-100",
+                  "flex w-full items-center gap-1.5 rounded-md px-2.5 py-1 text-left text-sm transition hover:bg-neutral-100",
                   isExpanded ? "text-neutral-900" : "text-neutral-700"
                 )}
                 style={{ paddingLeft: depth * 14 + 10 }}
@@ -1310,7 +1311,7 @@ function FileTreeNavigator({
             )}
             style={{ paddingLeft: depth * 14 + 32 }}
           >
-            <span className="truncate font-medium">{node.name}</span>
+            <span className="truncate">{node.name}</span>
           </button>
         );
       })}
@@ -1588,157 +1589,162 @@ function FileDiffCard({
         id={anchorId}
         ref={cardRef}
         className={cn(
-          "overflow-hidden rounded-2xl border border-neutral-200 bg-white transition focus:outline-none divide-y",
+          "rounded-2xl border border-neutral-200 bg-white transition focus:outline-none",
           isActive ? "" : ""
         )}
         tabIndex={-1}
         aria-current={isActive}
       >
-        <button
-          type="button"
-          onClick={() => setIsCollapsed((previous) => !previous)}
-          className="flex w-full items-center gap-0 rounded-t-xl border-neutral-200 bg-neutral-50/80 px-3.5 py-2.5 text-left font-sans font-medium transition hover:bg-neutral-100 focus:outline-none focus-visible:outline-none"
-          aria-expanded={!isCollapsed}
-        >
-          <span className="flex h-5 w-5 items-center justify-center text-neutral-400">
-            {isCollapsed ? (
-              <ChevronRight className="h-3.5 w-3.5" />
-            ) : (
-              <ChevronDown className="h-3.5 w-3.5" />
+        <div className="flex flex-col rounded-2xl divide-y divide-neutral-200">
+          <button
+            type="button"
+            onClick={() => setIsCollapsed((previous) => !previous)}
+            className={clsx(
+              "sticky top-0 z-10 flex w-full items-center gap-0 rounded-t-2xl border-neutral-200 bg-neutral-50 px-3.5 py-2.5 text-left font-sans font-medium transition hover:bg-neutral-100 focus:outline-none focus-visible:outline-none",
+              isCollapsed ? "rounded-b-2xl" : "rounded-b-none"
             )}
-          </span>
-
-          <span
-            className={cn(
-              "flex h-5 w-5 items-center justify-center pl-2",
-              statusMeta.colorClassName
-            )}
+            aria-expanded={!isCollapsed}
           >
-            {statusMeta.icon}
-            <span className="sr-only">{statusMeta.label}</span>
-          </span>
-
-          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <span className="pl-1.5 text-sm text-neutral-700 truncate">
-              {file.filename}
+            <span className="flex h-5 w-5 items-center justify-center text-neutral-400">
+              {isCollapsed ? (
+                <ChevronRight className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5" />
+              )}
             </span>
-            {file.previous_filename ? (
-              <span className="text-sm text-neutral-500 truncate">
-                Renamed from {file.previous_filename}
-              </span>
-            ) : null}
-          </div>
 
-          <div className="flex items-center gap-2 text-[13px] font-medium text-neutral-600">
-            <span className="text-emerald-600">+{file.additions}</span>
-            <span className="text-rose-600">-{file.deletions}</span>
-          </div>
-        </button>
-
-        {showReview ? (
-          <div className="border-b border-neutral-200 bg-sky-50 px-4 py-4">
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-sky-700">
-              <Sparkles className="h-4 w-4" aria-hidden />
-              Automated review
-            </div>
-            <pre className="mt-2 max-h-[9.5rem] overflow-hidden whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-neutral-900">
-              {reviewContent}
-            </pre>
-          </div>
-        ) : null}
-
-        {!isCollapsed ? (
-          diff ? (
-            <Diff
-              diffType={diff.type}
-              hunks={diff.hunks}
-              viewType="split"
-              optimizeSelection
-              className="diff-syntax system-mono overflow-auto bg-white text-xs leading-5 text-neutral-800"
-              gutterClassName="system-mono bg-white text-xs text-neutral-500"
-              codeClassName="system-mono text-xs text-neutral-800"
-              tokens={tokens ?? undefined}
-              renderToken={renderHeatmapToken}
-              renderGutter={renderHeatmapGutter}
-              generateLineClassName={({ changes, defaultGenerate }) => {
-                const defaultClassName = defaultGenerate();
-                const classNames: string[] = ["system-mono text-xs py-1"];
-                const normalizedChanges = changes.filter(
-                  (change): change is ChangeData => Boolean(change)
-                );
-                const hasFocus =
-                  focusedLine !== null &&
-                  normalizedChanges.some((change) =>
-                    doesChangeMatchLine(change, focusedLine)
-                  );
-                if (hasFocus) {
-                  classNames.push("cmux-heatmap-focus");
-                }
-                if (
-                  diffHeatmap &&
-                  (diffHeatmap.lineClasses.size > 0 ||
-                    diffHeatmap.oldLineClasses.size > 0)
-                ) {
-                  let bestHeatmapClass: string | null = null;
-
-                  const considerClass = (candidate: string | undefined) => {
-                    if (!candidate) {
-                      return;
-                    }
-                    if (!bestHeatmapClass) {
-                      bestHeatmapClass = candidate;
-                      return;
-                    }
-                    const currentTier = extractHeatmapTier(bestHeatmapClass);
-                    const nextTier = extractHeatmapTier(candidate);
-                    if (nextTier > currentTier) {
-                      bestHeatmapClass = candidate;
-                    }
-                  };
-
-                  for (const change of normalizedChanges) {
-                    const newLineNumber = computeNewLineNumber(change);
-                    if (newLineNumber > 0) {
-                      considerClass(diffHeatmap.lineClasses.get(newLineNumber));
-                    }
-                    const oldLineNumber = computeOldLineNumber(change);
-                    if (oldLineNumber > 0) {
-                      considerClass(
-                        diffHeatmap.oldLineClasses.get(oldLineNumber)
-                      );
-                    }
-                  }
-
-                  if (bestHeatmapClass) {
-                    classNames.push(bestHeatmapClass);
-                  }
-                }
-
-                classNames.push("text-neutral-800");
-
-                return cn(defaultClassName, classNames);
-              }}
+            <span
+              className={cn(
+                "flex h-5 w-5 items-center justify-center pl-2",
+                statusMeta.colorClassName
+              )}
             >
-              {(hunks) =>
-                hunks.map((hunk) => (
-                  <Fragment key={hunk.content}>
-                    <Decoration>
-                      <div className="bg-sky-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-sky-700">
-                        {hunk.content}
-                      </div>
-                    </Decoration>
-                    <Hunk hunk={hunk} />
-                  </Fragment>
-                ))
-              }
-            </Diff>
-          ) : (
-            <div className="bg-neutral-50 px-4 py-6 text-sm text-neutral-600">
-              {error ??
-                "Diff content is unavailable for this file. It might be binary or too large to display."}
+              {statusMeta.icon}
+              <span className="sr-only">{statusMeta.label}</span>
+            </span>
+
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="pl-1.5 text-sm text-neutral-700 truncate">
+                {file.filename}
+              </span>
+              {file.previous_filename ? (
+                <span className="text-sm text-neutral-500 truncate">
+                  Renamed from {file.previous_filename}
+                </span>
+              ) : null}
             </div>
-          )
-        ) : null}
+
+            <div className="flex items-center gap-2 text-[13px] font-medium text-neutral-600">
+              <span className="text-emerald-600">+{file.additions}</span>
+              <span className="text-rose-600">-{file.deletions}</span>
+            </div>
+          </button>
+
+          {showReview ? (
+            <div className="border-b border-neutral-200 bg-sky-50 px-4 py-4">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-sky-700">
+                <Sparkles className="h-4 w-4" aria-hidden />
+                Automated review
+              </div>
+              <pre className="mt-2 max-h-[9.5rem] overflow-hidden whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-neutral-900">
+                {reviewContent}
+              </pre>
+            </div>
+          ) : null}
+
+          {!isCollapsed &&
+            (diff ? (
+              <Diff
+                diffType={diff.type}
+                hunks={diff.hunks}
+                viewType="split"
+                optimizeSelection
+                className="diff-syntax system-mono overflow-auto bg-white text-xs leading-5 text-neutral-800"
+                gutterClassName="system-mono bg-white text-xs text-neutral-500 rounded-b-2xl"
+                codeClassName="system-mono text-xs text-neutral-800"
+                tokens={tokens ?? undefined}
+                renderToken={renderHeatmapToken}
+                renderGutter={renderHeatmapGutter}
+                generateLineClassName={({ changes, defaultGenerate }) => {
+                  const defaultClassName = defaultGenerate();
+                  const classNames: string[] = ["system-mono text-xs py-1"];
+                  const normalizedChanges = changes.filter(
+                    (change): change is ChangeData => Boolean(change)
+                  );
+                  const hasFocus =
+                    focusedLine !== null &&
+                    normalizedChanges.some((change) =>
+                      doesChangeMatchLine(change, focusedLine)
+                    );
+                  if (hasFocus) {
+                    classNames.push("cmux-heatmap-focus");
+                  }
+                  if (
+                    diffHeatmap &&
+                    (diffHeatmap.lineClasses.size > 0 ||
+                      diffHeatmap.oldLineClasses.size > 0)
+                  ) {
+                    let bestHeatmapClass: string | null = null;
+
+                    const considerClass = (candidate: string | undefined) => {
+                      if (!candidate) {
+                        return;
+                      }
+                      if (!bestHeatmapClass) {
+                        bestHeatmapClass = candidate;
+                        return;
+                      }
+                      const currentTier = extractHeatmapTier(bestHeatmapClass);
+                      const nextTier = extractHeatmapTier(candidate);
+                      if (nextTier > currentTier) {
+                        bestHeatmapClass = candidate;
+                      }
+                    };
+                    for (const change of normalizedChanges) {
+                      const newLineNumber = computeNewLineNumber(change);
+                      if (newLineNumber > 0) {
+                        considerClass(
+                          diffHeatmap.lineClasses.get(newLineNumber)
+                        );
+                      }
+                      const oldLineNumber = computeOldLineNumber(change);
+                      if (oldLineNumber > 0) {
+                        considerClass(
+                          diffHeatmap.oldLineClasses.get(oldLineNumber)
+                        );
+                      }
+                    }
+
+                    if (bestHeatmapClass) {
+                      classNames.push(bestHeatmapClass);
+                    }
+                  }
+
+                  classNames.push("text-neutral-800");
+
+                  return cn(defaultClassName, classNames);
+                }}
+              >
+                {(hunks) =>
+                  hunks.map((hunk) => (
+                    <Fragment key={hunk.content}>
+                      <Decoration>
+                        <div className="bg-sky-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-sky-700">
+                          {hunk.content}
+                        </div>
+                      </Decoration>
+                      <Hunk hunk={hunk} />
+                    </Fragment>
+                  ))
+                }
+              </Diff>
+            ) : (
+              <div className="bg-neutral-50 px-4 py-6 text-sm text-neutral-600">
+                {error ??
+                  "Diff content is unavailable for this file. It might be binary or too large to display."}
+              </div>
+            ))}
+        </div>
       </article>
     </TooltipProvider>
   );
