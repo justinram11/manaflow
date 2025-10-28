@@ -7,25 +7,17 @@ import process from "node:process";
 import { promisify } from "node:util";
 import { createOpenAI } from "@ai-sdk/openai";
 import { streamObject, type LanguageModel } from "ai";
-import { z } from "zod";
 import { formatUnifiedDiffWithLineNumbers } from "./pr-review/diff-utils";
+import {
+  buildHeatmapPrompt,
+  heatmapSchema,
+  summarizeHeatmapStreamChunk,
+} from "../lib/services/code-review/heatmap-shared";
+import type { HeatmapLine } from "../lib/services/code-review/heatmap-shared";
 
 const execFileAsync = promisify(execFile);
 
-const heatmapSchema = z.object({
-  lines: z.array(
-    z.object({
-      line: z.string(),
-      changeType: z.enum(["addition", "deletion", "context"]),
-      hasChanged: z.boolean(),
-      shouldBeReviewedScore: z.number().min(0).max(1).optional(),
-      shouldReviewWhy: z.string().optional(),
-      mostImportantCharacterIndex: z.number(),
-    })
-  ),
-});
-
-export type HeatmapLine = z.infer<typeof heatmapSchema>["lines"][number];
+export type { HeatmapLine };
 
 export interface FileDiff {
   filePath: string;
@@ -221,30 +213,6 @@ function formatResultAsMarkdown(
   return sections.join("\n");
 }
 
-function buildPrompt(filePath: string, formattedDiff: string[]): string {
-  const diffBody =
-    formattedDiff.length > 0 ? formattedDiff.join("\n") : "(no diff)";
-  return `You are preparing a review heatmap for the file "${filePath}".
-Return structured data matching the provided schema. Rules:
-- Strip the leading "+", "-", or " " marker from each diff line and put the rest in the "line" field.
-- Set changeType to "addition" for "+" lines, "deletion" for "-" lines, and "context" for " " lines.
-- Include one entry per diff row that matters. Always cover every line that begins with "+" or "-".
-- Use hasChanged=true for "+" or "-" rows and false for context rows that you still want to mention.
-- When shouldBeReviewedScore is set, provide a short shouldReviewWhy hint (6-12 words). Leave both absent when the line is fine.
-- shouldBeReviewedScore is a number from 0.00 to 1.00 that indicates how careful the reviewer should be when reviewing this line of code.
-- mostImportantCharacterIndex must always be set. Count characters from the start of the line content (after stripping the marker).
-- Keep explanations concise; do not invent code that is not in the diff.
-- Anything that feels like it might be off or might warrant a comment should have a high score, even if it's technically correct.
-- In most cases, the shouldReviewWhy should follow a template like "<X> <verb> <Y>" (eg. "line is too long" or "code accesses sensitive data").
-- It should be understandable by a human and make sense (break the "X is Y" rule if it helps you make it more understandable).
-- Non-clean code and ugly code (hard to read for a human) should be given a higher score.
-
-Diff:
-\`\`\`diff
-${diffBody}
-\`\`\``;
-}
-
 async function mapWithConcurrency<T, R>(
   items: readonly T[],
   concurrency: number,
@@ -295,7 +263,7 @@ export async function runHeatmapJob(
         showLineNumbers: false,
         includeContextLineNumbers: false,
       });
-      const prompt = buildPrompt(file.filePath, formattedDiff);
+      const prompt = buildHeatmapPrompt(file.filePath, formattedDiff);
       const startTime = Date.now();
       try {
         const stream = streamObject({
@@ -310,16 +278,16 @@ export async function runHeatmapJob(
         let hasShownReasoning = false;
 
         for await (const chunk of stream.fullStream) {
-          console.log(JSON.stringify(chunk, null, 2));
-          if (chunk.type === "object") {
-            const currentLineCount = chunk.object.lines?.length ?? 0;
-            if (currentLineCount > lastLineCount) {
-              process.stdout.write(
-                `\r[heatmap] [${index + 1}/${options.files.length}] ${file.filePath}: ${currentLineCount} lines...`
-              );
-              lastLineCount = currentLineCount;
-            }
-          } else if (chunk.type === "text-delta" && chunk.textDelta) {
+          const { lineCount, textDelta } = summarizeHeatmapStreamChunk(chunk);
+
+          if (lineCount !== null && lineCount > lastLineCount) {
+            process.stdout.write(
+              `\r[heatmap] [${index + 1}/${options.files.length}] ${file.filePath}: ${lineCount} lines...`
+            );
+            lastLineCount = lineCount;
+          }
+
+          if (textDelta) {
             if (!hasShownReasoning) {
               process.stdout.write("\n");
               console.log(
@@ -327,7 +295,7 @@ export async function runHeatmapJob(
               );
               hasShownReasoning = true;
             }
-            process.stdout.write(chunk.textDelta);
+            process.stdout.write(`${textDelta} `);
           }
         }
 
@@ -404,7 +372,7 @@ function parseCliArgs(argv: readonly string[]): CliOptions {
     headRef: "HEAD",
     concurrency: 50,
     outputDir: "tmp/pr-review-heatmap",
-    model: "gpt-5",
+    model: "gpt-5-mini",
     maxFiles: null,
     includePaths: [],
     useMergeBase: true,
@@ -808,15 +776,11 @@ async function fetchPrMetadataFromGithub(
     `https://github.com/${identifier.owner}/${identifier.repo}/pull/${identifier.number}`;
 
   const baseRefName =
-    typeof base?.ref === "string" && base.ref.length > 0
-      ? base.ref
-      : "unknown";
+    typeof base?.ref === "string" && base.ref.length > 0 ? base.ref : "unknown";
   const baseRefOid =
     typeof base?.sha === "string" && base.sha.length > 0 ? base.sha : null;
   const headRefName =
-    typeof head?.ref === "string" && head.ref.length > 0
-      ? head.ref
-      : "unknown";
+    typeof head?.ref === "string" && head.ref.length > 0 ? head.ref : "unknown";
   const headRefOid =
     typeof head?.sha === "string" && head.sha.length > 0 ? head.sha : null;
 
@@ -1025,7 +989,9 @@ async function fetchPrMetadataViaGhCli(
   };
 }
 
-async function fetchPrDiffViaGhCli(metadata: GhPrMetadata): Promise<FileDiff[]> {
+async function fetchPrDiffViaGhCli(
+  metadata: GhPrMetadata
+): Promise<FileDiff[]> {
   const path = `repos/${metadata.owner}/${metadata.repo}/pulls/${metadata.number}`;
   const diffText = await runGhCommand([
     "api",
@@ -1079,12 +1045,10 @@ async function main(): Promise<void> {
     const shouldUseGhCliImmediately = options.preferGhCli;
     const allowGhCliFallback = options.allowGhCliFallback;
 
-    let prData:
-      | {
-          metadata: GhPrMetadata;
-          fileDiffs: FileDiff[];
-        }
-      | null = null;
+    let prData: {
+      metadata: GhPrMetadata;
+      fileDiffs: FileDiff[];
+    } | null = null;
 
     if (!shouldUseGhCliImmediately) {
       try {
@@ -1100,7 +1064,9 @@ async function main(): Promise<void> {
           throw error;
         }
         const message =
-          error instanceof Error ? error.message : String(error ?? "unknown error");
+          error instanceof Error
+            ? error.message
+            : String(error ?? "unknown error");
         console.warn(
           `[heatmap] GitHub API request failed (${message}); falling back to gh CLI...`
         );

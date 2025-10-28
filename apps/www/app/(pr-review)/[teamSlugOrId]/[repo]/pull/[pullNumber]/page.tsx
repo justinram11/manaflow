@@ -39,13 +39,21 @@ type PageProps = {
 
 export const dynamic = "force-dynamic";
 
-function buildPullRequestPath({ teamSlugOrId, repo, pullNumber }: PageParams): string {
+function buildPullRequestPath({
+  teamSlugOrId,
+  repo,
+  pullNumber,
+}: PageParams): string {
   return `/${encodeURIComponent(teamSlugOrId)}/${encodeURIComponent(repo)}/pull/${encodeURIComponent(pullNumber)}`;
 }
 
 function redirectToSignIn(returnPath: string): never {
-  const normalizedPath = returnPath.startsWith("/") ? returnPath : `/${returnPath}`;
-  const searchParams = new URLSearchParams({ after_auth_return_to: normalizedPath });
+  const normalizedPath = returnPath.startsWith("/")
+    ? returnPath
+    : `/${returnPath}`;
+  const searchParams = new URLSearchParams({
+    after_auth_return_to: normalizedPath,
+  });
   const signInUrl = `${stackServerApp.urls.signIn}?${searchParams.toString()}`;
 
   redirect(signInUrl);
@@ -70,7 +78,9 @@ async function getFirstTeam(): Promise<Team | null> {
   return firstTeam;
 }
 
-export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+export async function generateMetadata({
+  params,
+}: PageProps): Promise<Metadata> {
   const resolvedParams = await params;
   const returnPath = buildPullRequestPath(resolvedParams);
   const user = await requireSignedInUser(returnPath);
@@ -78,7 +88,11 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   if (!selectedTeam) {
     throw notFound();
   }
-  const { teamSlugOrId: githubOwner, repo, pullNumber: pullNumberRaw } = resolvedParams;
+  const {
+    teamSlugOrId: githubOwner,
+    repo,
+    pullNumber: pullNumberRaw,
+  } = resolvedParams;
   const pullNumber = parsePullNumber(pullNumberRaw);
 
   if (pullNumber === null) {
@@ -88,11 +102,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   }
 
   try {
-    const pullRequest = await fetchPullRequest(
-      githubOwner,
-      repo,
-      pullNumber
-    );
+    const pullRequest = await fetchPullRequest(githubOwner, repo, pullNumber);
 
     return {
       title: `${pullRequest.title} · #${pullRequest.number} · ${githubOwner}/${repo}`,
@@ -118,7 +128,11 @@ export default async function PullRequestPage({ params }: PageProps) {
     throw notFound();
   }
 
-  const { teamSlugOrId: githubOwner, repo, pullNumber: pullNumberRaw } = resolvedParams;
+  const {
+    teamSlugOrId: githubOwner,
+    repo,
+    pullNumber: pullNumberRaw,
+  } = resolvedParams;
   const pullNumber = parsePullNumber(pullNumberRaw);
 
   if (pullNumber === null) {
@@ -142,7 +156,7 @@ export default async function PullRequestPage({ params }: PageProps) {
 
   return (
     <div className="min-h-dvh bg-neutral-50 text-neutral-900">
-      <div className="flex w-full flex-col gap-8 px-6 pb-16 pt-10 sm:px-8 lg:px-12">
+      <div className="flex w-full flex-col gap-8 pb-16 pt-10 px-4">
         <Suspense fallback={<PullRequestHeaderSkeleton />}>
           <PullRequestHeader
             promise={pullRequestPromise}
@@ -196,19 +210,25 @@ function scheduleCodeReviewStart({
         const baseCommitRef = pullRequest.base?.sha ?? undefined;
 
         if (!commitRef) {
-          console.error("[code-review] Missing head commit SHA; skipping schedule", {
-            githubOwner,
-            repo,
-            pullNumber,
-          });
+          console.error(
+            "[code-review] Missing head commit SHA; skipping schedule",
+            {
+              githubOwner,
+              repo,
+              pullNumber,
+            }
+          );
           return;
         }
         if (!baseCommitRef) {
-          console.error("[code-review] Missing base commit SHA; skipping schedule", {
-            githubOwner,
-            repo,
-            pullNumber,
-          });
+          console.error(
+            "[code-review] Missing base commit SHA; skipping schedule",
+            {
+              githubOwner,
+              repo,
+              pullNumber,
+            }
+          );
           return;
         }
 
@@ -220,7 +240,10 @@ function scheduleCodeReviewStart({
           baseCommitRef,
           force: false,
         };
-        console.info("[code-review] Scheduling automated review", dedupeMetadata);
+        console.info(
+          "[code-review] Scheduling automated review",
+          dedupeMetadata
+        );
 
         const callbackBaseUrl = getConvexHttpActionBaseUrl();
         if (!callbackBaseUrl) {
@@ -356,7 +379,7 @@ function PullRequestHeaderContent({
   const authorLogin = pullRequest.user?.login ?? null;
 
   return (
-    <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
+    <section className="rounded-xl border border-neutral-200 bg-white p-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <PullRequestHeaderSummary
           statusLabel={statusBadge.label}

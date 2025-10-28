@@ -2,15 +2,18 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { streamObject } from "ai";
 import { api } from "@cmux/convex/api";
 import type { Id } from "@cmux/convex/dataModel";
-import { z } from "zod";
-
 import { getConvex } from "@/lib/utils/get-convex";
 import {
   collectPrDiffs,
   mapWithConcurrency,
-  type HeatmapLine,
 } from "@/scripts/pr-review-heatmap";
 import { formatUnifiedDiffWithLineNumbers } from "@/scripts/pr-review/diff-utils";
+import {
+  buildHeatmapPrompt,
+  heatmapSchema,
+  summarizeHeatmapStreamChunk,
+  type HeatmapLine,
+} from "./heatmap-shared";
 
 interface HeatmapReviewConfig {
   jobId: string;
@@ -24,43 +27,6 @@ interface HeatmapReviewConfig {
 
 // Placeholder sandbox ID for heatmap strategy (no Morph VM used)
 const HEATMAP_SANDBOX_ID = "heatmap-no-vm";
-
-const heatmapSchema = z.object({
-  lines: z.array(
-    z.object({
-      line: z.string(),
-      changeType: z.enum(["addition", "deletion", "context"]),
-      hasChanged: z.boolean(),
-      shouldBeReviewedScore: z.number().min(0).max(1).optional(),
-      shouldReviewWhy: z.string().optional(),
-      mostImportantCharacterIndex: z.number(),
-    })
-  ),
-});
-
-function buildPrompt(filePath: string, formattedDiff: string[]): string {
-  const diffBody =
-    formattedDiff.length > 0 ? formattedDiff.join("\n") : "(no diff)";
-  return `You are preparing a review heatmap for the file "${filePath}".
-Return structured data matching the provided schema. Rules:
-- Strip the leading "+", "-", or " " marker from each diff line and put the rest in the "line" field.
-- Set changeType to "addition" for "+" lines, "deletion" for "-" lines, and "context" for " " lines.
-- Include one entry per diff row that matters. Always cover every line that begins with "+" or "-".
-- Use hasChanged=true for "+" or "-" rows and false for context rows that you still want to mention.
-- When shouldBeReviewedScore is set, provide a short shouldReviewWhy hint (6-12 words). Leave both absent when the line is fine.
-- shouldBeReviewedScore is a number from 0.00 to 1.00 that indicates how careful the reviewer should be when reviewing this line of code.
-- mostImportantCharacterIndex must always be set. Count characters from the start of the line content (after stripping the marker).
-- Keep explanations concise; do not invent code that is not in the diff.
-- Anything that feels like it might be off or might warrant a comment should have a high score, even if it's technically correct.
-- In most cases, the shouldReviewWhy should follow a template like "<X> <verb> <Y>" (eg. "line is too long" or "code accesses sensitive data").
-- It should be understandable by a human and make sense (break the "X is Y" rule if it helps you make it more understandable).
-- Non-clean code and ugly code (hard to read for a human) should be given a higher score.
-
-Diff:
-\`\`\`diff
-${diffBody}
-\`\`\``;
-}
 
 /**
  * Run PR review using the heatmap strategy without Morph.
@@ -81,6 +47,7 @@ export async function runHeatmapReview(
   }
 
   const convex = getConvex({ accessToken: config.accessToken });
+  const jobStart = Date.now();
 
   try {
     // Fetch PR diffs via GitHub API
@@ -136,24 +103,59 @@ export async function runHeatmapReview(
           showLineNumbers: false,
           includeContextLineNumbers: false,
         });
-        const prompt = buildPrompt(file.filePath, formattedDiff);
-
+        const prompt = buildHeatmapPrompt(file.filePath, formattedDiff);
+        const streamStart = Date.now();
         const stream = streamObject({
-          model: openai("gpt-4o"),
+          model: openai("gpt-5-mini"),
           schema: heatmapSchema,
           prompt,
           temperature: 0,
           maxRetries: 2,
         });
 
+        let lastLineCount = 0;
+        let reasoningStarted = false;
+
+        for await (const chunk of stream.fullStream) {
+          const { lineCount, textDelta } = summarizeHeatmapStreamChunk(chunk);
+
+          if (lineCount !== null && lineCount > lastLineCount) {
+            lastLineCount = lineCount;
+            console.info(
+              `[heatmap-review] [${index + 1}/${sortedFiles.length}] ${file.filePath}: ${lastLineCount} lines generated so far`
+            );
+          }
+
+          if (textDelta) {
+            if (!reasoningStarted) {
+              reasoningStarted = true;
+              console.info(
+                `[heatmap-review] [${index + 1}/${sortedFiles.length}] ${file.filePath}: reasoning stream started`
+              );
+            }
+            const collapsed = textDelta.replace(/\s+/g, " ").trim();
+            if (collapsed.length > 0) {
+              const snippet =
+                collapsed.length > 200
+                  ? `${collapsed.slice(0, 197)}...`
+                  : collapsed;
+              console.info(
+                `[heatmap-review] [${index + 1}/${sortedFiles.length}] ${file.filePath}: reasoning chunk "${snippet}"`
+              );
+            }
+          }
+        }
+
         const result = await stream.object;
+        const durationMs = Date.now() - streamStart;
+        const finalLineCount = result.lines.length;
         const fileResult = {
           filePath: file.filePath,
           lines: result.lines,
         };
 
         console.info(
-          `[heatmap-review] [${index + 1}/${sortedFiles.length}] ✓ ${file.filePath}: ${result.lines.length} lines analyzed`
+          `[heatmap-review] [${index + 1}/${sortedFiles.length}] ✓ ${file.filePath}: ${finalLineCount} lines analyzed in ${Math.round(durationMs)}ms`
         );
 
         // Store file output in Convex immediately
@@ -166,7 +168,7 @@ export async function runHeatmapReview(
         });
 
         console.info(
-          `[heatmap-review] File output stored for ${file.filePath}`
+          `[heatmap-review] File output stored for ${file.filePath} (${finalLineCount} lines)`
         );
 
         return fileResult;
@@ -217,12 +219,20 @@ export async function runHeatmapReview(
     console.info("[heatmap-review] Job marked as completed", {
       jobId: config.jobId,
     });
+
+    console.info("[heatmap-review] Review completed", {
+      jobId: config.jobId,
+      durationMs: Date.now() - jobStart,
+      successes: allResults.length,
+      failures: failures.length,
+    });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : String(error ?? "Unknown error");
     console.error("[heatmap-review] Review failed", {
       jobId: config.jobId,
       error: message,
+      durationMs: Date.now() - jobStart,
     });
 
     // Mark job as failed in Convex

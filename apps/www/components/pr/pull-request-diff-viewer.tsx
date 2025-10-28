@@ -80,14 +80,14 @@ type ParsedFileDiff = {
 
 type RefractorNode =
   | {
-    type: "text";
-    value: string;
-  }
+      type: "text";
+      value: string;
+    }
   | {
-    type: string;
-    children?: RefractorNode[];
-    [key: string]: unknown;
-  };
+      type: string;
+      children?: RefractorNode[];
+      [key: string]: unknown;
+    };
 
 const extensionToLanguage: Record<string, string> = {
   bash: "bash",
@@ -212,7 +212,9 @@ const refractorAdapter = createRefractorAdapter(refractor);
 
 type FileOutput =
   | FunctionReturnType<typeof api.codeReview.listFileOutputsForPr>[number]
-  | FunctionReturnType<typeof api.codeReview.listFileOutputsForComparison>[number];
+  | FunctionReturnType<
+      typeof api.codeReview.listFileOutputsForComparison
+    >[number];
 
 type HeatmapTooltipMeta = {
   score: number;
@@ -372,15 +374,17 @@ export function PullRequestDiffViewer({
 
   const prQueryArgs = useMemo(
     () =>
-      normalizedJobType !== "pull_request" || prNumber === null || prNumber === undefined
+      normalizedJobType !== "pull_request" ||
+      prNumber === null ||
+      prNumber === undefined
         ? ("skip" as const)
         : {
-          teamSlugOrId,
-          repoFullName,
-          prNumber,
-          ...(commitRef ? { commitRef } : {}),
-          ...(baseCommitRef ? { baseCommitRef } : {}),
-        },
+            teamSlugOrId,
+            repoFullName,
+            prNumber,
+            ...(commitRef ? { commitRef } : {}),
+            ...(baseCommitRef ? { baseCommitRef } : {}),
+          },
     [
       normalizedJobType,
       teamSlugOrId,
@@ -396,12 +400,12 @@ export function PullRequestDiffViewer({
       normalizedJobType !== "comparison" || !comparisonSlug
         ? ("skip" as const)
         : {
-          teamSlugOrId,
-          repoFullName,
-          comparisonSlug,
-          ...(commitRef ? { commitRef } : {}),
-          ...(baseCommitRef ? { baseCommitRef } : {}),
-        },
+            teamSlugOrId,
+            repoFullName,
+            comparisonSlug,
+            ...(commitRef ? { commitRef } : {}),
+            ...(baseCommitRef ? { baseCommitRef } : {}),
+          },
     [
       normalizedJobType,
       teamSlugOrId,
@@ -504,7 +508,9 @@ export function PullRequestDiffViewer({
       }
 
       try {
-        const [diff] = parseDiff(buildDiffText(file), { nearbySequences: "zip" });
+        const [diff] = parseDiff(buildDiffText(file), {
+          nearbySequences: "zip",
+        });
         return {
           file,
           anchorId: file.filename,
@@ -703,7 +709,7 @@ export function PullRequestDiffViewer({
   const firstPath = parsedDiffs[0]?.file.filename ?? "";
   const initialPath =
     hydratedInitialPath &&
-      sortedFiles.some((file) => file.filename === hydratedInitialPath)
+    sortedFiles.some((file) => file.filename === hydratedInitialPath)
       ? hydratedInitialPath
       : firstPath;
 
@@ -983,21 +989,21 @@ export function PullRequestDiffViewer({
 
   if (totalFileCount === 0) {
     return (
-      <div className="rounded-2xl border border-neutral-200 bg-white p-8 text-sm text-neutral-600 shadow-sm">
+      <div className="rounded-2xl border border-neutral-200 bg-white p-8 text-sm text-neutral-600">
         This pull request does not introduce any file changes.
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-3">
       <ReviewProgressIndicator
         totalFileCount={totalFileCount}
         processedFileCount={processedFileCount}
         isLoading={isLoadingFileOutputs}
       />
 
-      <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:gap-10">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:gap-3">
         <aside className="lg:sticky lg:top-6 lg:h-[calc(100vh-96px)] lg:w-72 lg:overflow-y-auto">
           {targetCount > 0 ? (
             <div className="mb-4 flex justify-center">
@@ -1009,7 +1015,7 @@ export function PullRequestDiffViewer({
               />
             </div>
           ) : null}
-          <div className="rounded-xl border border-neutral-200 bg-white p-3 shadow-sm">
+          <div className="rounded-xl border border-neutral-200 bg-white p-3">
             <FileTreeNavigator
               nodes={fileTree}
               activePath={activeAnchor}
@@ -1020,16 +1026,16 @@ export function PullRequestDiffViewer({
           </div>
         </aside>
 
-        <div className="flex-1 space-y-6">
+        <div className="flex-1 space-y-3">
           {fileEntries.map(({ entry, review, diffHeatmap }) => {
             const isFocusedFile =
               focusedError?.filePath === entry.file.filename;
             const focusedLine = isFocusedFile
               ? focusedError
                 ? {
-                  side: focusedError.side,
-                  lineNumber: focusedError.lineNumber,
-                }
+                    side: focusedError.side,
+                    lineNumber: focusedError.lineNumber,
+                  }
                 : null
               : null;
             const focusedChangeKey = isFocusedFile
@@ -1037,12 +1043,12 @@ export function PullRequestDiffViewer({
               : null;
             const autoTooltipLine =
               isFocusedFile &&
-                autoTooltipTarget &&
-                autoTooltipTarget.filePath === entry.file.filename
+              autoTooltipTarget &&
+              autoTooltipTarget.filePath === entry.file.filename
                 ? {
-                  side: autoTooltipTarget.side,
-                  lineNumber: autoTooltipTarget.lineNumber,
-                }
+                    side: autoTooltipTarget.side,
+                    lineNumber: autoTooltipTarget.lineNumber,
+                  }
                 : null;
 
             return (
@@ -1095,10 +1101,10 @@ function ReviewProgressIndicator({
 
   return (
     <div
-      className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm transition"
+      className="rounded-2xl border border-neutral-200 bg-white p-5 transition"
       aria-live="polite"
     >
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-sm font-medium text-neutral-700">
             Automated review progress
@@ -1300,9 +1306,7 @@ function FileTreeNavigator({
             onClick={() => onSelectFile(node.path)}
             className={cn(
               "flex w-full items-center gap-1 rounded-md px-2.5 py-1 text-left text-sm transition hover:bg-neutral-100",
-              isActive
-                ? "bg-sky-100/80 text-sky-900 shadow-sm"
-                : "text-neutral-700"
+              isActive ? "bg-sky-100/80 text-sky-900" : "text-neutral-700"
             )}
             style={{ paddingLeft: depth * 14 + 32 }}
           >
@@ -1557,8 +1561,8 @@ function FileDiffCard({
       diff.hunks,
       enhancers
         ? {
-          enhancers,
-        }
+            enhancers,
+          }
         : undefined
     );
   }, [diff, language, diffHeatmap]);
@@ -1584,8 +1588,8 @@ function FileDiffCard({
         id={anchorId}
         ref={cardRef}
         className={cn(
-          "overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm transition focus:outline-none",
-          isActive ? "ring-1 ring-sky-200" : "ring-0"
+          "overflow-hidden rounded-2xl border border-neutral-200 bg-white transition focus:outline-none divide-y",
+          isActive ? "" : ""
         )}
         tabIndex={-1}
         aria-current={isActive}
@@ -1593,7 +1597,7 @@ function FileDiffCard({
         <button
           type="button"
           onClick={() => setIsCollapsed((previous) => !previous)}
-          className="flex w-full items-center gap-3 border-b border-neutral-200 bg-neutral-50/80 px-3.5 py-2.5 text-left transition hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+          className="flex w-full items-center gap-0 rounded-t-xl border-neutral-200 bg-neutral-50/80 px-3.5 py-2.5 text-left font-sans font-medium transition hover:bg-neutral-100 focus:outline-none focus-visible:outline-none"
           aria-expanded={!isCollapsed}
         >
           <span className="flex h-5 w-5 items-center justify-center text-neutral-400">
@@ -1606,7 +1610,7 @@ function FileDiffCard({
 
           <span
             className={cn(
-              "flex h-5 w-5 items-center justify-center",
+              "flex h-5 w-5 items-center justify-center pl-2",
               statusMeta.colorClassName
             )}
           >
@@ -1615,17 +1619,17 @@ function FileDiffCard({
           </span>
 
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <span className="font-mono text-xs text-neutral-700 truncate">
+            <span className="pl-1.5 text-sm text-neutral-700 truncate">
               {file.filename}
             </span>
             {file.previous_filename ? (
-              <span className="font-mono text-[11px] text-neutral-500 truncate">
+              <span className="text-sm text-neutral-500 truncate">
                 Renamed from {file.previous_filename}
               </span>
             ) : null}
           </div>
 
-          <div className="flex items-center gap-2 text-[11px] font-medium text-neutral-600">
+          <div className="flex items-center gap-2 text-[13px] font-medium text-neutral-600">
             <span className="text-emerald-600">+{file.additions}</span>
             <span className="text-rose-600">-{file.deletions}</span>
           </div>
@@ -1695,9 +1699,7 @@ function FileDiffCard({
                   for (const change of normalizedChanges) {
                     const newLineNumber = computeNewLineNumber(change);
                     if (newLineNumber > 0) {
-                      considerClass(
-                        diffHeatmap.lineClasses.get(newLineNumber)
-                      );
+                      considerClass(diffHeatmap.lineClasses.get(newLineNumber));
                     }
                     const oldLineNumber = computeOldLineNumber(change);
                     if (oldLineNumber > 0) {

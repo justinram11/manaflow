@@ -854,7 +854,7 @@ function CmuxCommentsWidget() {
             top: `${cursorPos.y - 10}px`,
           }}
         >
-          <div className="bg-blue-500 text-white px-3 py-1 rounded-full text-sm shadow-lg animate-pulse">
+          <div className="bg-blue-500 text-white px-3 py-1 rounded-full text-sm animate-pulse">
             Click to comment
           </div>
         </div>
