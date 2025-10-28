@@ -106,7 +106,7 @@ export async function runHeatmapReview(
         const prompt = buildHeatmapPrompt(file.filePath, formattedDiff);
         const streamStart = Date.now();
         const stream = streamObject({
-          model: openai("gpt-5-mini"),
+          model: openai("gpt-5-nano"),
           schema: heatmapSchema,
           prompt,
           temperature: 0,
@@ -182,7 +182,9 @@ export async function runHeatmapReview(
       } else {
         const error = result.reason;
         const message =
-          error instanceof Error ? error.message : String(error ?? "Unknown error");
+          error instanceof Error
+            ? error.message
+            : String(error ?? "Unknown error");
         const filePath = "<unknown>";
         console.error(`[heatmap-review] ✗ ${filePath}: ${message}`);
         failures.push({ filePath, message });
