@@ -7,7 +7,7 @@ import { getGitHubTokenFromKeychain } from "./getGitHubToken";
 
 export async function setupGitCredentialsForDocker(
   instanceId: string,
-  convex?: ConvexHttpClient
+  _convex?: ConvexHttpClient
 ): Promise<string | null> {
   try {
     const githubToken = await getGitHubTokenFromKeychain();

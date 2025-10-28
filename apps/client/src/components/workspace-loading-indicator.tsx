@@ -6,7 +6,7 @@ export type WorkspaceLoadingStatus = "loading" | "error";
 
 type WorkspaceLoadingVariant = "vscode" | "browser";
 
-interface WorkspaceLoadingIndicatorProps {
+export interface WorkspaceLoadingIndicatorProps {
   status: WorkspaceLoadingStatus;
   variant?: WorkspaceLoadingVariant;
   className?: string;
@@ -33,11 +33,11 @@ const VARIANT_COPY: Record<
     errorDescription: "Refresh the page or try rerunning the task.",
   },
   browser: {
-    loadingTitle: "Launching browser workspace",
+    loadingTitle: "Launching browser preview",
     loadingDescription:
-      "Preparing the in-browser environment. This may take a moment.",
-    errorTitle: "We couldn't launch the browser",
-    errorDescription: "Refresh the page or try rerunning the task.",
+      "Preparing the in-browser environment. Available in cloud workspaces.",
+    errorTitle: "We couldn't launch the browser preview",
+    errorDescription: "Refresh the page or switch to cloud mode, then try again.",
   },
 };
 

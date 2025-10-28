@@ -37,6 +37,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  type ReactNode,
 } from "react";
 import { RepositoryAdvancedOptions } from "./RepositoryAdvancedOptions";
 
@@ -105,6 +106,12 @@ export interface RepositoryPickerProps {
   headerTitle?: string;
   headerDescription?: string;
   className?: string;
+  onStartConfigure?: (payload: {
+    selectedRepos: string[];
+    instanceId?: string;
+    snapshotId?: MorphSnapshotId;
+  }) => void;
+  topAccessory?: ReactNode;
 }
 
 export function RepositoryPicker({
@@ -120,6 +127,8 @@ export function RepositoryPicker({
   headerTitle = "Select Repositories",
   headerDescription = "Choose repositories to include in your environment.",
   className = "",
+  onStartConfigure,
+  topAccessory,
 }: RepositoryPickerProps) {
   const router = useRouter();
   const navigate = useNavigate();
@@ -178,37 +187,57 @@ export function RepositoryPicker({
     return () => window.removeEventListener("message", onMessage);
   }, [handleConnectionsInvalidated]);
 
+  const resolveInstanceId = useCallback(
+    (routeInstanceId?: string, provisionedInstanceId?: string) => {
+      if (routeInstanceId) return routeInstanceId;
+      if (instanceId) return instanceId;
+      return provisionedInstanceId;
+    },
+    [instanceId]
+  );
+
   const goToConfigure = useCallback(
-    async (repos: string[], maybeInstanceId?: string): Promise<void> => {
-      await navigate({
-        to: "/$teamSlugOrId/environments/new",
-        params: { teamSlugOrId },
-        search: (prev) => ({
-          step: "configure",
-          selectedRepos: repos,
-          instanceId: prev.instanceId,
-          connectionLogin: prev.connectionLogin,
-          repoSearch: prev.repoSearch,
-          snapshotId: selectedSnapshotId,
-        }),
-      });
-      if (!instanceId && maybeInstanceId) {
+    async (
+      repos: string[],
+      provisionedInstanceId?: string
+    ): Promise<string | undefined> => {
+      let resolvedInstanceId: string | undefined;
+      const navigateToConfigure = async (options?: { replace?: boolean }) => {
         await navigate({
           to: "/$teamSlugOrId/environments/new",
           params: { teamSlugOrId },
-          search: (prev) => ({
-            step: "configure",
-            selectedRepos: repos,
-            instanceId: maybeInstanceId,
-            connectionLogin: prev.connectionLogin,
-            repoSearch: prev.repoSearch,
-            snapshotId: selectedSnapshotId,
-          }),
-          replace: true,
+          search: (prev) => {
+            resolvedInstanceId = resolveInstanceId(
+              prev.instanceId,
+              provisionedInstanceId
+            );
+            return {
+              step: "configure",
+              selectedRepos: repos,
+              instanceId: resolvedInstanceId,
+              connectionLogin: prev.connectionLogin,
+              repoSearch: prev.repoSearch,
+              snapshotId: selectedSnapshotId,
+            };
+          },
+          ...options,
         });
+      };
+
+      await navigateToConfigure();
+      if (!instanceId && provisionedInstanceId) {
+        await navigateToConfigure({ replace: true });
       }
+
+      return resolvedInstanceId;
     },
-    [instanceId, navigate, selectedSnapshotId, teamSlugOrId]
+    [
+      instanceId,
+      navigate,
+      resolveInstanceId,
+      selectedSnapshotId,
+      teamSlugOrId,
+    ]
   );
 
   const handleContinue = useCallback(
@@ -226,7 +255,13 @@ export function RepositoryPicker({
         },
         {
           onSuccess: async (data) => {
-            await goToConfigure(repos, data.instanceId);
+            const configuredInstanceId =
+              (await goToConfigure(repos, data.instanceId)) ?? data.instanceId;
+            onStartConfigure?.({
+              selectedRepos: repos,
+              instanceId: configuredInstanceId,
+              snapshotId: selectedSnapshotId,
+            });
             console.log("Cloned repos:", data.clonedRepos);
             console.log("Removed repos:", data.removedRepos);
           },
@@ -239,6 +274,7 @@ export function RepositoryPicker({
     [
       goToConfigure,
       instanceId,
+      onStartConfigure,
       selectedSnapshotId,
       setupInstanceMutation,
       setupManualInstanceMutation,
@@ -298,6 +334,7 @@ export function RepositoryPicker({
 
   return (
     <div className={className}>
+      {topAccessory ? <div className="mb-4">{topAccessory}</div> : null}
       {showHeader && (
         <>
           <h1 className="text-xl font-semibold text-neutral-900 dark:text-neutral-100">

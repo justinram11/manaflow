@@ -101,23 +101,6 @@ const KNOWN_PORT_MAPPINGS: { [key: string]: string } = {
   cdp: "39381",
 };
 
-// Check if container exists in Docker
-async function checkContainerExists(containerName: string): Promise<boolean> {
-  const docker = DockerVSCodeInstance.getDocker();
-
-  try {
-    const containers = await docker.listContainers({
-      all: true,
-      filters: { name: [containerName] },
-    });
-
-    return containers.length > 0;
-  } catch (error) {
-    serverLogger.error(`Failed to check container existence:`, error);
-    return false;
-  }
-}
-
 // Get actual host port for a container port from Docker
 async function getActualPortFromDocker(
   containerName: string,
@@ -421,7 +404,7 @@ export function setupWebSocketProxy(server: Server) {
         }
       });
 
-      proxy.on("proxyReqWs", (proxyReq, req, socket) => {
+      proxy.on("proxyReqWs", (_proxyReq, _req, _upgradeSocket) => {
         // Log WebSocket upgrade for debugging
         serverLogger.info(
           `WebSocket upgrade for ${containerName}:${actualPort} established`

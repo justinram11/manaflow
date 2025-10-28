@@ -26,6 +26,7 @@ import {
   Diff,
   Hunk,
   computeNewLineNumber,
+  computeOldLineNumber,
   parseDiff,
   pickRanges,
   getChangeKey,
@@ -56,6 +57,7 @@ import {
   parseReviewHeatmap,
   type DiffHeatmap,
   type ReviewHeatmapLine,
+  type ResolvedHeatmapLine,
 } from "./heatmap";
 
 type PullRequestDiffViewerProps = {
@@ -78,14 +80,14 @@ type ParsedFileDiff = {
 
 type RefractorNode =
   | {
-      type: "text";
-      value: string;
-    }
+    type: "text";
+    value: string;
+  }
   | {
-      type: string;
-      children?: RefractorNode[];
-      [key: string]: unknown;
-    };
+    type: string;
+    children?: RefractorNode[];
+    [key: string]: unknown;
+  };
 
 const extensionToLanguage: Record<string, string> = {
   bash: "bash",
@@ -222,7 +224,7 @@ type FileDiffViewModel = {
   review: FileOutput | null;
   reviewHeatmap: ReviewHeatmapLine[];
   diffHeatmap: DiffHeatmap | null;
-  changeKeyByLine: Map<number, string>;
+  changeKeyByLine: Map<string, string>;
 };
 
 type ReviewErrorTarget = {
@@ -230,6 +232,7 @@ type ReviewErrorTarget = {
   anchorId: string;
   filePath: string;
   lineNumber: number;
+  side: DiffLineSide;
   reason: string | null;
   score: number | null;
   changeKey: string | null;
@@ -242,6 +245,7 @@ type FocusNavigateOptions = {
 type ActiveTooltipTarget = {
   filePath: string;
   lineNumber: number;
+  side: DiffLineSide;
 };
 
 type ShowAutoTooltipOptions = {
@@ -253,6 +257,15 @@ type HeatmapTooltipTheme = {
   titleClass: string;
   reasonClass: string;
 };
+
+type DiffLineSide = "new" | "old";
+
+type DiffLineLocation = {
+  side: DiffLineSide;
+  lineNumber: number;
+};
+
+type LineTooltipMap = Record<DiffLineSide, Map<number, HeatmapTooltipMeta>>;
 
 function inferLanguage(filename: string): string | null {
   const lowerPath = filename.toLowerCase();
@@ -357,12 +370,12 @@ export function PullRequestDiffViewer({
       normalizedJobType !== "pull_request" || prNumber === null || prNumber === undefined
         ? ("skip" as const)
         : {
-            teamSlugOrId,
-            repoFullName,
-            prNumber,
-            ...(commitRef ? { commitRef } : {}),
-            ...(baseCommitRef ? { baseCommitRef } : {}),
-          },
+          teamSlugOrId,
+          repoFullName,
+          prNumber,
+          ...(commitRef ? { commitRef } : {}),
+          ...(baseCommitRef ? { baseCommitRef } : {}),
+        },
     [
       normalizedJobType,
       teamSlugOrId,
@@ -378,12 +391,12 @@ export function PullRequestDiffViewer({
       normalizedJobType !== "comparison" || !comparisonSlug
         ? ("skip" as const)
         : {
-            teamSlugOrId,
-            repoFullName,
-            comparisonSlug,
-            ...(commitRef ? { commitRef } : {}),
-            ...(baseCommitRef ? { baseCommitRef } : {}),
-          },
+          teamSlugOrId,
+          repoFullName,
+          comparisonSlug,
+          ...(commitRef ? { commitRef } : {}),
+          ...(baseCommitRef ? { baseCommitRef } : {}),
+        },
     [
       normalizedJobType,
       teamSlugOrId,
@@ -418,7 +431,11 @@ export function PullRequestDiffViewer({
     return map;
   }, [fileOutputs]);
 
-  const totalFileCount = files.length;
+  const sortedFiles = useMemo(() => {
+    return [...files].sort((a, b) => a.filename.localeCompare(b.filename));
+  }, [files]);
+
+  const totalFileCount = sortedFiles.length;
 
   const processedFileCount = useMemo(() => {
     if (fileOutputs === undefined) {
@@ -426,19 +443,19 @@ export function PullRequestDiffViewer({
     }
 
     let count = 0;
-    for (const file of files) {
+    for (const file of sortedFiles) {
       if (fileOutputIndex.has(file.filename)) {
         count += 1;
       }
     }
 
     return count;
-  }, [fileOutputs, fileOutputIndex, files]);
+  }, [fileOutputs, fileOutputIndex, sortedFiles]);
 
   const isLoadingFileOutputs = fileOutputs === undefined;
 
   const parsedDiffs = useMemo<ParsedFileDiff[]>(() => {
-    return files.map((file) => {
+    return sortedFiles.map((file) => {
       if (!file.patch) {
         return {
           file,
@@ -450,7 +467,7 @@ export function PullRequestDiffViewer({
       }
 
       try {
-        const [diff] = parseDiff(buildDiffText(file));
+        const [diff] = parseDiff(buildDiffText(file), { nearbySequences: "zip" });
         return {
           file,
           anchorId: file.filename,
@@ -469,7 +486,7 @@ export function PullRequestDiffViewer({
         };
       }
     });
-  }, [files]);
+  }, [sortedFiles]);
 
   const fileEntries = useMemo<FileDiffViewModel[]>(() => {
     return parsedDiffs.map((entry) => {
@@ -497,25 +514,39 @@ export function PullRequestDiffViewer({
 
     for (const fileEntry of fileEntries) {
       const { entry, diffHeatmap, changeKeyByLine } = fileEntry;
-      if (!diffHeatmap || diffHeatmap.entries.size === 0) {
+      if (!diffHeatmap || diffHeatmap.totalEntries === 0) {
         continue;
       }
 
-      const sortedEntries = Array.from(diffHeatmap.entries.entries()).sort(
-        (a, b) => a[0] - b[0]
-      );
+      const addTargets = (
+        entriesMap: Map<number, ResolvedHeatmapLine>,
+        side: DiffLineSide
+      ) => {
+        if (entriesMap.size === 0) {
+          return;
+        }
 
-      for (const [lineNumber, metadata] of sortedEntries) {
-        targets.push({
-          id: `${entry.anchorId}:${lineNumber}`,
-          anchorId: entry.anchorId,
-          filePath: entry.file.filename,
-          lineNumber,
-          reason: metadata.reason ?? null,
-          score: metadata.score ?? null,
-          changeKey: changeKeyByLine.get(lineNumber) ?? null,
-        });
-      }
+        const sortedEntries = Array.from(entriesMap.entries()).sort(
+          (a, b) => a[0] - b[0]
+        );
+
+        for (const [lineNumber, metadata] of sortedEntries) {
+          targets.push({
+            id: `${entry.anchorId}:${side}:${lineNumber}`,
+            anchorId: entry.anchorId,
+            filePath: entry.file.filename,
+            lineNumber,
+            side,
+            reason: metadata.reason ?? null,
+            score: metadata.score ?? null,
+            changeKey:
+              changeKeyByLine.get(buildLineKey(side, lineNumber)) ?? null,
+          });
+        }
+      };
+
+      addTargets(diffHeatmap.entries, "new");
+      addTargets(diffHeatmap.oldEntries, "old");
     }
 
     return targets;
@@ -555,6 +586,7 @@ export function PullRequestDiffViewer({
       setAutoTooltipTarget({
         filePath: target.filePath,
         lineNumber: target.lineNumber,
+        side: target.side,
       });
 
       const shouldStick = options?.sticky ?? false;
@@ -565,7 +597,8 @@ export function PullRequestDiffViewer({
             if (
               current &&
               current.filePath === target.filePath &&
-              current.lineNumber === target.lineNumber
+              current.lineNumber === target.lineNumber &&
+              current.side === target.side
             ) {
               return null;
             }
@@ -616,7 +649,7 @@ export function PullRequestDiffViewer({
       ? null
       : (errorTargets[focusedErrorIndex] ?? null);
 
-  const fileTree = useMemo(() => buildFileTree(files), [files]);
+  const fileTree = useMemo(() => buildFileTree(sortedFiles), [sortedFiles]);
   const directoryPaths = useMemo(
     () => collectDirectoryPaths(fileTree),
     [fileTree]
@@ -630,7 +663,7 @@ export function PullRequestDiffViewer({
   const firstPath = parsedDiffs[0]?.file.filename ?? "";
   const initialPath =
     hydratedInitialPath &&
-    files.some((file) => file.filename === hydratedInitialPath)
+      sortedFiles.some((file) => file.filename === hydratedInitialPath)
       ? hydratedInitialPath
       : firstPath;
 
@@ -657,11 +690,11 @@ export function PullRequestDiffViewer({
 
   useEffect(() => {
     const hash = decodeURIComponent(window.location.hash.slice(1));
-    if (hash && files.some((file) => file.filename === hash)) {
+    if (hash && sortedFiles.some((file) => file.filename === hash)) {
       setActivePath(hash);
       setActiveAnchor(hash);
     }
-  }, [files]);
+  }, [sortedFiles]);
 
   useEffect(() => {
     setExpandedPaths((previous) => {
@@ -937,17 +970,25 @@ export function PullRequestDiffViewer({
           {fileEntries.map(({ entry, review, diffHeatmap }) => {
             const isFocusedFile =
               focusedError?.filePath === entry.file.filename;
-            const focusedLineNumber = isFocusedFile
-              ? (focusedError?.lineNumber ?? null)
+            const focusedLine = isFocusedFile
+              ? focusedError
+                ? {
+                  side: focusedError.side,
+                  lineNumber: focusedError.lineNumber,
+                }
+                : null
               : null;
             const focusedChangeKey = isFocusedFile
               ? (focusedError?.changeKey ?? null)
               : null;
-            const autoTooltipLineNumber =
+            const autoTooltipLine =
               isFocusedFile &&
-              autoTooltipTarget &&
-              autoTooltipTarget.filePath === entry.file.filename
-                ? autoTooltipTarget.lineNumber
+                autoTooltipTarget &&
+                autoTooltipTarget.filePath === entry.file.filename
+                ? {
+                  side: autoTooltipTarget.side,
+                  lineNumber: autoTooltipTarget.lineNumber,
+                }
                 : null;
 
             return (
@@ -957,9 +998,9 @@ export function PullRequestDiffViewer({
                 isActive={entry.anchorId === activeAnchor}
                 review={review}
                 diffHeatmap={diffHeatmap}
-                focusedLineNumber={focusedLineNumber}
+                focusedLine={focusedLine}
                 focusedChangeKey={focusedChangeKey}
-                autoTooltipLineNumber={autoTooltipLineNumber}
+                autoTooltipLine={autoTooltipLine}
               />
             );
           })}
@@ -1224,17 +1265,17 @@ function FileDiffCard({
   isActive,
   review,
   diffHeatmap,
-  focusedLineNumber,
+  focusedLine,
   focusedChangeKey,
-  autoTooltipLineNumber,
+  autoTooltipLine,
 }: {
   entry: ParsedFileDiff;
   isActive: boolean;
   review: FileOutput | null;
   diffHeatmap: DiffHeatmap | null;
-  focusedLineNumber: number | null;
+  focusedLine: DiffLineLocation | null;
   focusedChangeKey: string | null;
-  autoTooltipLineNumber: number | null;
+  autoTooltipLine: DiffLineLocation | null;
 }) {
   const { file, diff, anchorId, error } = entry;
   const cardRef = useRef<HTMLElement | null>(null);
@@ -1285,29 +1326,45 @@ function FileDiffCard({
     });
   }, [focusedChangeKey]);
 
-  const lineTooltips = useMemo(() => {
+  const lineTooltips = useMemo<LineTooltipMap | null>(() => {
     if (!diffHeatmap) {
       return null;
     }
 
-    const tooltipMap = new Map<number, HeatmapTooltipMeta>();
-    for (const [lineNumber, metadata] of diffHeatmap.entries.entries()) {
-      const score = metadata.score ?? null;
-      if (score === null || score <= 0) {
-        continue;
-      }
+    const tooltipMap: LineTooltipMap = {
+      new: new Map<number, HeatmapTooltipMeta>(),
+      old: new Map<number, HeatmapTooltipMeta>(),
+    };
 
-      tooltipMap.set(lineNumber, {
-        score,
-        reason: metadata.reason ?? null,
-      });
+    const assignTooltips = (
+      source: Map<number, ResolvedHeatmapLine>,
+      target: Map<number, HeatmapTooltipMeta>
+    ) => {
+      for (const [lineNumber, metadata] of source.entries()) {
+        const score = metadata.score ?? null;
+        if (score === null || score <= 0) {
+          continue;
+        }
+
+        target.set(lineNumber, {
+          score,
+          reason: metadata.reason ?? null,
+        });
+      }
+    };
+
+    assignTooltips(diffHeatmap.entries, tooltipMap.new);
+    assignTooltips(diffHeatmap.oldEntries, tooltipMap.old);
+
+    if (tooltipMap.new.size === 0 && tooltipMap.old.size === 0) {
+      return null;
     }
 
-    return tooltipMap.size > 0 ? tooltipMap : null;
+    return tooltipMap;
   }, [diffHeatmap]);
 
   const renderHeatmapToken = useMemo<RenderToken | undefined>(() => {
-    if (!lineTooltips) {
+    if (!lineTooltips || lineTooltips.new.size === 0) {
       return undefined;
     }
 
@@ -1333,7 +1390,7 @@ function FileDiffCard({
           (className.includes("cmux-heatmap-char") ||
             className.includes("cmux-heatmap-char-tier"))
         ) {
-          const tooltipMeta = lineTooltips.get(lineNumber);
+          const tooltipMeta = lineTooltips.new.get(lineNumber);
           if (tooltipMeta) {
             const rendered = renderDefault(token, index);
             return (
@@ -1380,26 +1437,34 @@ function FileDiffCard({
       wrapInAnchor,
     }) => {
       const content = renderDefault();
-      if (side !== "new") {
+      const tooltipSource =
+        side === "new" ? lineTooltips.new : lineTooltips.old;
+
+      if (tooltipSource.size === 0) {
         return wrapInAnchor(content);
       }
 
-      const lineNumber = computeNewLineNumber(change);
+      const lineNumber =
+        side === "new"
+          ? computeNewLineNumber(change)
+          : computeOldLineNumber(change);
       if (lineNumber <= 0) {
         return wrapInAnchor(content);
       }
 
-      const tooltipMeta = lineTooltips.get(lineNumber);
+      const tooltipMeta = tooltipSource.get(lineNumber);
       if (!tooltipMeta) {
         return wrapInAnchor(content);
       }
 
       const isAutoTooltipOpen =
-        autoTooltipLineNumber !== null && lineNumber === autoTooltipLineNumber;
+        autoTooltipLine !== null &&
+        autoTooltipLine.side === side &&
+        autoTooltipLine.lineNumber === lineNumber;
 
       return wrapInAnchor(
         <HeatmapGutterTooltip
-          key={`heatmap-gutter-${lineNumber}`}
+          key={`heatmap-gutter-${side}-${lineNumber}`}
           isAutoOpen={isAutoTooltipOpen}
           tooltipMeta={tooltipMeta}
         >
@@ -1409,7 +1474,7 @@ function FileDiffCard({
     };
 
     return renderGutterWithTooltip;
-  }, [lineTooltips, autoTooltipLineNumber]);
+  }, [lineTooltips, autoTooltipLine]);
 
   const tokens = useMemo<HunkTokens | null>(() => {
     if (!diff) {
@@ -1438,8 +1503,8 @@ function FileDiffCard({
       diff.hunks,
       enhancers
         ? {
-            enhancers,
-          }
+          enhancers,
+        }
         : undefined
     );
   }, [diff, language, diffHeatmap]);
@@ -1544,36 +1609,47 @@ function FileDiffCard({
                   (change): change is ChangeData => Boolean(change)
                 );
                 const hasFocus =
-                  focusedLineNumber !== null &&
-                  normalizedChanges.some((change) => {
-                    const newLineNumber = computeNewLineNumber(change);
-                    return (
-                      newLineNumber > 0 && newLineNumber === focusedLineNumber
-                    );
-                  });
+                  focusedLine !== null &&
+                  normalizedChanges.some((change) =>
+                    doesChangeMatchLine(change, focusedLine)
+                  );
                 if (hasFocus) {
                   classNames.push("cmux-heatmap-focus");
                 }
-                if (diffHeatmap && diffHeatmap.lineClasses.size > 0) {
+                if (
+                  diffHeatmap &&
+                  (diffHeatmap.lineClasses.size > 0 ||
+                    diffHeatmap.oldLineClasses.size > 0)
+                ) {
                   let bestHeatmapClass: string | null = null;
-                  for (const change of normalizedChanges) {
-                    const newLineNumber = computeNewLineNumber(change);
-                    if (newLineNumber <= 0) {
-                      continue;
-                    }
-                    const candidate =
-                      diffHeatmap.lineClasses.get(newLineNumber);
+
+                  const considerClass = (candidate: string | undefined) => {
                     if (!candidate) {
-                      continue;
+                      return;
                     }
                     if (!bestHeatmapClass) {
                       bestHeatmapClass = candidate;
-                      continue;
+                      return;
                     }
                     const currentTier = extractHeatmapTier(bestHeatmapClass);
                     const nextTier = extractHeatmapTier(candidate);
                     if (nextTier > currentTier) {
                       bestHeatmapClass = candidate;
+                    }
+                  };
+
+                  for (const change of normalizedChanges) {
+                    const newLineNumber = computeNewLineNumber(change);
+                    if (newLineNumber > 0) {
+                      considerClass(
+                        diffHeatmap.lineClasses.get(newLineNumber)
+                      );
+                    }
+                    const oldLineNumber = computeOldLineNumber(change);
+                    if (oldLineNumber > 0) {
+                      considerClass(
+                        diffHeatmap.oldLineClasses.get(oldLineNumber)
+                      );
                     }
                   }
 
@@ -1883,24 +1959,44 @@ function scrollElementToViewportCenter(
   });
 }
 
-function buildChangeKeyIndex(diff: FileData | null): Map<number, string> {
-  const map = new Map<number, string>();
+function buildChangeKeyIndex(diff: FileData | null): Map<string, string> {
+  const map = new Map<string, string>();
   if (!diff) {
     return map;
   }
 
   for (const hunk of diff.hunks) {
     for (const change of hunk.changes) {
-      const lineNumber = computeNewLineNumber(change);
-      if (lineNumber <= 0) {
-        continue;
+      const newLineNumber = computeNewLineNumber(change);
+      if (newLineNumber > 0) {
+        map.set(buildLineKey("new", newLineNumber), getChangeKey(change));
       }
 
-      map.set(lineNumber, getChangeKey(change));
+      const oldLineNumber = computeOldLineNumber(change);
+      if (oldLineNumber > 0) {
+        map.set(buildLineKey("old", oldLineNumber), getChangeKey(change));
+      }
     }
   }
 
   return map;
+}
+
+function buildLineKey(side: DiffLineSide, lineNumber: number): string {
+  return `${side}:${lineNumber}`;
+}
+
+function doesChangeMatchLine(
+  change: ChangeData,
+  target: DiffLineLocation
+): boolean {
+  if (target.side === "new") {
+    const newLineNumber = computeNewLineNumber(change);
+    return newLineNumber > 0 && newLineNumber === target.lineNumber;
+  }
+
+  const oldLineNumber = computeOldLineNumber(change);
+  return oldLineNumber > 0 && oldLineNumber === target.lineNumber;
 }
 
 function buildDiffText(file: GithubFileChange): string {

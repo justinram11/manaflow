@@ -284,7 +284,16 @@ export function TaskRunTerminalSession({
 
     if (isActive) {
       measureAndQueueResize();
-      terminal.focus();
+      // Defer focus to avoid triggering terminal queries during panel transitions
+      // Use double RAF to ensure resize operations are fully complete
+      // This prevents special characters from appearing when panels are swapped
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (terminal && isActive) {
+            terminal.focus();
+          }
+        });
+      });
     }
   }, [isActive, measureAndQueueResize, terminal]);
 

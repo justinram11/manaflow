@@ -1059,7 +1059,7 @@ function SettingsComponent() {
       {/* Footer Save bar */}
       <div
         ref={saveButtonRef}
-        className="border-t border-neutral-200 dark:border-neutral-800 bg-white/80 dark:bg-neutral-900/80 backdrop-blur supports-[backdrop-filter]:bg-white/60 supports-[backdrop-filter]:dark:bg-neutral-900/60"
+        className="sticky bottom-0 border-t border-neutral-200 dark:border-neutral-800 bg-white/80 dark:bg-neutral-900/80 backdrop-blur supports-[backdrop-filter]:bg-white/60 supports-[backdrop-filter]:dark:bg-neutral-900/60"
       >
         <div className="max-w-3xl mx-auto px-6 py-3 flex items-center justify-end gap-3">
           <button

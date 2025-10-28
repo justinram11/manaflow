@@ -282,6 +282,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
+
     ::view-transition-old(root),
     ::view-transition-new(root) {
       animation-duration: 1ms;
@@ -291,6 +292,7 @@
   * {
     @apply border-border outline-ring/50;
   }
+
   body {
     @apply bg-background text-foreground;
   }
@@ -309,11 +311,15 @@ pre,
 
 /* Hide scrollbars while keeping scroll functional */
 .hide-scrollbar {
-  -ms-overflow-style: none; /* IE and Edge */
-  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none;
+  /* IE and Edge */
+  scrollbar-width: none;
+  /* Firefox */
 }
+
 .hide-scrollbar::-webkit-scrollbar {
-  width: 0px; /* Chrome, Safari, Opera */
+  width: 0px;
+  /* Chrome, Safari, Opera */
   height: 0px;
 }
 
@@ -476,10 +482,12 @@ pre,
 
 /* Custom animations */
 @keyframes pulse-subtle {
+
   0%,
   100% {
     opacity: 1;
   }
+
   50% {
     opacity: 0.8;
   }

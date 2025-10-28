@@ -10,7 +10,7 @@ import React, {
 interface ResizableColumnsProps {
   left: React.ReactNode;
   right: React.ReactNode;
-  storageKey?: string;
+  storageKey?: string | null;
   defaultLeftWidth?: number; // px
   minLeft?: number; // px
   maxLeft?: number; // px
@@ -35,14 +35,18 @@ export function ResizableColumns({
   const rafIdRef = useRef<number | null>(null);
   const [isResizing, setIsResizing] = useState(false);
   const [leftWidth, setLeftWidth] = useState<number>(() => {
-    const stored = storageKey ? localStorage.getItem(storageKey) : null;
+    if (!storageKey) {
+      return defaultLeftWidth;
+    }
+    const stored = localStorage.getItem(storageKey);
     const parsed = stored ? Number.parseInt(stored, 10) : defaultLeftWidth;
     if (Number.isNaN(parsed)) return defaultLeftWidth;
     return Math.min(Math.max(parsed, minLeft), maxLeft);
   });
 
   useEffect(() => {
-    if (storageKey) localStorage.setItem(storageKey, String(leftWidth));
+    if (!storageKey) return;
+    localStorage.setItem(storageKey, String(leftWidth));
   }, [leftWidth, storageKey]);
 
   const onMouseMove = useCallback(

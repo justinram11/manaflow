@@ -13,6 +13,7 @@ import type { AnnotatedTaskRun, TaskRunWithChildren } from "@/types/task";
 import { ContextMenu } from "@base-ui-components/react/context-menu";
 import { api } from "@cmux/convex/api";
 import { type Doc, type Id } from "@cmux/convex/dataModel";
+import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { Link, useLocation, type LinkProps } from "@tanstack/react-router";
 import clsx from "clsx";
 import { useQuery as useConvexQuery } from "convex/react";
@@ -44,6 +45,7 @@ import {
   memo,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -221,6 +223,7 @@ function TaskTreeInner({
 
   const canExpand = true;
   const isCrownEvaluating = task.crownEvaluationStatus === "in_progress";
+  const isLocalWorkspace = task.isLocalWorkspace;
 
   const taskLeadingIcon = (() => {
     if (isCrownEvaluating) {
@@ -305,6 +308,10 @@ function TaskTreeInner({
         default:
           return null;
       }
+    }
+
+    if (isLocalWorkspace) {
+      return null;
     }
 
     return task.isCompleted ? (
@@ -409,6 +416,7 @@ function TaskRunsContent({
   teamSlugOrId,
   level,
 }: TaskRunsContentProps) {
+  const location = useLocation();
   const optimisticTask = isFakeConvexId(taskId);
   const runs = useConvexQuery(
     api.taskRuns.getByTask,
@@ -419,6 +427,32 @@ function TaskRunsContent({
     () => (runs && runs.length > 0 ? annotateAgentOrdinals(runs) : []),
     [runs]
   );
+
+  const runIdFromSearch = useMemo(() => {
+    if (
+      location.search &&
+      typeof location.search === "object" &&
+      location.search !== null &&
+      "runId" in location.search &&
+      typeof location.search.runId === "string"
+    ) {
+      const parsed = typedZid("taskRuns").safeParse(location.search.runId);
+      if (parsed.success) {
+        return parsed.data;
+      }
+    }
+    return undefined;
+  }, [location.search]);
+
+  const shouldHighlightDefaultRun = useMemo(() => {
+    if (!annotatedRuns.length) {
+      return false;
+    }
+    const isTaskRoute = location.pathname.includes(`/task/${taskId}`);
+    const hasRunSegment = location.pathname.includes(`/task/${taskId}/run/`);
+    const hasExplicitRunSelection = Boolean(runIdFromSearch);
+    return isTaskRoute && !hasRunSegment && !hasExplicitRunSelection;
+  }, [annotatedRuns.length, location.pathname, runIdFromSearch, taskId]);
 
   if (optimisticTask) {
     return (
@@ -447,13 +481,14 @@ function TaskRunsContent({
 
   return (
     <div className="flex flex-col">
-      {annotatedRuns.map((run) => (
+      {annotatedRuns.map((run, index) => (
         <TaskRunTree
           key={run._id}
           run={run}
           level={level + 1}
           taskId={taskId}
           teamSlugOrId={teamSlugOrId}
+          isDefaultSelected={shouldHighlightDefaultRun && index === 0}
         />
       ))}
     </div>
@@ -483,6 +518,7 @@ interface TaskRunTreeProps {
   level: number;
   taskId: Id<"tasks">;
   teamSlugOrId: string;
+  isDefaultSelected?: boolean;
 }
 
 function TaskRunTreeInner({
@@ -490,10 +526,53 @@ function TaskRunTreeInner({
   level,
   taskId,
   teamSlugOrId,
+  isDefaultSelected = false,
 }: TaskRunTreeProps) {
+  const location = useLocation();
   const { expandedRuns, setRunExpanded } = useTaskRunExpansionContext();
   const defaultExpanded = Boolean(run.isCrowned);
   const isExpanded = expandedRuns[run._id] ?? defaultExpanded;
+  const runIdFromSearch = useMemo(() => {
+    if (
+      location.search &&
+      typeof location.search === "object" &&
+      location.search !== null &&
+      "runId" in location.search
+    ) {
+      const value = location.search.runId;
+      if (typeof value === "string") {
+        const parsed = typedZid("taskRuns").safeParse(value);
+        if (parsed.success) {
+          return parsed.data;
+        }
+      }
+    }
+    return undefined;
+  }, [location.search]);
+  const isRunRoute = useMemo(
+    () =>
+      location.pathname.includes(
+        `/${teamSlugOrId}/task/${taskId}/run/${run._id}`
+      ),
+    [location.pathname, teamSlugOrId, taskId, run._id]
+  );
+  const isRunSelected = useMemo(
+    () => isDefaultSelected || runIdFromSearch === run._id || isRunRoute,
+    [isDefaultSelected, isRunRoute, run._id, runIdFromSearch]
+  );
+
+  const hasExpandedManually = useRef<Id<"taskRuns"> | null>(null);
+
+  useEffect(() => {
+    if (
+      isRunSelected &&
+      !isExpanded &&
+      hasExpandedManually.current !== run._id
+    ) {
+      setRunExpanded(run._id, true);
+    }
+  }, [isExpanded, isRunSelected, run._id, setRunExpanded]);
+
   const hasChildren = run.children.length > 0;
 
   // Memoize the display text to avoid recalculating on every render
@@ -509,10 +588,13 @@ function TaskRunTreeInner({
   // Memoize the toggle handler
   const handleToggle = useCallback(
     (_event?: MouseEvent<HTMLButtonElement | HTMLAnchorElement>) => {
+      hasExpandedManually.current = run._id;
       setRunExpanded(run._id, !isExpanded);
     },
     [isExpanded, run._id, setRunExpanded]
   );
+
+  const isLocalWorkspaceRunEntry = run.isLocalWorkspace;
 
   const statusIcon = {
     pending: <Circle className="w-3 h-3 text-neutral-400" />,
@@ -521,10 +603,16 @@ function TaskRunTreeInner({
     failed: <XCircle className="w-3 h-3 text-red-500" />,
   }[run.status];
 
+  const shouldHideStatusIcon =
+    isLocalWorkspaceRunEntry && run.status !== "failed";
+  const resolvedStatusIcon = shouldHideStatusIcon ? null : statusIcon;
+
   const runLeadingIcon =
     run.status === "failed" && run.errorMessage ? (
       <Tooltip>
-        <TooltipTrigger asChild>{statusIcon}</TooltipTrigger>
+        <TooltipTrigger asChild>
+          {resolvedStatusIcon ?? statusIcon}
+        </TooltipTrigger>
         <TooltipContent
           side="right"
           className="max-w-xs whitespace-pre-wrap break-words"
@@ -533,7 +621,7 @@ function TaskRunTreeInner({
         </TooltipContent>
       </Tooltip>
     ) : (
-      statusIcon
+      resolvedStatusIcon
     );
 
   const crownIcon = run.isCrowned ? (
@@ -545,7 +633,7 @@ function TaskRunTreeInner({
         <TooltipContent
           side="right"
           sideOffset={6}
-          className="max-w-sm p-3 z-[var(--z-overlay)]"
+          className="max-w-sm p-3 z-[var(--z-global-blocking)]"
         >
           <div className="space-y-1.5">
             <p className="font-medium text-sm text-neutral-200">
@@ -620,16 +708,35 @@ function TaskRunTreeInner({
     <Fragment>
       <ContextMenu.Root>
         <ContextMenu.Trigger>
-          <div
-            onClick={() => {
-              if (!hasCollapsibleContent) {
+          <Link
+            to="/$teamSlugOrId/task/$taskId"
+            params={{
+              teamSlugOrId,
+              taskId,
+            }}
+            search={(prev) => ({
+              ...(prev ?? {}),
+              runId: run._id,
+            })}
+            className="group block"
+            activeOptions={{ exact: false }}
+            onClick={(event) => {
+              if (
+                event.defaultPrevented ||
+                event.button !== 0 ||
+                event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey
+              ) {
                 return;
               }
+
               handleToggle();
             }}
           >
             <SidebarListItem
-              containerClassName="mt-px"
+              containerClassName={clsx("mt-px", { active: isRunSelected })}
               paddingLeft={10 + level * 16}
               toggle={{
                 expanded: isExpanded,
@@ -640,7 +747,7 @@ function TaskRunTreeInner({
               titleClassName="text-[13px] text-neutral-700 dark:text-neutral-300"
               meta={leadingContent}
             />
-          </div>
+          </Link>
         </ContextMenu.Trigger>
         <ContextMenu.Portal>
           <ContextMenu.Positioner className="outline-none z-[var(--z-context-menu)]">
@@ -824,7 +931,7 @@ function TaskRunDetails({
       <TooltipContent
         side="right"
         sideOffset={6}
-        className="max-w-sm p-3 z-[var(--z-overlay)]"
+        className="max-w-sm p-3 z-[var(--z-global-blocking)]"
       >
         <div className="space-y-1.5">
           <p className="font-medium text-sm text-neutral-200">

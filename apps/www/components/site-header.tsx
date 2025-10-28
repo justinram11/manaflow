@@ -25,6 +25,7 @@ type SiteHeaderProps = {
 };
 
 const DEFAULT_DOWNLOAD_URLS: MacDownloadUrls = {
+  universal: null,
   arm64: null,
   x64: null,
 };

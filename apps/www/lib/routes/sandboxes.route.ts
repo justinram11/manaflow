@@ -6,7 +6,6 @@ import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
 import { api } from "@cmux/convex/api";
 import { RESERVED_CMUX_PORT_SET } from "@cmux/shared/utils/reserved-cmux-ports";
-import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { MorphCloudClient } from "morphcloud";
@@ -146,10 +145,6 @@ sandboxesRouter.openapi(
 
     try {
       const convex = getConvex({ accessToken });
-
-      const taskRunConvexId = body.taskRunId
-        ? typedZid("taskRuns").parse(body.taskRunId)
-        : null;
 
       const {
         team,
@@ -312,27 +307,14 @@ sandboxesRouter.openapi(
 
       if (maintenanceScript || devScript) {
         (async () => {
-          const result = await runMaintenanceAndDevScripts({
+          await runMaintenanceAndDevScripts({
             instance,
             maintenanceScript: maintenanceScript || undefined,
             devScript: devScript || undefined,
             identifiers: scriptIdentifiers ?? undefined,
+            convexUrl: env.NEXT_PUBLIC_CONVEX_URL,
+            taskRunJwt: body.taskRunJwt || undefined,
           });
-          if (taskRunConvexId && (result.maintenanceError || result.devError)) {
-            try {
-              await convex.mutation(api.taskRuns.updateEnvironmentError, {
-                teamSlugOrId: body.teamSlugOrId,
-                id: taskRunConvexId,
-                maintenanceError: result.maintenanceError ?? undefined,
-                devError: result.devError ?? undefined,
-              });
-            } catch (mutationError) {
-              console.error(
-                "[sandboxes.start] Failed to record environment error to taskRun",
-                mutationError,
-              );
-            }
-          }
         })().catch((error) => {
           console.error(
             "[sandboxes.start] Background script execution failed:",

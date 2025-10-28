@@ -21,7 +21,6 @@ import {
 import { startEmbeddedServer } from "./embedded-server";
 import { registerWebContentsViewHandlers } from "./web-contents-view";
 import { registerGlobalContextMenu } from "./context-menu";
-// Auto-updater
 import electronUpdater, {
   type UpdateCheckResult,
   type UpdateInfo,
@@ -77,6 +76,14 @@ const LOG_ROTATION: LogRotationOptions = {
   maxBytes: 5 * 1024 * 1024,
   maxBackups: 3,
 };
+
+process.on("uncaughtException", (error) => {
+  console.error("[ElectronMain] Uncaught exception", error);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[ElectronMain] Unhandled rejection", reason);
+});
 
 let rendererLoaded = false;
 let pendingProtocolUrl: string | null = null;
@@ -470,8 +477,7 @@ function setupAutoUpdates(): void {
     autoUpdater.allowPrerelease = false;
 
     if (process.platform === "darwin") {
-      const suffix = process.arch === "arm64" ? "arm64" : "x64";
-      const channel = `latest-${suffix}`;
+      const channel = "latest-universal";
       if (autoUpdater.channel !== channel) {
         autoUpdater.channel = channel;
         mainLog("Configured autoUpdater channel", {
@@ -504,7 +510,7 @@ function setupAutoUpdates(): void {
       `${p.percent?.toFixed?.(1) ?? 0}% (${p.transferred}/${p.total})`
     )
   );
-  autoUpdater.on("update-downloaded", (_event, info?: UpdateInfo) => {
+  autoUpdater.on("update-downloaded", (info: UpdateInfo) => {
     const version =
       info &&
       typeof info === "object" &&
@@ -823,11 +829,16 @@ app.whenReady().then(async () => {
   // });
 
   const ses = session.fromPartition(PARTITION);
-  // Intercept HTTPS for our private host and serve local files; pass-through others.
-  ses.protocol.handle("https", async (req) => {
-    const u = new URL(req.url);
-    if (u.hostname !== APP_HOST) return net.fetch(req);
-    const pathname = u.pathname === "/" ? "/index.html" : u.pathname;
+
+  const handleCmuxProtocol = async (request: Request): Promise<Response> => {
+    const electronReq = request as unknown as Electron.ProtocolRequest;
+    const url = new URL(electronReq.url);
+
+    if (url.hostname !== APP_HOST) {
+      return net.fetch(request);
+    }
+
+    const pathname = url.pathname === "/" ? "/index.html" : url.pathname;
     const fsPath = path.normalize(
       path.join(baseDir, decodeURIComponent(pathname))
     );
@@ -836,13 +847,17 @@ app.whenReady().then(async () => {
       mainWarn("Blocked path outside baseDir", { fsPath, baseDir });
       return new Response("Not found", { status: 404 });
     }
+
     const response = await net.fetch(pathToFileURL(fsPath).toString());
     response.headers.set(
       "Content-Security-Policy",
       "default-src * 'unsafe-inline' 'unsafe-eval' data: blob: ws: wss:; worker-src * blob:; child-src * blob:; frame-src *"
     );
     return response;
-  });
+  };
+
+  ses.protocol.handle("https", handleCmuxProtocol);
+  ses.protocol.handle("http", handleCmuxProtocol);
 
   // Create the initial window.
   if (BrowserWindow.getAllWindows().length === 0) createWindow();

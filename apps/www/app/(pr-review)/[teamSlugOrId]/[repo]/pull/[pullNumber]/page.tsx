@@ -1,6 +1,6 @@
 import { Suspense, use } from "react";
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { waitUntil } from "@vercel/functions";
 import { type Team } from "@stackframe/stack";
 
@@ -39,6 +39,28 @@ type PageProps = {
 
 export const dynamic = "force-dynamic";
 
+function buildPullRequestPath({ teamSlugOrId, repo, pullNumber }: PageParams): string {
+  return `/${encodeURIComponent(teamSlugOrId)}/${encodeURIComponent(repo)}/pull/${encodeURIComponent(pullNumber)}`;
+}
+
+function redirectToSignIn(returnPath: string): never {
+  const normalizedPath = returnPath.startsWith("/") ? returnPath : `/${returnPath}`;
+  const searchParams = new URLSearchParams({ after_auth_return_to: normalizedPath });
+  const signInUrl = `${stackServerApp.urls.signIn}?${searchParams.toString()}`;
+
+  redirect(signInUrl);
+}
+
+async function requireSignedInUser(returnPath: string) {
+  const user = await stackServerApp.getUser({ or: "return-null" });
+
+  if (!user) {
+    redirectToSignIn(returnPath);
+  }
+
+  return user;
+}
+
 async function getFirstTeam(): Promise<Team | null> {
   const teams = await stackServerApp.listTeams();
   const firstTeam = teams[0];
@@ -48,19 +70,15 @@ async function getFirstTeam(): Promise<Team | null> {
   return firstTeam;
 }
 
-export async function generateMetadata({
-  params,
-}: PageProps): Promise<Metadata> {
-  const user = await stackServerApp.getUser({ or: "redirect" });
+export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+  const resolvedParams = await params;
+  const returnPath = buildPullRequestPath(resolvedParams);
+  const user = await requireSignedInUser(returnPath);
   const selectedTeam = user.selectedTeam || (await getFirstTeam());
   if (!selectedTeam) {
     throw notFound();
   }
-  const {
-    teamSlugOrId: githubOwner,
-    repo,
-    pullNumber: pullNumberRaw,
-  } = await params;
+  const { teamSlugOrId: githubOwner, repo, pullNumber: pullNumberRaw } = resolvedParams;
   const pullNumber = parsePullNumber(pullNumberRaw);
 
   if (pullNumber === null) {
@@ -92,17 +110,15 @@ export async function generateMetadata({
 }
 
 export default async function PullRequestPage({ params }: PageProps) {
-  const user = await stackServerApp.getUser({ or: "redirect" });
+  const resolvedParams = await params;
+  const returnPath = buildPullRequestPath(resolvedParams);
+  const user = await requireSignedInUser(returnPath);
   const selectedTeam = user.selectedTeam || (await getFirstTeam());
   if (!selectedTeam) {
     throw notFound();
   }
 
-  const {
-    teamSlugOrId: githubOwner,
-    repo,
-    pullNumber: pullNumberRaw,
-  } = await params;
+  const { teamSlugOrId: githubOwner, repo, pullNumber: pullNumberRaw } = resolvedParams;
   const pullNumber = parsePullNumber(pullNumberRaw);
 
   if (pullNumber === null) {

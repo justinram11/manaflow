@@ -264,6 +264,15 @@ export default async function LandingPage() {
             <div className="relative">
               <div className="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-[0_40px_120px_-40px_rgba(56,189,248,0.35)] backdrop-blur lg:ml-auto lg:max-w-lg">
                 <div className="space-y-6">
+                  <div className="relative aspect-video overflow-hidden rounded-xl">
+                    <iframe
+                      className="h-full w-full"
+                      src="https://www.youtube.com/embed/YtQTKSM_wsA"
+                      title="cmux demo video"
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      allowFullScreen
+                    />
+                  </div>
                   {heroHighlights.map((highlight) => (
                     <div key={highlight.title} className="flex gap-4">
                       <div className="mt-0.5 h-8 w-8 flex-none rounded-full bg-gradient-to-br from-sky-500/80 to-indigo-500/80 text-center text-base font-semibold leading-8 text-white shadow-lg">

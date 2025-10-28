@@ -28,6 +28,10 @@ const normalizeArchitecture = (
 
   const normalized = value.toLowerCase();
 
+  if (normalized === "universal" || normalized === "universal2") {
+    return "universal";
+  }
+
   if (normalized === "arm" || normalized === "arm64" || normalized === "aarch64") {
     return "arm64";
   }
@@ -123,6 +127,10 @@ export function MacDownloadLink({
 }: MacDownloadLinkProps) {
   const sanitizedUrls = useMemo<MacDownloadUrls>(
     () => ({
+      universal:
+        typeof urls.universal === "string" && urls.universal.trim() !== ""
+          ? urls.universal
+          : null,
       arm64:
         typeof urls.arm64 === "string" && urls.arm64.trim() !== ""
           ? urls.arm64
@@ -132,10 +140,14 @@ export function MacDownloadLink({
           ? urls.x64
           : null,
     }),
-    [urls.arm64, urls.x64],
+    [urls.arm64, urls.universal, urls.x64],
   );
 
   const autoDefaultUrl = useMemo(() => {
+    if (sanitizedUrls.universal) {
+      return sanitizedUrls.universal;
+    }
+
     if (sanitizedUrls.arm64) {
       return sanitizedUrls.arm64;
     }
@@ -145,7 +157,7 @@ export function MacDownloadLink({
     }
 
     return fallbackUrl;
-  }, [fallbackUrl, sanitizedUrls.arm64, sanitizedUrls.x64]);
+  }, [fallbackUrl, sanitizedUrls.arm64, sanitizedUrls.universal, sanitizedUrls.x64]);
 
   const explicitDefaultUrl = useMemo(() => {
     if (architecture) {
@@ -163,6 +175,11 @@ export function MacDownloadLink({
 
   useEffect(() => {
     if (!autoDetect) {
+      return;
+    }
+
+    // When a universal build is available, prefer it over per-arch detection.
+    if (sanitizedUrls.universal) {
       return;
     }
 

@@ -21,6 +21,7 @@ type GithubRelease = {
 };
 
 const emptyDownloads: MacDownloadUrls = {
+  universal: null,
   arm64: null,
   x64: null,
 };

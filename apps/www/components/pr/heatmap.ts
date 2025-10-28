@@ -1,4 +1,8 @@
-import { computeNewLineNumber, isDelete, type FileData } from "react-diff-view";
+import {
+  computeNewLineNumber,
+  computeOldLineNumber,
+  type FileData,
+} from "react-diff-view";
 import type { RangeTokenNode } from "react-diff-view";
 
 export type ReviewHeatmapLine = {
@@ -11,19 +15,30 @@ export type ReviewHeatmapLine = {
 
 export type DiffHeatmap = {
   lineClasses: Map<number, string>;
+  oldLineClasses: Map<number, string>;
   newRanges: HeatmapRangeNode[];
   entries: Map<number, ResolvedHeatmapLine>;
+  oldEntries: Map<number, ResolvedHeatmapLine>;
+  totalEntries: number;
 };
 
 export type HeatmapRangeNode = RangeTokenNode & {
   className: string;
 };
 
-type ResolvedHeatmapLine = {
+export type ResolvedHeatmapLine = {
+  side: DiffLineSide;
   lineNumber: number;
   score: number | null;
   reason: string | null;
   mostImportantCharacterIndex: number | null;
+};
+
+type DiffLineSide = "new" | "old";
+
+type CollectedLineContent = {
+  newLines: Map<number, string>;
+  oldLines: Map<number, string>;
 };
 
 const SCORE_CLAMP_MIN = 0;
@@ -100,9 +115,9 @@ export function buildDiffHeatmap(
     return null;
   }
 
-  const newLineContent = collectNewLineContent(diff);
+  const lineContent = collectLineContent(diff);
 
-  const resolvedEntries = resolveLineNumbers(reviewHeatmap, newLineContent);
+  const resolvedEntries = resolveLineNumbers(reviewHeatmap, lineContent);
   if (resolvedEntries.length === 0) {
     return null;
   }
@@ -113,9 +128,15 @@ export function buildDiffHeatmap(
   }
 
   const lineClasses = new Map<number, string>();
+  const oldLineClasses = new Map<number, string>();
   const characterRanges: HeatmapRangeNode[] = [];
+  const entries = new Map<number, ResolvedHeatmapLine>();
+  const oldEntries = new Map<number, ResolvedHeatmapLine>();
 
-  for (const [lineNumber, entry] of aggregated.entries()) {
+  for (const entry of aggregated.values()) {
+    const targetEntries = entry.side === "new" ? entries : oldEntries;
+    targetEntries.set(entry.lineNumber, entry);
+
     const normalizedScore =
       entry.score === null
         ? null
@@ -123,14 +144,19 @@ export function buildDiffHeatmap(
     const tier = computeHeatmapTier(normalizedScore);
 
     if (tier > 0) {
-      lineClasses.set(lineNumber, `cmux-heatmap-tier-${tier}`);
+      const targetClassMap =
+        entry.side === "new" ? lineClasses : oldLineClasses;
+      targetClassMap.set(entry.lineNumber, `cmux-heatmap-tier-${tier}`);
     }
 
-    if (entry.mostImportantCharacterIndex === null) {
+    if (
+      entry.side === "old" ||
+      entry.mostImportantCharacterIndex === null
+    ) {
       continue;
     }
 
-    const content = newLineContent.get(lineNumber);
+    const content = lineContent.newLines.get(entry.lineNumber);
     if (!content || content.length === 0) {
       continue;
     }
@@ -144,7 +170,7 @@ export function buildDiffHeatmap(
     const charTier = tier > 0 ? tier : 1;
     const range: HeatmapRangeNode = {
       type: "span",
-      lineNumber,
+      lineNumber: entry.lineNumber,
       start: highlightIndex,
       length: Math.min(1, Math.max(content.length - highlightIndex, 1)),
       className: `cmux-heatmap-char cmux-heatmap-char-tier-${charTier}`,
@@ -152,27 +178,35 @@ export function buildDiffHeatmap(
     characterRanges.push(range);
   }
 
-  if (lineClasses.size === 0 && characterRanges.length === 0) {
+  if (
+    lineClasses.size === 0 &&
+    oldLineClasses.size === 0 &&
+    characterRanges.length === 0
+  ) {
     return null;
   }
 
   return {
     lineClasses,
+    oldLineClasses,
     newRanges: characterRanges,
-    entries: aggregated,
+    entries,
+    oldEntries,
+    totalEntries: aggregated.size,
   };
 }
 
 function aggregateEntries(
   entries: ResolvedHeatmapLine[]
-): Map<number, ResolvedHeatmapLine> {
-  const aggregated = new Map<number, ResolvedHeatmapLine>();
+): Map<string, ResolvedHeatmapLine> {
+  const aggregated = new Map<string, ResolvedHeatmapLine>();
 
   for (const entry of entries) {
-    const current = aggregated.get(entry.lineNumber);
+    const key = buildLineKey(entry.side, entry.lineNumber);
+    const current = aggregated.get(key);
 
     if (!current) {
-      aggregated.set(entry.lineNumber, { ...entry });
+      aggregated.set(key, { ...entry });
       continue;
     }
 
@@ -180,8 +214,9 @@ function aggregateEntries(
     const nextScore = entry.score ?? SCORE_CLAMP_MIN;
     const shouldReplaceScore = nextScore > currentScore;
 
-    aggregated.set(entry.lineNumber, {
+    aggregated.set(key, {
       lineNumber: entry.lineNumber,
+      side: entry.side,
       score: shouldReplaceScore ? entry.score : current.score,
       reason: entry.reason ?? current.reason,
       mostImportantCharacterIndex:
@@ -192,27 +227,35 @@ function aggregateEntries(
   return aggregated;
 }
 
+function buildLineKey(side: DiffLineSide, lineNumber: number): string {
+  return `${side}:${lineNumber}`;
+}
+
 function resolveLineNumbers(
   entries: ReviewHeatmapLine[],
-  lineContent: Map<number, string>
+  lineContent: CollectedLineContent
 ): ResolvedHeatmapLine[] {
   const resolved: ResolvedHeatmapLine[] = [];
-  const lineEntries = Array.from(lineContent.entries());
-  const searchOffsets = new Map<string, number>();
+  const { newLines, oldLines } = lineContent;
+  const newLineEntries = Array.from(newLines.entries());
+  const oldLineEntries = Array.from(oldLines.entries());
+  const newSearchOffsets = new Map<string, number>();
+  const oldSearchOffsets = new Map<string, number>();
 
   for (const entry of entries) {
     if (entry.score === null) {
       continue;
     }
 
-    const directLine =
-      entry.lineNumber && lineContent.has(entry.lineNumber)
-        ? entry.lineNumber
-        : null;
+    const directMatch = resolveDirectLineNumber(
+      entry,
+      lineContent
+    );
 
-    if (directLine) {
+    if (directMatch) {
       resolved.push({
-        lineNumber: directLine,
+        side: directMatch.side,
+        lineNumber: directMatch.lineNumber,
         score: entry.score,
         reason: entry.reason,
         mostImportantCharacterIndex: entry.mostImportantCharacterIndex,
@@ -225,15 +268,31 @@ function resolveLineNumbers(
       continue;
     }
 
-    const candidate = findLineByText(
+    const newCandidate = findLineByText(
       normalizedTarget,
-      lineEntries,
-      searchOffsets
+      newLineEntries,
+      newSearchOffsets
     );
-
-    if (candidate !== null) {
+    if (newCandidate !== null) {
       resolved.push({
-        lineNumber: candidate,
+        side: "new",
+        lineNumber: newCandidate,
+        score: entry.score,
+        reason: entry.reason,
+        mostImportantCharacterIndex: entry.mostImportantCharacterIndex,
+      });
+      continue;
+    }
+
+    const oldCandidate = findLineByText(
+      normalizedTarget,
+      oldLineEntries,
+      oldSearchOffsets
+    );
+    if (oldCandidate !== null) {
+      resolved.push({
+        side: "old",
+        lineNumber: oldCandidate,
         score: entry.score,
         reason: entry.reason,
         mostImportantCharacterIndex: entry.mostImportantCharacterIndex,
@@ -242,6 +301,62 @@ function resolveLineNumbers(
   }
 
   return resolved;
+}
+
+function resolveDirectLineNumber(
+  entry: ReviewHeatmapLine,
+  lineContent: CollectedLineContent
+): { side: DiffLineSide; lineNumber: number } | null {
+  const { lineNumber } = entry;
+  if (!lineNumber) {
+    return null;
+  }
+
+  const { newLines, oldLines } = lineContent;
+  const hasNew = newLines.has(lineNumber);
+  const hasOld = oldLines.has(lineNumber);
+
+  if (!hasNew && !hasOld) {
+    return null;
+  }
+
+  if (hasNew && !hasOld) {
+    return { side: "new", lineNumber };
+  }
+
+  if (!hasNew && hasOld) {
+    return { side: "old", lineNumber };
+  }
+
+  const targetLooksLikeCode = isLikelyCodeFragment(entry.lineText);
+  const normalizedTarget = targetLooksLikeCode
+    ? normalizeLineText(entry.lineText)
+    : null;
+
+  if (targetLooksLikeCode && normalizedTarget) {
+    const normalizedNew = normalizeLineText(newLines.get(lineNumber));
+    const normalizedOld = normalizeLineText(oldLines.get(lineNumber));
+    const matchesNew =
+      normalizedTarget && normalizedNew
+        ? normalizedNew === normalizedTarget ||
+          normalizedNew.includes(normalizedTarget)
+        : false;
+    const matchesOld =
+      normalizedTarget && normalizedOld
+        ? normalizedOld === normalizedTarget ||
+          normalizedOld.includes(normalizedTarget)
+        : false;
+
+    if (matchesNew && !matchesOld) {
+      return { side: "new", lineNumber };
+    }
+
+    if (matchesOld && !matchesNew) {
+      return { side: "old", lineNumber };
+    }
+  }
+
+  return { side: "new", lineNumber };
 }
 
 function findLineByText(
@@ -282,25 +397,36 @@ function normalizeLineText(value: string | null | undefined): string | null {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function collectNewLineContent(diff: FileData): Map<number, string> {
-  const map = new Map<number, string>();
+function isLikelyCodeFragment(value: string | null | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+
+  return /[A-Za-z_]/.test(value);
+}
+
+function collectLineContent(diff: FileData): CollectedLineContent {
+  const newLines = new Map<number, string>();
+  const oldLines = new Map<number, string>();
 
   for (const hunk of diff.hunks) {
     for (const change of hunk.changes) {
-      const lineNumber = computeNewLineNumber(change);
-      if (lineNumber < 0) {
-        continue;
+      const newLineNumber = computeNewLineNumber(change);
+      if (newLineNumber > 0) {
+        newLines.set(newLineNumber, change.content ?? "");
       }
 
-      if (isDelete(change)) {
-        continue;
+      const oldLineNumber = computeOldLineNumber(change);
+      if (oldLineNumber > 0) {
+        oldLines.set(oldLineNumber, change.content ?? "");
       }
-
-      map.set(lineNumber, change.content ?? "");
     }
   }
 
-  return map;
+  return {
+    newLines,
+    oldLines,
+  };
 }
 
 function computeHeatmapTier(score: number | null): number {

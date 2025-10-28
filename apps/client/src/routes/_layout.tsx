@@ -4,10 +4,14 @@ import { RealSocketProvider } from "@/contexts/socket/real-socket-provider";
 import { cachedGetUser } from "@/lib/cachedGetUser";
 import { stackClientApp } from "@/lib/stack";
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
+import {
+  localVSCodeServeWebQueryOptions,
+  useLocalVSCodeServeWebQuery,
+} from "@/queries/local-vscode-serve-web";
 
 export const Route = createFileRoute("/_layout")({
   component: Layout,
-  beforeLoad: async () => {
+  beforeLoad: async ({ context }) => {
     const user = await cachedGetUser(stackClientApp);
     if (!user) {
       throw redirect({
@@ -21,10 +25,14 @@ export const Route = createFileRoute("/_layout")({
     if (!convexAuthReady) {
       console.log("[Route.beforeLoad] convexAuthReady:", convexAuthReady);
     }
+    void context.queryClient
+      .ensureQueryData(localVSCodeServeWebQueryOptions())
+      .catch(() => undefined);
   },
 });
 
 function Layout() {
+  useLocalVSCodeServeWebQuery();
   return (
     <ConvexClientProvider>
       <RealSocketProvider>

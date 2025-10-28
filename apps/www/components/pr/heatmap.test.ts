@@ -63,7 +63,7 @@ describe("parseReviewHeatmap", () => {
 
 describe("buildDiffHeatmap", () => {
   it("produces tiered classes and character highlights", () => {
-    const files = parseDiff(SAMPLE_DIFF);
+    const files = parseDiff(SAMPLE_DIFF, { nearbySequences: "zip" });
     const file = files[0] ?? null;
     expect(file).not.toBeNull();
 

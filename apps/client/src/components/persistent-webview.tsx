@@ -9,7 +9,7 @@ import {
   type PersistentIframeStatus,
 } from "./persistent-iframe";
 
-interface PersistentWebViewProps {
+export interface PersistentWebViewProps {
   persistKey: string;
   src: string;
   className?: string;
@@ -40,6 +40,8 @@ interface PersistentWebViewProps {
     restored: boolean;
   }) => void;
   onElectronViewDestroyed?: () => void;
+  isExpanded?: boolean;
+  isAnyPanelExpanded?: boolean;
 }
 
 const DISABLE_WEBCONTENTSVIEW = true;
@@ -71,6 +73,8 @@ export function PersistentWebView({
   preflight,
   onElectronViewReady,
   onElectronViewDestroyed,
+  isExpanded,
+  isAnyPanelExpanded,
 }: PersistentWebViewProps) {
   const resolvedRetain = true;
 
@@ -116,6 +120,8 @@ export function PersistentWebView({
       forcedStatus={forcedStatus}
       loadTimeoutMs={loadTimeoutMs}
       preflight={preflight}
+      isExpanded={isExpanded}
+      isAnyPanelExpanded={isAnyPanelExpanded}
     />
   );
 }

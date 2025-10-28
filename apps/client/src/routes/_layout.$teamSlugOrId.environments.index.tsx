@@ -1,12 +1,14 @@
 import { FloatingPane } from "@/components/floating-pane";
 import { TitleBar } from "@/components/TitleBar";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { useEnvironmentDraft } from "@/state/environment-draft-store";
 import { api } from "@cmux/convex/api";
 import { convexQuery } from "@convex-dev/react-query";
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { formatDistanceToNow } from "date-fns";
 import { Calendar, Eye, GitBranch, Play, Plus, Server } from "lucide-react";
+import { useEffect } from "react";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/environments/")({
   loader: async ({ params }) => {
@@ -21,12 +23,33 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/environments/")({
 
 function EnvironmentsListPage() {
   const { teamSlugOrId } = Route.useParams();
+  const navigate = useNavigate({ from: Route.fullPath });
+  const draft = useEnvironmentDraft(teamSlugOrId);
 
   const { data: environments } = useSuspenseQuery(
     convexQuery(api.environments.list, {
       teamSlugOrId,
     })
   );
+
+  useEffect(() => {
+    if (!draft || draft.step !== "configure" || !draft.instanceId) {
+      return;
+    }
+    void navigate({
+      to: "/$teamSlugOrId/environments/new",
+      params: { teamSlugOrId },
+      search: {
+        step: "configure",
+        selectedRepos: draft.selectedRepos,
+        connectionLogin: undefined,
+        repoSearch: undefined,
+        instanceId: draft.instanceId,
+        snapshotId: draft.snapshotId ?? undefined,
+      },
+      replace: true,
+    });
+  }, [draft, navigate, teamSlugOrId]);
 
   return (
     <FloatingPane header={<TitleBar title="Environments" />}>

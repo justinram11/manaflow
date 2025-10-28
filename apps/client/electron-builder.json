@@ -59,10 +59,12 @@
     "entitlements": "build/entitlements.mac.plist",
     "entitlementsInherit": "build/entitlements.mac.plist",
     "gatekeeperAssess": false,
+    "mergeASARs": false,
     "target": [
       "dmg",
       "zip"
     ],
+    "x64ArchFiles": "Contents/Resources/native/**/*.node",
     "extendInfo": {
       "CFBundleIconFile": "icon"
     }

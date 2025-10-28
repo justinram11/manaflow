@@ -38,6 +38,8 @@ cmux-cli
 # Native Rust addon artifacts
 apps/server/native/**/target/
 apps/server/native/**/*.node
+apps/server/native/**/*.d.ts
+apps/server/native/**/index.js
 apps/server/native/**/Cargo.lock
 crates/**/target/
 

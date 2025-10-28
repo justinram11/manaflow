@@ -15,6 +15,11 @@ import {
   TASK_RUN_IFRAME_SANDBOX,
   preloadTaskRunIframes,
 } from "../lib/preloadTaskRunIframes";
+import { shouldUseServerIframePreflight } from "@/hooks/useIframePreflight";
+import {
+  localVSCodeServeWebQueryOptions,
+  useLocalVSCodeServeWebQuery,
+} from "@/queries/local-vscode-serve-web";
 
 export const Route = createFileRoute(
   "/_layout/$teamSlugOrId/task/$taskId/run/$runId/"
@@ -25,17 +30,24 @@ export const Route = createFileRoute(
     taskRunId: typedZid("taskRuns").parse(params.runId),
   }),
   loader: async (opts) => {
-    const result = await opts.context.queryClient.ensureQueryData(
-      convexQuery(api.taskRuns.get, {
-        teamSlugOrId: opts.params.teamSlugOrId,
-        id: opts.params.taskRunId,
-      })
-    );
+    const [result, localServeWeb] = await Promise.all([
+      opts.context.queryClient.ensureQueryData(
+        convexQuery(api.taskRuns.get, {
+          teamSlugOrId: opts.params.teamSlugOrId,
+          id: opts.params.taskRunId,
+        })
+      ),
+      opts.context.queryClient.ensureQueryData(
+        localVSCodeServeWebQueryOptions()
+      ),
+    ]);
     if (result) {
       const workspaceUrl = result.vscode?.workspaceUrl;
       void preloadTaskRunIframes([
         {
-          url: workspaceUrl ? toProxyWorkspaceUrl(workspaceUrl) : "",
+          url: workspaceUrl
+            ? toProxyWorkspaceUrl(workspaceUrl, localServeWeb.baseUrl)
+            : "",
           taskRunId: opts.params.taskRunId,
         },
       ]);
@@ -45,6 +57,7 @@ export const Route = createFileRoute(
 
 function TaskRunComponent() {
   const { taskRunId, teamSlugOrId } = Route.useParams();
+  const localServeWeb = useLocalVSCodeServeWebQuery();
   const taskRun = useSuspenseQuery(
     convexQuery(api.taskRuns.get, {
       teamSlugOrId,
@@ -54,10 +67,14 @@ function TaskRunComponent() {
 
   const rawWorkspaceUrl = taskRun?.data?.vscode?.workspaceUrl ?? null;
   const workspaceUrl = rawWorkspaceUrl
-    ? toProxyWorkspaceUrl(rawWorkspaceUrl)
+    ? toProxyWorkspaceUrl(rawWorkspaceUrl, localServeWeb.data?.baseUrl)
     : null;
+  const disablePreflight = rawWorkspaceUrl
+    ? shouldUseServerIframePreflight(rawWorkspaceUrl)
+    : false;
   const persistKey = getTaskRunPersistKey(taskRunId);
   const hasWorkspace = workspaceUrl !== null;
+  const isLocalWorkspace = taskRun?.data?.vscode?.provider === "other";
   const [iframeStatus, setIframeStatus] =
     useState<PersistentIframeStatus>("loading");
 
@@ -80,8 +97,11 @@ function TaskRunComponent() {
   );
 
   const loadingFallback = useMemo(
-    () => <WorkspaceLoadingIndicator variant="vscode" status="loading" />,
-    []
+    () =>
+      isLocalWorkspace
+        ? null
+        : <WorkspaceLoadingIndicator variant="vscode" status="loading" />,
+    [isLocalWorkspace]
   );
   const errorFallback = useMemo(
     () => <WorkspaceLoadingIndicator variant="vscode" status="error" />,
@@ -105,6 +125,7 @@ function TaskRunComponent() {
               iframeClassName="select-none"
               allow={TASK_RUN_IFRAME_ALLOW}
               sandbox={TASK_RUN_IFRAME_SANDBOX}
+              preflight={!disablePreflight}
               retainOnUnmount
               suspended={!hasWorkspace}
               onLoad={onLoad}
@@ -119,17 +140,19 @@ function TaskRunComponent() {
           ) : (
             <div className="grow" />
           )}
-          <div
-            className={clsx(
-              "absolute inset-0 flex items-center justify-center transition pointer-events-none",
-              {
-                "opacity-100": !hasWorkspace,
-                "opacity-0": hasWorkspace,
-              }
-            )}
-          >
-            <WorkspaceLoadingIndicator variant="vscode" status="loading" />
-          </div>
+          {!isLocalWorkspace ? (
+            <div
+              className={clsx(
+                "absolute inset-0 flex items-center justify-center transition pointer-events-none",
+                {
+                  "opacity-100": !hasWorkspace,
+                  "opacity-0": hasWorkspace,
+                }
+              )}
+            >
+              <WorkspaceLoadingIndicator variant="vscode" status="loading" />
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

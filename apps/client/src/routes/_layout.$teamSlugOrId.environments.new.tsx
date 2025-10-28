@@ -3,9 +3,27 @@ import { FloatingPane } from "@/components/floating-pane";
 import { RepositoryPicker } from "@/components/RepositoryPicker";
 import { TitleBar } from "@/components/TitleBar";
 import { toMorphVncUrl } from "@/lib/toProxyWorkspaceUrl";
-import { DEFAULT_MORPH_SNAPSHOT_ID, MORPH_SNAPSHOT_PRESETS, type MorphSnapshotId } from "@cmux/shared";
-import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  clearEnvironmentDraft,
+  persistEnvironmentDraftMetadata,
+  updateEnvironmentDraftConfig,
+  useEnvironmentDraft,
+} from "@/state/environment-draft-store";
+import type { EnvironmentConfigDraft } from "@/types/environment";
+import {
+  DEFAULT_MORPH_SNAPSHOT_ID,
+  MORPH_SNAPSHOT_PRESETS,
+  type MorphSnapshotId,
+} from "@cmux/shared";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { ArrowLeft } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { z } from "zod";
 
 const morphSnapshotIds = MORPH_SNAPSHOT_PRESETS.map(
@@ -21,6 +39,31 @@ const searchSchema = z.object({
   snapshotId: z.enum(morphSnapshotIds).default(DEFAULT_MORPH_SNAPSHOT_ID),
 });
 
+const haveSameRepos = (
+  a: readonly string[],
+  b: readonly string[],
+): boolean => {
+  if (a.length !== b.length) {
+    return false;
+  }
+  const counts = new Map<string, number>();
+  for (const repo of a) {
+    counts.set(repo, (counts.get(repo) ?? 0) + 1);
+  }
+  for (const repo of b) {
+    const next = counts.get(repo);
+    if (!next) {
+      return false;
+    }
+    if (next === 1) {
+      counts.delete(repo);
+    } else {
+      counts.set(repo, next - 1);
+    }
+  }
+  return counts.size === 0;
+};
+
 export const Route = createFileRoute("/_layout/$teamSlugOrId/environments/new")(
   {
     component: EnvironmentsPage,
@@ -30,55 +73,171 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/environments/new")(
 
 function EnvironmentsPage() {
   const searchParams = Route.useSearch();
-  const step = searchParams.step ?? "select";
+  const stepFromSearch = searchParams.step ?? "select";
   const urlSelectedRepos = searchParams.selectedRepos ?? [];
   const urlInstanceId = searchParams.instanceId;
-  const selectedSnapshotId = searchParams.snapshotId ?? DEFAULT_MORPH_SNAPSHOT_ID;
+  const searchSnapshotId =
+    searchParams.snapshotId ?? DEFAULT_MORPH_SNAPSHOT_ID;
   const { teamSlugOrId } = Route.useParams();
+  const navigate = useNavigate({ from: Route.fullPath });
+  const draft = useEnvironmentDraft(teamSlugOrId);
   const [headerActions, setHeaderActions] = useState<ReactNode | null>(null);
+
+  const activeStep = draft?.step ?? stepFromSearch;
+  const activeSelectedRepos = draft?.selectedRepos ?? urlSelectedRepos;
+  const activeInstanceId = draft?.instanceId ?? urlInstanceId;
+  const activeSnapshotId = draft?.snapshotId ?? searchSnapshotId;
+
   const derivedVscodeUrl = useMemo(() => {
-    if (!urlInstanceId) return undefined;
-    const hostId = urlInstanceId.replace(/_/g, "-");
+    if (!activeInstanceId) return undefined;
+    const hostId = activeInstanceId.replace(/_/g, "-");
     return `https://port-39378-${hostId}.http.cloud.morph.so/?folder=/root/workspace`;
-  }, [urlInstanceId]);
+  }, [activeInstanceId]);
 
   const derivedBrowserUrl = useMemo(() => {
-    if (!urlInstanceId) return undefined;
-    const hostId = urlInstanceId.replace(/_/g, "-");
+    if (!activeInstanceId) return undefined;
+    const hostId = activeInstanceId.replace(/_/g, "-");
     const workspaceUrl = `https://port-39378-${hostId}.http.cloud.morph.so/?folder=/root/workspace`;
     return toMorphVncUrl(workspaceUrl) ?? undefined;
-  }, [urlInstanceId]);
+  }, [activeInstanceId]);
 
   useEffect(() => {
-    if (step !== "configure") {
+    if (activeStep !== "configure") {
       setHeaderActions(null);
     }
-  }, [step]);
+  }, [activeStep]);
+
+  useEffect(() => {
+    if (activeStep !== "configure" || draft) {
+      return;
+    }
+    persistEnvironmentDraftMetadata(
+      teamSlugOrId,
+      {
+        selectedRepos: activeSelectedRepos,
+        instanceId: activeInstanceId,
+        snapshotId: activeSnapshotId,
+      },
+      { resetConfig: false, step: "configure" },
+    );
+  }, [
+    activeInstanceId,
+    activeSelectedRepos,
+    activeSnapshotId,
+    activeStep,
+    draft,
+    teamSlugOrId,
+  ]);
+
+  const handleStartConfigure = useCallback(
+    (payload: {
+      selectedRepos: string[];
+      instanceId?: string;
+      snapshotId?: MorphSnapshotId;
+    }) => {
+      const existingRepos = draft?.selectedRepos ?? [];
+      const reposChanged = !haveSameRepos(existingRepos, payload.selectedRepos);
+      const instanceChanged = draft?.instanceId !== payload.instanceId;
+      const snapshotChanged = draft?.snapshotId !== payload.snapshotId;
+      const shouldResetConfig =
+        !draft || reposChanged || instanceChanged || snapshotChanged;
+
+      persistEnvironmentDraftMetadata(
+        teamSlugOrId,
+        {
+          selectedRepos: payload.selectedRepos,
+          instanceId: payload.instanceId,
+          snapshotId: payload.snapshotId,
+        },
+        { resetConfig: shouldResetConfig, step: "configure" },
+      );
+    },
+    [draft, teamSlugOrId],
+  );
+
+  const handlePersistConfig = useCallback(
+    (partial: Partial<EnvironmentConfigDraft>) => {
+      updateEnvironmentDraftConfig(teamSlugOrId, partial, {
+        selectedRepos: activeSelectedRepos,
+        instanceId: activeInstanceId,
+        snapshotId: activeSnapshotId,
+      });
+    },
+    [teamSlugOrId, activeInstanceId, activeSelectedRepos, activeSnapshotId],
+  );
+
+  const handleBackToRepositorySelection = useCallback(() => {
+    persistEnvironmentDraftMetadata(
+      teamSlugOrId,
+      {
+        selectedRepos: activeSelectedRepos,
+        instanceId: activeInstanceId,
+        snapshotId: activeSnapshotId,
+      },
+      { resetConfig: false, step: "select" },
+    );
+  }, [activeInstanceId, activeSelectedRepos, activeSnapshotId, teamSlugOrId]);
+
+  const handleResetDraft = useCallback(() => {
+    clearEnvironmentDraft(teamSlugOrId);
+    setHeaderActions(null);
+  }, [teamSlugOrId]);
+
+  const handleDiscardAndExit = useCallback(async () => {
+    handleResetDraft();
+    await navigate({
+      to: "/$teamSlugOrId/environments",
+      params: { teamSlugOrId },
+      search: {
+        step: undefined,
+        selectedRepos: undefined,
+        connectionLogin: undefined,
+        repoSearch: undefined,
+        instanceId: undefined,
+        snapshotId: undefined,
+      },
+    });
+  }, [handleResetDraft, navigate, teamSlugOrId]);
 
   return (
     <FloatingPane header={<TitleBar title="Environments" actions={headerActions} />}>
       <div className="flex flex-col grow select-none relative h-full overflow-hidden">
-        {step === "select" ? (
+        {activeStep === "select" ? (
           <div className="p-6 max-w-3xl w-full mx-auto overflow-auto">
             <RepositoryPicker
               teamSlugOrId={teamSlugOrId}
-              instanceId={urlInstanceId}
-              initialSelectedRepos={urlSelectedRepos}
-              initialSnapshotId={selectedSnapshotId}
+              instanceId={activeInstanceId}
+              initialSelectedRepos={activeSelectedRepos}
+              initialSnapshotId={activeSnapshotId}
               showHeader={true}
               showContinueButton={true}
               showManualConfigOption={true}
+              onStartConfigure={handleStartConfigure}
+              topAccessory={
+                <button
+                  type="button"
+                  onClick={handleDiscardAndExit}
+                  className="inline-flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 transition-colors"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  Back to environments
+                </button>
+              }
             />
           </div>
         ) : (
           <EnvironmentConfiguration
-            selectedRepos={urlSelectedRepos}
+            selectedRepos={activeSelectedRepos}
             teamSlugOrId={teamSlugOrId}
-            instanceId={urlInstanceId}
+            instanceId={activeInstanceId}
             vscodeUrl={derivedVscodeUrl}
             browserUrl={derivedBrowserUrl}
             isProvisioning={false}
             onHeaderControlsChange={setHeaderActions}
+            persistedState={draft?.config}
+            onPersistStateChange={handlePersistConfig}
+            onBackToRepositorySelection={handleBackToRepositorySelection}
+            onEnvironmentSaved={handleResetDraft}
           />
         )}
       </div>

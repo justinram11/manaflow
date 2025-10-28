@@ -230,7 +230,7 @@ export function OpenEditorSplitButton({
           <ChevronDown className="w-3.5 h-3.5" />
         </Menu.Trigger>
         <Menu.Portal>
-          <Menu.Positioner sideOffset={5} className="outline-none z-[var(--z-popover)]">
+          <Menu.Positioner sideOffset={5} className="outline-none z-[var(--z-global-blocking)]">
             <Menu.Popup
               className={clsx(
                 "origin-[var(--transform-origin)] rounded-md bg-white dark:bg-black py-1",

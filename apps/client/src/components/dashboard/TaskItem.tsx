@@ -171,19 +171,19 @@ export const TaskItem = memo(function TaskItem({
               <span className="text-[14px] truncate min-w-0">{task.text}</span>
               {(task.projectFullName ||
                 (task.baseBranch && task.baseBranch !== "main")) && (
-                <span className="text-[11px] text-neutral-400 dark:text-neutral-500 flex-shrink-0 ml-auto mr-0">
-                  {task.projectFullName && (
-                    <span>{task.projectFullName.split("/")[1]}</span>
-                  )}
-                  {task.projectFullName &&
-                    task.baseBranch &&
-                    task.baseBranch !== "main" &&
-                    "/"}
-                  {task.baseBranch && task.baseBranch !== "main" && (
-                    <span>{task.baseBranch}</span>
-                  )}
-                </span>
-              )}
+                  <span className="text-[11px] text-neutral-400 dark:text-neutral-500 flex-shrink-0 ml-auto mr-0">
+                    {task.projectFullName && (
+                      <span>{task.projectFullName.split("/")[1]}</span>
+                    )}
+                    {task.projectFullName &&
+                      task.baseBranch &&
+                      task.baseBranch !== "main" &&
+                      "/"}
+                    {task.baseBranch && task.baseBranch !== "main" && (
+                      <span>{task.baseBranch}</span>
+                    )}
+                  </span>
+                )}
             </div>
             {task.updatedAt && (
               <span className="text-[11px] text-neutral-400 dark:text-neutral-500 flex-shrink-0 ml-auto mr-0 tabular-nums">

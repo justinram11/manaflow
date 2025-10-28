@@ -9,6 +9,11 @@ import {
   TASK_RUN_IFRAME_ALLOW,
   TASK_RUN_IFRAME_SANDBOX,
 } from "@/lib/preloadTaskRunIframes";
+import {
+  ensureInitialEnvVars,
+  type EnvVar,
+  type EnvironmentConfigDraft,
+} from "@/types/environment";
 import { formatEnvVarsContent } from "@cmux/shared/utils/format-env-vars-content";
 import type { MorphSnapshotId } from "@cmux/shared";
 import { validateExposedPorts } from "@cmux/shared/utils/validate-exposed-ports";
@@ -23,7 +28,16 @@ import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { Id } from "@cmux/convex/dataModel";
 import clsx from "clsx";
 import type { PersistentIframeStatus } from "@/components/persistent-iframe";
-import { ArrowLeft, Code2, Loader2, Minus, Monitor, Plus, Settings, X } from "lucide-react";
+import {
+  ArrowLeft,
+  Code2,
+  Loader2,
+  Minus,
+  Monitor,
+  Plus,
+  Settings,
+  X,
+} from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -33,24 +47,6 @@ import {
   type ReactNode,
 } from "react";
 import TextareaAutosize from "react-textarea-autosize";
-
-export type EnvVar = { name: string; value: string; isSecret: boolean };
-
-const ensureInitialEnvVars = (initial?: EnvVar[]): EnvVar[] => {
-  const base = (initial ?? []).map((item) => ({
-    name: item.name,
-    value: item.value,
-    isSecret: item.isSecret ?? true,
-  }));
-  if (base.length === 0) {
-    return [{ name: "", value: "", isSecret: true }];
-  }
-  const last = base[base.length - 1];
-  if (!last || last.name.trim().length > 0 || last.value.trim().length > 0) {
-    base.push({ name: "", value: "", isSecret: true });
-  }
-  return base;
-};
 
 export function EnvironmentConfiguration({
   selectedRepos,
@@ -67,6 +63,10 @@ export function EnvironmentConfiguration({
   initialExposedPorts = "",
   initialEnvVars,
   onHeaderControlsChange,
+  persistedState = null,
+  onPersistStateChange,
+  onBackToRepositorySelection,
+  onEnvironmentSaved,
 }: {
   selectedRepos: string[];
   teamSlugOrId: string;
@@ -82,6 +82,10 @@ export function EnvironmentConfiguration({
   initialExposedPorts?: string;
   initialEnvVars?: EnvVar[];
   onHeaderControlsChange?: (controls: ReactNode | null) => void;
+  persistedState?: EnvironmentConfigDraft | null;
+  onPersistStateChange?: (partial: Partial<EnvironmentConfigDraft>) => void;
+  onBackToRepositorySelection?: () => void;
+  onEnvironmentSaved?: () => void;
 }) {
   const navigate = useNavigate();
   const searchRoute:
@@ -98,15 +102,65 @@ export function EnvironmentConfiguration({
     instanceId?: string;
     snapshotId?: MorphSnapshotId;
   };
-  const [envName, setEnvName] = useState(() => initialEnvName);
+  const [envName, setEnvName] = useState(
+    () => persistedState?.envName ?? initialEnvName
+  );
   const [envVars, setEnvVars] = useState<EnvVar[]>(() =>
-    ensureInitialEnvVars(initialEnvVars)
+    ensureInitialEnvVars(persistedState?.envVars ?? initialEnvVars)
   );
   const [maintenanceScript, setMaintenanceScript] = useState(
-    () => initialMaintenanceScript
+    () => persistedState?.maintenanceScript ?? initialMaintenanceScript
   );
-  const [devScript, setDevScript] = useState(() => initialDevScript);
-  const [exposedPorts, setExposedPorts] = useState(() => initialExposedPorts);
+  const [devScript, setDevScript] = useState(
+    () => persistedState?.devScript ?? initialDevScript
+  );
+  const [exposedPorts, setExposedPorts] = useState(
+    () => persistedState?.exposedPorts ?? initialExposedPorts
+  );
+  const persistConfig = useCallback(
+    (partial: Partial<EnvironmentConfigDraft>) => {
+      onPersistStateChange?.(partial);
+    },
+    [onPersistStateChange]
+  );
+  const updateEnvName = useCallback(
+    (value: string) => {
+      setEnvName(value);
+      persistConfig({ envName: value });
+    },
+    [persistConfig]
+  );
+  const updateEnvVars = useCallback(
+    (updater: (prev: EnvVar[]) => EnvVar[]) => {
+      setEnvVars((prev) => {
+        const next = updater(prev);
+        persistConfig({ envVars: next });
+        return next;
+      });
+    },
+    [persistConfig]
+  );
+  const updateMaintenanceScript = useCallback(
+    (value: string) => {
+      setMaintenanceScript(value);
+      persistConfig({ maintenanceScript: value });
+    },
+    [persistConfig]
+  );
+  const updateDevScript = useCallback(
+    (value: string) => {
+      setDevScript(value);
+      persistConfig({ devScript: value });
+    },
+    [persistConfig]
+  );
+  const updateExposedPorts = useCallback(
+    (value: string) => {
+      setExposedPorts(value);
+      persistConfig({ exposedPorts: value });
+    },
+    [persistConfig]
+  );
   const [portsError, setPortsError] = useState<string | null>(null);
   const keyInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const [pendingFocusIndex, setPendingFocusIndex] = useState<number | null>(
@@ -321,6 +375,7 @@ export function EnvironmentConfiguration({
         },
         {
           onSuccess: async () => {
+            onEnvironmentSaved?.();
             await navigate({
               to: "/$teamSlugOrId/environments/$environmentId",
               params: {
@@ -360,6 +415,7 @@ export function EnvironmentConfiguration({
         },
         {
           onSuccess: async () => {
+            onEnvironmentSaved?.();
             await navigate({
               to: "/$teamSlugOrId/environments",
               params: { teamSlugOrId },
@@ -581,10 +637,11 @@ export function EnvironmentConfiguration({
 
   const leftPane = (
     <div className="h-full p-6 overflow-y-auto">
-      <div className="flex items-center gap-4 mb-4">
+      <div className="flex flex-wrap items-center gap-4 mb-4">
         {mode === "new" ? (
           <button
             onClick={async () => {
+              onBackToRepositorySelection?.();
               await navigate({
                 to: "/$teamSlugOrId/environments/new",
                 params: { teamSlugOrId },
@@ -650,7 +707,7 @@ export function EnvironmentConfiguration({
           <input
             type="text"
             value={envName}
-            onChange={(e) => setEnvName(e.target.value)}
+            onChange={(e) => updateEnvName(e.target.value)}
             readOnly={mode === "snapshot"}
             aria-readonly={mode === "snapshot"}
             placeholder={
@@ -714,7 +771,7 @@ export function EnvironmentConfiguration({
                   e.preventDefault();
                   const items = parseEnvBlock(text);
                   if (items.length > 0) {
-                    setEnvVars((prev) => {
+                    updateEnvVars((prev) => {
                       const map = new Map(
                         prev
                           .filter(
@@ -778,7 +835,7 @@ export function EnvironmentConfiguration({
                       }}
                       onChange={(e) => {
                         const v = e.target.value;
-                        setEnvVars((prev) => {
+                        updateEnvVars((prev) => {
                           const next = [...prev];
                           next[idx] = { ...next[idx]!, name: v };
                           return next;
@@ -791,7 +848,7 @@ export function EnvironmentConfiguration({
                       value={row.value}
                       onChange={(e) => {
                         const v = e.target.value;
-                        setEnvVars((prev) => {
+                        updateEnvVars((prev) => {
                           const next = [...prev];
                           next[idx] = { ...next[idx]!, value: v };
                           return next;
@@ -806,7 +863,7 @@ export function EnvironmentConfiguration({
                       <button
                         type="button"
                         onClick={() => {
-                          setEnvVars((prev) => {
+                          updateEnvVars((prev) => {
                             const next = prev.filter((_, i) => i !== idx);
                             return next.length > 0
                               ? next
@@ -827,7 +884,7 @@ export function EnvironmentConfiguration({
                 <button
                   type="button"
                   onClick={() =>
-                    setEnvVars((prev) => [
+                    updateEnvVars((prev) => [
                       ...prev,
                       { name: "", value: "", isSecret: true },
                     ])
@@ -872,7 +929,7 @@ export function EnvironmentConfiguration({
                 description={SCRIPT_COPY.maintenance.description}
                 subtitle={SCRIPT_COPY.maintenance.subtitle}
                 value={maintenanceScript}
-                onChange={(next) => setMaintenanceScript(next)}
+                onChange={updateMaintenanceScript}
                 placeholder={SCRIPT_COPY.maintenance.placeholder}
                 descriptionClassName="mb-3"
                 minHeightClassName="min-h-[114px]"
@@ -890,7 +947,7 @@ export function EnvironmentConfiguration({
                 description={SCRIPT_COPY.dev.description}
                 subtitle={SCRIPT_COPY.dev.subtitle}
                 value={devScript}
-                onChange={(next) => setDevScript(next)}
+                onChange={updateDevScript}
                 placeholder={SCRIPT_COPY.dev.placeholder}
                 minHeightClassName="min-h-[130px]"
               />
@@ -902,7 +959,7 @@ export function EnvironmentConfiguration({
                 <input
                   type="text"
                   value={exposedPorts}
-                  onChange={(e) => setExposedPorts(e.target.value)}
+                  onChange={(e) => updateExposedPorts(e.target.value)}
                   placeholder="3000, 8080, 5432"
                   className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
                 />
@@ -981,7 +1038,7 @@ export function EnvironmentConfiguration({
 
   return (
     <ResizableColumns
-      storageKey="envConfigWidth"
+      storageKey={null}
       defaultLeftWidth={360}
       minLeft={220}
       maxLeft={700}

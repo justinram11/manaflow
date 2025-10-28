@@ -35,6 +35,8 @@ interface PersistentIframeProps {
   forcedStatus?: PersistentIframeStatus | null;
   loadTimeoutMs?: number;
   preflight?: boolean;
+  isExpanded?: boolean;
+  isAnyPanelExpanded?: boolean;
 }
 
 type ScrollTarget = HTMLElement | Window;
@@ -83,6 +85,8 @@ export function PersistentIframe({
   forcedStatus,
   loadTimeoutMs = 30_000,
   preflight = true,
+  isExpanded = false,
+  isAnyPanelExpanded = false,
 }: PersistentIframeProps) {
   const [status, setStatus] = useState<PersistentIframeStatus>("loading");
   const overlayRef = useRef<HTMLDivElement | null>(null);
@@ -161,7 +165,7 @@ export function PersistentIframe({
       if (attempt && attempt > 1) {
         return `Retrying workspace resume (attempt ${attempt})…`;
       }
-      return "Resuming Morph workspace…";
+      return "Resuming cloud workspace…";
     }
 
     if (preflightPhase === "resume_failed") {
@@ -233,6 +237,22 @@ export function PersistentIframe({
     onLoad: handleLoad,
     onError: handleError,
   });
+
+  // Hide non-expanded iframes when another panel is expanded
+  useEffect(() => {
+    const wrapper = document.querySelector(`[data-iframe-key="${persistKey}"]`) as HTMLElement;
+    if (!wrapper) return;
+
+    if (isAnyPanelExpanded && !isExpanded) {
+      // Another panel is expanded - hide this iframe completely
+      wrapper.style.visibility = "hidden";
+      wrapper.style.pointerEvents = "none";
+    } else {
+      // This panel is expanded OR no panel is expanded - show normally
+      wrapper.style.visibility = "visible";
+      wrapper.style.pointerEvents = "auto";
+    }
+  }, [persistKey, isExpanded, isAnyPanelExpanded]);
 
   const effectiveStatus = forcedStatus ?? status;
 
@@ -311,8 +331,8 @@ export function PersistentIframe({
     const resizeObserver =
       typeof ResizeObserver !== "undefined"
         ? new ResizeObserver(() => {
-            syncOverlayPosition();
-          })
+          syncOverlayPosition();
+        })
         : null;
     resizeObserver?.observe(target);
 
@@ -351,20 +371,20 @@ export function PersistentIframe({
   const overlayElement = overlayRef.current;
   const overlayContent = showErrorOverlay
     ? {
-        node: errorFallback,
-        className: cn(
-          "pointer-events-none flex h-full w-full items-center justify-center bg-neutral-50/90 dark:bg-neutral-950/90",
-          errorClassName,
-        ),
-      }
+      node: errorFallback,
+      className: cn(
+        "pointer-events-none flex h-full w-full items-center justify-center bg-neutral-50/90 dark:bg-neutral-950/90",
+        errorClassName,
+      ),
+    }
     : showLoadingOverlay
       ? {
-          node: loadingFallback,
-          className: cn(
-            "pointer-events-none flex h-full w-full items-center justify-center bg-neutral-50 dark:bg-neutral-950",
-            loadingClassName,
-          ),
-        }
+        node: loadingFallback,
+        className: cn(
+          "pointer-events-none flex h-full w-full items-center justify-center bg-neutral-50 dark:bg-neutral-950",
+          loadingClassName,
+        ),
+      }
       : null;
 
   return (
@@ -376,18 +396,18 @@ export function PersistentIframe({
       />
       {overlayElement && overlayContent && shouldShowOverlay
         ? createPortal(
-            <div className={overlayContent.className}>
-              <div className="pointer-events-auto flex flex-col items-center gap-3 text-center">
-                {overlayContent.node}
-                {resumeMessage ? (
-                  <p className="text-sm text-neutral-600 dark:text-neutral-300">
-                    {resumeMessage}
-                  </p>
-                ) : null}
-              </div>
-            </div>,
-            overlayElement,
-          )
+          <div className={overlayContent.className}>
+            <div className="pointer-events-auto flex flex-col items-center gap-3 text-center">
+              {overlayContent.node}
+              {resumeMessage ? (
+                <p className="text-sm text-neutral-600 dark:text-neutral-300">
+                  {resumeMessage}
+                </p>
+              ) : null}
+            </div>
+          </div>,
+          overlayElement,
+        )
         : null}
     </>
   );

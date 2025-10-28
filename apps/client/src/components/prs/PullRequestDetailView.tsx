@@ -17,6 +17,8 @@ import { useCombinedWorkflowData, WorkflowRunsBadge, WorkflowRunsSection } from 
 
 const RUN_PENDING_STATUSES = new Set(["in_progress", "queued", "waiting", "pending"]);
 const RUN_PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
+const PR_SYNC_GRACE_MS = 1500;
+const PR_FINAL_NOT_FOUND_DELAY_MS = 10000;
 
 type PullRequestDetailViewProps = {
   teamSlugOrId: string;
@@ -39,6 +41,43 @@ type AdditionsAndDeletionsProps = {
   ref1: string;
   ref2: string;
 };
+
+function PullRequestLoadingState() {
+  return (
+    <div className="h-full w-full flex items-center justify-center">
+      <div className="flex flex-col items-center gap-3 text-neutral-500 dark:text-neutral-400 text-center">
+        <Loader2 className="w-5 h-5 animate-spin" />
+        <div className="text-sm font-medium">Loading pull request...</div>
+        <p className="text-xs text-neutral-400 dark:text-neutral-500">
+          Hang tight while we fetch the latest data from GitHub.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function PullRequestUnavailableState({ variant }: { variant: "syncing" | "missing" }) {
+  const isMissing = variant === "missing";
+  return (
+    <div className="h-full w-full flex items-center justify-center">
+      <div className="flex flex-col items-center gap-3 text-neutral-500 dark:text-neutral-400 text-center">
+        {isMissing ? (
+          <X className="w-5 h-5 text-neutral-400 dark:text-neutral-500" />
+        ) : (
+          <GitBranch className="w-5 h-5 text-neutral-400 dark:text-neutral-500" />
+        )}
+        <div className="text-sm font-medium">
+          {isMissing ? "We couldn't find this pull request" : "Still syncing this PR..."}
+        </div>
+        <p className="text-xs text-neutral-400 dark:text-neutral-500">
+          {isMissing
+            ? "Double-check the link or refresh; GitHub might not have this PR."
+            : "We'll update the view as soon as the pull request finishes creating."}
+        </p>
+      </div>
+    </div>
+  );
+}
 
 
 function AdditionsAndDeletions({
@@ -153,6 +192,25 @@ export function PullRequestDetailView({
       collapseChecks: collapseAllChecks,
     } : null);
   };
+
+  const [shouldShowPrMissingState, setShouldShowPrMissingState] = useState(false);
+  const [shouldShowDefinitiveMissingState, setShouldShowDefinitiveMissingState] = useState(false);
+
+  useEffect(() => {
+    if (currentPR === null) {
+      const timeoutId = setTimeout(() => setShouldShowPrMissingState(true), PR_SYNC_GRACE_MS);
+      return () => clearTimeout(timeoutId);
+    }
+    setShouldShowPrMissingState(false);
+  }, [currentPR]);
+
+  useEffect(() => {
+    if (currentPR === null) {
+      const timeoutId = setTimeout(() => setShouldShowDefinitiveMissingState(true), PR_FINAL_NOT_FOUND_DELAY_MS);
+      return () => clearTimeout(timeoutId);
+    }
+    setShouldShowDefinitiveMissingState(false);
+  }, [currentPR]);
 
   const closePrMutation = useMutation<
     PostApiIntegrationsGithubPrsCloseResponse,
@@ -269,11 +327,15 @@ export function PullRequestDetailView({
     });
   };
 
+  if (currentPR === undefined || (currentPR === null && !shouldShowPrMissingState)) {
+    return <PullRequestLoadingState />;
+  }
+
   if (!currentPR) {
     return (
-      <div className="h-full w-full flex items-center justify-center text-neutral-500 dark:text-neutral-400">
-        PR not found
-      </div>
+      <PullRequestUnavailableState
+        variant={shouldShowDefinitiveMissingState ? "missing" : "syncing"}
+      />
     );
   }
 
