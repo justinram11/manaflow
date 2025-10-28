@@ -108,9 +108,20 @@ codeReviewRouter.openapi(
     if (!user) {
       return c.json({ error: "Unauthorized" }, 401);
     }
-    const { accessToken } = await user.getAuthJson();
+    const [{ accessToken }, githubAccount] = await Promise.all([
+      user.getAuthJson(),
+      user.getConnectedAccount("github"),
+    ]);
     if (!accessToken) {
       return c.json({ error: "Unauthorized" }, 401);
+    }
+    if (!githubAccount) {
+      return c.json({ error: "GitHub account is not connected" }, 401);
+    }
+    const { accessToken: githubAccessToken } =
+      await githubAccount.getAccessToken();
+    if (!githubAccessToken) {
+      return c.json({ error: "GitHub access token unavailable" }, 401);
     }
 
     const body = c.req.valid("json") as CodeReviewStartBody;
@@ -147,6 +158,7 @@ codeReviewRouter.openapi(
 
     const { job, deduplicated, backgroundTask } = await startCodeReviewJob({
       accessToken,
+      githubAccessToken,
       callbackBaseUrl: convexHttpBase,
       payload: {
         teamSlugOrId: body.teamSlugOrId,

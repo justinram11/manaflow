@@ -25,9 +25,7 @@ import {
   getConvexHttpActionBaseUrl,
   startCodeReviewJob,
 } from "@/lib/services/code-review/start-code-review";
-import {
-  buildComparisonJobDetails,
-} from "@/lib/services/code-review/comparison";
+import { buildComparisonJobDetails } from "@/lib/services/code-review/comparison";
 import type { ComparisonJobDetails } from "@/lib/services/code-review/comparison";
 
 type PageParams = {
@@ -51,7 +49,9 @@ async function getFirstTeam(): Promise<Team | null> {
   return firstTeam;
 }
 
-function parseComparisonSlug(raw: string): { base: string; head: string } | null {
+function parseComparisonSlug(
+  raw: string
+): { base: string; head: string } | null {
   const tripleSplit = raw.split("...");
   if (tripleSplit.length === 2) {
     const [base, head] = tripleSplit;
@@ -71,7 +71,9 @@ function parseComparisonSlug(raw: string): { base: string; head: string } | null
   return null;
 }
 
-export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+export async function generateMetadata({
+  params,
+}: PageProps): Promise<Metadata> {
   const user = await stackServerApp.getUser({ or: "redirect" });
   const selectedTeam = user.selectedTeam || (await getFirstTeam());
   if (!selectedTeam) {
@@ -116,11 +118,7 @@ export default async function ComparisonPage({ params }: PageProps) {
     throw notFound();
   }
 
-  const {
-    teamSlugOrId: githubOwner,
-    repo,
-    comparison,
-  } = await params;
+  const { teamSlugOrId: githubOwner, repo, comparison } = await params;
 
   const refs = parseComparisonSlug(comparison);
   if (!refs) {
@@ -263,7 +261,7 @@ function ComparisonHeaderContent({
   const repoFullName = `${githubOwner}/${repo}`;
 
   return (
-    <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
+    <section className="border border-neutral-200 bg-white p-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -289,7 +287,9 @@ function ComparisonHeaderContent({
                 <span>
                   {comparison.ahead_by ? `${comparison.ahead_by} ahead` : null}
                   {comparison.ahead_by && comparison.behind_by ? ", " : ""}
-                  {comparison.behind_by ? `${comparison.behind_by} behind` : null}
+                  {comparison.behind_by
+                    ? `${comparison.behind_by} behind`
+                    : null}
                 </span>
               </>
             ) : null}
@@ -327,7 +327,7 @@ function ComparisonStatusBadge({
   return (
     <span
       className={cn(
-        "rounded-md px-2 py-0.5 font-semibold uppercase tracking-wide",
+        "px-2 py-0.5 font-semibold uppercase tracking-wide",
         className
       )}
     >
@@ -432,8 +432,25 @@ function scheduleComparisonCodeReviewStart({
           return;
         }
 
-        const { accessToken } = await user.getAuthJson();
+        const [{ accessToken }, githubAccount] = await Promise.all([
+          user.getAuthJson(),
+          user.getConnectedAccount("github"),
+        ]);
         if (!accessToken) {
+          return;
+        }
+        if (!githubAccount) {
+          console.warn(
+            "[code-review] Skipping auto-start: GitHub account not connected"
+          );
+          return;
+        }
+        const { accessToken: githubAccessToken } =
+          await githubAccount.getAccessToken();
+        if (!githubAccessToken) {
+          console.warn(
+            "[code-review] Skipping auto-start: GitHub access token unavailable"
+          );
           return;
         }
 
@@ -443,17 +460,21 @@ function scheduleComparisonCodeReviewStart({
           comparisonDetails.compareUrl;
 
         if (!commitRef || !baseCommitRef) {
-          console.error("[code-review] Comparison start missing commit refs; skipping", {
-            repoFullName: comparisonDetails.repoFullName,
-            comparisonSlug: comparisonDetails.slug,
-            commitRefPresent: Boolean(commitRef),
-            baseCommitRefPresent: Boolean(baseCommitRef),
-          });
+          console.error(
+            "[code-review] Comparison start missing commit refs; skipping",
+            {
+              repoFullName: comparisonDetails.repoFullName,
+              comparisonSlug: comparisonDetails.slug,
+              commitRefPresent: Boolean(commitRef),
+              baseCommitRefPresent: Boolean(baseCommitRef),
+            }
+          );
           return;
         }
 
         const { backgroundTask } = await startCodeReviewJob({
           accessToken,
+          githubAccessToken,
           callbackBaseUrl,
           payload: {
             teamSlugOrId,
@@ -490,12 +511,12 @@ function scheduleComparisonCodeReviewStart({
 
 function ComparisonHeaderSkeleton() {
   return (
-    <div className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
+    <div className="border border-neutral-200 bg-white p-6">
       <div className="animate-pulse space-y-4">
-        <div className="h-4 w-32 rounded bg-neutral-200" />
-        <div className="h-8 w-3/4 rounded bg-neutral-200" />
-        <div className="h-4 w-1/2 rounded bg-neutral-200" />
-        <div className="h-4 w-full rounded bg-neutral-200" />
+        <div className="h-4 w-32 bg-neutral-200" />
+        <div className="h-8 w-3/4 bg-neutral-200" />
+        <div className="h-4 w-1/2 bg-neutral-200" />
+        <div className="h-4 w-full bg-neutral-200" />
       </div>
     </div>
   );
@@ -507,7 +528,10 @@ function getComparisonStatusBadge(comparison: GithubComparison): {
 } {
   switch (comparison.status) {
     case "identical":
-      return { label: "Identical", className: "bg-neutral-200 text-neutral-700" };
+      return {
+        label: "Identical",
+        className: "bg-neutral-200 text-neutral-700",
+      };
     case "ahead":
       return { label: "Ahead", className: "bg-emerald-100 text-emerald-700" };
     case "behind":

@@ -10,6 +10,10 @@ import {
   type PrReviewJobContext,
 } from "@/src/pr-review";
 import type { ComparisonJobDetails } from "./comparison";
+import { PR_REVIEW_STRATEGY } from "@/pr-review.config";
+import { runHeatmapReview } from "./run-heatmap-review";
+import { loadOptionsFromEnv } from "@/scripts/pr-review/core/options";
+import type { PrReviewStrategyId } from "@/scripts/pr-review/core/options";
 
 type ComparisonJobPayload = Pick<ComparisonJobDetails, "slug" | "base" | "head">;
 
@@ -26,6 +30,7 @@ type StartCodeReviewPayload = {
 
 type StartCodeReviewOptions = {
   accessToken: string;
+  githubAccessToken: string | null;
   callbackBaseUrl: string;
   payload: StartCodeReviewPayload;
   request?: Request;
@@ -66,6 +71,15 @@ function hashCallbackToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
+function resolveStrategy(): PrReviewStrategyId {
+  const override = process.env.CMUX_PR_REVIEW_STRATEGY;
+  if (typeof override === "string" && override.trim().length > 0) {
+    const options = loadOptionsFromEnv(process.env);
+    return options.strategy;
+  }
+  return PR_REVIEW_STRATEGY;
+}
+
 export function getConvexHttpActionBaseUrl(): string | null {
   const url = env.NEXT_PUBLIC_CONVEX_URL;
   if (!url) {
@@ -76,10 +90,12 @@ export function getConvexHttpActionBaseUrl(): string | null {
 
 export async function startCodeReviewJob({
   accessToken,
+  githubAccessToken,
   callbackBaseUrl,
   payload,
   request,
 }: StartCodeReviewOptions): Promise<StartCodeReviewResult> {
+  const strategy = resolveStrategy();
   const jobType: "pull_request" | "comparison" = payload.comparison
     ? "comparison"
     : "pull_request";
@@ -218,16 +234,37 @@ export async function startCodeReviewJob({
       url: fileCallbackUrl,
       token: callbackToken,
     },
+    strategy,
+    githubAccessToken: githubAccessToken ?? undefined,
   };
 
   const backgroundTask = (async () => {
     try {
-      console.info("[code-review] Starting automated PR review", {
+      // Fork based on strategy
+      if (strategy === "heatmap") {
+        console.info("[code-review] Starting heatmap review (no Morph)", {
+          jobId: job.jobId,
+          strategy: "heatmap",
+        });
+        await runHeatmapReview({
+          jobId: job.jobId,
+          teamId: job.teamId ?? undefined,
+          prUrl: payload.githubLink,
+          prNumber: job.prNumber ?? undefined,
+          accessToken,
+          callbackToken,
+          githubAccessToken,
+        });
+      } else {
+        console.info("[code-review] Starting automated PR review (Morph)", {
+          jobId: job.jobId,
+          strategy,
+        });
+        await startAutomatedPrReview(reviewConfig);
+      }
+      console.info("[code-review] Review completed", {
         jobId: job.jobId,
-      });
-      await startAutomatedPrReview(reviewConfig);
-      console.info("[code-review] Automated PR review completed", {
-        jobId: job.jobId,
+        strategy,
         callbackTokenPreview: callbackToken.slice(0, 8),
       });
     } catch (error) {

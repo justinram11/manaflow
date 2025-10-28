@@ -31,6 +31,7 @@ export default tseslint.config(
       "out/**",
       "build/**",
       "next-env.d.ts",
+      "scripts/pr-review/pr-review-inject.bundle.js",
     ],
   },
   // Project rules

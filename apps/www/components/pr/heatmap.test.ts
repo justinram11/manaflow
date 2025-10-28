@@ -26,25 +26,25 @@ describe("parseReviewHeatmap", () => {
             line: "2",
             shouldBeReviewedScore: 0.3,
             shouldReviewWhy: "first pass",
-            mostImportantCharacterIndex: 4,
+            mostImportantWord: "const",
           },
           {
             line: "2",
             shouldBeReviewedScore: 0.7,
             shouldReviewWhy: "updated score",
-            mostImportantCharacterIndex: 6,
+            mostImportantWord: "b",
           },
           {
             line: 4,
             shouldBeReviewedScore: 0.92,
             shouldReviewWhy: "new export logic",
-            mostImportantCharacterIndex: 120,
+            mostImportantWord: "length",
           },
           {
             line: "invalid",
             shouldBeReviewedScore: 1,
             shouldReviewWhy: "ignored",
-            mostImportantCharacterIndex: 0,
+            mostImportantWord: "invalid",
           },
         ],
       }),
@@ -74,19 +74,19 @@ describe("buildDiffHeatmap", () => {
             line: "2",
             shouldBeReviewedScore: 0.3,
             shouldReviewWhy: "first pass",
-            mostImportantCharacterIndex: 4,
+            mostImportantWord: "const",
           },
           {
             line: "2",
             shouldBeReviewedScore: 0.7,
             shouldReviewWhy: "updated score",
-            mostImportantCharacterIndex: 6,
+            mostImportantWord: "b",
           },
           {
             line: 4,
             shouldBeReviewedScore: 0.92,
             shouldReviewWhy: "new export logic",
-            mostImportantCharacterIndex: 120,
+            mostImportantWord: "length",
           },
         ],
       }),
@@ -119,11 +119,12 @@ describe("buildDiffHeatmap", () => {
     const lineFourChange = file!.hunks[0]?.changes.find(
       (change) => computeNewLineNumber(change) === 4
     );
+    expect(lineFourChange?.content.includes("length")).toBe(true);
     const expectedStart = Math.max(
-      (lineFourChange?.content.length ?? 1) - 1,
+      (lineFourChange?.content.indexOf("length") ?? -1),
       0
     );
     expect(rangeForLine4.start).toBe(expectedStart);
-    expect(rangeForLine4.length).toBe(1);
+    expect(rangeForLine4.length).toBe(6);
   });
 });

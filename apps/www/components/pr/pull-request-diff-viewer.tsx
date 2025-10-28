@@ -20,6 +20,8 @@ import {
   FileText,
   Folder,
   Sparkles,
+  Copy,
+  Check,
 } from "lucide-react";
 import {
   Decoration,
@@ -59,6 +61,7 @@ import {
   type ReviewHeatmapLine,
   type ResolvedHeatmapLine,
 } from "./heatmap";
+import clsx from "clsx";
 
 type PullRequestDiffViewerProps = {
   files: GithubFileChange[];
@@ -80,14 +83,14 @@ type ParsedFileDiff = {
 
 type RefractorNode =
   | {
-    type: "text";
-    value: string;
-  }
+      type: "text";
+      value: string;
+    }
   | {
-    type: string;
-    children?: RefractorNode[];
-    [key: string]: unknown;
-  };
+      type: string;
+      children?: RefractorNode[];
+      [key: string]: unknown;
+    };
 
 const extensionToLanguage: Record<string, string> = {
   bash: "bash",
@@ -212,7 +215,9 @@ const refractorAdapter = createRefractorAdapter(refractor);
 
 type FileOutput =
   | FunctionReturnType<typeof api.codeReview.listFileOutputsForPr>[number]
-  | FunctionReturnType<typeof api.codeReview.listFileOutputsForComparison>[number];
+  | FunctionReturnType<
+      typeof api.codeReview.listFileOutputsForComparison
+    >[number];
 
 type HeatmapTooltipMeta = {
   score: number;
@@ -357,6 +362,41 @@ function getFileStatusMeta(
   }
 }
 
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy text:", err);
+    }
+  }, [text]);
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className="flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-sky-700 transition-colors hover:bg-sky-100"
+      aria-label={copied ? "Copied to clipboard" : "Copy to clipboard"}
+    >
+      {copied ? (
+        <>
+          <Check className="h-3.5 w-3.5" aria-hidden />
+          <span>Copied!</span>
+        </>
+      ) : (
+        <>
+          <Copy className="h-3.5 w-3.5" aria-hidden />
+          <span>Copy</span>
+        </>
+      )}
+    </button>
+  );
+}
+
 export function PullRequestDiffViewer({
   files,
   teamSlugOrId,
@@ -372,15 +412,17 @@ export function PullRequestDiffViewer({
 
   const prQueryArgs = useMemo(
     () =>
-      normalizedJobType !== "pull_request" || prNumber === null || prNumber === undefined
+      normalizedJobType !== "pull_request" ||
+      prNumber === null ||
+      prNumber === undefined
         ? ("skip" as const)
         : {
-          teamSlugOrId,
-          repoFullName,
-          prNumber,
-          ...(commitRef ? { commitRef } : {}),
-          ...(baseCommitRef ? { baseCommitRef } : {}),
-        },
+            teamSlugOrId,
+            repoFullName,
+            prNumber,
+            ...(commitRef ? { commitRef } : {}),
+            ...(baseCommitRef ? { baseCommitRef } : {}),
+          },
     [
       normalizedJobType,
       teamSlugOrId,
@@ -396,12 +438,12 @@ export function PullRequestDiffViewer({
       normalizedJobType !== "comparison" || !comparisonSlug
         ? ("skip" as const)
         : {
-          teamSlugOrId,
-          repoFullName,
-          comparisonSlug,
-          ...(commitRef ? { commitRef } : {}),
-          ...(baseCommitRef ? { baseCommitRef } : {}),
-        },
+            teamSlugOrId,
+            repoFullName,
+            comparisonSlug,
+            ...(commitRef ? { commitRef } : {}),
+            ...(baseCommitRef ? { baseCommitRef } : {}),
+          },
     [
       normalizedJobType,
       teamSlugOrId,
@@ -504,7 +546,9 @@ export function PullRequestDiffViewer({
       }
 
       try {
-        const [diff] = parseDiff(buildDiffText(file), { nearbySequences: "zip" });
+        const [diff] = parseDiff(buildDiffText(file), {
+          nearbySequences: "zip",
+        });
         return {
           file,
           anchorId: file.filename,
@@ -703,7 +747,7 @@ export function PullRequestDiffViewer({
   const firstPath = parsedDiffs[0]?.file.filename ?? "";
   const initialPath =
     hydratedInitialPath &&
-      sortedFiles.some((file) => file.filename === hydratedInitialPath)
+    sortedFiles.some((file) => file.filename === hydratedInitialPath)
       ? hydratedInitialPath
       : firstPath;
 
@@ -983,53 +1027,57 @@ export function PullRequestDiffViewer({
 
   if (totalFileCount === 0) {
     return (
-      <div className="rounded-2xl border border-neutral-200 bg-white p-8 text-sm text-neutral-600 shadow-sm">
+      <div className="border border-neutral-200 bg-white p-8 text-sm text-neutral-600">
         This pull request does not introduce any file changes.
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <ReviewProgressIndicator
-        totalFileCount={totalFileCount}
-        processedFileCount={processedFileCount}
-        isLoading={isLoadingFileOutputs}
-      />
-
-      <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:gap-10">
-        <aside className="lg:sticky lg:top-6 lg:h-[calc(100vh-96px)] lg:w-72 lg:overflow-y-auto">
-          {targetCount > 0 ? (
-            <div className="mb-4 flex justify-center">
-              <ErrorNavigator
-                totalCount={targetCount}
-                currentIndex={focusedErrorIndex}
-                onPrevious={handleFocusPrevious}
-                onNext={handleFocusNext}
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:gap-3">
+        <aside className="lg:sticky lg:top-2 lg:h-[calc(100vh)] lg:w-72 lg:overflow-y-auto">
+          <div className="flex flex-col gap-3">
+            <div className="lg:sticky lg:top-0 lg:z-10 lg:bg-white">
+              <ReviewProgressIndicator
+                totalFileCount={totalFileCount}
+                processedFileCount={processedFileCount}
+                isLoading={isLoadingFileOutputs}
               />
             </div>
-          ) : null}
-          <div className="rounded-xl border border-neutral-200 bg-white p-3 shadow-sm">
-            <FileTreeNavigator
-              nodes={fileTree}
-              activePath={activeAnchor}
-              expandedPaths={expandedPaths}
-              onToggleDirectory={handleToggleDirectory}
-              onSelectFile={handleNavigate}
-            />
+            {targetCount > 0 ? (
+              <div className="flex justify-center">
+                <ErrorNavigator
+                  totalCount={targetCount}
+                  currentIndex={focusedErrorIndex}
+                  onPrevious={handleFocusPrevious}
+                  onNext={handleFocusNext}
+                />
+              </div>
+            ) : null}
+            <div>
+              <FileTreeNavigator
+                nodes={fileTree}
+                activePath={activeAnchor}
+                expandedPaths={expandedPaths}
+                onToggleDirectory={handleToggleDirectory}
+                onSelectFile={handleNavigate}
+              />
+            </div>
           </div>
+          <div className="h-[40px]"></div>
         </aside>
 
-        <div className="flex-1 space-y-6">
+        <div className="flex-1 space-y-3">
           {fileEntries.map(({ entry, review, diffHeatmap }) => {
             const isFocusedFile =
               focusedError?.filePath === entry.file.filename;
             const focusedLine = isFocusedFile
               ? focusedError
                 ? {
-                  side: focusedError.side,
-                  lineNumber: focusedError.lineNumber,
-                }
+                    side: focusedError.side,
+                    lineNumber: focusedError.lineNumber,
+                  }
                 : null
               : null;
             const focusedChangeKey = isFocusedFile
@@ -1037,12 +1085,12 @@ export function PullRequestDiffViewer({
               : null;
             const autoTooltipLine =
               isFocusedFile &&
-                autoTooltipTarget &&
-                autoTooltipTarget.filePath === entry.file.filename
+              autoTooltipTarget &&
+              autoTooltipTarget.filePath === entry.file.filename
                 ? {
-                  side: autoTooltipTarget.side,
-                  lineNumber: autoTooltipTarget.lineNumber,
-                }
+                    side: autoTooltipTarget.side,
+                    lineNumber: autoTooltipTarget.lineNumber,
+                  }
                 : null;
 
             return (
@@ -1058,6 +1106,7 @@ export function PullRequestDiffViewer({
               />
             );
           })}
+          <div className="h-[70dvh] w-full" />
         </div>
       </div>
     </div>
@@ -1087,46 +1136,62 @@ function ReviewProgressIndicator({
       : pendingFileCount === 0
         ? "All files processed"
         : `${processedFileCount} processed • ${pendingFileCount} pending`;
-
   const processedBadgeText =
     processedFileCount === null ? "— done" : `${processedFileCount} done`;
   const pendingBadgeText =
     processedFileCount === null ? "— waiting" : `${pendingFileCount} waiting`;
+  const isFullyProcessed =
+    processedFileCount !== null && pendingFileCount === 0;
+  const shouldPulsePending =
+    processedFileCount === null || pendingFileCount > 0;
 
   return (
     <div
-      className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm transition"
+      className="border border-neutral-200 bg-white p-5 transition"
       aria-live="polite"
     >
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="text-sm font-medium text-neutral-700">
             Automated review progress
           </p>
-          <p className="text-xs text-neutral-500">{statusText}</p>
+          <p className="sr-only">{statusText}</p>
         </div>
         <div className="flex items-center gap-2 text-xs font-semibold">
-          <span
-            className={cn(
-              "rounded-md bg-emerald-100 px-2 py-0.5 text-emerald-700",
-              isLoading ? "animate-pulse" : undefined
-            )}
-          >
-            {processedBadgeText}
-          </span>
-          <span
-            className={cn(
-              "rounded-md bg-amber-100 px-2 py-0.5 text-amber-700",
-              isLoading ? "animate-pulse" : undefined
-            )}
-          >
-            {pendingBadgeText}
-          </span>
+          {isFullyProcessed ? (
+            <span
+              className={cn(
+                "bg-emerald-100 px-2 py-0.5 text-emerald-700",
+                isLoading ? "animate-pulse" : undefined
+              )}
+            >
+              All files processed
+            </span>
+          ) : (
+            <>
+              <span
+                className={cn(
+                  "bg-emerald-100 px-2 py-0.5 text-emerald-700",
+                  isLoading ? "animate-pulse" : undefined
+                )}
+              >
+                {processedBadgeText}
+              </span>
+              <span
+                className={cn(
+                  "bg-amber-100 px-2 py-0.5 text-amber-700",
+                  shouldPulsePending ? "animate-pulse" : undefined
+                )}
+              >
+                {pendingBadgeText}
+              </span>
+            </>
+          )}
         </div>
       </div>
-      <div className="mt-3 h-2 rounded-full bg-neutral-200">
+      <div className="mt-3 h-2 bg-neutral-200">
         <div
-          className="h-full rounded-full bg-sky-500 transition-[width] duration-300 ease-out"
+          className="h-full bg-sky-500 transition-[width] duration-300 ease-out"
           style={{ width: `${progressPercent}%` }}
           role="progressbar"
           aria-label="Automated review progress"
@@ -1164,11 +1229,11 @@ function ErrorNavigator({
 
   return (
     <TooltipProvider delayDuration={120} skipDelayDuration={120}>
-      <div className="inline-flex items-center gap-3 rounded-full border border-sky-200 bg-white/95 px-3 py-1 text-xs font-medium text-neutral-700 shadow-sm shadow-sky-200/60 backdrop-blur dark:border-sky-800/60 dark:bg-neutral-900/95 dark:text-neutral-200 dark:shadow-sky-900/40">
+      <div className="flex items-center gap-3 border border-sky-200 bg-white/95 px-3 py-1 text-xs font-medium text-neutral-700 backdrop-blur dark:border-sky-800/60 dark:bg-neutral-900/95 dark:text-neutral-200">
         <span aria-live="polite" className="flex items-center gap-1">
           {hasSelection && displayIndex !== null ? (
             <>
-              <span>Error</span>
+              <span>Highlight</span>
               <span className="font-mono tabular-nums">{displayIndex}</span>
               <span>of</span>
               <span className="font-mono tabular-nums">{totalCount}</span>
@@ -1176,7 +1241,7 @@ function ErrorNavigator({
           ) : (
             <>
               <span className="font-mono tabular-nums">{totalCount}</span>
-              <span>{totalCount === 1 ? "error" : "errors"}</span>
+              <span>{totalCount === 1 ? "highlight" : "highlights"}</span>
             </>
           )}
         </span>
@@ -1186,8 +1251,8 @@ function ErrorNavigator({
               <button
                 type="button"
                 onClick={() => onPrevious()}
-                className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
-                aria-label="Go to previous error (Shift+K)"
+                className="inline-flex h-6 w-6 items-center justify-center border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                aria-label="Go to previous highlight (Shift+K)"
                 disabled={totalCount === 0}
               >
                 <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
@@ -1198,7 +1263,7 @@ function ErrorNavigator({
               align="center"
               className="flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-2 py-1 text-[11px] font-medium text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
             >
-              <span>Previous error</span>
+              <span>Previous highlight</span>
               <span className="rounded border border-neutral-200 bg-neutral-50 px-1 py-0.5 font-mono text-[10px] uppercase text-neutral-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
                 ⇧ K
               </span>
@@ -1209,8 +1274,8 @@ function ErrorNavigator({
               <button
                 type="button"
                 onClick={() => onNext()}
-                className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
-                aria-label="Go to next error (Shift+J)"
+                className="inline-flex h-6 w-6 items-center justify-center border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                aria-label="Go to next highlight (Shift+J)"
                 disabled={totalCount === 0}
               >
                 <ChevronRight className="h-3.5 w-3.5" aria-hidden />
@@ -1221,7 +1286,7 @@ function ErrorNavigator({
               align="center"
               className="flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-2 py-1 text-[11px] font-medium text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
             >
-              <span>Next error</span>
+              <span>Next highlight</span>
               <span className="rounded border border-neutral-200 bg-neutral-50 px-1 py-0.5 font-mono text-[10px] uppercase text-neutral-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
                 ⇧ J
               </span>
@@ -1264,7 +1329,7 @@ function FileTreeNavigator({
                 type="button"
                 onClick={() => onToggleDirectory(node.path)}
                 className={cn(
-                  "flex w-full items-center gap-1.5 rounded-md px-2.5 py-1 text-left text-sm font-medium transition hover:bg-neutral-100",
+                  "flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-sm transition hover:bg-neutral-100",
                   isExpanded ? "text-neutral-900" : "text-neutral-700"
                 )}
                 style={{ paddingLeft: depth * 14 + 10 }}
@@ -1299,14 +1364,14 @@ function FileTreeNavigator({
             type="button"
             onClick={() => onSelectFile(node.path)}
             className={cn(
-              "flex w-full items-center gap-1 rounded-md px-2.5 py-1 text-left text-sm transition hover:bg-neutral-100",
+              "flex w-full items-center gap-1 px-2.5 py-1 text-left text-sm transition hover:bg-neutral-100",
               isActive
-                ? "bg-sky-100/80 text-sky-900 shadow-sm"
+                ? "bg-sky-100/80 text-sky-900 font-semibold"
                 : "text-neutral-700"
             )}
             style={{ paddingLeft: depth * 14 + 32 }}
           >
-            <span className="truncate font-medium">{node.name}</span>
+            <span className="truncate">{node.name}</span>
           </button>
         );
       })}
@@ -1557,8 +1622,8 @@ function FileDiffCard({
       diff.hunks,
       enhancers
         ? {
-          enhancers,
-        }
+            enhancers,
+          }
         : undefined
     );
   }, [diff, language, diffHeatmap]);
@@ -1568,7 +1633,8 @@ function FileDiffCard({
       return null;
     }
 
-    return extractAutomatedReviewText(review.codexReviewOutput);
+    return JSON.stringify(review.codexReviewOutput, null, 2);
+    // return extractAutomatedReviewText(review.codexReviewOutput);
   }, [review]);
 
   // const showReview = Boolean(reviewContent);
@@ -1584,159 +1650,164 @@ function FileDiffCard({
         id={anchorId}
         ref={cardRef}
         className={cn(
-          "overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm transition focus:outline-none",
-          isActive ? "ring-1 ring-sky-200" : "ring-0"
+          "border border-neutral-200 bg-white transition focus:outline-none",
+          isActive ? "" : ""
         )}
         tabIndex={-1}
         aria-current={isActive}
       >
-        <button
-          type="button"
-          onClick={() => setIsCollapsed((previous) => !previous)}
-          className="flex w-full items-center gap-3 border-b border-neutral-200 bg-neutral-50/80 px-3.5 py-2.5 text-left transition hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
-          aria-expanded={!isCollapsed}
-        >
-          <span className="flex h-5 w-5 items-center justify-center text-neutral-400">
-            {isCollapsed ? (
-              <ChevronRight className="h-3.5 w-3.5" />
-            ) : (
-              <ChevronDown className="h-3.5 w-3.5" />
+        <div className="flex flex-col divide-y divide-neutral-200">
+          <button
+            type="button"
+            onClick={() => setIsCollapsed((previous) => !previous)}
+            className={clsx(
+              "sticky top-0 z-10 flex w-full items-center gap-0 border-neutral-200 bg-neutral-50 px-3.5 py-2.5 text-left font-sans font-medium transition hover:bg-neutral-100 focus:outline-none focus-visible:outline-none"
             )}
-          </span>
-
-          <span
-            className={cn(
-              "flex h-5 w-5 items-center justify-center",
-              statusMeta.colorClassName
-            )}
+            aria-expanded={!isCollapsed}
           >
-            {statusMeta.icon}
-            <span className="sr-only">{statusMeta.label}</span>
-          </span>
-
-          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <span className="font-mono text-xs text-neutral-700 truncate">
-              {file.filename}
+            <span className="flex h-5 w-5 items-center justify-center text-neutral-400">
+              {isCollapsed ? (
+                <ChevronRight className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5" />
+              )}
             </span>
-            {file.previous_filename ? (
-              <span className="font-mono text-[11px] text-neutral-500 truncate">
-                Renamed from {file.previous_filename}
-              </span>
-            ) : null}
-          </div>
 
-          <div className="flex items-center gap-2 text-[11px] font-medium text-neutral-600">
-            <span className="text-emerald-600">+{file.additions}</span>
-            <span className="text-rose-600">-{file.deletions}</span>
-          </div>
-        </button>
-
-        {showReview ? (
-          <div className="border-b border-neutral-200 bg-sky-50 px-4 py-4">
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-sky-700">
-              <Sparkles className="h-4 w-4" aria-hidden />
-              Automated review
-            </div>
-            <pre className="mt-2 max-h-[9.5rem] overflow-hidden whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-neutral-900">
-              {reviewContent}
-            </pre>
-          </div>
-        ) : null}
-
-        {!isCollapsed ? (
-          diff ? (
-            <Diff
-              diffType={diff.type}
-              hunks={diff.hunks}
-              viewType="split"
-              optimizeSelection
-              className="diff-syntax system-mono overflow-auto bg-white text-xs leading-5 text-neutral-800"
-              gutterClassName="system-mono bg-white text-xs text-neutral-500"
-              codeClassName="system-mono text-xs text-neutral-800"
-              tokens={tokens ?? undefined}
-              renderToken={renderHeatmapToken}
-              renderGutter={renderHeatmapGutter}
-              generateLineClassName={({ changes, defaultGenerate }) => {
-                const defaultClassName = defaultGenerate();
-                const classNames: string[] = ["system-mono text-xs py-1"];
-                const normalizedChanges = changes.filter(
-                  (change): change is ChangeData => Boolean(change)
-                );
-                const hasFocus =
-                  focusedLine !== null &&
-                  normalizedChanges.some((change) =>
-                    doesChangeMatchLine(change, focusedLine)
-                  );
-                if (hasFocus) {
-                  classNames.push("cmux-heatmap-focus");
-                }
-                if (
-                  diffHeatmap &&
-                  (diffHeatmap.lineClasses.size > 0 ||
-                    diffHeatmap.oldLineClasses.size > 0)
-                ) {
-                  let bestHeatmapClass: string | null = null;
-
-                  const considerClass = (candidate: string | undefined) => {
-                    if (!candidate) {
-                      return;
-                    }
-                    if (!bestHeatmapClass) {
-                      bestHeatmapClass = candidate;
-                      return;
-                    }
-                    const currentTier = extractHeatmapTier(bestHeatmapClass);
-                    const nextTier = extractHeatmapTier(candidate);
-                    if (nextTier > currentTier) {
-                      bestHeatmapClass = candidate;
-                    }
-                  };
-
-                  for (const change of normalizedChanges) {
-                    const newLineNumber = computeNewLineNumber(change);
-                    if (newLineNumber > 0) {
-                      considerClass(
-                        diffHeatmap.lineClasses.get(newLineNumber)
-                      );
-                    }
-                    const oldLineNumber = computeOldLineNumber(change);
-                    if (oldLineNumber > 0) {
-                      considerClass(
-                        diffHeatmap.oldLineClasses.get(oldLineNumber)
-                      );
-                    }
-                  }
-
-                  if (bestHeatmapClass) {
-                    classNames.push(bestHeatmapClass);
-                  }
-                }
-
-                classNames.push("text-neutral-800");
-
-                return cn(defaultClassName, classNames);
-              }}
+            <span
+              className={cn(
+                "flex h-5 w-5 items-center justify-center pl-2",
+                statusMeta.colorClassName
+              )}
             >
-              {(hunks) =>
-                hunks.map((hunk) => (
-                  <Fragment key={hunk.content}>
-                    <Decoration>
-                      <div className="bg-sky-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-sky-700">
-                        {hunk.content}
-                      </div>
-                    </Decoration>
-                    <Hunk hunk={hunk} />
-                  </Fragment>
-                ))
-              }
-            </Diff>
-          ) : (
-            <div className="bg-neutral-50 px-4 py-6 text-sm text-neutral-600">
-              {error ??
-                "Diff content is unavailable for this file. It might be binary or too large to display."}
+              {statusMeta.icon}
+              <span className="sr-only">{statusMeta.label}</span>
+            </span>
+
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="pl-1.5 text-sm text-neutral-700 truncate">
+                {file.filename}
+              </span>
+              {file.previous_filename ? (
+                <span className="text-sm text-neutral-500 truncate">
+                  Renamed from {file.previous_filename}
+                </span>
+              ) : null}
             </div>
-          )
-        ) : null}
+
+            <div className="flex items-center gap-2 text-[13px] font-medium text-neutral-600">
+              <span className="text-emerald-600">+{file.additions}</span>
+              <span className="text-rose-600">-{file.deletions}</span>
+            </div>
+          </button>
+
+          {showReview && reviewContent ? (
+            <div className="border-b border-neutral-200 bg-sky-50 px-4 py-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-sky-700">
+                  <Sparkles className="h-4 w-4" aria-hidden />
+                  Automated review
+                </div>
+                <CopyButton text={reviewContent} />
+              </div>
+              <pre className="mt-2 max-h-[9.5rem] overflow-auto whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-neutral-900">
+                {reviewContent}
+              </pre>
+            </div>
+          ) : null}
+
+          {!isCollapsed &&
+            (diff ? (
+              <Diff
+                diffType={diff.type}
+                hunks={diff.hunks}
+                viewType="split"
+                optimizeSelection
+                className="diff-syntax system-mono overflow-auto bg-white text-xs leading-5 text-neutral-800"
+                gutterClassName="system-mono bg-white text-xs text-neutral-500"
+                codeClassName="system-mono text-xs text-neutral-800"
+                tokens={tokens ?? undefined}
+                renderToken={renderHeatmapToken}
+                renderGutter={renderHeatmapGutter}
+                generateLineClassName={({ changes, defaultGenerate }) => {
+                  const defaultClassName = defaultGenerate();
+                  const classNames: string[] = ["system-mono text-xs py-1"];
+                  const normalizedChanges = changes.filter(
+                    (change): change is ChangeData => Boolean(change)
+                  );
+                  const hasFocus =
+                    focusedLine !== null &&
+                    normalizedChanges.some((change) =>
+                      doesChangeMatchLine(change, focusedLine)
+                    );
+                  if (hasFocus) {
+                    classNames.push("cmux-heatmap-focus");
+                  }
+                  if (
+                    diffHeatmap &&
+                    (diffHeatmap.lineClasses.size > 0 ||
+                      diffHeatmap.oldLineClasses.size > 0)
+                  ) {
+                    let bestHeatmapClass: string | null = null;
+
+                    const considerClass = (candidate: string | undefined) => {
+                      if (!candidate) {
+                        return;
+                      }
+                      if (!bestHeatmapClass) {
+                        bestHeatmapClass = candidate;
+                        return;
+                      }
+                      const currentTier = extractHeatmapTier(bestHeatmapClass);
+                      const nextTier = extractHeatmapTier(candidate);
+                      if (nextTier > currentTier) {
+                        bestHeatmapClass = candidate;
+                      }
+                    };
+                    for (const change of normalizedChanges) {
+                      const newLineNumber = computeNewLineNumber(change);
+                      if (newLineNumber > 0) {
+                        considerClass(
+                          diffHeatmap.lineClasses.get(newLineNumber)
+                        );
+                      }
+                      const oldLineNumber = computeOldLineNumber(change);
+                      if (oldLineNumber > 0) {
+                        considerClass(
+                          diffHeatmap.oldLineClasses.get(oldLineNumber)
+                        );
+                      }
+                    }
+
+                    if (bestHeatmapClass) {
+                      classNames.push(bestHeatmapClass);
+                    }
+                  }
+
+                  classNames.push("text-neutral-800");
+
+                  return cn(defaultClassName, classNames);
+                }}
+              >
+                {(hunks) =>
+                  hunks.map((hunk) => (
+                    <Fragment key={hunk.content}>
+                      <Decoration>
+                        <div className="bg-sky-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-sky-700">
+                          {hunk.content}
+                        </div>
+                      </Decoration>
+                      <Hunk hunk={hunk} />
+                    </Fragment>
+                  ))
+                }
+              </Diff>
+            ) : (
+              <div className="bg-neutral-50 px-4 py-6 text-sm text-neutral-600">
+                {error ??
+                  "Diff content is unavailable for this file. It might be binary or too large to display."}
+              </div>
+            ))}
+        </div>
       </article>
     </TooltipProvider>
   );
@@ -1840,30 +1911,30 @@ function getHeatmapTooltipTheme(score: number): HeatmapTooltipTheme {
     case 4:
       return {
         contentClass:
-          "bg-rose-900/95 border-rose-500/40 text-rose-50 shadow-lg shadow-rose-950/40",
-        titleClass: "text-rose-100",
-        reasonClass: "text-rose-200",
+          "bg-orange-100 border-orange-300 text-neutral-900 shadow-lg shadow-orange-200/70",
+        titleClass: "text-neutral-900",
+        reasonClass: "text-neutral-800",
       };
     case 3:
       return {
         contentClass:
-          "bg-rose-800/95 border-rose-400/40 text-rose-50 shadow-lg shadow-rose-950/30",
-        titleClass: "text-rose-100",
-        reasonClass: "text-rose-200",
+          "bg-amber-100 border-amber-300 text-neutral-900 shadow-lg shadow-amber-200/70",
+        titleClass: "text-neutral-900",
+        reasonClass: "text-neutral-800",
       };
     case 2:
       return {
         contentClass:
-          "bg-amber-800/95 border-amber-400/40 text-amber-50 shadow-lg shadow-amber-950/30",
-        titleClass: "text-amber-100",
-        reasonClass: "text-amber-200",
+          "bg-yellow-100 border-yellow-200 text-neutral-900 shadow-lg shadow-yellow-200/60",
+        titleClass: "text-neutral-900",
+        reasonClass: "text-neutral-800",
       };
     case 1:
       return {
         contentClass:
-          "bg-amber-900/95 border-amber-500/40 text-amber-50 shadow-lg shadow-amber-950/40",
-        titleClass: "text-amber-100",
-        reasonClass: "text-amber-200",
+          "bg-yellow-50 border-yellow-200 text-neutral-900 shadow-lg shadow-yellow-200/50",
+        titleClass: "text-neutral-900",
+        reasonClass: "text-neutral-700",
       };
     default:
       return {
@@ -1885,7 +1956,7 @@ function extractHeatmapTier(className: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function extractAutomatedReviewText(value: unknown): string | null {
+function _extractAutomatedReviewText(value: unknown): string | null {
   if (value === null || value === undefined) {
     return null;
   }
@@ -1900,7 +1971,7 @@ function extractAutomatedReviewText(value: unknown): string | null {
       "response" in value &&
       typeof (value as { response?: unknown }).response === "string"
     ) {
-      return extractAutomatedReviewText(
+      return _extractAutomatedReviewText(
         (value as { response: string }).response
       );
     }
@@ -1936,7 +2007,8 @@ function formatLineReviews(entries: unknown[]): string | null {
     }
 
     const record = entry as Record<string, unknown>;
-    const line = typeof record.line === "string" ? record.line.trim() : null;
+    const rawLine = typeof record.line === "string" ? record.line : null;
+    const line = rawLine?.trim() ?? null;
     if (!line) {
       continue;
     }
@@ -1951,7 +2023,14 @@ function formatLineReviews(entries: unknown[]): string | null {
         ? record.shouldBeReviewedScore
         : null;
 
-    const changeFlag = record.hasChanged === false ? null : "Changed";
+    let changeFlag: string | null = null;
+    if (typeof rawLine === "string") {
+      if (rawLine.startsWith("+")) {
+        changeFlag = "Added";
+      } else if (rawLine.startsWith("-")) {
+        changeFlag = "Removed";
+      }
+    }
 
     const parts: string[] = [`Line ${line}`];
     if (changeFlag) {

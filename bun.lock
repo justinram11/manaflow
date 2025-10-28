@@ -23,7 +23,7 @@
     },
     "apps/client": {
       "name": "@cmux/client",
-      "version": "1.0.135",
+      "version": "1.0.137",
       "dependencies": {
         "@base-ui-components/react": "1.0.0-beta.2",
         "@cmux/convex": "workspace:*",

@@ -189,6 +189,7 @@ async function main(): Promise<void> {
 
   const { job, deduplicated, backgroundTask } = await startCodeReviewJob({
     accessToken: tokens.accessToken,
+    githubAccessToken: getGithubToken(),
     callbackBaseUrl,
     payload: {
       teamSlugOrId,

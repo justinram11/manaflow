@@ -10,7 +10,7 @@ export type ReviewHeatmapLine = {
   lineText: string | null;
   score: number | null;
   reason: string | null;
-  mostImportantCharacterIndex: number | null;
+  mostImportantWord: string | null;
 };
 
 export type DiffHeatmap = {
@@ -31,7 +31,7 @@ export type ResolvedHeatmapLine = {
   lineNumber: number;
   score: number | null;
   reason: string | null;
-  mostImportantCharacterIndex: number | null;
+  mostImportantWord: string | null;
 };
 
 type DiffLineSide = "new" | "old";
@@ -83,8 +83,8 @@ export function parseReviewHeatmap(raw: unknown): ReviewHeatmapLine[] {
     }
 
     const reason = parseNullableString(record.shouldReviewWhy);
-    const mostImportantCharacterIndex = parseNullableInteger(
-      record.mostImportantCharacterIndex
+    const mostImportantWord = parseNullableString(
+      record.mostImportantWord
     );
 
     parsed.push({
@@ -92,7 +92,7 @@ export function parseReviewHeatmap(raw: unknown): ReviewHeatmapLine[] {
       lineText,
       score: normalizedScore,
       reason,
-      mostImportantCharacterIndex,
+      mostImportantWord,
     });
   }
 
@@ -151,7 +151,7 @@ export function buildDiffHeatmap(
 
     if (
       entry.side === "old" ||
-      entry.mostImportantCharacterIndex === null
+      !entry.mostImportantWord
     ) {
       continue;
     }
@@ -161,10 +161,20 @@ export function buildDiffHeatmap(
       continue;
     }
 
+    const highlight = deriveHighlightRange(content, entry.mostImportantWord);
+    if (!highlight) {
+      continue;
+    }
+
     const highlightIndex = clamp(
-      Math.floor(entry.mostImportantCharacterIndex),
+      highlight.start,
       0,
       Math.max(content.length - 1, 0)
+    );
+    const highlightLength = clamp(
+      Math.floor(highlight.length),
+      1,
+      Math.max(content.length - highlightIndex, 1)
     );
 
     const charTier = tier > 0 ? tier : 1;
@@ -172,7 +182,7 @@ export function buildDiffHeatmap(
       type: "span",
       lineNumber: entry.lineNumber,
       start: highlightIndex,
-      length: Math.min(1, Math.max(content.length - highlightIndex, 1)),
+      length: highlightLength,
       className: `cmux-heatmap-char cmux-heatmap-char-tier-${charTier}`,
     };
     characterRanges.push(range);
@@ -219,8 +229,8 @@ function aggregateEntries(
       side: entry.side,
       score: shouldReplaceScore ? entry.score : current.score,
       reason: entry.reason ?? current.reason,
-      mostImportantCharacterIndex:
-        entry.mostImportantCharacterIndex ?? current.mostImportantCharacterIndex,
+      mostImportantWord:
+        entry.mostImportantWord ?? current.mostImportantWord,
     });
   }
 
@@ -258,44 +268,79 @@ function resolveLineNumbers(
         lineNumber: directMatch.lineNumber,
         score: entry.score,
         reason: entry.reason,
-        mostImportantCharacterIndex: entry.mostImportantCharacterIndex,
+        mostImportantWord: entry.mostImportantWord,
       });
       continue;
     }
 
-    const normalizedTarget = normalizeLineText(entry.lineText);
-    if (!normalizedTarget) {
+    const normalizedTarget = toSearchableText(entry.lineText);
+    if (normalizedTarget) {
+      const newCandidate = findLineByText(
+        normalizedTarget,
+        newLineEntries,
+        newSearchOffsets
+      );
+      if (newCandidate !== null) {
+        resolved.push({
+          side: "new",
+          lineNumber: newCandidate,
+          score: entry.score,
+          reason: entry.reason,
+          mostImportantWord: entry.mostImportantWord,
+        });
+        continue;
+      }
+
+      const oldCandidate = findLineByText(
+        normalizedTarget,
+        oldLineEntries,
+        oldSearchOffsets
+      );
+      if (oldCandidate !== null) {
+        resolved.push({
+          side: "old",
+          lineNumber: oldCandidate,
+          score: entry.score,
+          reason: entry.reason,
+          mostImportantWord: entry.mostImportantWord,
+        });
+        continue;
+      }
+    }
+
+    const normalizedKeyword = toSearchableText(entry.mostImportantWord);
+    if (!normalizedKeyword) {
       continue;
     }
 
-    const newCandidate = findLineByText(
-      normalizedTarget,
+    const keywordNewCandidate = findLineByText(
+      normalizedKeyword,
       newLineEntries,
       newSearchOffsets
     );
-    if (newCandidate !== null) {
+    if (keywordNewCandidate !== null) {
       resolved.push({
         side: "new",
-        lineNumber: newCandidate,
+        lineNumber: keywordNewCandidate,
         score: entry.score,
         reason: entry.reason,
-        mostImportantCharacterIndex: entry.mostImportantCharacterIndex,
+        mostImportantWord: entry.mostImportantWord,
       });
       continue;
     }
 
-    const oldCandidate = findLineByText(
-      normalizedTarget,
+    const keywordOldCandidate = findLineByText(
+      normalizedKeyword,
       oldLineEntries,
       oldSearchOffsets
     );
-    if (oldCandidate !== null) {
+    if (keywordOldCandidate !== null) {
       resolved.push({
         side: "old",
-        lineNumber: oldCandidate,
+        lineNumber: keywordOldCandidate,
         score: entry.score,
         reason: entry.reason,
-        mostImportantCharacterIndex: entry.mostImportantCharacterIndex,
+        mostImportantWord: entry.mostImportantWord,
       });
     }
   }
@@ -321,42 +366,55 @@ function resolveDirectLineNumber(
   }
 
   if (hasNew && !hasOld) {
-    return { side: "new", lineNumber };
+    return doesLineContentMatch(entry, newLines.get(lineNumber))
+      ? { side: "new", lineNumber }
+      : null;
   }
 
   if (!hasNew && hasOld) {
+    return doesLineContentMatch(entry, oldLines.get(lineNumber))
+      ? { side: "old", lineNumber }
+      : null;
+  }
+
+  const matchesNew = doesLineContentMatch(entry, newLines.get(lineNumber));
+  const matchesOld = doesLineContentMatch(entry, oldLines.get(lineNumber));
+
+  if (matchesNew && !matchesOld) {
+    return { side: "new", lineNumber };
+  }
+
+  if (matchesOld && !matchesNew) {
     return { side: "old", lineNumber };
   }
 
-  const targetLooksLikeCode = isLikelyCodeFragment(entry.lineText);
-  const normalizedTarget = targetLooksLikeCode
-    ? normalizeLineText(entry.lineText)
-    : null;
-
-  if (targetLooksLikeCode && normalizedTarget) {
-    const normalizedNew = normalizeLineText(newLines.get(lineNumber));
-    const normalizedOld = normalizeLineText(oldLines.get(lineNumber));
-    const matchesNew =
-      normalizedTarget && normalizedNew
-        ? normalizedNew === normalizedTarget ||
-          normalizedNew.includes(normalizedTarget)
-        : false;
-    const matchesOld =
-      normalizedTarget && normalizedOld
-        ? normalizedOld === normalizedTarget ||
-          normalizedOld.includes(normalizedTarget)
-        : false;
-
-    if (matchesNew && !matchesOld) {
-      return { side: "new", lineNumber };
-    }
-
-    if (matchesOld && !matchesNew) {
-      return { side: "old", lineNumber };
-    }
+  if (matchesNew && matchesOld) {
+    return { side: "new", lineNumber };
   }
 
-  return { side: "new", lineNumber };
+  return null;
+}
+
+function doesLineContentMatch(
+  entry: ReviewHeatmapLine,
+  rawContent: string | null | undefined
+): boolean {
+  const normalizedContent = toSearchableText(rawContent);
+  if (!normalizedContent) {
+    return false;
+  }
+
+  const normalizedTarget = toSearchableText(entry.lineText);
+  if (normalizedTarget && normalizedContent.includes(normalizedTarget)) {
+    return true;
+  }
+
+  const normalizedWord = toSearchableText(entry.mostImportantWord);
+  if (normalizedWord && normalizedContent.includes(normalizedWord)) {
+    return true;
+  }
+
+  return !normalizedTarget && !normalizedWord;
 }
 
 function findLineByText(
@@ -369,7 +427,7 @@ function findLineByText(
 
   for (let index = startIndex; index < entriesCount; index += 1) {
     const [lineNumber, rawText] = lineEntries[index]!;
-    const normalizedSource = normalizeLineText(rawText);
+    const normalizedSource = toSearchableText(rawText);
     if (!normalizedSource) {
       continue;
     }
@@ -394,15 +452,14 @@ function normalizeLineText(value: string | null | undefined): string | null {
     return null;
   }
 
-  return value.replace(/\s+/g, " ").trim();
+  const { content } = stripDiffMarker(value);
+  const normalized = content.replace(/\s+/g, " ").trim();
+  return normalized.length > 0 ? normalized : null;
 }
 
-function isLikelyCodeFragment(value: string | null | undefined): boolean {
-  if (!value) {
-    return false;
-  }
-
-  return /[A-Za-z_]/.test(value);
+function toSearchableText(value: string | null | undefined): string | null {
+  const normalized = normalizeLineText(value);
+  return normalized ? normalized.toLowerCase() : null;
 }
 
 function collectLineContent(diff: FileData): CollectedLineContent {
@@ -429,6 +486,117 @@ function collectLineContent(diff: FileData): CollectedLineContent {
   };
 }
 
+function deriveHighlightRange(
+  rawContent: string,
+  mostImportantWord: string | null
+): { start: number; length: number } | null {
+  if (!rawContent || !mostImportantWord) {
+    return null;
+  }
+
+  const trimmedWord = mostImportantWord.trim();
+  if (!trimmedWord) {
+    return null;
+  }
+
+  const { content, offset } = stripDiffMarker(rawContent);
+  if (!content) {
+    return null;
+  }
+
+  const candidates = buildHighlightCandidates(trimmedWord);
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const lowerContent = content.toLowerCase();
+
+  for (const candidate of candidates) {
+    const directIndex = content.indexOf(candidate);
+    if (directIndex >= 0) {
+      return {
+        start: directIndex + offset,
+        length: Math.max(candidate.length, 1),
+      };
+    }
+
+    const lowerCandidate = candidate.toLowerCase();
+    const lowerIndex = lowerContent.indexOf(lowerCandidate);
+    if (lowerIndex >= 0) {
+      return {
+        start: lowerIndex + offset,
+        length: Math.max(candidate.length, 1),
+      };
+    }
+  }
+
+  const fallbackIndex = content.search(/\S/);
+  if (fallbackIndex >= 0) {
+    return {
+      start: fallbackIndex + offset,
+      length: 1,
+    };
+  }
+
+  return null;
+}
+
+function stripDiffMarker(value: string): { content: string; offset: number } {
+  if (!value) {
+    return { content: "", offset: 0 };
+  }
+
+  const firstChar = value[0] ?? "";
+  if (firstChar === "+" || firstChar === "-" || firstChar === " ") {
+    return { content: value.slice(1), offset: 1 };
+  }
+
+  return { content: value, offset: 0 };
+}
+
+function buildHighlightCandidates(word: string): string[] {
+  const candidates = new Set<string>();
+
+  const addCandidate = (value: string | null | undefined): void => {
+    if (!value) {
+      return;
+    }
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+    candidates.add(trimmed);
+  };
+
+  const base = stripSurroundingQuotes(word.trim());
+  addCandidate(word);
+  addCandidate(base);
+  addCandidate(sanitizeHighlightToken(base));
+
+  const tokens = base.split(/\s+/).filter(Boolean);
+  for (const token of tokens) {
+    addCandidate(token);
+    addCandidate(sanitizeHighlightToken(token));
+
+    if (token.includes(".")) {
+      for (const segment of token.split(".").filter(Boolean)) {
+        addCandidate(segment);
+        addCandidate(sanitizeHighlightToken(segment));
+      }
+    }
+  }
+
+  return Array.from(candidates);
+}
+
+function stripSurroundingQuotes(value: string): string {
+  return value.replace(/^["'`]+|["'`]+$/g, "");
+}
+
+function sanitizeHighlightToken(value: string): string {
+  return value.replace(/^[^A-Za-z0-9_$]+/, "").replace(/[^A-Za-z0-9_$]+$/, "");
+}
+
 function computeHeatmapTier(score: number | null): number {
   if (score === null) {
     return 0;
@@ -451,7 +619,21 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function parseLineNumber(value: unknown): number | null {
-  const numeric = parseNullableNumber(value);
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const integer = Math.floor(value);
+    return integer > 0 ? integer : null;
+  }
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const candidate = extractLineNumberCandidate(value);
+  if (!candidate) {
+    return null;
+  }
+
+  const numeric = parseNullableNumber(candidate);
   if (numeric === null) {
     return null;
   }
@@ -477,18 +659,20 @@ function parseNullableNumber(value: unknown): number | null {
   return null;
 }
 
-function parseNullableInteger(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return Math.floor(value);
+function extractLineNumberCandidate(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
   }
 
-  if (typeof value === "string") {
-    const match = value.match(/-?\d+/);
-    if (!match) {
-      return null;
-    }
-    const parsed = Number.parseInt(match[0] ?? "", 10);
-    return Number.isFinite(parsed) ? parsed : null;
+  if (/^[+-]?\d+(\.\d+)?$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  const lineMatch =
+    trimmed.match(/^line\s*([+-]?\d+(?:\.\d+)?)(?:\s*[:\-–])?$/i);
+  if (lineMatch && lineMatch[1]) {
+    return lineMatch[1];
   }
 
   return null;

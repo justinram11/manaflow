@@ -44,7 +44,7 @@ export function ReviewDiffContent({
   baseCommitRef?: string;
 }) {
   return (
-    <section className="flex flex-col gap-4">
+    <section className="flex flex-col gap-1">
       <ReviewDiffSummary
         fileCount={fileCount}
         additions={additions}
@@ -110,7 +110,7 @@ export function ReviewChangeSummary({
 export function ReviewGitHubLinkButton({ href }: { href: string }) {
   return (
     <a
-      className="inline-flex items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 py-1.5 font-medium text-neutral-700 transition hover:border-neutral-400 hover:text-neutral-900"
+      className="inline-flex items-center gap-1.5 border border-neutral-300 bg-white px-3 py-1.5 font-medium text-neutral-700 transition hover:border-neutral-400 hover:text-neutral-900"
       href={href}
       target="_blank"
       rel="noreferrer"
@@ -159,12 +159,12 @@ export function ReviewDiffViewerWrapper({
 export function DiffViewerSkeleton() {
   return (
     <div className="space-y-4">
-      <div className="h-6 w-48 rounded bg-neutral-200" />
+      <div className="h-6 w-48 bg-neutral-200" />
       <div className="space-y-3">
         {Array.from({ length: 3 }).map((_, index) => (
           <div
             key={index}
-            className="h-32 rounded-xl border border-neutral-200 bg-neutral-100"
+            className="h-32 border border-neutral-200 bg-neutral-100"
           />
         ))}
       </div>
@@ -182,7 +182,7 @@ export function ErrorPanel({
   documentationUrl?: string;
 }) {
   return (
-    <div className="rounded-xl border border-rose-200 bg-rose-50 p-6 text-sm text-rose-700">
+    <div className="border border-rose-200 bg-rose-50 p-6 text-sm text-rose-700">
       <p className="font-semibold">{title}</p>
       <p className="mt-2 leading-relaxed">{message}</p>
       {documentationUrl ? (

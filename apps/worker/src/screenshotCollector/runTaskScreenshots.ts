@@ -50,7 +50,7 @@ async function uploadScreenshotFile(params: {
     headers: {
       "Content-Type": contentType,
     },
-    body: bytes,
+    body: new Uint8Array(bytes),
   });
 
   if (!uploadResponse.ok) {

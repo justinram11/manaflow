@@ -1,17 +1,21 @@
 import type { Instance } from "morphcloud";
 import { MorphCloudClient } from "morphcloud";
-import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { spawn } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   codeReviewCallbackSchema,
   type CodeReviewCallbackPayload,
 } from "@cmux/shared/codeReview/callback-schemas";
-import { fetchPullRequest } from "@/lib/github/fetch-pull-request";
-import type { GithubPullRequest } from "@/lib/github/fetch-pull-request";
-import { isGithubApiError } from "@/lib/github/errors";
+import {
+  bundleInjectScript,
+  getBunExecutable,
+  resolveInjectScriptPaths,
+} from "../scripts/pr-review/shared";
+import {
+  fetchPrMetadata,
+  type GithubPrMetadata,
+} from "../scripts/pr-review/github";
 
 const DEFAULT_MORPH_SNAPSHOT_ID = "snapshot_vb7uqz8o";
 const OPEN_VSCODE_PORT = 39378;
@@ -19,6 +23,7 @@ const REMOTE_WORKSPACE_DIR = "/root/workspace";
 const REMOTE_LOG_FILE_PATH = "/root/pr-review-inject.log";
 const WORKSPACE_LOG_RELATIVE_PATH = "pr-review-inject.log";
 const WORKSPACE_LOG_ABSOLUTE_PATH = `${REMOTE_WORKSPACE_DIR}/${WORKSPACE_LOG_RELATIVE_PATH}`;
+const CODE_REVIEW_OUTPUT_FILENAME = "code-review-output.json";
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 
@@ -32,108 +37,13 @@ function resolveProductionMode(explicit?: boolean): boolean {
   );
 }
 
-function hasInjectScriptDir(baseDir: string): boolean {
-  return existsSync(resolve(baseDir, "scripts/pr-review"));
-}
-
-function findProjectRoot(): string {
-  const envRoot = process.env.CMUX_WWW_APP_ROOT;
-  if (envRoot && hasInjectScriptDir(envRoot)) {
-    return envRoot;
-  }
-
-  const cwdCandidate = process.cwd();
-  if (hasInjectScriptDir(cwdCandidate)) {
-    return cwdCandidate;
-  }
-
-  let currentDir: string | null = moduleDir;
-  // Walk up towards the filesystem root in case code is running from a compiled output directory.
-  while (currentDir) {
-    if (hasInjectScriptDir(currentDir)) {
-      return currentDir;
-    }
-    const parentDir = dirname(currentDir);
-    if (parentDir === currentDir) {
-      break;
-    }
-    currentDir = parentDir;
-  }
-
-  return cwdCandidate;
-}
-
-const projectRoot = findProjectRoot();
-const injectScriptsDir = resolve(projectRoot, "scripts/pr-review");
-const injectScriptSourcePath = resolve(
-  injectScriptsDir,
-  "pr-review-inject.ts"
-);
-const injectScriptBundlePath = resolve(
-  injectScriptsDir,
-  "pr-review-inject.bundle.js"
-);
+const {
+  projectRoot,
+  injectScriptSourcePath,
+  injectScriptBundlePath,
+} = resolveInjectScriptPaths({ moduleDir });
 
 let cachedInjectScriptPromise: Promise<string> | null = null;
-
-function getBunExecutable(): string {
-  return process.env.BUN_RUNTIME ?? process.env.BUN_BIN ?? "bun";
-}
-
-async function buildInjectScript(productionMode: boolean): Promise<void> {
-  if (productionMode) {
-    console.log(
-      "[pr-review][debug] Production mode detected; expecting prebuilt inject script bundle."
-    );
-    return;
-  }
-
-  const bunExecutable = getBunExecutable();
-  console.log("[pr-review][debug] buildInjectScript resolving paths", {
-    moduleDir,
-    projectRoot,
-    injectScriptSourcePath,
-    injectScriptBundlePath,
-  });
-  const sourcePath = injectScriptSourcePath;
-  const bundlePath = injectScriptBundlePath;
-
-  console.log("[pr-review] Bundling inject script via bun build...");
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(
-      bunExecutable,
-      [
-        "build",
-        sourcePath,
-        "--outfile",
-        bundlePath,
-        "--target",
-        "bun",
-        "--external",
-        "@openai/codex-sdk",
-        "--external",
-        "@openai/codex",
-        "--external",
-        "zod",
-      ],
-      {
-        stdio: "inherit",
-      }
-    );
-    child.once("error", reject);
-    child.once("exit", (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      reject(
-        new Error(
-          `bun build exited with code ${code ?? "unknown"} when bundling inject script`
-        )
-      );
-    });
-  });
-}
 
 async function getInjectScriptSource(productionMode: boolean): Promise<string> {
   if (!cachedInjectScriptPromise) {
@@ -141,7 +51,19 @@ async function getInjectScriptSource(productionMode: boolean): Promise<string> {
       console.log(
         "[pr-review][debug] getInjectScriptSource ensuring inject script bundle is available"
       );
-      await buildInjectScript(productionMode);
+      console.log("[pr-review][debug] bundleInjectScript resolving paths", {
+        moduleDir,
+        projectRoot,
+        injectScriptSourcePath,
+        injectScriptBundlePath,
+      });
+      await bundleInjectScript({
+        productionMode,
+        sourcePath: injectScriptSourcePath,
+        bundlePath: injectScriptBundlePath,
+        bunExecutable: getBunExecutable(),
+        logPrefix: "[pr-review]",
+      });
       console.log(
         `[pr-review][debug] Reading inject script bundle from ${injectScriptBundlePath}`
       );
@@ -188,6 +110,11 @@ export interface PrReviewJobContext {
   fileCallback?: PrReviewCallbackConfig;
   morphSnapshotId?: string;
   productionMode?: boolean;
+  showDiffLineNumbers?: boolean;
+  showContextLineNumbers?: boolean;
+  strategy?: string;
+  diffArtifactMode?: string;
+  githubAccessToken?: string;
 }
 
 export interface ComparisonReviewContext {
@@ -198,22 +125,7 @@ export interface ComparisonReviewContext {
   headRef: string;
 }
 
-interface ParsedPrUrl {
-  owner: string;
-  repo: string;
-  number: number;
-}
-
-interface PrMetadata extends ParsedPrUrl {
-  prUrl: string;
-  headRefName: string;
-  headRepoOwner: string;
-  headRepoName: string;
-  headSha: string;
-  baseRefName: string;
-}
-
-type GithubApiPullResponse = GithubPullRequest;
+type PrMetadata = GithubPrMetadata;
 
 function ensureMorphClient(): MorphCloudClient {
   const apiKey = process.env.MORPH_API_KEY;
@@ -249,101 +161,6 @@ async function sendCallback(
     console.error(`[pr-review] Failed to send callback: ${message}`);
     throw error;
   }
-}
-
-function parsePrUrl(prUrl: string): ParsedPrUrl {
-  let url: URL;
-  try {
-    url = new URL(prUrl);
-  } catch (_error) {
-    throw new Error(`Invalid PR URL: ${prUrl}`);
-  }
-
-  const pathParts = url.pathname.split("/").filter(Boolean);
-  if (pathParts.length < 3 || pathParts[2] !== "pull") {
-    throw new Error(
-      `PR URL must be in the form https://github.com/<owner>/<repo>/pull/<number>, received: ${prUrl}`
-    );
-  }
-
-  const [owner, repo, _pullSegment, prNumberPart] = pathParts;
-  const prNumber = Number(prNumberPart);
-  if (!Number.isInteger(prNumber)) {
-    throw new Error(`Invalid PR number in URL: ${prUrl}`);
-  }
-
-  return { owner, repo, number: prNumber };
-}
-
-async function fetchPrMetadata(prUrl: string): Promise<PrMetadata> {
-  const parsed = parsePrUrl(prUrl);
-
-  let data: GithubApiPullResponse;
-  try {
-    data = await fetchPullRequest(parsed.owner, parsed.repo, parsed.number);
-  } catch (error) {
-    if (isGithubApiError(error)) {
-      const documentation = error.documentationUrl
-        ? ` - ${error.documentationUrl}`
-        : "";
-      throw new Error(
-        `Failed to fetch PR metadata via GitHub API: ${error.message}${documentation}`.trim()
-      );
-    }
-
-    const message =
-      error instanceof Error ? error.message : String(error ?? "unknown error");
-    throw new Error(
-      `Failed to fetch PR metadata via GitHub API: ${message}`.trim()
-    );
-  }
-
-  const headRefName = data.head?.ref;
-  if (typeof headRefName !== "string" || headRefName.length === 0) {
-    throw new Error("PR metadata is missing head.ref.");
-  }
-
-  const headRepoName = data.head?.repo?.name;
-  const headRepoOwner = data.head?.repo?.owner?.login;
-  if (
-    typeof headRepoName !== "string" ||
-    headRepoName.length === 0 ||
-    typeof headRepoOwner !== "string" ||
-    headRepoOwner.length === 0
-  ) {
-    throw new Error("PR metadata is missing head repository information.");
-  }
-
-  const baseRefName = data.base?.ref;
-  if (typeof baseRefName !== "string" || baseRefName.length === 0) {
-    throw new Error("PR metadata is missing base.ref.");
-  }
-
-  const headSha = data.head?.sha;
-  if (typeof headSha !== "string" || headSha.length === 0) {
-    throw new Error("PR metadata is missing head.sha.");
-  }
-
-  const baseRepoName = data.base?.repo?.name;
-  const baseRepoOwner = data.base?.repo?.owner?.login;
-
-  return {
-    owner:
-      typeof baseRepoOwner === "string" && baseRepoOwner.length > 0
-        ? baseRepoOwner
-        : parsed.owner,
-    repo:
-      typeof baseRepoName === "string" && baseRepoName.length > 0
-        ? baseRepoName
-        : parsed.repo,
-    number: parsed.number,
-    prUrl,
-    headRefName,
-    headRepoName,
-    headRepoOwner,
-    headSha,
-    baseRefName,
-  };
 }
 
 function shellQuote(value: string): string {
@@ -645,11 +462,40 @@ export async function startAutomatedPrReview(
       ["OPENAI_API_KEY", openAiApiKey],
       ["LOG_FILE_PATH", REMOTE_LOG_FILE_PATH],
       ["LOG_SYMLINK_PATH", WORKSPACE_LOG_ABSOLUTE_PATH],
+      [
+        "CODE_REVIEW_OUTPUT_SYMLINK_PATH",
+        `${REMOTE_WORKSPACE_DIR}/${CODE_REVIEW_OUTPUT_FILENAME}`,
+      ],
       ["JOB_ID", config.jobId],
       ["SANDBOX_INSTANCE_ID", startedInstance.id],
       ["REPO_FULL_NAME", config.repoFullName],
       ["COMMIT_REF", normalizedCommitRef],
     ];
+
+    if (typeof config.showDiffLineNumbers === "boolean") {
+      envPairs.push([
+        "CMUX_PR_REVIEW_SHOW_DIFF_LINE_NUMBERS",
+        config.showDiffLineNumbers ? "true" : "false",
+      ]);
+    }
+    if (typeof config.showContextLineNumbers === "boolean") {
+      envPairs.push([
+        "CMUX_PR_REVIEW_SHOW_CONTEXT_LINE_NUMBERS",
+        config.showContextLineNumbers ? "true" : "false",
+      ]);
+    }
+    if (typeof config.strategy === "string" && config.strategy.length > 0) {
+      envPairs.push(["CMUX_PR_REVIEW_STRATEGY", config.strategy]);
+    }
+    if (
+      typeof config.diffArtifactMode === "string" &&
+      config.diffArtifactMode.length > 0
+    ) {
+      envPairs.push([
+        "CMUX_PR_REVIEW_DIFF_ARTIFACT_MODE",
+        config.diffArtifactMode,
+      ]);
+    }
 
     if (config.callback) {
       envPairs.push(["CALLBACK_URL", config.callback.url]);
