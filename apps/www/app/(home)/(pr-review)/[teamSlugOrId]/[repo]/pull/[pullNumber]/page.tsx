@@ -221,7 +221,7 @@ export default async function PullRequestPage({ params }: PageProps) {
 
   return (
     <div className="min-h-dvh bg-neutral-50 text-neutral-900">
-      <div className="flex w-full flex-col gap-8 pb-4 pt-10 px-4">
+      <div className="flex w-full flex-col gap-8 pb-4 pt-10 px-3">
         <Suspense fallback={<PullRequestHeaderSkeleton />}>
           <PullRequestHeader
             promise={pullRequestPromise}

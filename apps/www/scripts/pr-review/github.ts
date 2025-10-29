@@ -59,9 +59,16 @@ export function parsePrUrl(prUrl: string): ParsedPrUrl {
   return { owner, repo, number: prNumber };
 }
 
-export async function fetchPrMetadata(prUrl: string): Promise<GithubPrMetadata> {
+type FetchPrMetadataOptions = {
+  accessToken?: string | null;
+};
+
+export async function fetchPrMetadata(
+  prUrl: string,
+  options?: FetchPrMetadataOptions
+): Promise<GithubPrMetadata> {
   const parsed = parsePrUrl(prUrl);
-  const token = getGithubToken();
+  const token = options?.accessToken;
   const octokit = new Octokit(token ? { auth: token } : {});
 
   let data: GithubApiPullResponse;
