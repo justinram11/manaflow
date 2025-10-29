@@ -82,7 +82,7 @@ export function PrivateRepoPrompt({
       setError("An unexpected error occurred. Please try again.");
       setIsRedirecting(false);
     }
-  }, [githubAppSlugProp, repo, githubOwner, teamSlugOrId]);
+  }, [githubAppSlugProp, teamSlugOrId]);
 
   return (
     <div className="min-h-dvh bg-neutral-50 text-neutral-900 flex items-center justify-center px-6">

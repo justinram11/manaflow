@@ -22,9 +22,6 @@ export function summarizeFiles(files: GithubFileChange[]): {
 
 export function ReviewDiffContent({
   files,
-  fileCount,
-  additions,
-  deletions,
   teamSlugOrId,
   repoFullName,
   reviewTarget,
@@ -32,9 +29,6 @@ export function ReviewDiffContent({
   baseCommitRef,
 }: {
   files: GithubFileChange[];
-  fileCount: number;
-  additions: number;
-  deletions: number;
   teamSlugOrId: string;
   repoFullName: string;
   reviewTarget:

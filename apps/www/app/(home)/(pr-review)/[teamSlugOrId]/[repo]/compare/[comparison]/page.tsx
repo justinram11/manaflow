@@ -354,7 +354,6 @@ function ComparisonDiffSection({
   try {
     const files = use(filesPromise);
     const comparison = use(comparisonPromise);
-    const totals = summarizeFiles(files);
     const repoFullName = `${githubOwner}/${repo}`;
     const commits = comparison.commits ?? [];
     const headCommit = commits.length > 0 ? commits[commits.length - 1] : null;
@@ -367,9 +366,6 @@ function ComparisonDiffSection({
     return (
       <ReviewDiffContent
         files={files}
-        fileCount={totals.fileCount}
-        additions={totals.additions}
-        deletions={totals.deletions}
         teamSlugOrId={teamSlugOrId}
         repoFullName={repoFullName}
         reviewTarget={{ type: "comparison", slug: comparisonDetails.slug }}

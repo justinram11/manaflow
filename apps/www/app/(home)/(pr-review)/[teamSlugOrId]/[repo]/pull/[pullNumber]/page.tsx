@@ -24,7 +24,6 @@ import {
   ReviewChangeSummary,
   ReviewDiffContent,
   ReviewGitHubLinkButton,
-  summarizeFiles,
 } from "../../_components/review-diff-content";
 import { PrivateRepoPrompt } from "../../_components/private-repo-prompt";
 import { TeamOnboardingPrompt } from "../../_components/team-onboarding-prompt";
@@ -610,7 +609,6 @@ function PullRequestDiffSection({
   try {
     const files = use(filesPromise);
     const pullRequest = use(pullRequestPromise);
-    const totals = summarizeFiles(files);
     const fallbackRepoFullName =
       pullRequest.base?.repo?.full_name ??
       pullRequest.head?.repo?.full_name ??
@@ -621,9 +619,6 @@ function PullRequestDiffSection({
     return (
       <ReviewDiffContent
         files={files}
-        fileCount={totals.fileCount}
-        additions={totals.additions}
-        deletions={totals.deletions}
         teamSlugOrId={teamSlugOrId}
         repoFullName={fallbackRepoFullName}
         reviewTarget={{ type: "pull_request", prNumber: pullNumber }}
