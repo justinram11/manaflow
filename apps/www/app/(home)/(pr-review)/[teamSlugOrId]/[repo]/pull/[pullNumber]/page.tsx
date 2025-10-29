@@ -104,7 +104,8 @@ async function requireSignedInUser(returnPath: string) {
 }
 
 async function getUserOrAnonymous() {
-  const user = await stackServerApp.getUser({ or: "return-null" });
+  const user = await stackServerApp.getUser({ or: "anonymous" });
+  console.log("[PullRequestPage] getUserOrAnonymous - user:", user?.id, "isAnonymous:", user ? "anonymous" in user : false);
   return user;
 }
 
@@ -200,11 +201,13 @@ export default async function PullRequestPage({ params }: PageProps) {
         repo={repo}
         githubOwner={githubOwner}
         pullNumber={pullNumber}
+        stackProjectId={env.NEXT_PUBLIC_STACK_PROJECT_ID}
+        stackPublishableKey={env.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY}
       />
     );
   }
 
-  // For private repos, user is required (handled by requireSignedInUser above)
+  // All authenticated users should have a team (Stack Auth creates teams for all users)
   const selectedTeam = user!.selectedTeam || (await getFirstTeam());
   if (!selectedTeam) {
     return (
@@ -225,14 +228,20 @@ export default async function PullRequestPage({ params }: PageProps) {
     });
   } catch (error) {
     if (isGithubApiError(error) && error.status === 404) {
-      return (
-        <PrivateRepoPrompt
-          teamSlugOrId={selectedTeam.id}
-          repo={repo}
-          githubOwner={githubOwner}
-          githubAppSlug={env.NEXT_PUBLIC_GITHUB_APP_SLUG}
-        />
-      );
+      // For private repos, show the install prompt
+      // For public repos without a team, we can't do anything
+      if (!repoIsPublic && selectedTeam) {
+        return (
+          <PrivateRepoPrompt
+            teamSlugOrId={selectedTeam.id}
+            repo={repo}
+            githubOwner={githubOwner}
+            githubAppSlug={env.NEXT_PUBLIC_GITHUB_APP_SLUG}
+          />
+        );
+      }
+      // For public repos or when no team, just throw - shouldn't happen for public repos
+      throw error;
     }
     throw error;
   }
@@ -245,13 +254,16 @@ export default async function PullRequestPage({ params }: PageProps) {
     { authToken: githubAccessToken }
   ).then((files) => files.map(toGithubFileChange));
 
-  scheduleCodeReviewStart({
-    teamSlugOrId: selectedTeam.id,
-    githubOwner,
-    repo,
-    pullNumber,
-    pullRequestPromise,
-  });
+  // Only schedule code review if we have a team
+  if (selectedTeam) {
+    scheduleCodeReviewStart({
+      teamSlugOrId: selectedTeam.id,
+      githubOwner,
+      repo,
+      pullNumber,
+      pullRequestPromise,
+    });
+  }
 
   return (
     <div className="min-h-dvh bg-neutral-50 text-neutral-900">
@@ -268,7 +280,7 @@ export default async function PullRequestPage({ params }: PageProps) {
           <PullRequestDiffSection
             filesPromise={pullRequestFilesPromise}
             pullRequestPromise={pullRequestPromise}
-            teamSlugOrId={selectedTeam.id}
+            teamSlugOrId={selectedTeam?.id ?? githubOwner}
             githubOwner={githubOwner}
             repo={repo}
             pullNumber={pullNumber}

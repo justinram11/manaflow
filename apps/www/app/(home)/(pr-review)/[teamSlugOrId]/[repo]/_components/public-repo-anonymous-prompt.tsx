@@ -2,51 +2,63 @@
 
 import { useCallback, useState } from "react";
 import { Eye, LogIn } from "lucide-react";
+import { useStackApp } from "@stackframe/stack";
 
 interface PublicRepoAnonymousPromptProps {
   teamSlugOrId: string;
   repo: string;
   githubOwner: string;
   pullNumber: number;
+  stackProjectId: string;
+  stackPublishableKey: string;
 }
 
 /**
  * Prompt shown to anonymous users viewing a public repository.
- * Allows them to sign in anonymously to access the PR review features.
+ * Allows them to sign in to access the PR review features.
  */
 export function PublicRepoAnonymousPrompt({
   teamSlugOrId,
   repo,
   githubOwner,
   pullNumber,
+  stackProjectId,
+  stackPublishableKey,
 }: PublicRepoAnonymousPromptProps) {
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const app = useStackApp();
 
   const handleAnonymousSignIn = useCallback(async () => {
     setIsSigningIn(true);
     setError(null);
 
     try {
-      const currentUrl = window.location.href;
+      // Call our server-side API to create anonymous user
+      const response = await fetch("/api/auth/anonymous/sign-up", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include", // Important: include cookies
+      });
 
-      // Store return URL in session storage
-      try {
-        sessionStorage.setItem("pr_review_return_url", currentUrl);
-      } catch (storageError) {
-        console.warn(
-          "[PublicRepoAnonymousPrompt] Failed to persist return URL",
-          storageError
-        );
+      const data = await response.json();
+      console.log("[PublicRepoAnonymousPrompt] API Response:", data);
+
+      if (!response.ok || !data.success) {
+        console.error("[PublicRepoAnonymousPrompt] Anonymous sign-up failed:", data);
+        setError(data.message || "Failed to create anonymous session");
+        setIsSigningIn(false);
+        return;
       }
 
-      // TODO: Implement anonymous user sign-in flow with Stack Auth
-      // For now, redirect to sign-in page with return URL
-      const returnTo = encodeURIComponent(window.location.pathname);
-      window.location.href = `/sign-in?after_auth_return_to=${returnTo}`;
+      // Successfully created anonymous user, reload to pick up cookies
+      console.log("[PublicRepoAnonymousPrompt] Anonymous user created successfully");
+      window.location.reload();
     } catch (err) {
       console.error(
-        "[PublicRepoAnonymousPrompt] Failed to initiate anonymous sign-in",
+        "[PublicRepoAnonymousPrompt] Failed to create anonymous user",
         err
       );
       setError("An unexpected error occurred. Please try again.");
@@ -54,10 +66,24 @@ export function PublicRepoAnonymousPrompt({
     }
   }, []);
 
-  const handleRegularSignIn = useCallback(() => {
-    const returnTo = encodeURIComponent(window.location.pathname);
-    window.location.href = `/sign-in?after_auth_return_to=${returnTo}`;
-  }, []);
+  const handleRegularSignIn = useCallback(async () => {
+    setIsSigningIn(true);
+    setError(null);
+
+    try {
+      // Use Stack Auth sign-in URL with return path
+      const returnTo = encodeURIComponent(window.location.pathname);
+      const signInUrl = `${app.urls.signIn}?after_auth_return_to=${returnTo}`;
+      window.location.href = signInUrl;
+    } catch (err) {
+      console.error(
+        "[PublicRepoAnonymousPrompt] Failed to initiate sign-in",
+        err
+      );
+      setError("An unexpected error occurred. Please try again.");
+      setIsSigningIn(false);
+    }
+  }, [app.urls.signIn]);
 
   return (
     <div className="min-h-dvh bg-neutral-50 dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 flex items-center justify-center px-6">
@@ -118,7 +144,7 @@ export function PublicRepoAnonymousPrompt({
                     {isSigningIn ? (
                       <>
                         <div className="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                        <span>Signing in…</span>
+                        <span>Creating anonymous session…</span>
                       </>
                     ) : (
                       <>
@@ -135,12 +161,12 @@ export function PublicRepoAnonymousPrompt({
                     className="w-full inline-flex items-center justify-center gap-3 rounded-lg bg-neutral-900 dark:bg-neutral-100 px-6 py-3 text-base font-medium text-white dark:text-neutral-900 transition-colors hover:bg-neutral-800 dark:hover:bg-neutral-200 focus:outline-none focus:ring-2 focus:ring-neutral-400 focus:ring-offset-2 dark:focus:ring-offset-neutral-950 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <LogIn className="h-5 w-5" />
-                    <span>Sign In with GitHub</span>
+                    <span>Sign In</span>
                   </button>
                 </div>
 
                 <p className="text-xs text-center text-neutral-500 dark:text-neutral-400">
-                  Guest access allows you to view public repositories without an account.
+                  Sign in to access code review features for public repositories.
                 </p>
               </div>
             </div>

@@ -1,0 +1,174 @@
+import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
+import { stackServerApp } from "@/lib/utils/stack";
+import { env } from "@/lib/utils/www-env";
+import { cookies } from "next/headers";
+
+export const authAnonymousRouter = new OpenAPIHono();
+
+const AnonymousSignUpResponse = z
+  .object({
+    success: z.boolean(),
+    userId: z.string().optional(),
+    teamId: z.string().optional(),
+    teams: z.array(z.any()).optional(),
+    message: z.string().optional(),
+  })
+  .openapi("AnonymousSignUpResponse");
+
+authAnonymousRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/auth/anonymous/sign-up",
+    tags: ["Auth"],
+    summary: "Create an anonymous user for public repo access",
+    responses: {
+      200: {
+        description: "Anonymous user created successfully",
+        content: {
+          "application/json": {
+            schema: AnonymousSignUpResponse,
+          },
+        },
+      },
+      400: { description: "Bad request" },
+      500: { description: "Server error" },
+    },
+  }),
+  async (c) => {
+    try {
+      // Try to create anonymous user using Stack Auth API
+      const response = await fetch("https://api.stack-auth.com/api/v1/auth/anonymous/sign-up", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-stack-project-id": env.NEXT_PUBLIC_STACK_PROJECT_ID,
+          "x-stack-publishable-client-key": env.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY,
+          "x-stack-secret-server-key": env.STACK_SECRET_SERVER_KEY,
+          "x-stack-access-type": "server",
+        },
+        body: JSON.stringify({}),
+      });
+
+      const responseText = await response.text();
+      console.log("[authAnonymous] Stack API response status:", response.status);
+      console.log("[authAnonymous] Stack API response:", responseText);
+
+      if (!response.ok) {
+        let errorData: any = {};
+        try {
+          errorData = JSON.parse(responseText);
+        } catch {
+          errorData = { message: responseText };
+        }
+
+        // If anonymous accounts aren't enabled, return a clear error
+        if (errorData.code === "ANONYMOUS_ACCOUNTS_NOT_ENABLED" || response.status === 403) {
+          return c.json(
+            {
+              success: false,
+              message: "Anonymous accounts are not enabled for this project",
+            },
+            400
+          );
+        }
+
+        console.error("[authAnonymous] Failed to create anonymous user:", errorData);
+        return c.json(
+          {
+            success: false,
+            message: errorData.message || "Failed to create anonymous user",
+          },
+          response.status
+        );
+      }
+
+      const data = JSON.parse(responseText);
+
+      // Set the Stack Auth cookies with proper format
+      if (data.access_token && data.refresh_token) {
+        // Stack Auth cookie format: stack-access (no project ID) and stack-refresh-{projectId}
+        const projectId = env.NEXT_PUBLIC_STACK_PROJECT_ID;
+        const cookieOptions = [
+          "Path=/",
+          "Max-Age=31536000", // 1 year
+          "SameSite=Lax",
+          process.env.NODE_ENV === "production" ? "Secure" : "",
+        ].filter(Boolean).join("; ");
+
+        // Set access token cookie - format: stack-access (no project ID!)
+        const accessCookie = `stack-access=${data.access_token}; ${cookieOptions}`;
+        console.log("[authAnonymous] Setting access cookie:", accessCookie.substring(0, 80) + "...");
+        c.header("Set-Cookie", accessCookie, { append: true });
+
+        // Set refresh token cookie - format: stack-refresh-{projectId}
+        const refreshCookie = `stack-refresh-${projectId}=${data.refresh_token}; ${cookieOptions}`;
+        console.log("[authAnonymous] Setting refresh cookie:", refreshCookie.substring(0, 80) + "...");
+        c.header("Set-Cookie", refreshCookie, { append: true });
+
+        // Fetch teams for the specific anonymous user
+        try {
+          console.log("[authAnonymous] Fetching teams for anonymous user:", data.user_id);
+
+          // Get the user object from Stack Auth
+          const user = await stackServerApp.getUser(data.user_id);
+
+          if (!user) {
+            console.error("[authAnonymous] User not found:", data.user_id);
+            return c.json({
+              success: true,
+              userId: data.user_id,
+              teamId: data.team_id,
+              teams: [],
+              message: "Anonymous user created successfully (user not found)",
+            });
+          }
+
+          // Get teams for this specific user
+          const teams = await user.listTeams();
+          console.log("[authAnonymous] User teams:", teams);
+
+          const userTeams = teams.map(team => ({
+            id: team.id,
+            display_name: team.displayName,
+            profile_image_url: team.profileImageUrl,
+          }));
+
+          return c.json({
+            success: true,
+            userId: data.user_id,
+            teamId: data.team_id,
+            teams: userTeams,
+            message: "Anonymous user created successfully",
+          });
+        } catch (teamsErr) {
+          console.error("[authAnonymous] Failed to fetch teams:", teamsErr);
+          // Still return success for user creation even if team fetch fails
+          return c.json({
+            success: true,
+            userId: data.user_id,
+            teamId: data.team_id,
+            teams: [],
+            message: "Anonymous user created successfully (teams fetch failed)",
+          });
+        }
+      }
+
+      return c.json(
+        {
+          success: false,
+          message: "No tokens received from Stack Auth",
+        },
+        500
+      );
+    } catch (error) {
+      console.error("[authAnonymous] Error creating anonymous user:", error);
+      return c.json(
+        {
+          success: false,
+          message: error instanceof Error ? error.message : "Internal server error",
+        },
+        500
+      );
+    }
+  }
+);

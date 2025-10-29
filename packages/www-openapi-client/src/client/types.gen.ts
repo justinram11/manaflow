@@ -10,6 +10,14 @@ export type Health = {
     uptime: number;
 };
 
+export type AnonymousSignUpResponse = {
+    success: boolean;
+    userId?: string;
+    teamId?: string;
+    teams?: Array<unknown>;
+    message?: string;
+};
+
 export type User = {
     id: string;
     name: string;
@@ -611,6 +619,33 @@ export type GetApiHealthResponses = {
 };
 
 export type GetApiHealthResponse = GetApiHealthResponses[keyof GetApiHealthResponses];
+
+export type PostApiAuthAnonymousSignUpData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/auth/anonymous/sign-up';
+};
+
+export type PostApiAuthAnonymousSignUpErrors = {
+    /**
+     * Bad request
+     */
+    400: unknown;
+    /**
+     * Server error
+     */
+    500: unknown;
+};
+
+export type PostApiAuthAnonymousSignUpResponses = {
+    /**
+     * Anonymous user created successfully
+     */
+    200: AnonymousSignUpResponse;
+};
+
+export type PostApiAuthAnonymousSignUpResponse = PostApiAuthAnonymousSignUpResponses[keyof PostApiAuthAnonymousSignUpResponses];
 
 export type GetApiUsersData = {
     body?: never;

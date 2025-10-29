@@ -22,6 +22,7 @@ import {
   usersRouter,
   iframePreflightRouter,
 } from "@/lib/routes/index";
+import { authAnonymousRouter } from "@/lib/routes/auth.anonymous.route";
 import { stackServerApp } from "@/lib/utils/stack";
 import { swaggerUI } from "@hono/swagger-ui";
 import { OpenAPIHono } from "@hono/zod-openapi";
@@ -97,6 +98,7 @@ app.get("/user", async (c) => {
 
 // Routes - Next.js passes the full /api/* path
 app.route("/", healthRouter);
+app.route("/", authAnonymousRouter);
 app.route("/", usersRouter);
 app.route("/", booksRouter);
 app.route("/", devServerRouter);
