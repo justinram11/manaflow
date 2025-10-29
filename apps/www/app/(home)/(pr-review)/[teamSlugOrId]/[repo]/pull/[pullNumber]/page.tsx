@@ -3,13 +3,10 @@ import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { waitUntil } from "@vercel/functions";
 import { type Team } from "@stackframe/stack";
-import { REQUIRE_SIGN_IN_FOR_PUBLIC_REPOS } from "@/lib/config/auth";
-import { env } from "@/lib/utils/www-env";
 
 import {
   fetchPullRequest,
   fetchPullRequestFiles,
-  fetchRepositoryVisibility,
   toGithubFileChange,
   type GithubPullRequest,
   type GithubFileChange,
@@ -29,8 +26,6 @@ import {
   ReviewGitHubLinkButton,
   summarizeFiles,
 } from "../../_components/review-diff-content";
-import { PrivateRepoPrompt } from "../../_components/private-repo-prompt";
-import { TeamOnboardingPrompt } from "../../_components/team-onboarding-prompt";
 
 type PageParams = {
   teamSlugOrId: string;
@@ -61,23 +56,11 @@ function redirectToSignIn(returnPath: string): never {
   });
   const signInUrl = `${stackServerApp.urls.signIn}?${searchParams.toString()}`;
 
-  console.log("[PR Review] Redirecting to sign in:", {
-    returnPath,
-    normalizedPath,
-    signInUrl,
-  });
-
   redirect(signInUrl);
 }
 
 async function requireSignedInUser(returnPath: string) {
   const user = await stackServerApp.getUser({ or: "return-null" });
-
-  console.log("[PR Review] Auth check:", {
-    returnPath,
-    hasUser: !!user,
-    userId: user?.id,
-  });
 
   if (!user) {
     redirectToSignIn(returnPath);
@@ -100,23 +83,17 @@ export async function generateMetadata({
 }: PageProps): Promise<Metadata> {
   const resolvedParams = await params;
   const returnPath = buildPullRequestPath(resolvedParams);
-  const { teamSlugOrId: githubOwner, repo, pullNumber: pullNumberRaw } = resolvedParams;
-  const pullNumber = parsePullNumber(pullNumberRaw);
-
-  const repoVisibility = await fetchRepositoryVisibility(githubOwner, repo);
-  const authRequired = repoVisibility !== "public" || REQUIRE_SIGN_IN_FOR_PUBLIC_REPOS;
-  const user = authRequired
-    ? await requireSignedInUser(returnPath)
-    : await stackServerApp.getUser({ or: "return-null" });
-
-  if (authRequired && !user) {
-    redirectToSignIn(returnPath);
-  }
-
-  const selectedTeam = user?.selectedTeam || (user ? await getFirstTeam() : null);
-  if (authRequired && !selectedTeam) {
+  const user = await requireSignedInUser(returnPath);
+  const selectedTeam = user.selectedTeam || (await getFirstTeam());
+  if (!selectedTeam) {
     throw notFound();
   }
+  const {
+    teamSlugOrId: githubOwner,
+    repo,
+    pullNumber: pullNumberRaw,
+  } = resolvedParams;
+  const pullNumber = parsePullNumber(pullNumberRaw);
 
   if (pullNumber === null) {
     return {
@@ -145,102 +122,62 @@ export async function generateMetadata({
 export default async function PullRequestPage({ params }: PageProps) {
   const resolvedParams = await params;
   const returnPath = buildPullRequestPath(resolvedParams);
-  const { teamSlugOrId: githubOwner, repo, pullNumber: pullNumberRaw } = resolvedParams;
+  const user = await requireSignedInUser(returnPath);
+  const selectedTeam = user.selectedTeam || (await getFirstTeam());
+  if (!selectedTeam) {
+    throw notFound();
+  }
+
+  const {
+    teamSlugOrId: githubOwner,
+    repo,
+    pullNumber: pullNumberRaw,
+  } = resolvedParams;
   const pullNumber = parsePullNumber(pullNumberRaw);
 
   if (pullNumber === null) {
     notFound();
   }
 
-  const repoVisibility = await fetchRepositoryVisibility(githubOwner, repo);
-  const authRequired = repoVisibility !== "public" || REQUIRE_SIGN_IN_FOR_PUBLIC_REPOS;
-  const user = authRequired
-    ? await requireSignedInUser(returnPath)
-    : await stackServerApp.getUser({ or: "return-null" });
+  const pullRequestPromise = fetchPullRequest(githubOwner, repo, pullNumber);
+  const pullRequestFilesPromise = fetchPullRequestFiles(
+    githubOwner,
+    repo,
+    pullNumber
+  ).then((files) => files.map(toGithubFileChange));
 
-  if (authRequired && !user) {
-    redirectToSignIn(returnPath);
-  }
+  scheduleCodeReviewStart({
+    teamSlugOrId: selectedTeam.id,
+    githubOwner,
+    repo,
+    pullNumber,
+    pullRequestPromise,
+  });
 
-  const selectedTeam = user?.selectedTeam || (user ? await getFirstTeam() : null);
+  return (
+    <div className="min-h-dvh bg-neutral-50 text-neutral-900">
+      <div className="flex w-full flex-col gap-8 pb-4 pt-10 px-3">
+        <Suspense fallback={<PullRequestHeaderSkeleton />}>
+          <PullRequestHeader
+            promise={pullRequestPromise}
+            githubOwner={githubOwner}
+            repo={repo}
+          />
+        </Suspense>
 
-  if (!selectedTeam) {
-    if (authRequired) {
-      return (
-        <TeamOnboardingPrompt
-          githubOwner={githubOwner}
-          repo={repo}
-          pullNumber={pullNumber}
-        />
-      );
-    }
-
-    throw new Error("Public repository unauthenticated flow is not implemented yet.");
-  }
-
-  // If user doesn't have a team, show onboarding
-  // (handled above)
-
-  // Check if the PR is accessible
-  try {
-    const pullRequest = await fetchPullRequest(githubOwner, repo, pullNumber);
-
-    // If we can fetch the PR, proceed with normal rendering
-    const pullRequestPromise = Promise.resolve(pullRequest);
-    const pullRequestFilesPromise = fetchPullRequestFiles(
-      githubOwner,
-      repo,
-      pullNumber
-    ).then((files) => files.map(toGithubFileChange));
-
-    scheduleCodeReviewStart({
-      teamSlugOrId: selectedTeam.id,
-      githubOwner,
-      repo,
-      pullNumber,
-      pullRequestPromise,
-    });
-
-    return (
-      <div className="min-h-dvh bg-neutral-50 text-neutral-900">
-        <div className="flex w-full flex-col gap-8 px-6 pb-16 pt-10 sm:px-8 lg:px-12">
-          <Suspense fallback={<PullRequestHeaderSkeleton />}>
-            <PullRequestHeader
-              promise={pullRequestPromise}
-              githubOwner={githubOwner}
-              repo={repo}
-            />
-          </Suspense>
-
-          <Suspense fallback={<DiffViewerSkeleton />}>
-            <PullRequestDiffSection
-              filesPromise={pullRequestFilesPromise}
-              pullRequestPromise={pullRequestPromise}
-              teamSlugOrId={selectedTeam.id}
-              githubOwner={githubOwner}
-              repo={repo}
-              pullNumber={pullNumber}
-            />
-          </Suspense>
-        </div>
+        <Suspense fallback={<DiffViewerSkeleton />}>
+          <PullRequestDiffSection
+            filesPromise={pullRequestFilesPromise}
+            pullRequestPromise={pullRequestPromise}
+            teamSlugOrId={selectedTeam.id}
+            githubOwner={githubOwner}
+            repo={repo}
+            pullNumber={pullNumber}
+          />
+        </Suspense>
       </div>
-    );
-  } catch (error) {
-    // If we get a 404, show the private repo prompt
-    if (isGithubApiError(error) && error.status === 404) {
-      return (
-        <PrivateRepoPrompt
-          teamSlugOrId={selectedTeam.id}
-          repo={repo}
-          githubOwner={githubOwner}
-          githubAppSlug={env.NEXT_PUBLIC_GITHUB_APP_SLUG}
-        />
-      );
-    }
-
-    // For other errors, throw to be handled by Next.js error boundary
-    throw error;
-  }
+    </div>
+  );
 }
 
 type PullRequestPromise = ReturnType<typeof fetchPullRequest>;

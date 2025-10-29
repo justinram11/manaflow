@@ -18,9 +18,9 @@ export const pauseMorphInstance = internalAction({
       return;
     }
 
-    const url = `${MORPH_API_BASE_URL}/api/instance/${encodeURIComponent(
+    const url = `${MORPH_API_BASE_URL}/api/instance/${
       args.sandboxInstanceId
-    )}/pause`;
+    }/pause`;
     try {
       const response = await fetch(url, {
         method: "POST",

@@ -72,9 +72,9 @@ async function getInjectScriptSource(productionMode: boolean): Promise<string> {
       } catch (error) {
         const maybeCode =
           typeof error === "object" &&
-            error !== null &&
-            "code" in error &&
-            typeof (error as { code?: unknown }).code === "string"
+          error !== null &&
+          "code" in error &&
+          typeof (error as { code?: unknown }).code === "string"
             ? (error as { code: string }).code
             : null;
         if (maybeCode === "ENOENT") {
@@ -508,9 +508,6 @@ export async function startAutomatedPrReview(
     }
     if (config.teamId) {
       envPairs.push(["TEAM_ID", config.teamId]);
-    }
-    if (config.githubAccessToken) {
-      envPairs.push(["GITHUB_TOKEN", config.githubAccessToken]);
     }
 
     const envAssignments = envPairs

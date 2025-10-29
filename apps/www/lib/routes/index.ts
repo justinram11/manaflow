@@ -10,7 +10,6 @@ export { githubPrsFileContentsRouter } from "./github.prs.file-contents.route";
 export { githubPrsFilesRouter } from "./github.prs.files.route";
 export { githubPrsPatchRouter } from "./github.prs.patch.route";
 export { githubPrsRouter } from "./github.prs.route";
-export { githubInstallStateRouter } from "./github.install-state.route";
 export { healthRouter } from "./health.route";
 export { iframePreflightRouter } from "./iframe-preflight.route";
 export { morphRouter } from "./morph.route";

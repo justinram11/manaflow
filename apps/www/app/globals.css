@@ -178,17 +178,17 @@ body {
 
 .cmux-heatmap-tier-2 .diff-gutter,
 .cmux-heatmap-tier-2 .diff-code {
-  box-shadow: inset 0 0 0 999px rgba(254, 240, 138, 0.5);
+  box-shadow: inset 0 0 0 999px rgba(253, 230, 138, 0.55);
 }
 
 .cmux-heatmap-tier-3 .diff-gutter,
 .cmux-heatmap-tier-3 .diff-code {
-  box-shadow: inset 0 0 0 999px rgba(253, 186, 116, 0.55);
+  box-shadow: inset 0 0 0 999px rgba(252, 211, 77, 0.6);
 }
 
 .cmux-heatmap-tier-4 .diff-gutter,
 .cmux-heatmap-tier-4 .diff-code {
-  box-shadow: inset 0 0 0 999px rgba(251, 146, 60, 0.6);
+  box-shadow: inset 0 0 0 999px rgba(245, 158, 11, 0.65);
 }
 
 .cmux-heatmap-tier-3 {
@@ -239,7 +239,7 @@ body {
 
 .dark .cmux-heatmap-tier-2 .diff-gutter,
 .dark .cmux-heatmap-tier-2 .diff-code {
-  box-shadow: inset 0 0 0 999px rgba(254, 240, 138, 0.36);
+  box-shadow: inset 0 0 0 999px rgba(253, 230, 138, 0.36);
 }
 
 .diff-syntax {
@@ -247,9 +247,9 @@ body {
   --diff-gutter-insert-text-color: rgb(21 128 61);
   --diff-code-insert-background-color: rgb(240 253 244);
   --diff-code-insert-text-color: rgb(22 101 52);
-  --diff-gutter-delete-background-color: transparent;
+  --diff-gutter-delete-background-color: #fadde0;
   --diff-gutter-delete-text-color: rgb(115 115 115);
-  --diff-code-delete-background-color: transparent;
+  --diff-code-delete-background-color: rgb(252,236,234);
   --diff-code-delete-text-color: rgb(82 82 82);
 }
 
@@ -258,20 +258,20 @@ body {
   --diff-gutter-insert-text-color: rgb(134 239 172);
   --diff-code-insert-background-color: rgba(34, 197, 94, 0.16);
   --diff-code-insert-text-color: rgb(187 247 208);
-  --diff-gutter-delete-background-color: transparent;
+  --diff-gutter-delete-background-color: #fadde0;
   --diff-gutter-delete-text-color: rgb(163 163 163);
-  --diff-code-delete-background-color: transparent;
+  --diff-code-delete-background-color: rgb(252,236,234);
   --diff-code-delete-text-color: rgb(212 212 212);
 }
 
 .dark .cmux-heatmap-tier-3 .diff-gutter,
 .dark .cmux-heatmap-tier-3 .diff-code {
-  box-shadow: inset 0 0 0 999px rgba(253, 186, 116, 0.42);
+  box-shadow: inset 0 0 0 999px rgba(252, 211, 77, 0.42);
 }
 
 .dark .cmux-heatmap-tier-4 .diff-gutter,
 .dark .cmux-heatmap-tier-4 .diff-code {
-  box-shadow: inset 0 0 0 999px rgba(251, 146, 60, 0.48);
+  box-shadow: inset 0 0 0 999px rgba(245, 158, 11, 0.48);
 }
 
 .dark .cmux-heatmap-tier-3 {
@@ -317,7 +317,6 @@ body {
 
 .cmux-heatmap-char {
   display: inline-block;
-  border-radius: 0.25rem;
   padding: 0 0.05rem;
 }
 
@@ -331,16 +330,16 @@ body {
 }
 
 .cmux-heatmap-char-tier-2 {
-  background-color: rgba(254, 240, 138, 0.75);
+  background-color: rgba(253, 230, 138, 0.75);
 }
 
 .cmux-heatmap-char-tier-3 {
-  background-color: rgba(253, 186, 116, 0.8);
+  background-color: rgba(252, 211, 77, 0.8);
   color: #422006;
 }
 
 .cmux-heatmap-char-tier-4 {
-  background-color: rgba(251, 146, 60, 0.85);
+  background-color: rgba(245, 158, 11, 0.85);
   color: #431407;
 }
 
@@ -364,20 +363,20 @@ body {
 }
 
 .dark .cmux-heatmap-char-tier-1 {
-  background-color: rgba(254, 240, 138, 0.5);
+  background-color: rgba(254, 249, 195, 0.5);
 }
 
 .dark .cmux-heatmap-char-tier-2 {
-  background-color: rgba(254, 240, 138, 0.58);
+  background-color: rgba(253, 230, 138, 0.58);
 }
 
 .dark .cmux-heatmap-char-tier-3 {
-  background-color: rgba(253, 186, 116, 0.64);
+  background-color: rgba(252, 211, 77, 0.64);
   color: #fff7ed;
 }
 
 .dark .cmux-heatmap-char-tier-4 {
-  background-color: rgba(251, 146, 60, 0.7);
+  background-color: rgba(245, 158, 11, 0.7);
   color: #ffedd5;
 }
 

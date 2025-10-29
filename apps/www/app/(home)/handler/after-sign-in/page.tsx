@@ -56,24 +56,15 @@ export default async function AfterSignInPage({ searchParams }: AfterSignInPageP
 
   const afterAuthReturnToRaw = getSingleValue(searchParams?.after_auth_return_to ?? undefined);
 
-  console.log("[After Sign In] Processing redirect:", {
-    afterAuthReturnTo: afterAuthReturnToRaw,
-    hasRefreshToken: !!stackRefreshToken,
-    hasAccessToken: !!stackAccessToken,
-  });
-
   if (afterAuthReturnToRaw?.startsWith(CMUX_SCHEME)) {
-    console.log("[After Sign In] Opening Electron app with deep link");
     const cmuxHref = buildCmuxHref(afterAuthReturnToRaw, stackRefreshToken, stackAccessToken);
     if (cmuxHref) {
       return <OpenCmuxClient href={cmuxHref} />;
     }
   } else if (afterAuthReturnToRaw && isRelativePath(afterAuthReturnToRaw)) {
-    console.log("[After Sign In] Redirecting to web path:", afterAuthReturnToRaw);
     redirect(afterAuthReturnToRaw || "/");
   }
 
-  console.log("[After Sign In] No return path, using fallback");
   const fallbackHref = buildCmuxHref(null, stackRefreshToken, stackAccessToken);
   if (fallbackHref) {
     return <OpenCmuxClient href={fallbackHref} />;

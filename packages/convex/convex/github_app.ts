@@ -112,11 +112,8 @@ export const deactivateProviderConnection = internalMutation({
 
 // Mint a signed, single-use install state token for mapping installation -> team
 export const mintInstallState = authMutation({
-  args: {
-    teamSlugOrId: v.string(),
-    returnUrl: v.optional(v.string()),
-  },
-  handler: async (ctx, { teamSlugOrId, returnUrl }) => {
+  args: { teamSlugOrId: v.string() },
+  handler: async (ctx, { teamSlugOrId }) => {
     if (!env.INSTALL_STATE_SECRET)
       throw new Error("Missing INSTALL_STATE_SECRET");
     const identity = ctx.identity;
@@ -161,7 +158,6 @@ export const mintInstallState = authMutation({
       iat: now,
       exp,
       nonce,
-      ...(returnUrl ? { returnUrl } : {}),
     } as const;
     const payload = JSON.stringify(payloadObj);
     const sigBuf = await hmacSha256(env.INSTALL_STATE_SECRET, payload);
@@ -177,7 +173,6 @@ export const mintInstallState = authMutation({
       exp,
       status: "pending",
       createdAt: now,
-      ...(returnUrl ? { returnUrl } : {}),
     });
 
     return { state: token } as const;

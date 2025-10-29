@@ -88,7 +88,6 @@ export const githubSetup = httpAction(async (ctx, req) => {
     iat: number;
     exp: number;
     nonce: string;
-    returnUrl?: string;
   };
   let payload: Payload;
   try {
@@ -211,17 +210,11 @@ export const githubSetup = httpAction(async (ctx, req) => {
     }
   }
 
-  // Check if there's a returnUrl in the payload (web flow)
-  if (payload.returnUrl) {
-    console.log("[github_setup] Redirecting to web return URL:", payload.returnUrl);
-    return Response.redirect(payload.returnUrl, 302);
-  }
-
-  // Otherwise, use Electron deep link (Electron flow)
+  // Resolve slug for nicer redirect when available
   const team = await ctx.runQuery(internal.teams.getByTeamIdInternal, {
     teamId: payload.teamId,
   });
   const teamPath = team?.slug ?? payload.teamId;
-  console.log("[github_setup] No return URL, using deep link for team:", teamPath);
+  // Prefer deep link back into the app so Electron foregrounds and refreshes.
   return Response.redirect(toCmuxDeepLink(teamPath), 302);
 });
