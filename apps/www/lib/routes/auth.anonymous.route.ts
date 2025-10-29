@@ -84,26 +84,34 @@ authAnonymousRouter.openapi(
 
       const data = JSON.parse(responseText);
 
-      // Set the Stack Auth cookies with proper format
+      // Set the Stack Auth cookies with proper format using Next.js cookies API
       if (data.access_token && data.refresh_token) {
         // Stack Auth cookie format: stack-access (no project ID) and stack-refresh-{projectId}
         const projectId = env.NEXT_PUBLIC_STACK_PROJECT_ID;
-        const cookieOptions = [
-          "Path=/",
-          "Max-Age=31536000", // 1 year
-          "SameSite=Lax",
-          process.env.NODE_ENV === "production" ? "Secure" : "",
-        ].filter(Boolean).join("; ");
+        const cookieStore = await cookies();
+
+        const cookieOptions = {
+          path: "/",
+          maxAge: 31536000, // 1 year
+          sameSite: "lax" as const,
+          secure: process.env.NODE_ENV === "production",
+          httpOnly: false, // Stack Auth needs client-side access
+        };
 
         // Set access token cookie - format: stack-access (no project ID!)
-        const accessCookie = `stack-access=${data.access_token}; ${cookieOptions}`;
-        console.log("[authAnonymous] Setting access cookie:", accessCookie.substring(0, 80) + "...");
-        c.header("Set-Cookie", accessCookie, { append: true });
+        console.log("[authAnonymous] Setting stack-access cookie");
+        cookieStore.set("stack-access", data.access_token, cookieOptions);
 
         // Set refresh token cookie - format: stack-refresh-{projectId}
-        const refreshCookie = `stack-refresh-${projectId}=${data.refresh_token}; ${cookieOptions}`;
-        console.log("[authAnonymous] Setting refresh cookie:", refreshCookie.substring(0, 80) + "...");
-        c.header("Set-Cookie", refreshCookie, { append: true });
+        console.log("[authAnonymous] Setting stack-refresh cookie");
+        cookieStore.set(`stack-refresh-${projectId}`, data.refresh_token, cookieOptions);
+
+        // Set the HTTPS indicator cookie (required by Stack Auth)
+        console.log("[authAnonymous] Setting stack-is-https cookie");
+        cookieStore.set("stack-is-https", "true", {
+          ...cookieOptions,
+          maxAge: 31536000, // 1 year
+        });
 
         // Fetch teams for the specific anonymous user
         try {

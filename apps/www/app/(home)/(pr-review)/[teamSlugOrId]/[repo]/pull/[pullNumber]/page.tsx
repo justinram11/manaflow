@@ -104,8 +104,10 @@ async function requireSignedInUser(returnPath: string) {
 }
 
 async function getUserOrAnonymous() {
-  const user = await stackServerApp.getUser({ or: "anonymous" });
-  console.log("[PullRequestPage] getUserOrAnonymous - user:", user?.id, "isAnonymous:", user ? "anonymous" in user : false);
+  const user = await stackServerApp.getUser({
+    or: "anonymous"
+  });
+
   return user;
 }
 
@@ -188,12 +190,13 @@ export default async function PullRequestPage({ params }: PageProps) {
   // Check if the repository is public
   const repoIsPublic = await isRepoPublic(githubOwner, repo);
 
-  // Get user (may be null if anonymous)
+  // For public repos, check if there's an existing user first (don't create anonymous yet)
+  // For private repos, require authentication
   const user = repoIsPublic
-    ? await getUserOrAnonymous()
+    ? await stackServerApp.getUser({ or: "anonymous" })
     : await requireSignedInUser(returnPath);
 
-  // For public repos without a user, show anonymous prompt
+  // For public repos without an existing user, show anonymous prompt
   if (repoIsPublic && !user) {
     return (
       <PublicRepoAnonymousPrompt
@@ -207,16 +210,23 @@ export default async function PullRequestPage({ params }: PageProps) {
     );
   }
 
-  // All authenticated users should have a team (Stack Auth creates teams for all users)
-  const selectedTeam = user!.selectedTeam || (await getFirstTeam());
-  if (!selectedTeam) {
-    return (
-      <TeamOnboardingPrompt
-        githubOwner={resolvedParams.teamSlugOrId}
-        repo={resolvedParams.repo}
-        pullNumber={parsePullNumber(resolvedParams.pullNumber) ?? 0}
-      />
-    );
+  // For private repos, require a team. For public repos, teams are optional.
+  let selectedTeam: Team | null = null;
+  if (!repoIsPublic) {
+    // Private repos require authentication and a team
+    selectedTeam = user!.selectedTeam || (await getFirstTeam());
+    if (!selectedTeam) {
+      return (
+        <TeamOnboardingPrompt
+          githubOwner={resolvedParams.teamSlugOrId}
+          repo={resolvedParams.repo}
+          pullNumber={parsePullNumber(resolvedParams.pullNumber) ?? 0}
+        />
+      );
+    }
+  } else {
+    // Public repos: try to get a team but don't require it (for anonymous users)
+    selectedTeam = user!.selectedTeam || (await getFirstTeam());
   }
 
   const githubAccessToken = await resolveGithubAccessToken(user!);
@@ -760,13 +770,13 @@ function formatRelativeTimeFromNow(date: Date): string {
     divisor: number;
     unit: Intl.RelativeTimeFormatUnit;
   }[] = [
-    { threshold: 45, divisor: 1, unit: "second" },
-    { threshold: 2700, divisor: 60, unit: "minute" }, // 45 minutes
-    { threshold: 64_800, divisor: 3_600, unit: "hour" }, // 18 hours
-    { threshold: 561_600, divisor: 86_400, unit: "day" }, // 6.5 days
-    { threshold: 2_419_200, divisor: 604_800, unit: "week" }, // 4 weeks
-    { threshold: 28_512_000, divisor: 2_629_746, unit: "month" }, // 11 months
-  ];
+      { threshold: 45, divisor: 1, unit: "second" },
+      { threshold: 2700, divisor: 60, unit: "minute" }, // 45 minutes
+      { threshold: 64_800, divisor: 3_600, unit: "hour" }, // 18 hours
+      { threshold: 561_600, divisor: 86_400, unit: "day" }, // 6.5 days
+      { threshold: 2_419_200, divisor: 604_800, unit: "week" }, // 4 weeks
+      { threshold: 28_512_000, divisor: 2_629_746, unit: "month" }, // 11 months
+    ];
 
   const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
 
