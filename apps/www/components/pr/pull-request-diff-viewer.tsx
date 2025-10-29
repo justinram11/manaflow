@@ -14,6 +14,7 @@ import type {
   ReactNode,
   KeyboardEvent as ReactKeyboardEvent,
   CSSProperties,
+  ChangeEvent,
 } from "react";
 import {
   ChevronLeft,
@@ -566,6 +567,8 @@ export function PullRequestDiffViewer({
     return Math.max(totalFileCount - processedFileCount, 0);
   }, [processedFileCount, totalFileCount]);
 
+  const [heatmapThreshold, setHeatmapThreshold] = useState(0);
+
   const [isNotificationSupported, setIsNotificationSupported] = useState(false);
   const [notificationPermission, setNotificationPermission] =
     useState<NotificationPermission | null>(null);
@@ -755,7 +758,9 @@ export function PullRequestDiffViewer({
         : [];
       const diffHeatmap =
         entry.diff && reviewHeatmap.length > 0
-          ? buildDiffHeatmap(entry.diff, reviewHeatmap)
+          ? buildDiffHeatmap(entry.diff, reviewHeatmap, {
+              scoreThreshold: heatmapThreshold,
+            })
           : null;
 
       return {
@@ -766,7 +771,7 @@ export function PullRequestDiffViewer({
         changeKeyByLine: buildChangeKeyIndex(entry.diff),
       };
     });
-  }, [parsedDiffs, fileOutputIndex]);
+  }, [parsedDiffs, fileOutputIndex, heatmapThreshold]);
 
   const errorTargets = useMemo<ReviewErrorTarget[]>(() => {
     const targets: ReviewErrorTarget[] = [];
@@ -1427,6 +1432,10 @@ export function PullRequestDiffViewer({
             {notificationCardState ? (
               <ReviewCompletionNotificationCard state={notificationCardState} />
             ) : null}
+            <HeatmapThresholdControl
+              value={heatmapThreshold}
+              onChange={setHeatmapThreshold}
+            />
             {targetCount > 0 ? (
               <div className="flex justify-center">
                 <ErrorNavigator
@@ -1629,6 +1638,67 @@ function ReviewProgressIndicator({
           aria-valuenow={processedFileCount ?? 0}
         />
       </div>
+    </div>
+  );
+}
+
+function HeatmapThresholdControl({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (next: number) => void;
+}) {
+  const sliderId = useId();
+  const descriptionId = `${sliderId}-description`;
+  const percent = Math.round(Math.min(Math.max(value, 0), 1) * 100);
+
+  const handleSliderChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const numeric = Number.parseInt(event.target.value, 10);
+      if (Number.isNaN(numeric)) {
+        return;
+      }
+      const normalized = Math.min(Math.max(numeric / 100, 0), 1);
+      onChange(normalized);
+    },
+    [onChange]
+  );
+
+  return (
+    <div className="rounded border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
+      <div className="flex items-center justify-between gap-3">
+        <label
+          htmlFor={sliderId}
+          className="font-medium text-neutral-700 dark:text-neutral-100"
+        >
+          Highlight threshold
+        </label>
+        <span className="text-xs font-semibold text-neutral-600 dark:text-neutral-300">
+          ≥ {percent}%
+        </span>
+      </div>
+      <input
+        id={sliderId}
+        type="range"
+        min={0}
+        max={100}
+        step={5}
+        value={percent}
+        onChange={handleSliderChange}
+        className="mt-3 w-full accent-sky-500 dark:accent-sky-400"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+        aria-valuetext={`Highlight threshold ${percent} percent`}
+        aria-describedby={descriptionId}
+      />
+      <p
+        id={descriptionId}
+        className="mt-2 text-xs text-neutral-500 dark:text-neutral-400"
+      >
+        Only show heatmap highlights with a score at or above this value.
+      </p>
     </div>
   );
 }

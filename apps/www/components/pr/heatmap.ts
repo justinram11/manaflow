@@ -22,6 +22,10 @@ export type DiffHeatmap = {
   totalEntries: number;
 };
 
+export type BuildDiffHeatmapOptions = {
+  scoreThreshold?: number;
+};
+
 export type HeatmapRangeNode = RangeTokenNode & {
   className: string;
 };
@@ -109,7 +113,8 @@ export function parseReviewHeatmap(raw: unknown): ReviewHeatmapLine[] {
 
 export function buildDiffHeatmap(
   diff: FileData | null,
-  reviewHeatmap: ReviewHeatmapLine[]
+  reviewHeatmap: ReviewHeatmapLine[],
+  options: BuildDiffHeatmapOptions = {}
 ): DiffHeatmap | null {
   if (!diff || reviewHeatmap.length === 0) {
     return null;
@@ -127,13 +132,24 @@ export function buildDiffHeatmap(
     return null;
   }
 
+  const threshold = options.scoreThreshold ?? SCORE_CLAMP_MIN;
+  const normalizedThreshold = clamp(
+    threshold,
+    SCORE_CLAMP_MIN,
+    SCORE_CLAMP_MAX
+  );
+  const filtered = filterEntriesByThreshold(aggregated, normalizedThreshold);
+  if (filtered.size === 0) {
+    return null;
+  }
+
   const lineClasses = new Map<number, string>();
   const oldLineClasses = new Map<number, string>();
   const characterRanges: HeatmapRangeNode[] = [];
   const entries = new Map<number, ResolvedHeatmapLine>();
   const oldEntries = new Map<number, ResolvedHeatmapLine>();
 
-  for (const entry of aggregated.values()) {
+  for (const entry of filtered.values()) {
     const targetEntries = entry.side === "new" ? entries : oldEntries;
     targetEntries.set(entry.lineNumber, entry);
 
@@ -202,7 +218,7 @@ export function buildDiffHeatmap(
     newRanges: characterRanges,
     entries,
     oldEntries,
-    totalEntries: aggregated.size,
+    totalEntries: filtered.size,
   };
 }
 
@@ -235,6 +251,26 @@ function aggregateEntries(
   }
 
   return aggregated;
+}
+
+function filterEntriesByThreshold(
+  entries: Map<string, ResolvedHeatmapLine>,
+  threshold: number
+): Map<string, ResolvedHeatmapLine> {
+  if (threshold <= SCORE_CLAMP_MIN) {
+    return entries;
+  }
+
+  const filtered = new Map<string, ResolvedHeatmapLine>();
+
+  for (const [key, entry] of entries.entries()) {
+    const score = entry.score ?? SCORE_CLAMP_MIN;
+    if (score >= threshold) {
+      filtered.set(key, entry);
+    }
+  }
+
+  return filtered;
 }
 
 function buildLineKey(side: DiffLineSide, lineNumber: number): string {

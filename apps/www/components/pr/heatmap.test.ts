@@ -127,4 +127,73 @@ describe("buildDiffHeatmap", () => {
     expect(rangeForLine4.start).toBe(expectedStart);
     expect(rangeForLine4.length).toBe(6);
   });
+
+  it("filters entries below the configured threshold", () => {
+    const files = parseDiff(SAMPLE_DIFF, { nearbySequences: "zip" });
+    const file = files[0] ?? null;
+    expect(file).not.toBeNull();
+
+    const review = parseReviewHeatmap({
+      response: JSON.stringify({
+        lines: [
+          {
+            line: "2",
+            shouldBeReviewedScore: 0.3,
+            shouldReviewWhy: "first pass",
+            mostImportantWord: "const",
+          },
+          {
+            line: "2",
+            shouldBeReviewedScore: 0.7,
+            shouldReviewWhy: "updated score",
+            mostImportantWord: "b",
+          },
+          {
+            line: 4,
+            shouldBeReviewedScore: 0.92,
+            shouldReviewWhy: "new export logic",
+            mostImportantWord: "length",
+          },
+        ],
+      }),
+    });
+
+    const heatmap = buildDiffHeatmap(file, review, {
+      scoreThreshold: 0.8,
+    });
+
+    expect(heatmap).not.toBeNull();
+    if (!heatmap) {
+      return;
+    }
+
+    expect(heatmap.entries.has(2)).toBe(false);
+    expect(heatmap.entries.has(4)).toBe(true);
+    expect(heatmap.totalEntries).toBe(1);
+  });
+
+  it("returns null when all entries fall below the threshold", () => {
+    const files = parseDiff(SAMPLE_DIFF, { nearbySequences: "zip" });
+    const file = files[0] ?? null;
+    expect(file).not.toBeNull();
+
+    const review = parseReviewHeatmap({
+      response: JSON.stringify({
+        lines: [
+          {
+            line: "2",
+            shouldBeReviewedScore: 0.2,
+            shouldReviewWhy: "low score",
+            mostImportantWord: "const",
+          },
+        ],
+      }),
+    });
+
+    const heatmap = buildDiffHeatmap(file, review, {
+      scoreThreshold: 0.5,
+    });
+
+    expect(heatmap).toBeNull();
+  });
 });
