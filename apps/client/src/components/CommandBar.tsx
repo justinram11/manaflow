@@ -163,12 +163,13 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   const [isCreatingLocalWorkspace, setIsCreatingLocalWorkspace] =
     useState(false);
   const [commandValue, setCommandValue] = useState<string | undefined>(
-    undefined,
+    undefined
   );
   const openRef = useRef<boolean>(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const commandListRef = useRef<HTMLDivElement | null>(null);
   const previousSearchRef = useRef(search);
+  const skipNextCloseRef = useRef(false);
   // Used only in non-Electron fallback
   const prevFocusedElRef = useRef<HTMLElement | null>(null);
   const navigate = useNavigate();
@@ -186,16 +187,37 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         params: { teamSlugOrId: targetTeamSlugOrId },
       });
     },
-    [router],
+    [router]
   );
 
   const closeCommand = useCallback(() => {
+    console.log("[CommandBar] closeCommand");
+    skipNextCloseRef.current = false;
     setOpen(false);
     setSearch("");
     setOpenedWithShift(false);
     setActivePage("root");
     setCommandValue(undefined);
   }, [setOpen, setSearch, setOpenedWithShift, setActivePage, setCommandValue]);
+
+  const handleEscape = useCallback(() => {
+    console.log("[CommandBar] handleEscape", {
+      activePage,
+      searchLength: search.length,
+    });
+    skipNextCloseRef.current = false;
+    if (search.length > 0) {
+      skipNextCloseRef.current = true;
+      setSearch("");
+      return;
+    }
+    if (activePage !== "root") {
+      skipNextCloseRef.current = true;
+      setActivePage("root");
+      return;
+    }
+    closeCommand();
+  }, [activePage, closeCommand, search, setActivePage, setSearch]);
 
   const stackUser = useUser({ or: "return-null" });
   const stackTeams = stackUser?.useTeams() ?? EMPTY_TEAM_LIST;
@@ -216,8 +238,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         }
         const existingActivity =
           existing.lastPushedAt ?? Number.NEGATIVE_INFINITY;
-        const candidateActivity =
-          repo.lastPushedAt ?? Number.NEGATIVE_INFINITY;
+        const candidateActivity = repo.lastPushedAt ?? Number.NEGATIVE_INFINITY;
         if (candidateActivity > existingActivity) {
           uniqueRepos.set(repo.fullName, repo);
         }
@@ -321,8 +342,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   const nextWorkspaceSequence = useQuery(api.localWorkspaces.nextSequence, {
     teamSlugOrId,
   });
-  const predictedWorkspaceSequence =
-    nextWorkspaceSequence?.sequence ?? null;
+  const predictedWorkspaceSequence = nextWorkspaceSequence?.sequence ?? null;
   const reserveLocalWorkspace = useMutation(api.localWorkspaces.reserve);
   const failTaskRun = useMutation(api.taskRuns.fail);
 
@@ -337,7 +357,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       }
       if (!socket) {
         console.warn(
-          "Socket is not connected yet. Please try again momentarily.",
+          "Socket is not connected yet. Please try again momentarily."
         );
         return;
       }
@@ -402,20 +422,20 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                 console.log(
                   response.pending
                     ? `${effectiveWorkspaceName} is provisioning…`
-                    : `${effectiveWorkspaceName} is ready`,
+                    : `${effectiveWorkspaceName} is ready`
                 );
 
                 const normalizedWorkspaceUrl = response.workspaceUrl
                   ? rewriteLocalWorkspaceUrlIfNeeded(
                       response.workspaceUrl,
-                      localServeWeb.data?.baseUrl,
+                      localServeWeb.data?.baseUrl
                     )
                   : null;
 
                 if (response.workspaceUrl && effectiveTaskRunId) {
                   const proxiedUrl = toProxyWorkspaceUrl(
                     response.workspaceUrl,
-                    localServeWeb.data?.baseUrl,
+                    localServeWeb.data?.baseUrl
                   );
                   if (proxiedUrl) {
                     void preloadTaskRunIframes([
@@ -455,7 +475,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
               } finally {
                 resolve();
               }
-            },
+            }
           );
         });
       } catch (error) {
@@ -483,7 +503,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       router,
       socket,
       teamSlugOrId,
-    ],
+    ]
   );
 
   const handleLocalWorkspaceSelect = useCallback(
@@ -491,7 +511,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       closeCommand();
       void createLocalWorkspace(projectFullName);
     },
-    [closeCommand, createLocalWorkspace],
+    [closeCommand, createLocalWorkspace]
   );
 
   useEffect(() => {
@@ -686,7 +706,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         }
       }
     },
-    [router, teamSlugOrId, allTasks, preloadTeamDashboard],
+    [router, teamSlugOrId, allTasks, preloadTeamDashboard]
   );
 
   const handleSelect = useCallback(
@@ -745,7 +765,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                   ? ` (${result.version})`
                   : "";
                 toast.success(
-                  `Update available${versionLabel}. Downloading in the background.`,
+                  `Update available${versionLabel}. Downloading in the background.`
                 );
               } else {
                 toast.info("You're up to date.");
@@ -779,13 +799,15 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       } else if (value === "sidebar-toggle") {
         const currentHidden = localStorage.getItem("sidebarHidden") === "true";
         localStorage.setItem("sidebarHidden", String(!currentHidden));
-        window.dispatchEvent(new StorageEvent("storage", {
-          key: "sidebarHidden",
-          newValue: String(!currentHidden),
-          oldValue: String(currentHidden),
-          storageArea: localStorage,
-          url: window.location.href,
-        }));
+        window.dispatchEvent(
+          new StorageEvent("storage", {
+            key: "sidebarHidden",
+            newValue: String(!currentHidden),
+            oldValue: String(currentHidden),
+            storageArea: localStorage,
+            url: window.location.href,
+          })
+        );
       } else if (value === "home") {
         navigate({
           to: "/$teamSlugOrId/dashboard",
@@ -896,7 +918,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       stackUser,
       stackTeams,
       closeCommand,
-    ],
+    ]
   );
 
   const rootCommandEntries = useMemo<CommandListEntry[]>(() => {
@@ -928,7 +950,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       searchText: buildSearchText(
         "New Local Workspace",
         ["workspace", "local"],
-        ["local-workspaces"],
+        ["local-workspaces"]
       ),
       className: baseCommandItemClassName,
       execute: () => handleSelect("local-workspaces"),
@@ -947,7 +969,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       searchText: buildSearchText(
         "Pull Requests",
         ["pull request", "prs"],
-        ["pull-requests"],
+        ["pull-requests"]
       ),
       className: baseCommandItemClassName,
       execute: () => handleSelect("pull-requests"),
@@ -967,7 +989,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         searchText: buildSearchText(
           "Debug WebContents",
           ["debug", "electron"],
-          ["dev:webcontents"],
+          ["dev:webcontents"]
         ),
         className: baseCommandItemClassName,
         execute: () => handleSelect("dev:webcontents"),
@@ -1002,7 +1024,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       searchText: buildSearchText(
         "Environments",
         ["environment"],
-        ["environments"],
+        ["environments"]
       ),
       className: baseCommandItemClassName,
       execute: () => handleSelect("environments"),
@@ -1036,7 +1058,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       searchText: buildSearchText(
         "Switch team",
         ["team", "switch"],
-        ["teams:switch"],
+        ["teams:switch"]
       ),
       className: baseCommandItemClassName,
       execute: () => handleSelect("teams:switch"),
@@ -1055,7 +1077,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       searchText: buildSearchText(
         "Toggle Sidebar",
         ["sidebar", "toggle"],
-        ["sidebar-toggle"],
+        ["sidebar-toggle"]
       ),
       className: baseCommandItemClassName,
       execute: () => handleSelect("sidebar-toggle"),
@@ -1074,7 +1096,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       searchText: buildSearchText(
         "Light Mode",
         ["theme", "light"],
-        ["theme-light"],
+        ["theme-light"]
       ),
       className: baseCommandItemClassName,
       execute: () => handleSelect("theme-light"),
@@ -1093,7 +1115,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       searchText: buildSearchText(
         "Dark Mode",
         ["theme", "dark"],
-        ["theme-dark"],
+        ["theme-dark"]
       ),
       className: baseCommandItemClassName,
       execute: () => handleSelect("theme-dark"),
@@ -1112,7 +1134,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       searchText: buildSearchText(
         "System Theme",
         ["theme", "system"],
-        ["theme-system"],
+        ["theme-system"]
       ),
       className: baseCommandItemClassName,
       execute: () => handleSelect("theme-system"),
@@ -1132,7 +1154,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         searchText: buildSearchText(
           "Sign out",
           ["logout", "account"],
-          ["sign-out"],
+          ["sign-out"]
         ),
         className: baseCommandItemClassName,
         execute: () => handleSelect("sign-out"),
@@ -1147,8 +1169,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
 
     if (allTasks && allTasks.length > 0) {
       allTasks.slice(0, 9).forEach((task, index) => {
-        const title =
-          task.pullRequestTitle || task.text || `Task ${index + 1}`;
+        const title = task.pullRequestTitle || task.text || `Task ${index + 1}`;
         const keywords = compactStrings([
           title,
           task.text,
@@ -1156,11 +1177,10 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
           String(task._id),
           `task ${index + 1}`,
         ]);
-        const baseSearch = buildSearchText(
-          title,
-          keywords,
-          [`${index + 1}`, `task:${task._id}`],
-        );
+        const baseSearch = buildSearchText(title, keywords, [
+          `${index + 1}`,
+          `task:${task._id}`,
+        ]);
         const statusLabel = task.isCompleted ? "completed" : "in progress";
         const statusClassName = task.isCompleted
           ? "text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
@@ -1191,11 +1211,10 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
             value: `${index + 1} vs:task:${task._id}`,
             label: `${title} (VS)`,
             keywords: vsKeywords,
-            searchText: buildSearchText(
-              `${title} VS`,
-              vsKeywords,
-              [`${index + 1} vs`, `task:${task._id}:vs`],
-            ),
+            searchText: buildSearchText(`${title} VS`, vsKeywords, [
+              `${index + 1} vs`,
+              `task:${task._id}:vs`,
+            ]),
             className: taskCommandItemClassName,
             execute: () => handleSelect(`task:${task._id}:vs`),
             renderContent: () => (
@@ -1214,11 +1233,10 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
             value: `${index + 1} git diff:task:${task._id}`,
             label: `${title} (git diff)`,
             keywords: diffKeywords,
-            searchText: buildSearchText(
-              `${title} git diff`,
-              diffKeywords,
-              [`${index + 1} git diff`, `task:${task._id}:gitdiff`],
-            ),
+            searchText: buildSearchText(`${title} git diff`, diffKeywords, [
+              `${index + 1} git diff`,
+              `task:${task._id}:gitdiff`,
+            ]),
             className: taskCommandItemClassName,
             execute: () => handleSelect(`task:${task._id}:gitdiff`),
             renderContent: () => (
@@ -1243,7 +1261,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         searchText: buildSearchText(
           "Check for Updates",
           ["update", "desktop"],
-          ["updates:check"],
+          ["updates:check"]
         ),
         className: baseCommandItemClassName,
         execute: () => handleSelect("updates:check"),
@@ -1262,7 +1280,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         searchText: buildSearchText(
           "Logs View",
           ["logs", "view"],
-          ["logs:view"],
+          ["logs:view"]
         ),
         className: baseCommandItemClassName,
         execute: () => handleSelect("logs:view"),
@@ -1281,7 +1299,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         searchText: buildSearchText(
           "Logs Copy",
           ["logs", "copy"],
-          ["logs:copy"],
+          ["logs:copy"]
         ),
         className: baseCommandItemClassName,
         execute: () => handleSelect("logs:copy"),
@@ -1311,11 +1329,9 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         value,
         label: option.fullName,
         keywords: option.keywords,
-        searchText: buildSearchText(
-          option.fullName,
-          option.keywords,
-          [option.repoBaseName],
-        ),
+        searchText: buildSearchText(option.fullName, option.keywords, [
+          option.repoBaseName,
+        ]),
         className: baseCommandItemClassName,
         disabled: isCreatingLocalWorkspace,
         execute: () => handleLocalWorkspaceSelect(option.fullName),
@@ -1358,35 +1374,35 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
 
   useEffect(() => {
     pruneLocalWorkspaceHistory(
-      new Set(localWorkspaceEntries.map((entry) => entry.value)),
+      new Set(localWorkspaceEntries.map((entry) => entry.value))
     );
   }, [localWorkspaceEntries, pruneLocalWorkspaceHistory]);
 
   const filteredRootEntries = useMemo(
     () => filterCommandItems(search, rootCommandEntries),
-    [rootCommandEntries, search],
+    [rootCommandEntries, search]
   );
 
   const filteredLocalWorkspaceEntries = useMemo(
     () => filterCommandItems(search, localWorkspaceEntries),
-    [localWorkspaceEntries, search],
+    [localWorkspaceEntries, search]
   );
   const hasSearchQuery = search.trim().length > 0;
 
   const rootSuggestedEntries = useMemo(
     () => selectSuggestedItems(rootSuggestionHistory, filteredRootEntries, 5),
-    [filteredRootEntries, rootSuggestionHistory],
+    [filteredRootEntries, rootSuggestionHistory]
   );
   const rootSuggestedValueSet = useMemo(
     () => new Set(rootSuggestedEntries.map((entry) => entry.value)),
-    [rootSuggestedEntries],
+    [rootSuggestedEntries]
   );
   const rootRemainingEntries = useMemo(
     () =>
       filteredRootEntries.filter(
-        (entry) => !rootSuggestedValueSet.has(entry.value),
+        (entry) => !rootSuggestedValueSet.has(entry.value)
       ),
-    [filteredRootEntries, rootSuggestedValueSet],
+    [filteredRootEntries, rootSuggestedValueSet]
   );
 
   const localWorkspaceSuggestedEntries = useMemo(
@@ -1394,26 +1410,25 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       selectSuggestedItems(
         localWorkspaceSuggestionHistory,
         filteredLocalWorkspaceEntries,
-        5,
+        5
       ),
-    [filteredLocalWorkspaceEntries, localWorkspaceSuggestionHistory],
+    [filteredLocalWorkspaceEntries, localWorkspaceSuggestionHistory]
   );
   const localWorkspaceSuggestedValueSet = useMemo(
-    () =>
-      new Set(localWorkspaceSuggestedEntries.map((entry) => entry.value)),
-    [localWorkspaceSuggestedEntries],
+    () => new Set(localWorkspaceSuggestedEntries.map((entry) => entry.value)),
+    [localWorkspaceSuggestedEntries]
   );
   const localWorkspaceRemainingEntries = useMemo(
     () =>
       filteredLocalWorkspaceEntries.filter(
-        (entry) => !localWorkspaceSuggestedValueSet.has(entry.value),
+        (entry) => !localWorkspaceSuggestedValueSet.has(entry.value)
       ),
-    [filteredLocalWorkspaceEntries, localWorkspaceSuggestedValueSet],
+    [filteredLocalWorkspaceEntries, localWorkspaceSuggestedValueSet]
   );
 
   const rootSuggestionsToRender = useMemo(
     () => (!hasSearchQuery ? rootSuggestedEntries : []),
-    [hasSearchQuery, rootSuggestedEntries],
+    [hasSearchQuery, rootSuggestedEntries]
   );
   const rootCommandsToRender = useMemo(
     () =>
@@ -1425,18 +1440,18 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       hasSearchQuery,
       rootRemainingEntries,
       rootSuggestionsToRender.length,
-    ],
+    ]
   );
   const rootVisibleValues = useMemo(
     () =>
       [...rootSuggestionsToRender, ...rootCommandsToRender].map(
-        (entry) => entry.value,
+        (entry) => entry.value
       ),
-    [rootCommandsToRender, rootSuggestionsToRender],
+    [rootCommandsToRender, rootSuggestionsToRender]
   );
   const localWorkspaceSuggestionsToRender = useMemo(
     () => (!hasSearchQuery ? localWorkspaceSuggestedEntries : []),
-    [hasSearchQuery, localWorkspaceSuggestedEntries],
+    [hasSearchQuery, localWorkspaceSuggestedEntries]
   );
   const localWorkspaceCommandsToRender = useMemo(
     () =>
@@ -1448,19 +1463,20 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       hasSearchQuery,
       localWorkspaceRemainingEntries,
       localWorkspaceSuggestionsToRender.length,
-    ],
+    ]
   );
   const localWorkspaceVisibleValues = useMemo(
     () =>
-      [...localWorkspaceSuggestionsToRender, ...localWorkspaceCommandsToRender].map(
-        (entry) => entry.value,
-      ),
-    [localWorkspaceCommandsToRender, localWorkspaceSuggestionsToRender],
+      [
+        ...localWorkspaceSuggestionsToRender,
+        ...localWorkspaceCommandsToRender,
+      ].map((entry) => entry.value),
+    [localWorkspaceCommandsToRender, localWorkspaceSuggestionsToRender]
   );
   const teamVisibleValues = useMemo(() => {
     if (!teamCommandItems.length) return [];
     return teamCommandItems.map(
-      (item) => `team:${item.id}:${item.teamSlugOrId}`,
+      (item) => `team:${item.id}:${item.teamSlugOrId}`
     );
   }, [teamCommandItems]);
 
@@ -1487,7 +1503,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         {entry.renderContent()}
       </Command.Item>
     ),
-    [],
+    []
   );
 
   const scrollCommandItemIntoView = useCallback((value: string | undefined) => {
@@ -1496,7 +1512,8 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     const listEl = commandListRef.current;
     if (!listEl) return;
     const escapeValue =
-      typeof window.CSS !== "undefined" && typeof window.CSS.escape === "function"
+      typeof window.CSS !== "undefined" &&
+      typeof window.CSS.escape === "function"
         ? window.CSS.escape(value)
         : value.replace(/["\\]/g, "\\$&");
     const selector = `[data-value="${escapeValue}"]`;
@@ -1594,7 +1611,13 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         value={commandValue}
         shouldFilter={false}
         onOpenChange={(nextOpen) => {
+          console.log("[CommandBar] onOpenChange", { nextOpen });
           if (!nextOpen) {
+            if (skipNextCloseRef.current) {
+              console.log("[CommandBar] onOpenChange skip close");
+              skipNextCloseRef.current = false;
+              return;
+            }
             closeCommand();
           } else {
             setActivePage("root");
@@ -1608,10 +1631,17 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         title="Command Menu"
         loop
         className="fixed inset-0 z-[var(--z-commandbar)] flex items-start justify-center pt-[20vh] pointer-events-none"
-        onKeyDown={(e) => {
+        onKeyDownCapture={(e) => {
+          console.log("[CommandBar] onKeyDownCapture", {
+            key: e.key,
+            activePage,
+            searchLength: search.length,
+          });
           if (e.key === "Escape") {
             e.preventDefault();
-            closeCommand();
+            e.stopPropagation();
+            console.log("[CommandBar] Escape pressed via onKeyDownCapture");
+            handleEscape();
           } else if (
             e.key === "Backspace" &&
             activePage !== "root" &&
@@ -1620,6 +1650,9 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
             e.target === inputRef.current
           ) {
             e.preventDefault();
+            console.log(
+              "[CommandBar] Backspace pressed, navigating back to root"
+            );
             setActivePage("root");
           }
         }}
@@ -1637,7 +1670,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
           <CommandHighlightListener onHighlight={handleHighlight} />
           <Command.List
             ref={commandListRef}
-            className="max-h-[400px] overflow-y-auto px-1 pb-2 flex flex-col gap-2"
+            className="max-h-[400px] overflow-y-auto px-1 pb-2 flex flex-col gap-2 pt-1"
           >
             <Command.Empty className="py-6 text-center text-sm text-neutral-500 dark:text-neutral-400">
               {activePage === "teams"
@@ -1654,20 +1687,14 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                 {rootSuggestionsToRender.length > 0 ? (
                   <Command.Group>
                     {rootSuggestionsToRender.map((entry) =>
-                      renderCommandItem(entry, recordRootUsage),
+                      renderCommandItem(entry, recordRootUsage)
                     )}
                   </Command.Group>
-                ) : null}
-                {rootSuggestionsToRender.length > 0 &&
-                rootCommandsToRender.length > 0 ? (
-                  <div className="px-2">
-                    <hr className="border-neutral-200 dark:border-neutral-800" />
-                  </div>
                 ) : null}
                 {rootCommandsToRender.length > 0 ? (
                   <Command.Group>
                     {rootCommandsToRender.map((entry) =>
-                      renderCommandItem(entry, recordRootUsage),
+                      renderCommandItem(entry, recordRootUsage)
                     )}
                   </Command.Group>
                 ) : null}
@@ -1677,13 +1704,15 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
             {activePage === "local-workspaces" ? (
               <>
                 {isLocalWorkspaceLoading ? (
-                  <div className={placeholderClassName}>Loading repositories…</div>
+                  <div className={placeholderClassName}>
+                    Loading repositories…
+                  </div>
                 ) : (
                   <>
                     {localWorkspaceSuggestionsToRender.length > 0 ? (
                       <Command.Group>
                         {localWorkspaceSuggestionsToRender.map((entry) =>
-                          renderCommandItem(entry, recordLocalWorkspaceUsage),
+                          renderCommandItem(entry, recordLocalWorkspaceUsage)
                         )}
                       </Command.Group>
                     ) : null}
@@ -1696,7 +1725,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                     {localWorkspaceCommandsToRender.length > 0 ? (
                       <Command.Group>
                         {localWorkspaceCommandsToRender.map((entry) =>
-                          renderCommandItem(entry, recordLocalWorkspaceUsage),
+                          renderCommandItem(entry, recordLocalWorkspaceUsage)
                         )}
                       </Command.Group>
                     ) : null}
