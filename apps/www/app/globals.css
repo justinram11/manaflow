@@ -247,9 +247,9 @@ body {
   --diff-gutter-insert-text-color: rgb(21 128 61);
   --diff-code-insert-background-color: rgb(240 253 244);
   --diff-code-insert-text-color: rgb(22 101 52);
-  --diff-gutter-delete-background-color: transparent;
+  --diff-gutter-delete-background-color: rgb(252,236,234);
   --diff-gutter-delete-text-color: rgb(115 115 115);
-  --diff-code-delete-background-color: transparent;
+  --diff-code-delete-background-color: rgb(252,236,234);
   --diff-code-delete-text-color: rgb(82 82 82);
 }
 
@@ -258,9 +258,9 @@ body {
   --diff-gutter-insert-text-color: rgb(134 239 172);
   --diff-code-insert-background-color: rgba(34, 197, 94, 0.16);
   --diff-code-insert-text-color: rgb(187 247 208);
-  --diff-gutter-delete-background-color: transparent;
+  --diff-gutter-delete-background-color: rgb(252,236,234);
   --diff-gutter-delete-text-color: rgb(163 163 163);
-  --diff-code-delete-background-color: transparent;
+  --diff-code-delete-background-color: rgb(252,236,234);
   --diff-code-delete-text-color: rgb(212 212 212);
 }
 
