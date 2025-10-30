@@ -46,14 +46,11 @@ const GITHUB_USER_AGENT = "cmux-pr-review-heatmap";
 
 // Load GitHub tokens from environment variables
 function loadGitHubTokensFromEnv(): string[] {
-  const tokens: string[] = [];
-  for (let i = 1; i <= 3; i++) {
-    const token = process.env[`GITHUB_TOKEN_${i}`];
-    if (token) {
-      tokens.push(token);
-    }
-  }
-  return tokens;
+  return [
+    process.env.GITHUB_TOKEN_1,
+    process.env.GITHUB_TOKEN_2,
+    process.env.GITHUB_TOKEN_3,
+  ].filter((t): t is string => Boolean(t));
 }
 
 let currentTokenIndex = 0;
@@ -689,41 +686,23 @@ interface GhPrMetadata {
   title: string | null;
 }
 
-function resolveGithubToken(token?: string | null, isPrivateRepo = false): string | null {
+function resolveGithubToken(token?: string | null): string | null {
   // If a token is explicitly provided, use it
   if (token) {
     console.log("[heatmap] Using explicitly provided GitHub token");
     return token;
   }
 
-  // Try standard environment variables
-  const envToken =
-    process.env.GITHUB_TOKEN ??
-    process.env.GH_TOKEN ??
-    process.env.GITHUB_PERSONAL_ACCESS_TOKEN ??
-    null;
-
-  if (envToken) {
-    console.log("[heatmap] Using GitHub token from environment variable");
-    return envToken;
-  }
-
-  // For private repos, don't use rotating tokens
-  if (isPrivateRepo) {
-    console.warn("[heatmap] No token provided for private repository access");
-    return null;
-  }
-
-  // Fall back to rotating tokens from GITHUB_TOKEN_1, GITHUB_TOKEN_2, etc. (public repos only)
+  // Use rotating tokens by default
   const nextToken = getNextGitHubToken();
   if (nextToken) {
     const tokenPrefix = nextToken.substring(0, 20);
     const tokenCount = loadGitHubTokensFromEnv().length;
-    console.log(`[heatmap] Using rotating GitHub token for public repo (${tokenPrefix}...) [${currentTokenIndex}/${tokenCount}]`);
+    console.log(`[heatmap] Using rotating GitHub token (${tokenPrefix}...) [${currentTokenIndex}/${tokenCount}]`);
     return nextToken;
   }
 
-  console.warn("[heatmap] No GitHub tokens available (set GITHUB_TOKEN_1, GITHUB_TOKEN_2, etc.)");
+  console.warn("[heatmap] No GitHub tokens available (set GITHUB_TOKEN_1, GITHUB_TOKEN_2, GITHUB_TOKEN_3)");
   return null;
 }
 
@@ -772,8 +751,7 @@ async function fetchGithubResponse(
   if (!response.ok) {
     const errorText = await response.text();
     throw new Error(
-      `GitHub API request to ${url} failed with status ${
-        response.status
+      `GitHub API request to ${url} failed with status ${response.status
       }: ${errorText.slice(0, 2000)}`
     );
   }
