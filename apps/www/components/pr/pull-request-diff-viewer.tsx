@@ -1694,20 +1694,25 @@ function CmuxPromoCard() {
   return (
     <div className="border border-neutral-200 bg-white p-5 pt-4 text-sm text-neutral-700">
       <div className="flex flex-col gap-3">
-        <a
-          href="https://cmux.dev"
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label="Visit cmux.dev"
-          className="inline-flex w-fit items-center justify-start"
-        >
-          <CmuxLogo
-            height={36}
-            label="cmux.dev"
-            wordmarkText="cmux.dev"
-            wordmarkFill="#0f172a"
-          />
-        </a>
+        <div className="flex flex-row items-center justify-center gap-2 text-center">
+          <p className="text-xs font-mono leading-relaxed text-neutral-900 font-bold">
+            From the creators of 
+          </p>
+          <a
+            href="https://cmux.dev"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Visit cmux.dev"
+            className="inline-flex w-fit items-center justify-start"
+          >
+            <CmuxLogo
+              height={36}
+              label="cmux.dev"
+              wordmarkText="cmux.dev"
+              wordmarkFill="#0f172a"
+            />
+          </a>
+        </div>
         <div className="space-y-2">
           <p className="text-xs font-mono leading-relaxed text-neutral-500">
             AI coding agent manager that spins up isolated VS Code instances, git diff view, terminal, and dev server so parallel agent work stays verifiable, fast, and ready to ship.
