@@ -6,7 +6,7 @@ import heatmapDemo0 from "@/assets/heatmap-demo-0.png";
 export const metadata: Metadata = {
   title: "Heatmap diff viewer for code reviews",
   description:
-    "Color-coded diff viewer that highlights lines and tokens by how much human attention they need.",
+    "Pull request viewer that color-codes every diff line/token by how much human attention it probably needs",
 };
 
 export default function HeatmapPage() {

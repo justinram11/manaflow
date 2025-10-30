@@ -6,12 +6,8 @@ export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const hostname = request.nextUrl.hostname;
 
-  console.log("hostname:", hostname);
-
-  if (hostname === "github0.com" && pathname === "/") {
-    const url = request.nextUrl.clone();
-    url.pathname = "/heatmap";
-    return NextResponse.rewrite(url);
+  if (hostname === "0github.com" && pathname === "/") {
+    return NextResponse.rewrite(new URL("/heatmap", request.url));
   }
 
   // Check if this is a PR review page that requires authentication
@@ -42,16 +38,8 @@ export function middleware(request: NextRequest) {
 
   const hasStackAuthCookies = !!(stackAccessCookie || stackRefreshCookie);
 
-  console.log("[middleware] Checking cookies for:", pathname);
-  console.log("[middleware] Has stack-access:", !!stackAccessCookie);
-  console.log("[middleware] Has stack-refresh:", !!stackRefreshCookie);
-  console.log("[middleware] hasStackAuthCookies:", hasStackAuthCookies);
-
   // If no cookies, redirect to auth page
   if (!hasStackAuthCookies) {
-    console.log(
-      "[middleware] No Stack Auth cookies found, redirecting to auth page"
-    );
     const url = request.nextUrl.clone();
     url.pathname = `${pathname}/auth`;
     return NextResponse.redirect(url);
