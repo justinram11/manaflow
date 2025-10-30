@@ -3,6 +3,7 @@ import { isRepoPublic } from "@/lib/github/check-repo-visibility";
 import { stackServerApp } from "@/lib/utils/stack";
 import { PublicRepoAnonymousPrompt } from "../../../_components/public-repo-anonymous-prompt";
 import { PrivateRepoPrompt } from "../../../_components/private-repo-prompt";
+import { AnonymousToSignInPrompt } from "../../../_components/anonymous-to-signin-prompt";
 import { env } from "@/lib/utils/www-env";
 
 type PageParams = {
@@ -45,16 +46,30 @@ export default async function AuthPage({ params }: PageProps) {
   // Check if repository is public
   const repoIsPublic = await isRepoPublic(githubOwner, repo);
 
-  // Check if user is already authenticated
-  const user = await stackServerApp.getUser({ or: "return-null" });
+  // For private repos, use Stack Auth's automatic redirect for non-authenticated users
+  // For public repos, allow anonymous users by using return-null
+  const user = await stackServerApp.getUser({
+    or: repoIsPublic ? "return-null" : "redirect"
+  });
 
-  // If already authenticated, redirect back to PR page
-  if (user) {
+  // For private repos with anonymous users (no email), show sign-in prompt
+  // Stack Auth's "redirect" may not catch anonymous users since they have valid sessions
+  if (!repoIsPublic && user && !user.primaryEmail) {
+    console.log("[AuthPage] Anonymous user attempting private repo, showing sign-in prompt");
+    return (
+      <AnonymousToSignInPrompt
+        returnUrl={`/${githubOwner}/${repo}/pull/${pullNumber}`}
+      />
+    );
+  }
+
+  // If user exists and has email, they're authenticated - redirect back to PR page
+  if (user && user.primaryEmail) {
     console.log("[AuthPage] User already authenticated, redirecting to PR page");
     redirect(`/${githubOwner}/${repo}/pull/${pullNumber}`);
   }
 
-  // For public repos, show anonymous auth prompt
+  // For public repos with anonymous users or no user, show anonymous auth prompt
   if (repoIsPublic) {
     return (
       <PublicRepoAnonymousPrompt
@@ -62,13 +77,12 @@ export default async function AuthPage({ params }: PageProps) {
         repo={repo}
         githubOwner={githubOwner}
         pullNumber={pullNumber}
-        stackProjectId={env.NEXT_PUBLIC_STACK_PROJECT_ID}
-        stackPublishableKey={env.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY}
       />
     );
   }
 
-  // For private repos, show GitHub app install prompt
+  // For private repos, if we got here, user is authenticated (Stack Auth handled redirect)
+  // Show GitHub app install prompt
   return (
     <PrivateRepoPrompt
       teamSlugOrId={githubOwner}

@@ -157,6 +157,12 @@ export default async function PullRequestPage({ params }: PageProps) {
 
   console.log("[PullRequestPage] user:", user?.id, "repoIsPublic:", repoIsPublic);
 
+  // For private repos, reject anonymous users and redirect to auth
+  if (!repoIsPublic && user && !user.primaryEmail) {
+    const { redirect } = await import("next/navigation");
+    redirect(`/${githubOwner}/${repo}/pull/${pullNumber}/auth`);
+  }
+
   // For private repos, require a team. For public repos, teams are optional.
   let selectedTeam: Team | null = null;
   if (!repoIsPublic) {

@@ -10,8 +10,6 @@ interface PublicRepoAnonymousPromptProps {
   repo: string;
   githubOwner: string;
   pullNumber: number;
-  stackProjectId: string;
-  stackPublishableKey: string;
 }
 
 /**
