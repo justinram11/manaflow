@@ -10,6 +10,7 @@ export function middleware(request: NextRequest) {
   console.log("pathname:", pathname);
 
   if (hostname === "github0.com" && pathname === "/") {
+    console.log("skibidi");
     return NextResponse.rewrite(new URL("/heatmap", request.url));
   }
 
