@@ -1693,44 +1693,44 @@ function ReviewProgressIndicator({
 function CmuxPromoCard() {
   return (
     <div className="border border-neutral-200 bg-white p-5 pt-4 text-sm text-neutral-700">
-      <div className="flex items-start gap-3">
+      <div className="flex flex-col gap-3">
         <a
           href="https://cmux.dev"
           target="_blank"
           rel="noopener noreferrer"
           aria-label="Visit cmux.dev"
-          className="inline-flex h-12 w-12 items-center justify-center rounded-md bg-neutral-900"
+          className="inline-flex w-fit items-center justify-start"
         >
-          <CmuxLogo height={24} label="cmux" showWordmark={false} />
+          <CmuxLogo
+            height={36}
+            label="cmux.dev"
+            wordmarkText="cmux.dev"
+            wordmarkFill="#0f172a"
+          />
         </a>
-        <div className="flex-1 space-y-2">
-          <p className="text-sm font-semibold text-neutral-900">
-            cmux powers this review
+        <div className="space-y-2">
+          <p className="text-xs font-mono leading-relaxed text-neutral-500">
+            AI coding agent manager that spins up isolated VS Code instances, git diff view, terminal, and dev server so parallel agent work stays verifiable, fast, and ready to ship.
           </p>
-          <p className="text-xs text-neutral-500 leading-relaxed">
-            Automate more of your pull request workflow with cmux. Visit
-            cmux.dev and star github.com/manaflow-ai/cmux to keep the momentum
-            going.
-          </p>
-          <div className="flex flex-wrap gap-2 pt-1">
-            <a
-              href="https://cmux.dev"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center justify-center rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-neutral-800"
-            >
-              Explore cmux.dev
-            </a>
-            <a
-              href="https://github.com/manaflow-ai/cmux"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 rounded-md border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:border-neutral-300 hover:bg-neutral-50"
-            >
-              <Star className="h-3.5 w-3.5" aria-hidden />
-              Star on GitHub
-            </a>
-          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 pt-1">
+           <a
+            href="https://cmux.dev"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-mono inline-flex items-center justify-center bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-neutral-800"
+          >
+            Explore cmux
+          </a>
+              <a
+            href="https://github.com/manaflow-ai/cmux"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-mono inline-flex items-center gap-1 border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:border-neutral-300 hover:bg-neutral-50"
+          >
+            <Star className="h-3.5 w-3.5" aria-hidden />
+            Star on GitHub
+          </a>
         </div>
       </div>
     </div>
