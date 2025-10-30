@@ -32,7 +32,6 @@ import {
   Loader2,
   Star,
   AlertTriangle,
-  Send,
 } from "lucide-react";
 import {
   Decoration,
@@ -2218,7 +2217,6 @@ function CmuxPromoCard() {
             rel="noopener noreferrer"
             className="font-sans inline-flex items-center gap-1 border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:border-neutral-300 hover:bg-neutral-50"
           >
-            <Send className="h-3.5 w-3.5" aria-hidden />
             Explore cmux
           </a>
         </div>
