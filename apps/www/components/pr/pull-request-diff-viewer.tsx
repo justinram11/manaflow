@@ -107,14 +107,14 @@ type ParsedFileDiff = {
 
 type RefractorNode =
   | {
-    type: "text";
-    value: string;
-  }
+      type: "text";
+      value: string;
+    }
   | {
-    type: string;
-    children?: RefractorNode[];
-    [key: string]: unknown;
-  };
+      type: string;
+      children?: RefractorNode[];
+      [key: string]: unknown;
+    };
 
 const extensionToLanguage: Record<string, string> = {
   bash: "bash",
@@ -240,8 +240,8 @@ const refractorAdapter = createRefractorAdapter(refractor);
 type FileOutput =
   | FunctionReturnType<typeof api.codeReview.listFileOutputsForPr>[number]
   | FunctionReturnType<
-    typeof api.codeReview.listFileOutputsForComparison
-  >[number];
+      typeof api.codeReview.listFileOutputsForComparison
+    >[number];
 
 type HeatmapTooltipMeta = {
   score: number;
@@ -648,8 +648,8 @@ export function PullRequestDiffViewer({
                     if (filePath) {
                       const status =
                         payload.status === "skipped" ||
-                          payload.status === "error" ||
-                          payload.status === "success"
+                        payload.status === "error" ||
+                        payload.status === "success"
                           ? (payload.status as StreamFileStatus)
                           : "success";
                       const summary =
@@ -743,11 +743,13 @@ export function PullRequestDiffViewer({
                         skipReason: null,
                         summary: null,
                       };
-                      const lineKey = `${reviewLine.lineNumber ?? "unknown"}:${reviewLine.lineText ?? ""
-                        }`;
+                      const lineKey = `${reviewLine.lineNumber ?? "unknown"}:${
+                        reviewLine.lineText ?? ""
+                      }`;
                       const filtered = current.lines.filter((line) => {
-                        const existingKey = `${line.lineNumber ?? "unknown"}:${line.lineText ?? ""
-                          }`;
+                        const existingKey = `${line.lineNumber ?? "unknown"}:${
+                          line.lineText ?? ""
+                        }`;
                         return existingKey !== lineKey;
                       });
                       const updated = [...filtered, reviewLine].sort((a, b) => {
@@ -825,16 +827,16 @@ export function PullRequestDiffViewer({
   const prQueryArgs = useMemo(
     () =>
       normalizedJobType !== "pull_request" ||
-        prNumber === null ||
-        prNumber === undefined
+      prNumber === null ||
+      prNumber === undefined
         ? ("skip" as const)
         : {
-          teamSlugOrId,
-          repoFullName,
-          prNumber,
-          ...(commitRef ? { commitRef } : {}),
-          ...(baseCommitRef ? { baseCommitRef } : {}),
-        },
+            teamSlugOrId,
+            repoFullName,
+            prNumber,
+            ...(commitRef ? { commitRef } : {}),
+            ...(baseCommitRef ? { baseCommitRef } : {}),
+          },
     [
       normalizedJobType,
       teamSlugOrId,
@@ -850,12 +852,12 @@ export function PullRequestDiffViewer({
       normalizedJobType !== "comparison" || !comparisonSlug
         ? ("skip" as const)
         : {
-          teamSlugOrId,
-          repoFullName,
-          comparisonSlug,
-          ...(commitRef ? { commitRef } : {}),
-          ...(baseCommitRef ? { baseCommitRef } : {}),
-        },
+            teamSlugOrId,
+            repoFullName,
+            comparisonSlug,
+            ...(commitRef ? { commitRef } : {}),
+            ...(baseCommitRef ? { baseCommitRef } : {}),
+          },
     [
       normalizedJobType,
       teamSlugOrId,
@@ -1066,7 +1068,7 @@ export function PullRequestDiffViewer({
         const body = bodyLines.join("\n");
         const titleSubject =
           isPullRequestReview && (effectiveTitle || repoDescriptor)
-            ? effectiveTitle ?? repoDescriptor
+            ? (effectiveTitle ?? repoDescriptor)
             : null;
         const notificationTitle =
           titleSubject && titleSubject.length > 0
@@ -1246,9 +1248,9 @@ export function PullRequestDiffViewer({
         ...fileEntry,
         diffHeatmap: fileEntry.diffHeatmapArtifacts
           ? renderDiffHeatmapFromArtifacts(
-            fileEntry.diffHeatmapArtifacts,
-            heatmapThreshold
-          )
+              fileEntry.diffHeatmapArtifacts,
+              heatmapThreshold
+            )
           : null,
       })),
     [fileEntries, heatmapThreshold]
@@ -1436,7 +1438,7 @@ export function PullRequestDiffViewer({
   const firstPath = parsedDiffs[0]?.file.filename ?? "";
   const initialPath =
     hydratedInitialPath &&
-      sortedFiles.some((file) => file.filename === hydratedInitialPath)
+    sortedFiles.some((file) => file.filename === hydratedInitialPath)
       ? hydratedInitialPath
       : firstPath;
 
@@ -2010,9 +2012,9 @@ export function PullRequestDiffViewer({
               const focusedLine = isFocusedFile
                 ? focusedError
                   ? {
-                    side: focusedError.side,
-                    lineNumber: focusedError.lineNumber,
-                  }
+                      side: focusedError.side,
+                      lineNumber: focusedError.lineNumber,
+                    }
                   : null
                 : null;
               const focusedChangeKey = isFocusedFile
@@ -2020,12 +2022,12 @@ export function PullRequestDiffViewer({
                 : null;
               const autoTooltipLine =
                 isFocusedFile &&
-                  autoTooltipTarget &&
-                  autoTooltipTarget.filePath === entry.file.filename
+                autoTooltipTarget &&
+                autoTooltipTarget.filePath === entry.file.filename
                   ? {
-                    side: autoTooltipTarget.side,
-                    lineNumber: autoTooltipTarget.lineNumber,
-                  }
+                      side: autoTooltipTarget.side,
+                      lineNumber: autoTooltipTarget.lineNumber,
+                    }
                   : null;
 
               const isLoading =
@@ -2050,14 +2052,23 @@ export function PullRequestDiffViewer({
           )}
           <div className="h-[70dvh] w-full">
             <div className="px-3 py-6 text-center">
-              <span className="select-none text-xs text-neutral-500 dark:text-neutral-400">
+              <span className="select-none text-xs text-neutral-500">
                 You&apos;ve reached the end of the diff!
               </span>
-              <div className="grid place-content-center">
-                <pre className="mt-2 pb-20 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
+              <div className="grid place-content-center pb-4">
+                <pre className="mt-2 select-none text-left text-[8px] font-mono text-neutral-500">
                   {kitty}
                 </pre>
               </div>
+              <a
+                href="https://github.com/manaflow-ai/cmux"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-500 transition hover:border-neutral-300 hover:bg-neutral-50 select-none"
+              >
+                <Star className="h-3.5 w-3.5" aria-hidden />
+                Star on GitHub
+              </a>
             </div>
           </div>
         </div>
@@ -2182,7 +2193,8 @@ function CmuxPromoCard() {
         </div>
         <div className="mb-1">
           <p className="text-xs font-mono leading-relaxed text-neutral-500">
-            We also made a Claude Code/Codex manager! Check out cmux if you want heatmaps for your vibe coded diffs (coming soon)!
+            We also made a Claude Code/Codex manager! Check out cmux if you want
+            heatmaps for your vibe coded diffs (coming soon)!
           </p>
         </div>
         <div className="flex flex-wrap gap-2 pt-1">
@@ -2699,7 +2711,7 @@ function FileDiffCard({
 
     const enhancers =
       diffHeatmap &&
-        (diffHeatmap.newRanges.length > 0 || diffHeatmap.oldRanges.length > 0)
+      (diffHeatmap.newRanges.length > 0 || diffHeatmap.oldRanges.length > 0)
         ? [pickRanges(diffHeatmap.oldRanges, diffHeatmap.newRanges)]
         : undefined;
 
@@ -2720,8 +2732,8 @@ function FileDiffCard({
       diff.hunks,
       enhancers
         ? {
-          enhancers,
-        }
+            enhancers,
+          }
         : undefined
     );
   }, [diff, language, diffHeatmap]);

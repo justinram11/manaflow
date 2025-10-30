@@ -2,21 +2,21 @@ export const kitties = [
   // kitty1
   `\
   /\\_/\\     
- ( =.= )     check out our repo!
+ ( =.= )
  (>   <)>☕`,
   // kitty2
   `\
 /\\_/\\
-(='.'=)      check out our repo!
+(='.'=)
 (")_(")`,
   // bunny
   `\
 (\\  /)
-( ^.^ )      check out our repo!
+( ^.^ )
 c(")(")`,
   `/\\,
 (°、。7
-l、 ^\\    MEOW I'M FREE (check out our repo!)
+l、 ^\\    MEOW I'M FREE
 じし,_))ノ`,
   //   `  /\\
   // (=.=)
