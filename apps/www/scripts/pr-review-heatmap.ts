@@ -785,10 +785,23 @@ interface GithubApiContext {
   baseUrl: string;
 }
 
+// Cache PR metadata to avoid rate limit exhaustion
+// Cache entries expire after 5 minutes
+const prMetadataCache = new Map<string, { metadata: GhPrMetadata; expiry: number }>();
+const PR_METADATA_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 async function fetchPrMetadataFromGithub(
   identifier: ParsedPrIdentifier,
   context: GithubApiContext
 ): Promise<GhPrMetadata> {
+  const cacheKey = `${identifier.owner}/${identifier.repo}#${identifier.number}`.toLowerCase();
+
+  // Check cache first
+  const cached = prMetadataCache.get(cacheKey);
+  if (cached && cached.expiry > Date.now()) {
+    return cached.metadata;
+  }
+
   const path = `repos/${identifier.owner}/${identifier.repo}/pulls/${identifier.number}`;
   const data = (await fetchGithubResponse(path, {
     token: context.token,
@@ -818,7 +831,7 @@ async function fetchPrMetadataFromGithub(
   const title =
     typeof data.title === "string" && data.title.length > 0 ? data.title : null;
 
-  return {
+  const metadata: GhPrMetadata = {
     owner: identifier.owner,
     repo: identifier.repo,
     number: identifier.number,
@@ -829,6 +842,14 @@ async function fetchPrMetadataFromGithub(
     headRefOid,
     title,
   };
+
+  // Cache the result
+  prMetadataCache.set(cacheKey, {
+    metadata,
+    expiry: Date.now() + PR_METADATA_CACHE_TTL_MS,
+  });
+
+  return metadata;
 }
 
 function splitDiffIntoFiles(diffText: string): FileDiff[] {
