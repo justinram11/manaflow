@@ -41,9 +41,7 @@ export async function cachedGetUser(
 
   window.userPromise = (async () => {
     try {
-      const user = await stackClientApp.getUser({
-        or: "anonymous"
-      });
+      const user = await stackClientApp.getUser();
 
       if (!user) {
         window.cachedUser = null;
