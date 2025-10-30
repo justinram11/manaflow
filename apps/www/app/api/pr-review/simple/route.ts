@@ -172,11 +172,23 @@ export async function GET(request: NextRequest) {
         } catch (error) {
           const message =
             error instanceof Error ? error.message : "Unknown error";
-          console.error("[simple-review][api] Stream failed", {
-            prIdentifier,
-            message,
-            error,
-          });
+
+          // Don't log auth errors as errors - they're expected for private repos and handled by fallback
+          const isAuthError = message.includes("status 401") || message.includes("status 403") || message.includes("status 404");
+
+          if (isAuthError) {
+            console.info("[simple-review][api] Auth failed, fallback should handle", {
+              prIdentifier,
+              message,
+            });
+          } else {
+            console.error("[simple-review][api] Stream failed", {
+              prIdentifier,
+              message,
+              error,
+            });
+          }
+
           enqueue({ type: "error", message });
           controller.close();
         }

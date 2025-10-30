@@ -44,6 +44,27 @@ export interface HeatmapJobResult {
 const DEFAULT_GITHUB_API_BASE_URL = "https://api.github.com";
 const GITHUB_USER_AGENT = "cmux-pr-review-heatmap";
 
+// Load GitHub tokens from environment variables for rotation
+function loadGitHubTokensFromEnv(): string[] {
+  return [
+    process.env.GITHUB_TOKEN_1,
+    process.env.GITHUB_TOKEN_2,
+    process.env.GITHUB_TOKEN_3,
+  ].filter((t): t is string => Boolean(t));
+}
+
+let currentTokenIndex = 0;
+
+function getNextGitHubToken(): string | null {
+  const tokens = loadGitHubTokensFromEnv();
+  if (tokens.length === 0) {
+    return null;
+  }
+  const token = tokens[currentTokenIndex % tokens.length];
+  currentTokenIndex = (currentTokenIndex + 1) % tokens.length;
+  return token;
+}
+
 interface CollectPrDiffsOptions {
   prIdentifier: string;
   includePaths?: string[];
@@ -246,7 +267,7 @@ async function mapWithConcurrency<T, R>(
 }
 
 // Export helper functions and core functions for external use
-export { formatDuration, isBinaryFile, mapWithConcurrency };
+export { formatDuration, isBinaryFile, mapWithConcurrency, collectPrDiffsViaGhCli };
 
 export async function runHeatmapJob(
   options: HeatmapJobOptions
@@ -629,12 +650,24 @@ interface GhPrMetadata {
 }
 
 function resolveGithubToken(token?: string | null): string | null {
-  const envToken =
+  // If an explicit token is provided, use it
+  if (token) {
+    return token;
+  }
+
+  // Otherwise, try rotating tokens first
+  const rotatingToken = getNextGitHubToken();
+  if (rotatingToken) {
+    return rotatingToken;
+  }
+
+  // Fall back to single token env vars
+  return (
     process.env.GITHUB_TOKEN ??
     process.env.GH_TOKEN ??
     process.env.GITHUB_PERSONAL_ACCESS_TOKEN ??
-    null;
-  return token ?? envToken;
+    null
+  );
 }
 
 function normalizeGithubApiBaseUrl(custom?: string): string {
