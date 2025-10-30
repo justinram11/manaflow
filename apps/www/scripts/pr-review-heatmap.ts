@@ -696,9 +696,6 @@ function resolveGithubToken(token?: string | null): string | null {
   // Use rotating tokens by default
   const nextToken = getNextGitHubToken();
   if (nextToken) {
-    const tokenPrefix = nextToken.substring(0, 20);
-    const tokenCount = loadGitHubTokensFromEnv().length;
-    console.log(`[heatmap] Using rotating GitHub token (${tokenPrefix}...) [${currentTokenIndex}/${tokenCount}]`);
     return nextToken;
   }
 
