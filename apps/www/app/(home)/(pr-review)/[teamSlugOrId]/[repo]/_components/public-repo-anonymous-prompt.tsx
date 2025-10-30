@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import { Eye, LogIn } from "lucide-react";
 import { useStackApp } from "@stackframe/stack";
+import { useRouter } from "next/navigation";
 
 interface PublicRepoAnonymousPromptProps {
   teamSlugOrId: string;
@@ -18,16 +19,15 @@ interface PublicRepoAnonymousPromptProps {
  * Allows them to sign in to access the PR review features.
  */
 export function PublicRepoAnonymousPrompt({
-  teamSlugOrId,
+  teamSlugOrId: _teamSlugOrId,
   repo,
   githubOwner,
   pullNumber,
-  stackProjectId,
-  stackPublishableKey,
 }: PublicRepoAnonymousPromptProps) {
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const app = useStackApp();
+  const router = useRouter();
 
   const handleAnonymousSignIn = useCallback(async () => {
     setIsSigningIn(true);
@@ -53,9 +53,14 @@ export function PublicRepoAnonymousPrompt({
         return;
       }
 
-      // Remove /auth from the path to go back to PR page
-      const prPath = window.location.pathname.replace(/\/auth$/, "");
-      window.location.href = prPath;
+      const currentUrl = new URL(window.location.href);
+      let targetPath = currentUrl.pathname;
+      if (targetPath.endsWith("/auth")) {
+        targetPath = targetPath.slice(0, -"/auth".length) || "/";
+      }
+      const targetUrl = `${targetPath}${currentUrl.search}${currentUrl.hash}`;
+
+      router.push(targetUrl);
     } catch (err) {
       console.error(
         "[PublicRepoAnonymousPrompt] Failed to create anonymous user",
@@ -64,7 +69,7 @@ export function PublicRepoAnonymousPrompt({
       setError("An unexpected error occurred. Please try again.");
       setIsSigningIn(false);
     }
-  }, []);
+  }, [router]);
 
   const handleRegularSignIn = useCallback(async () => {
     setIsSigningIn(true);
@@ -100,7 +105,7 @@ export function PublicRepoAnonymousPrompt({
                 Public Repository Access
               </h1>
               <p className="mt-3 text-base text-neutral-600 dark:text-neutral-400 leading-relaxed">
-                You're viewing a public repository
+                You&apos;re viewing a public repository
                 <span className="mx-1 font-mono font-medium text-neutral-900 dark:text-neutral-100">
                   {githubOwner}/{repo}
                 </span>

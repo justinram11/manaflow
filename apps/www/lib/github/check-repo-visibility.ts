@@ -1,5 +1,4 @@
 import { createGitHubClient } from "./octokit";
-import { GithubApiError } from "./errors";
 
 type RepoVisibility = "public" | "private" | "unknown";
 

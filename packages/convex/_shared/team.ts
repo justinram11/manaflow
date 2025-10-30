@@ -63,7 +63,7 @@ export async function getTeamId(
 // Use this when the caller already scopes by userId and does not need
 // team membership guarantees (e.g., per-user comments).
 export async function resolveTeamIdLoose(
-  ctx: AnyCtx,
+  _ctx: AnyCtx,
   teamSlugOrId: string
 ): Promise<string> {
   if (isUuid(teamSlugOrId)) return teamSlugOrId;

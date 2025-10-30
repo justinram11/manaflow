@@ -14,7 +14,11 @@ export type AnonymousSignUpResponse = {
     success: boolean;
     userId?: string;
     teamId?: string;
-    teams?: Array<unknown>;
+    teams?: Array<{
+        id: string;
+        display_name: string;
+        profile_image_url: string | null;
+    }>;
     message?: string;
 };
 

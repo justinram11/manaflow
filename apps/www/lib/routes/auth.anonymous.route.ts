@@ -10,7 +10,15 @@ const AnonymousSignUpResponse = z
     success: z.boolean(),
     userId: z.string().optional(),
     teamId: z.string().optional(),
-    teams: z.array(z.any()).optional(),
+    teams: z
+      .array(
+        z.object({
+          id: z.string(),
+          display_name: z.string(),
+          profile_image_url: z.string().nullable(),
+        })
+      )
+      .optional(),
     message: z.string().optional(),
   })
   .openapi("AnonymousSignUpResponse");
@@ -54,7 +62,7 @@ authAnonymousRouter.openapi(
       console.log("[authAnonymous] Stack API response:", responseText);
 
       if (!response.ok) {
-        let errorData: any = {};
+        let errorData: { code?: string; message?: string } = {};
         try {
           errorData = JSON.parse(responseText);
         } catch {
