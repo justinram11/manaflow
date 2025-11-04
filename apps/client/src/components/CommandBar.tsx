@@ -14,7 +14,10 @@ import {
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
-import type { CreateLocalWorkspaceResponse } from "@cmux/shared";
+import type {
+  CreateLocalWorkspaceResponse,
+  CreateCloudWorkspaceResponse,
+} from "@cmux/shared";
 import { deriveRepoBaseName, generateWorkspaceName } from "@cmux/shared";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useUser, type Team } from "@stackframe/react";
@@ -115,6 +118,12 @@ type LocalWorkspaceOption = {
   keywords: string[];
 };
 
+type CloudWorkspaceOption = {
+  environmentId: Id<"environments">;
+  name: string;
+  keywords: string[];
+};
+
 type CommandListEntry = {
   value: string;
   label: string;
@@ -158,9 +167,11 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   const [search, setSearch] = useState("");
   const [openedWithShift, setOpenedWithShift] = useState(false);
   const [activePage, setActivePage] = useState<
-    "root" | "teams" | "local-workspaces"
+    "root" | "teams" | "local-workspaces" | "cloud-workspaces"
   >("root");
   const [isCreatingLocalWorkspace, setIsCreatingLocalWorkspace] =
+    useState(false);
+  const [isCreatingCloudWorkspace, setIsCreatingCloudWorkspace] =
     useState(false);
   const [commandValue, setCommandValue] = useState<string | undefined>(
     undefined
@@ -174,7 +185,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   const prevFocusedElRef = useRef<HTMLElement | null>(null);
   const navigate = useNavigate();
   const router = useRouter();
-  const { setTheme } = useTheme();
+  const { setTheme, theme } = useTheme();
   const { addTaskToExpand } = useExpandTasks();
   const { socket } = useSocket();
   const localServeWeb = useLocalVSCodeServeWebQuery();
@@ -218,6 +229,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   const selectedTeamId = stackUser?.selectedTeam?.id ?? null;
   const teamMemberships = useQuery(api.teams.listTeamMemberships, {});
   const reposByOrg = useQuery(api.github.getReposByOrg, { teamSlugOrId });
+  const environments = useQuery(api.environments.list, { teamSlugOrId });
 
   const localWorkspaceOptions = useMemo<LocalWorkspaceOption[]>(() => {
     const repoGroups = reposByOrg ?? {};
@@ -271,6 +283,27 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   }, [reposByOrg]);
 
   const isLocalWorkspaceLoading = reposByOrg === undefined;
+
+  const cloudWorkspaceOptions = useMemo<CloudWorkspaceOption[]>(() => {
+    if (!environments) return [];
+    return environments
+      .sort((a, b) => {
+        // Sort by creation time, most recent first
+        return b.createdAt - a.createdAt;
+      })
+      .map((env) => ({
+        environmentId: env._id,
+        name: env.name,
+        keywords: compactStrings([
+          env.name,
+          env.description,
+          env.morphSnapshotId,
+          ...(env.selectedRepos ?? []),
+        ]),
+      }));
+  }, [environments]);
+
+  const isCloudWorkspaceLoading = environments === undefined;
 
   const getClientSlug = useCallback((meta: unknown): string | undefined => {
     if (!isRecord(meta)) return undefined;
@@ -353,6 +386,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   });
   const predictedWorkspaceSequence = nextWorkspaceSequence?.sequence ?? null;
   const reserveLocalWorkspace = useMutation(api.localWorkspaces.reserve);
+  const createTask = useMutation(api.tasks.create);
   const failTaskRun = useMutation(api.taskRuns.fail);
 
   useEffect(() => {
@@ -521,6 +555,95 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       void createLocalWorkspace(projectFullName);
     },
     [closeCommand, createLocalWorkspace]
+  );
+
+  const createCloudWorkspace = useCallback(
+    async (environmentId: Id<"environments">) => {
+      if (isCreatingCloudWorkspace) {
+        return;
+      }
+      if (!socket) {
+        console.warn(
+          "Socket is not connected yet. Please try again momentarily."
+        );
+        return;
+      }
+
+      setIsCreatingCloudWorkspace(true);
+
+      try {
+        // Find environment name for the task text
+        const environment = environments?.find((env) => env._id === environmentId);
+        const environmentName = environment?.name ?? "Unknown Environment";
+
+        // Create task in Convex without task description (it's just a workspace)
+        const taskId = await createTask({
+          teamSlugOrId,
+          text: `Cloud Workspace: ${environmentName}`,
+          projectFullName: undefined, // No repo for cloud environment workspaces
+          baseBranch: undefined, // No branch for environments
+          environmentId,
+        });
+
+        // Hint the sidebar to auto-expand this task once it appears
+        addTaskToExpand(taskId);
+
+        await new Promise<void>((resolve) => {
+          socket.emit(
+            "create-cloud-workspace",
+            {
+              teamSlugOrId,
+              environmentId,
+              taskId,
+              theme,
+            },
+            async (response: CreateCloudWorkspaceResponse) => {
+              try {
+                if (response.success) {
+                  toast.success("Cloud workspace created successfully");
+                } else {
+                  toast.error(
+                    response.error || "Failed to create cloud workspace"
+                  );
+                }
+              } catch (callbackError) {
+                const message =
+                  callbackError instanceof Error
+                    ? callbackError.message
+                    : String(callbackError ?? "Unknown");
+                console.error("Failed to create cloud workspace", message);
+              } finally {
+                resolve();
+              }
+            }
+          );
+        });
+
+        console.log("Cloud workspace created:", taskId);
+      } catch (error) {
+        console.error("Error creating cloud workspace:", error);
+        toast.error("Failed to create cloud workspace");
+      } finally {
+        setIsCreatingCloudWorkspace(false);
+      }
+    },
+    [
+      addTaskToExpand,
+      createTask,
+      environments,
+      isCreatingCloudWorkspace,
+      socket,
+      teamSlugOrId,
+      theme,
+    ]
+  );
+
+  const handleCloudWorkspaceSelect = useCallback(
+    (environmentId: Id<"environments">) => {
+      closeCommand();
+      void createCloudWorkspace(environmentId);
+    },
+    [closeCommand, createCloudWorkspace]
   );
 
   useEffect(() => {
@@ -731,6 +854,10 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         });
       } else if (value === "local-workspaces") {
         setActivePage("local-workspaces");
+        setSearch("");
+        return;
+      } else if (value === "cloud-workspaces") {
+        setActivePage("cloud-workspaces");
         setSearch("");
         return;
       } else if (value === "pull-requests") {
@@ -965,6 +1092,24 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
           <>
             <FolderPlus className="h-4 w-4 text-neutral-500" />
             <span className="text-sm">New Local Workspace</span>
+          </>
+        ),
+      },
+      {
+        value: "cloud-workspaces",
+        label: "New Cloud Workspace",
+        keywords: ["workspace", "cloud", "environment", "env"],
+        searchText: buildSearchText(
+          "New Cloud Workspace",
+          ["workspace", "cloud", "environment"],
+          ["cloud-workspaces"]
+        ),
+        className: baseCommandItemClassName,
+        execute: () => handleSelect("cloud-workspaces"),
+        renderContent: () => (
+          <>
+            <Server className="h-4 w-4 text-neutral-500" />
+            <span className="text-sm">New Cloud Workspace</span>
           </>
         ),
       },
@@ -1364,6 +1509,31 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     predictedWorkspaceSequence,
   ]);
 
+  const cloudWorkspaceEntries = useMemo<CommandListEntry[]>(() => {
+    return cloudWorkspaceOptions.map((option) => {
+      const value = `cloud-workspace:${option.environmentId}`;
+      return {
+        value,
+        label: option.name,
+        keywords: option.keywords,
+        searchText: buildSearchText(option.name, option.keywords, [
+          option.environmentId,
+        ]),
+        className: baseCommandItemClassName,
+        disabled: isCreatingCloudWorkspace,
+        execute: () => handleCloudWorkspaceSelect(option.environmentId),
+        renderContent: () => (
+          <>
+            <Server className="h-4 w-4 text-neutral-500" />
+            <div className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate text-sm">{option.name}</span>
+            </div>
+          </>
+        ),
+      };
+    });
+  }, [cloudWorkspaceOptions, handleCloudWorkspaceSelect, isCreatingCloudWorkspace]);
+
   const {
     history: rootSuggestionHistory,
     record: recordRootUsage,
@@ -1374,6 +1544,11 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     record: recordLocalWorkspaceUsage,
     prune: pruneLocalWorkspaceHistory,
   } = useSuggestionHistory(buildScopeKey("local-workspaces", teamSlugOrId));
+  const {
+    history: cloudWorkspaceSuggestionHistory,
+    record: recordCloudWorkspaceUsage,
+    prune: pruneCloudWorkspaceHistory,
+  } = useSuggestionHistory(buildScopeKey("cloud-workspaces", teamSlugOrId));
 
   useEffect(() => {
     pruneRootHistory(new Set(rootCommandEntries.map((entry) => entry.value)));
@@ -1385,6 +1560,12 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     );
   }, [localWorkspaceEntries, pruneLocalWorkspaceHistory]);
 
+  useEffect(() => {
+    pruneCloudWorkspaceHistory(
+      new Set(cloudWorkspaceEntries.map((entry) => entry.value))
+    );
+  }, [cloudWorkspaceEntries, pruneCloudWorkspaceHistory]);
+
   const filteredRootEntries = useMemo(
     () => filterCommandItems(search, rootCommandEntries),
     [rootCommandEntries, search]
@@ -1393,6 +1574,10 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   const filteredLocalWorkspaceEntries = useMemo(
     () => filterCommandItems(search, localWorkspaceEntries),
     [localWorkspaceEntries, search]
+  );
+  const filteredCloudWorkspaceEntries = useMemo(
+    () => filterCommandItems(search, cloudWorkspaceEntries),
+    [cloudWorkspaceEntries, search]
   );
   const filteredTeamEntries = useMemo(
     () => filterCommandItems(search, teamCommandEntries),
@@ -1485,6 +1670,53 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       ].map((entry) => entry.value),
     [localWorkspaceCommandsToRender, localWorkspaceSuggestionsToRender]
   );
+
+  const cloudWorkspaceSuggestedEntries = useMemo(
+    () =>
+      selectSuggestedItems(
+        cloudWorkspaceSuggestionHistory,
+        filteredCloudWorkspaceEntries,
+        5
+      ),
+    [filteredCloudWorkspaceEntries, cloudWorkspaceSuggestionHistory]
+  );
+  const cloudWorkspaceSuggestedValueSet = useMemo(
+    () => new Set(cloudWorkspaceSuggestedEntries.map((entry) => entry.value)),
+    [cloudWorkspaceSuggestedEntries]
+  );
+  const cloudWorkspaceRemainingEntries = useMemo(
+    () =>
+      filteredCloudWorkspaceEntries.filter(
+        (entry) => !cloudWorkspaceSuggestedValueSet.has(entry.value)
+      ),
+    [filteredCloudWorkspaceEntries, cloudWorkspaceSuggestedValueSet]
+  );
+
+  const cloudWorkspaceSuggestionsToRender = useMemo(
+    () => (!hasSearchQuery ? cloudWorkspaceSuggestedEntries : []),
+    [hasSearchQuery, cloudWorkspaceSuggestedEntries]
+  );
+  const cloudWorkspaceCommandsToRender = useMemo(
+    () =>
+      hasSearchQuery || cloudWorkspaceSuggestionsToRender.length === 0
+        ? filteredCloudWorkspaceEntries
+        : cloudWorkspaceRemainingEntries,
+    [
+      filteredCloudWorkspaceEntries,
+      hasSearchQuery,
+      cloudWorkspaceRemainingEntries,
+      cloudWorkspaceSuggestionsToRender.length,
+    ]
+  );
+  const cloudWorkspaceVisibleValues = useMemo(
+    () =>
+      [
+        ...cloudWorkspaceSuggestionsToRender,
+        ...cloudWorkspaceCommandsToRender,
+      ].map((entry) => entry.value),
+    [cloudWorkspaceCommandsToRender, cloudWorkspaceSuggestionsToRender]
+  );
+
   const teamVisibleValues = useMemo(() => {
     if (!filteredTeamEntries.length) return [];
     return filteredTeamEntries.map((entry) => entry.value);
@@ -1545,6 +1777,8 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       availableValues = rootVisibleValues;
     } else if (activePage === "local-workspaces") {
       availableValues = localWorkspaceVisibleValues;
+    } else if (activePage === "cloud-workspaces") {
+      availableValues = cloudWorkspaceVisibleValues;
     } else if (activePage === "teams") {
       availableValues = teamVisibleValues;
     }
@@ -1559,6 +1793,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     }
   }, [
     activePage,
+    cloudWorkspaceVisibleValues,
     commandValue,
     localWorkspaceVisibleValues,
     open,
@@ -1583,6 +1818,8 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       availableValues = rootVisibleValues;
     } else if (activePage === "local-workspaces") {
       availableValues = localWorkspaceVisibleValues;
+    } else if (activePage === "cloud-workspaces") {
+      availableValues = cloudWorkspaceVisibleValues;
     } else if (activePage === "teams") {
       availableValues = teamVisibleValues;
     }
@@ -1599,6 +1836,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     scrollCommandItemIntoView(firstValue);
   }, [
     activePage,
+    cloudWorkspaceVisibleValues,
     commandValue,
     localWorkspaceVisibleValues,
     open,
@@ -1678,7 +1916,11 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                   ? isLocalWorkspaceLoading
                     ? "Loading repositories…"
                     : "No matching repositories."
-                  : "No results found."}
+                  : activePage === "cloud-workspaces"
+                    ? isCloudWorkspaceLoading
+                      ? "Loading environments…"
+                      : "No matching environments."
+                    : "No results found."}
             </Command.Empty>
 
             {activePage === "root" ? (
@@ -1725,6 +1967,39 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                       <Command.Group>
                         {localWorkspaceCommandsToRender.map((entry) =>
                           renderCommandItem(entry, recordLocalWorkspaceUsage)
+                        )}
+                      </Command.Group>
+                    ) : null}
+                  </>
+                )}
+              </>
+            ) : null}
+
+            {activePage === "cloud-workspaces" ? (
+              <>
+                {isCloudWorkspaceLoading ? (
+                  <div className={placeholderClassName}>
+                    Loading environments…
+                  </div>
+                ) : (
+                  <>
+                    {cloudWorkspaceSuggestionsToRender.length > 0 ? (
+                      <Command.Group>
+                        {cloudWorkspaceSuggestionsToRender.map((entry) =>
+                          renderCommandItem(entry, recordCloudWorkspaceUsage)
+                        )}
+                      </Command.Group>
+                    ) : null}
+                    {cloudWorkspaceSuggestionsToRender.length > 0 &&
+                    cloudWorkspaceCommandsToRender.length > 0 ? (
+                      <div className="px-2">
+                        <hr className="border-neutral-200 dark:border-neutral-800" />
+                      </div>
+                    ) : null}
+                    {cloudWorkspaceCommandsToRender.length > 0 ? (
+                      <Command.Group>
+                        {cloudWorkspaceCommandsToRender.map((entry) =>
+                          renderCommandItem(entry, recordCloudWorkspaceUsage)
                         )}
                       </Command.Group>
                     ) : null}

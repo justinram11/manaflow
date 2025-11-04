@@ -134,13 +134,16 @@ export function WorkspaceCreationButtons({
       ""
     ) as Id<"environments">;
 
+    // Extract environment name from the selectedProject (format is "env:id:name")
+    const environmentName = projectFullName.split(":")[2] || "Unknown Environment";
+
     setIsCreatingCloud(true);
 
     try {
-      // Create task in Convex without task description (it's just a workspace)
+      // Create task in Convex with environment name
       const taskId = await createTask({
         teamSlugOrId,
-        text: "Cloud Workspace",
+        text: `Cloud Workspace: ${environmentName}`,
         projectFullName: undefined, // No repo for cloud environment workspaces
         baseBranch: undefined, // No branch for environments
         environmentId,
@@ -190,6 +193,12 @@ export function WorkspaceCreationButtons({
 
   const canCreateLocal = selectedProject.length > 0 && !isEnvSelected;
   const canCreateCloud = selectedProject.length > 0 && isEnvSelected;
+
+  const SHOW_WORKSPACE_BUTTONS = false;
+
+  if (!SHOW_WORKSPACE_BUTTONS) {
+    return null;
+  }
 
   return (
     <div className="flex items-center gap-2 mb-3">
