@@ -32,6 +32,7 @@
     "@openai/codex-sdk": "^0.46.0",
     "@radix-ui/react-slot": "^1.2.3",
     "@radix-ui/react-tooltip": "^1.2.8",
+    "@sentry/nextjs": "^10",
     "@stackframe/js": "^2.8.48",
     "@stackframe/stack": "^2.8.48",
     "@t3-oss/env-core": "^0.13.8",
