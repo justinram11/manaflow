@@ -17,7 +17,8 @@ Sentry.init({
   // Enable sending user PII (Personally Identifiable Information)
   // https://docs.sentry.io/platforms/javascript/guides/nextjs/configuration/options/#sendDefaultPii
   sendDefaultPii: true,
-  integrations: [
+  integrations: (integrations) => [
+    ...integrations,
     Sentry.thirdPartyErrorFilterIntegration({
       // Specify the application keys that you specified in the Sentry bundler plugin
       filterKeys: ["cmux-www"],
