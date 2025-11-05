@@ -1215,7 +1215,7 @@ async fn websocket_subprotocol_matches_backend_choice() {
 }
 
 #[tokio::test]
-async fn websocket_extensions_are_not_advertised() {
+async fn websocket_extensions_are_forwarded() {
     let backend =
         TestWsBackend::spawn_with_handshake(None, Some("permessage-deflate")).await;
     let proxy = TestProxy::spawn().await;
@@ -1237,10 +1237,7 @@ async fn websocket_extensions_are_not_advertised() {
         .headers()
         .get("sec-websocket-extensions")
         .and_then(|value| value.to_str().ok());
-    assert!(
-        extensions.is_none(),
-        "Proxy should not advertise unsupported websocket extensions"
-    );
+    assert_eq!(extensions, Some("permessage-deflate"));
 
     ws.send(Message::Text("extensions".into()))
         .await

@@ -5,10 +5,9 @@ use std::{
 };
 
 use bytes::Bytes;
-use futures_util::{SinkExt, StreamExt};
 use http::{
     HeaderMap, Method, Request, Response, StatusCode, Uri, Version,
-    header::{self, HeaderValue},
+    header::{self, HeaderValue, CONNECTION, UPGRADE},
     uri::Scheme,
 };
 use hyper::{
@@ -17,17 +16,15 @@ use hyper::{
     server::conn::AddrStream,
     service::{make_service_fn, service_fn},
 };
+use hyper::upgrade::Upgraded;
 use hyper_rustls::HttpsConnectorBuilder;
-use hyper_tungstenite::{HyperWebsocket, is_upgrade_request};
 use lol_html::{HtmlRewriter, Settings, element, html_content::ContentType};
 use flate2::read::{GzDecoder, ZlibDecoder};
 use brotli::Decompressor;
-use tokio::{net::TcpStream, sync::oneshot, task::JoinHandle};
-use tokio_tungstenite::{
-    connect_async,
-    tungstenite::client::IntoClientRequest,
-    MaybeTlsStream,
-    WebSocketStream,
+use tokio::{
+    io::{copy_bidirectional, AsyncWriteExt},
+    sync::oneshot,
+    task::JoinHandle,
 };
 use tracing::{error, warn};
 use zstd::stream::read::Decoder as ZstdDecoder;
@@ -537,18 +534,6 @@ async fn handle_websocket(
     target: Target,
     behavior: ProxyBehavior,
 ) -> Response<Body> {
-    let requested_protocol = req
-        .headers()
-        .get("sec-websocket-protocol")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| {
-            value
-                .split(',')
-                .map(|token| token.trim())
-                .find(|token| !token.is_empty())
-                .map(|token| token.to_string())
-        });
-
     let (scheme, host, port_opt) = match target {
         Target::BackendPort(port) => (
             state.backend_scheme.clone(),
@@ -568,16 +553,26 @@ async fn handle_websocket(
         .path_and_query()
         .map(|pq| pq.as_str())
         .unwrap_or("/");
-    let ws_scheme = match scheme.as_str() {
-        "https" | "wss" => "wss",
-        _ => "ws",
+
+    let backend_uri = match format!("{}://{}{}", scheme.as_str(), authority, path_and_query).parse::<Uri>() {
+        Ok(uri) => uri,
+        Err(_) => {
+            return text_response(
+                StatusCode::BAD_GATEWAY,
+                "Failed to build upstream websocket URI",
+            );
+        }
     };
-    let backend_url = format!("{}://{}{}", ws_scheme, authority, path_and_query);
 
     let headers_to_forward = collect_forward_headers(req.headers(), &behavior);
 
-    let mut backend_request = match backend_url.clone().into_client_request() {
-        Ok(req) => req,
+    let mut backend_request = match Request::builder()
+        .method(req.method())
+        .uri(backend_uri)
+        .version(req.version())
+        .body(Body::empty())
+    {
+        Ok(request) => request,
         Err(_) => {
             return text_response(
                 StatusCode::BAD_GATEWAY,
@@ -585,15 +580,9 @@ async fn handle_websocket(
             );
         }
     };
-    if let Some(host) = backend_request.uri().host() {
-        let host_header = if let Some(port) = backend_request.uri().port_u16() {
-            format!("{}:{}", host, port)
-        } else {
-            host.to_string()
-        };
-        if let Ok(value) = HeaderValue::from_str(&host_header) {
-            backend_request.headers_mut().insert(header::HOST, value);
-        }
+
+    if let Ok(value) = HeaderValue::from_str(&authority) {
+        backend_request.headers_mut().insert(header::HOST, value);
     }
     for (name, value) in headers_to_forward.iter() {
         backend_request
@@ -601,48 +590,30 @@ async fn handle_websocket(
             .insert(name.clone(), value.clone());
     }
 
-    let backend_connection = match connect_async(backend_request).await {
-        Ok(conn) => conn,
-        Err(err) => {
-            error!(%err, "failed to establish upstream websocket");
-            return text_response(
-                StatusCode::BAD_GATEWAY,
-                "Failed to connect to websocket backend",
-            );
-        }
+    let (backend_stream, backend_headers) = match connect_upstream_websocket(state.client.clone(), backend_request).await {
+        Ok(result) => result,
+        Err(response) => return response,
     };
-    let (backend_ws, backend_response) = backend_connection;
-    let negotiated_protocol = backend_response
-        .headers()
-        .get("sec-websocket-protocol")
-        .cloned()
-        .or_else(|| {
-            requested_protocol
-                .as_ref()
-                .and_then(|value| HeaderValue::from_str(value).ok())
-        });
-    match hyper_tungstenite::upgrade(req, None) {
-        Ok((mut response, websocket)) => {
-            if let Some(value) = negotiated_protocol {
-                response
-                    .headers_mut()
-                    .insert("Sec-WebSocket-Protocol", value);
-            }
-            tokio::spawn(async move {
-                if let Err(err) = pump_websocket(websocket, backend_ws).await {
-                    error!(%err, "websocket proxy error");
+
+    let client_upgrade = hyper::upgrade::on(req);
+    let response = build_websocket_response(&backend_headers);
+
+    tokio::spawn(async move {
+        match client_upgrade.await {
+            Ok(client_stream) => {
+                if let Err(err) = tunnel_upgraded(client_stream, backend_stream).await {
+                    warn!(%err, "websocket tunnel error");
                 }
-            });
-            response
+            }
+            Err(err) => {
+                warn!(%err, "client upgrade error");
+                let mut backend_stream = backend_stream;
+                let _ = backend_stream.shutdown().await;
+            }
         }
-        Err(err) => {
-            error!(%err, "failed to upgrade connection");
-            text_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to upgrade WebSocket connection",
-            )
-        }
-    }
+    });
+
+    response
 }
 
 fn collect_forward_headers(
@@ -655,7 +626,6 @@ fn collect_forward_headers(
         http::HeaderMap::new()
     };
     headers.remove(header::HOST);
-    headers.remove("sec-websocket-extensions");
     if let Some(port) = &behavior.port_header {
         if let Ok(value) = HeaderValue::from_str(port) {
             headers.insert("X-Cmux-Port-Internal", value);
@@ -716,53 +686,85 @@ fn scope_from_cmux_subdomain(subdomain: &str) -> Option<String> {
     }
 }
 
-async fn pump_websocket(
-    websocket: HyperWebsocket,
-    backend_ws: WebSocketStream<MaybeTlsStream<TcpStream>>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let client_ws = websocket.await?;
+fn is_upgrade_request(req: &Request<Body>) -> bool {
+    if req.method() == Method::CONNECT {
+        return true;
+    }
+    let has_conn_upgrade = req
+        .headers()
+        .get(CONNECTION)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_ascii_lowercase().contains("upgrade"))
+        .unwrap_or(false);
+    let has_upgrade_hdr = req.headers().get(UPGRADE).is_some();
+    has_conn_upgrade && has_upgrade_hdr
+}
 
-    let (mut client_sink, mut client_stream) = client_ws.split();
-    let (mut backend_sink, mut backend_stream) = backend_ws.split();
+async fn connect_upstream_websocket(
+    client: HttpClient,
+    request: Request<Body>,
+) -> Result<(Upgraded, HeaderMap), Response<Body>> {
+    let response = client.request(request).await.map_err(|err| {
+        error!(%err, "upstream websocket request error");
+        text_response(
+            StatusCode::BAD_GATEWAY,
+            "Failed to connect to websocket backend".into(),
+        )
+    })?;
 
-    let to_backend = async {
-        while let Some(msg) = client_stream.next().await {
-            match msg {
-                Ok(message) => {
-                    backend_sink.send(message).await?;
-                }
-                Err(err) => {
-                    backend_sink.close().await?;
-                    return Err(err);
-                }
-            }
-        }
-        backend_sink.close().await?;
-        Ok::<(), hyper_tungstenite::tungstenite::Error>(())
-    };
-
-    let to_client = async {
-        while let Some(msg) = backend_stream.next().await {
-            match msg {
-                Ok(message) => {
-                    client_sink.send(message).await?;
-                }
-                Err(err) => {
-                    client_sink.close().await?;
-                    return Err(err);
-                }
-            }
-        }
-        client_sink.close().await?;
-        Ok::<(), hyper_tungstenite::tungstenite::Error>(())
-    };
-
-    tokio::select! {
-        res = to_backend => { res?; }
-        res = to_client => { res?; }
+    if response.status() != StatusCode::SWITCHING_PROTOCOLS {
+        let status = response.status();
+        let body_bytes = body::to_bytes(response.into_body())
+            .await
+            .unwrap_or_else(|_| Bytes::new());
+        return Err(
+            Response::builder()
+                .status(status)
+                .body(Body::from(body_bytes))
+                .unwrap(),
+        );
     }
 
-    Ok(())
+    let headers = response.headers().clone();
+    match hyper::upgrade::on(response).await {
+        Ok(upgraded) => Ok((upgraded, headers)),
+        Err(err) => {
+            error!(%err, "upstream websocket upgrade failed");
+            Err(text_response(
+                StatusCode::BAD_GATEWAY,
+                "Failed to upgrade websocket backend".into(),
+            ))
+        }
+    }
+}
+
+fn build_websocket_response(headers: &HeaderMap) -> Response<Body> {
+    let mut builder = Response::builder()
+        .status(StatusCode::SWITCHING_PROTOCOLS)
+        .header(CONNECTION, HeaderValue::from_static("upgrade"))
+        .header(UPGRADE, HeaderValue::from_static("websocket"));
+
+    for name in [
+        "sec-websocket-accept",
+        "sec-websocket-protocol",
+        "sec-websocket-extensions",
+    ] {
+        if let Some(value) = headers.get(name) {
+            builder = builder.header(name, value.clone());
+        }
+    }
+
+    builder.body(Body::empty()).unwrap()
+}
+
+async fn tunnel_upgraded(
+    mut client: Upgraded,
+    mut backend: Upgraded,
+) -> io::Result<()> {
+    let result = copy_bidirectional(&mut client, &mut backend).await;
+    let _ = client.shutdown().await;
+    let _ = backend.shutdown().await;
+    result.map(|_| ())
 }
 
 async fn transform_response(response: Response<Body>, behavior: ProxyBehavior) -> Response<Body> {
