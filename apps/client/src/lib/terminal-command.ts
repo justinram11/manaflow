@@ -55,9 +55,13 @@ function buildStandardCommand(intent: TerminalIntent): CreateTerminalTabRequest 
     };
   }
 
+  const script = `set -euo pipefail
+tmux select-window -t ${TMUX_SESSION_NAME}:0 >/dev/null 2>&1 || true
+exec tmux attach -t ${TMUX_SESSION_NAME}`;
+
   return {
-    cmd: "tmux",
-    args: ["attach", "-t", TMUX_SESSION_NAME],
+    cmd: "bash",
+    args: ["-lc", script],
   };
 }
 
