@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @plugin './hero.ts';
 @source '../node_modules/@heroui/theme/dist/**/*.{js,ts,jsx,tsx,mjs,cjs}';
+@source '../../../node_modules/@heroui/theme/dist/**/*.{js,ts,jsx,tsx,mjs,cjs}';
 @import "tw-animate-css";
 
 /* JetBrains Mono Font */
