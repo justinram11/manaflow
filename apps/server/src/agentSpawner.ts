@@ -24,6 +24,7 @@ import {
   getAuthToken,
   runWithAuth,
 } from "./utils/requestContext";
+import { getEditorSettingsUpload } from "./utils/editorSettings";
 import { env } from "./utils/server-env";
 import { getWwwClient } from "./utils/wwwClient";
 import { getWwwOpenApiModule } from "./utils/wwwOpenApiModule";
@@ -308,6 +309,19 @@ export async function spawnAgent(
           const injectName = keyConfig.mapToEnvVar || keyConfig.envVar;
           envVars[injectName] = key;
         }
+      }
+    }
+
+    const editorSettings = await getEditorSettingsUpload();
+    if (editorSettings) {
+      if (editorSettings.authFiles.length > 0) {
+        authFiles = [...authFiles, ...editorSettings.authFiles];
+      }
+      if (editorSettings.startupCommands.length > 0) {
+        startupCommands = [
+          ...editorSettings.startupCommands,
+          ...startupCommands,
+        ];
       }
     }
 
