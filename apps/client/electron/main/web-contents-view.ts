@@ -2,6 +2,7 @@ import {
   BrowserWindow,
   WebContentsView,
   ipcMain,
+  shell,
   type Rectangle,
   type Session,
   type WebContents,
@@ -21,6 +22,7 @@ import {
   getPreviewPartitionForPersistKey,
   isTaskRunPreviewPersistKey,
 } from "./task-run-preview-proxy";
+import { normalizeBrowserUrl } from "@cmux/shared";
 
 interface RegisterOptions {
   logger: Logger;
@@ -690,6 +692,23 @@ export function registerWebContentsViewHandlers({
               webPreferences: { partition: previewPartition },
             })
           : new WebContentsView();
+
+        view.webContents.setWindowOpenHandler((details) => {
+          const normalized = normalizeBrowserUrl(details.url ?? "");
+          if (!normalized) {
+            return { action: "deny" };
+          }
+          try {
+            void shell.openExternal(normalized);
+          } catch (error) {
+            logger.warn("Failed to open external URL from WebContentsView", {
+              url: normalized,
+              error,
+            });
+          }
+          return { action: "deny" };
+        });
+
         const disposeContextMenu = registerContextMenuForTarget(view);
 
         applyChromeCamouflage(view, logger);

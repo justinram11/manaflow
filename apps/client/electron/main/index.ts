@@ -48,6 +48,7 @@ import {
   getProxyCredentialsForWebContents,
   startPreviewProxy,
 } from "./task-run-preview-proxy";
+import { normalizeBrowserUrl } from "@cmux/shared";
 
 // Use a cookieable HTTPS origin intercepted locally instead of a custom scheme.
 const PARTITION = "persist:cmux";
@@ -676,7 +677,8 @@ function createWindow(): void {
   });
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url);
+    const targetUrl = normalizeBrowserUrl(details.url);
+    shell.openExternal(targetUrl);
     return { action: "deny" };
   });
 

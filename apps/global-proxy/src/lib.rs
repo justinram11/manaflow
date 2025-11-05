@@ -32,6 +32,7 @@ const GIT_COMMIT: &str = match option_env!("GIT_COMMIT") {
 };
 
 const CSP_FRAME_ANCESTORS_PORT_39378: &str = "frame-ancestors 'self' https://cmux.local http://cmux.local https://www.cmux.sh https://cmux.sh https://www.cmux.dev https://cmux.dev http://localhost:5173;";
+const FORWARD_ALL_WEBSOCKET_HEADERS: bool = true;
 
 #[derive(Clone, Debug)]
 pub struct ProxyConfig {
@@ -574,7 +575,11 @@ fn collect_forward_headers(
     original: &http::HeaderMap,
     behavior: &ProxyBehavior,
 ) -> http::HeaderMap {
-    let mut headers = http::HeaderMap::new();
+    let mut headers = if FORWARD_ALL_WEBSOCKET_HEADERS {
+        original.clone()
+    } else {
+        http::HeaderMap::new()
+    };
     if let Some(port) = &behavior.port_header {
         if let Ok(value) = HeaderValue::from_str(port) {
             headers.insert("X-Cmux-Port-Internal", value);

@@ -10,6 +10,7 @@ export * from "./socket-schemas";
 export * from "./terminal-config";
 export * from "./verifyTaskRunToken";
 export * from "./utils/normalize-origin";
+export * from "./utils/normalize-browser-url";
 export * from "./utils/reserved-cmux-ports";
 export * from "./utils/morph-instance";
 export * from "./utils/is-local-host";

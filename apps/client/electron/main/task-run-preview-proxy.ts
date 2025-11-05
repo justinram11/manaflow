@@ -266,6 +266,10 @@ function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
 
   const target = parseProxyRequestTarget(req);
   if (!target) {
+    proxyWarn("http-target-parse-failed", {
+      url: req.url,
+      host: req.headers.host,
+    });
     res.writeHead(400);
     res.end("Bad Request");
     return;
@@ -296,6 +300,9 @@ function handleConnect(
 
   const target = parseConnectTarget(req.url ?? "");
   if (!target) {
+    proxyWarn("connect-target-parse-failed", {
+      url: req.url,
+    });
     socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
     socket.end();
     return;
@@ -336,6 +343,10 @@ function handleUpgrade(req: IncomingMessage, socket: Socket, head: Buffer) {
 
   const target = parseProxyRequestTarget(req);
   if (!target) {
+    proxyWarn("upgrade-target-parse-failed", {
+      url: req.url,
+      host: req.headers.host,
+    });
     socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
     socket.end();
     return;
@@ -390,8 +401,12 @@ function respondProxyAuthRequiredSocket(socket: Socket) {
 
 function parseProxyRequestTarget(req: IncomingMessage): URL | null {
   try {
-    if (req.url && /^https?:\/\//i.test(req.url)) {
-      return new URL(req.url);
+    if (req.url && /^[a-z]+:\/\//i.test(req.url)) {
+      const normalized = req.url.replace(
+        /^ws(s)?:\/\//i,
+        (_match, secure) => (secure ? "https://" : "http://")
+      );
+      return new URL(normalized);
     }
     const host = req.headers.host;
     if (!host || !req.url) {

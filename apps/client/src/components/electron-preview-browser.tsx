@@ -16,6 +16,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { normalizeBrowserUrl } from "@cmux/shared";
 import { cn } from "@/lib/utils";
 import type {
   ElectronDevToolsMode,
@@ -37,18 +38,6 @@ interface NativeViewHandle {
   id: number;
   webContentsId: number;
   restored: boolean;
-}
-
-function normalizeUrl(raw: string): string {
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) return trimmed;
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
-    return trimmed;
-  }
-  if (trimmed.startsWith("//")) {
-    return `https:${trimmed}`;
-  }
-  return `https://${trimmed}`;
 }
 
 function useLoadingProgress(isLoading: boolean) {
@@ -223,25 +212,37 @@ export function ElectronPreviewBrowser({
     setCanGoForward(false);
   }, []);
 
+  const navigateToAddress = useCallback(() => {
+    const raw = addressValue.trim();
+    if (!raw) {
+      return;
+    }
+    if (!viewHandle) {
+      console.warn("[ElectronPreviewBrowser] navigate skipped; view not ready", {
+        raw,
+      });
+      return;
+    }
+    const target = normalizeBrowserUrl(raw);
+    console.log("[ElectronPreviewBrowser] navigate", { raw, target });
+    setCommittedUrl(target);
+    setAddressValue(target);
+    setIsEditing(false);
+    isNavigatingRef.current = true;
+    inputRef.current?.blur();
+    void window.cmux?.webContentsView
+      ?.loadURL(viewHandle.id, target)
+      .catch((error: unknown) => {
+        console.warn("Failed to navigate WebContentsView", error);
+      });
+  }, [addressValue, viewHandle]);
+
   const handleSubmit = useCallback(
     (event: React.FormEvent<HTMLFormElement>) => {
       event.preventDefault();
-      if (!viewHandle) return;
-      const raw = addressValue.trim();
-      if (!raw) return;
-      const target = normalizeUrl(raw);
-      setCommittedUrl(target);
-      setAddressValue(target);
-      setIsEditing(false);
-      isNavigatingRef.current = true;
-      inputRef.current?.blur();
-      void window.cmux?.webContentsView
-        ?.loadURL(viewHandle.id, target)
-        .catch((error: unknown) => {
-          console.warn("Failed to navigate WebContentsView", error);
-        });
+      navigateToAddress();
     },
-    [addressValue, viewHandle],
+    [navigateToAddress],
   );
 
   const initialSelectHandled = useRef(false);
@@ -359,10 +360,14 @@ export function ElectronPreviewBrowser({
         event.preventDefault();
         setAddressValue(committedUrl);
         event.currentTarget.blur();
-        // Blur will handle refocusing the WebContentsView
+        return;
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        navigateToAddress();
       }
     },
-    [committedUrl],
+    [committedUrl, navigateToAddress],
   );
 
   const handleToggleDevTools = useCallback(() => {
