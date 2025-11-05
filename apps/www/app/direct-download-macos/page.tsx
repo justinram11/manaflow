@@ -1,7 +1,4 @@
-"use client";
-
-import { Suspense, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { waitUntil } from "@vercel/functions";
 
 import { DirectDownloadRedirector } from "@/app/direct-download-macos/redirector";
 import {
@@ -13,6 +10,7 @@ import {
   normalizeMacArchitecture,
   pickMacDownloadUrl,
 } from "@/lib/utils/mac-architecture";
+import { trackDirectDownloadPageView } from "@/lib/analytics/track-direct-download";
 
 const pageContainerClasses =
   "min-h-screen bg-neutral-950 text-neutral-100 flex flex-col items-center justify-center px-6 py-12";
@@ -33,77 +31,74 @@ const FALLBACK_RELEASE_INFO: ReleaseInfo = {
   },
 };
 
-export default function DirectDownloadPage() {
-  return (
-    <Suspense fallback={<DirectDownloadFallback />}>
-      <DirectDownloadContent />
-    </Suspense>
+type DirectDownloadPageProps = {
+  searchParams?: Record<string, string | string[] | undefined>;
+};
+
+const searchParamValue = (
+  params: DirectDownloadPageProps["searchParams"],
+  key: string
+): string | null => {
+  if (!params) {
+    return null;
+  }
+
+  const value = params[key];
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value[0] ?? null;
+  }
+
+  return null;
+};
+
+const loadReleaseInfo = async (): Promise<ReleaseInfo> => {
+  try {
+    return await fetchLatestRelease();
+  } catch {
+    return FALLBACK_RELEASE_INFO;
+  }
+};
+
+export default async function DirectDownloadPage({
+  searchParams,
+}: DirectDownloadPageProps) {
+  const releaseInfo = await loadReleaseInfo();
+  const queryArchitecture = normalizeMacArchitecture(
+    searchParamValue(searchParams, "arch")
   );
-}
-
-function DirectDownloadContent() {
-  const searchParams = useSearchParams();
-  const [releaseInfo, setReleaseInfo] = useState<ReleaseInfo | null>(null);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    const load = async () => {
-      try {
-        const info = await fetchLatestRelease();
-
-        if (isMounted) {
-          setReleaseInfo(info);
-        }
-      } catch {
-        if (isMounted) {
-          setReleaseInfo(FALLBACK_RELEASE_INFO);
-        }
-      }
-    };
-
-    void load();
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  const queryArchitecture = useMemo(
-    () => normalizeMacArchitecture(searchParams.get("arch")),
-    [searchParams]
+  const macDownloadUrls = releaseInfo.macDownloadUrls;
+  const fallbackUrl = releaseInfo.fallbackUrl;
+  const latestVersion = releaseInfo.latestVersion;
+  const initialUrl = pickMacDownloadUrl(
+    macDownloadUrls,
+    fallbackUrl,
+    queryArchitecture
   );
 
-  const fallbackUrl =
-    releaseInfo?.fallbackUrl ?? FALLBACK_RELEASE_INFO.fallbackUrl;
-  const macDownloadUrls = releaseInfo?.macDownloadUrls ?? null;
-  const initialUrl = useMemo(() => {
-    if (!macDownloadUrls) {
-      return fallbackUrl;
-    }
-
-    return pickMacDownloadUrl(macDownloadUrls, fallbackUrl, queryArchitecture);
-  }, [macDownloadUrls, fallbackUrl, queryArchitecture]);
+  waitUntil(
+    trackDirectDownloadPageView({
+      latestVersion,
+      macDownloadUrls,
+      fallbackUrl,
+      initialUrl,
+      queryArchitecture,
+    })
+  );
 
   return (
     <div className={pageContainerClasses}>
-      {macDownloadUrls ? (
-        <DirectDownloadRedirector
-          macDownloadUrls={macDownloadUrls}
-          fallbackUrl={fallbackUrl}
-          initialUrl={initialUrl}
-          queryArchitecture={queryArchitecture}
-        />
-      ) : null}
+      <DirectDownloadRedirector
+        macDownloadUrls={macDownloadUrls}
+        fallbackUrl={fallbackUrl}
+        initialUrl={initialUrl}
+        queryArchitecture={queryArchitecture}
+      />
       <DownloadCard initialUrl={initialUrl} />
-    </div>
-  );
-}
-
-function DirectDownloadFallback() {
-  return (
-    <div className={pageContainerClasses}>
-      <DownloadCard initialUrl={FALLBACK_RELEASE_INFO.fallbackUrl} />
     </div>
   );
 }
