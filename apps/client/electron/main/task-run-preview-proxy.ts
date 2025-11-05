@@ -15,6 +15,7 @@ import type { Logger } from "./chrome-camouflage";
 type ProxyServer = http.Server;
 
 const TASK_RUN_PREVIEW_PREFIX = "task-run-preview:";
+const DEFAULT_PROXY_LOGGING_ENABLED = false;
 const CMUX_DOMAINS = [
   "cmux.app",
   "cmux.sh",
@@ -56,11 +57,19 @@ let proxyServer: ProxyServer | null = null;
 let proxyPort: number | null = null;
 let proxyLogger: Logger | null = null;
 let startingProxy: Promise<number> | null = null;
+let proxyLoggingEnabled = DEFAULT_PROXY_LOGGING_ENABLED;
+
+export function setPreviewProxyLoggingEnabled(enabled: boolean): void {
+  proxyLoggingEnabled = Boolean(enabled);
+}
 
 const contextsByUsername = new Map<string, ProxyContext>();
 const contextsByWebContentsId = new Map<number, ProxyContext>();
 
 function proxyLog(event: string, data?: Record<string, unknown>): void {
+  if (!proxyLoggingEnabled) {
+    return;
+  }
   try {
     proxyLogger?.log("Preview proxy", { event, ...(data ?? {}) });
   } catch {
@@ -69,6 +78,9 @@ function proxyLog(event: string, data?: Record<string, unknown>): void {
 }
 
 function proxyWarn(event: string, data?: Record<string, unknown>): void {
+  if (!proxyLoggingEnabled) {
+    return;
+  }
   try {
     proxyLogger?.warn("Preview proxy", { event, ...(data ?? {}) });
   } catch {
