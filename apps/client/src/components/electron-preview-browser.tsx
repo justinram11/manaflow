@@ -17,6 +17,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { normalizeBrowserUrl } from "@cmux/shared";
+import { isElectron } from "@/lib/electron";
 import { cn } from "@/lib/utils";
 import type {
   ElectronDevToolsMode,
@@ -92,7 +93,7 @@ export function ElectronPreviewBrowser({
   onToggleTerminal,
   renderBelowAddressBar,
 }: ElectronPreviewBrowserProps) {
-  const resolvedSrc = requestUrl ?? src;
+  const resolvedSrc = isElectron ? src : requestUrl ?? src;
   const [viewHandle, setViewHandle] = useState<NativeViewHandle | null>(null);
   const [addressValue, setAddressValue] = useState(src);
   const [committedUrl, setCommittedUrl] = useState(src);
