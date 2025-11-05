@@ -17,6 +17,20 @@ Sentry.init({
   // Enable sending user PII (Personally Identifiable Information)
   // https://docs.sentry.io/platforms/javascript/guides/nextjs/configuration/options/#sendDefaultPii
   sendDefaultPii: true,
+  integrations: (integrations) => [
+    ...integrations,
+    Sentry.thirdPartyErrorFilterIntegration({
+      // Specify the application keys that you specified in the Sentry bundler plugin
+      filterKeys: ["cmux-www"],
+      // Defines how to handle errors that contain third party stack frames.
+      // Possible values are:
+      // - 'drop-error-if-contains-third-party-frames'
+      // - 'drop-error-if-exclusively-contains-third-party-frames'
+      // - 'apply-tag-if-contains-third-party-frames'
+      // - 'apply-tag-if-exclusively-contains-third-party-frames'
+      behaviour: "drop-error-if-contains-third-party-frames",
+    }),
+  ],
 });
 
 export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;
