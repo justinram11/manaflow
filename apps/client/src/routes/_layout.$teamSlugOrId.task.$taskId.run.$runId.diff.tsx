@@ -762,7 +762,7 @@ function RunDiffPage() {
               </div>
             </div>
           )}
-          <div className="bg-white dark:bg-neutral-900 grow flex flex-col">
+          <div className="bg-white dark:bg-neutral-900 flex-1 min-h-0 flex flex-col">
             {pullRequests && pullRequests.length > 0 && (
               <Suspense fallback={null}>
                 {pullRequests.map((pr) => (
@@ -788,40 +788,44 @@ function RunDiffPage() {
                 highlightedSetId={selectedRun?.latestScreenshotSetId ?? null}
               />
             )}
-            <Suspense
-              fallback={
-                <div className="flex items-center justify-center h-full">
-                  <div className="text-neutral-500 dark:text-neutral-400 text-sm select-none">
-                    Loading diffs...
-                  </div>
-                </div>
-              }
-            >
-              {hasDiffSources ? (
-                <RunDiffSection
-                  repoFullName={primaryRepo as string}
-                  additionalRepoFullNames={additionalRepos}
-                  withRepoPrefix={shouldPrefixDiffs}
-                  ref1={baseRef}
-                  ref2={headRef}
-                  onControlsChange={setDiffControls}
-                  classNames={gitDiffViewerClassNames}
-                  metadataByRepo={metadataByRepo}
-                />
-              ) : (
-                <div className="p-6 text-sm text-neutral-600 dark:text-neutral-300">
-                  Missing repo or branches to show diff.
-                </div>
-              )}
-            </Suspense>
-            <RestartTaskForm
-              key={restartTaskPersistenceKey}
-              task={task}
-              teamSlugOrId={teamSlugOrId}
-              restartAgents={restartAgents}
-              restartIsCloudMode={restartIsCloudMode}
-              persistenceKey={restartTaskPersistenceKey}
-            />
+            <div className="flex-1 min-h-0 flex flex-col">
+              <div className="flex-1 min-h-0">
+                <Suspense
+                  fallback={
+                    <div className="flex h-full items-center justify-center">
+                      <div className="text-neutral-500 dark:text-neutral-400 text-sm select-none">
+                        Loading diffs...
+                      </div>
+                    </div>
+                  }
+                >
+                  {hasDiffSources ? (
+                    <RunDiffSection
+                      repoFullName={primaryRepo as string}
+                      additionalRepoFullNames={additionalRepos}
+                      withRepoPrefix={shouldPrefixDiffs}
+                      ref1={baseRef}
+                      ref2={headRef}
+                      onControlsChange={setDiffControls}
+                      classNames={gitDiffViewerClassNames}
+                      metadataByRepo={metadataByRepo}
+                    />
+                  ) : (
+                    <div className="flex h-full items-center justify-center p-6 text-sm text-neutral-600 dark:text-neutral-300">
+                      Missing repo or branches to show diff.
+                    </div>
+                  )}
+                </Suspense>
+              </div>
+              <RestartTaskForm
+                key={restartTaskPersistenceKey}
+                task={task}
+                teamSlugOrId={teamSlugOrId}
+                restartAgents={restartAgents}
+                restartIsCloudMode={restartIsCloudMode}
+                persistenceKey={restartTaskPersistenceKey}
+              />
+            </div>
           </div>
         </div>
       </div>

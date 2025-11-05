@@ -31,6 +31,7 @@ import {
 import { PrivateRepoPrompt } from "../../_components/private-repo-prompt";
 import { TeamOnboardingPrompt } from "../../_components/team-onboarding-prompt";
 import { env } from "@/lib/utils/www-env";
+import { trackRepoPageView } from "@/lib/analytics/track-repo-page-view";
 
 const ENABLE_IMMEDIATE_CODE_REVIEW = false;
 
@@ -245,6 +246,15 @@ export default async function PullRequestPage({ params }: PageProps) {
       pullRequestPromise,
     });
   }
+
+  waitUntil(
+    trackRepoPageView({
+      repo: `${githubOwner}/${repo}`,
+      pageType: "pull_request",
+      pullNumber,
+      userId: user!.id,
+    })
+  );
 
   return (
     <div className="min-h-dvh bg-neutral-50 text-neutral-900">

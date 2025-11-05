@@ -27,6 +27,7 @@ import {
 } from "@/lib/services/code-review/start-code-review";
 import { buildComparisonJobDetails } from "@/lib/services/code-review/comparison";
 import type { ComparisonJobDetails } from "@/lib/services/code-review/comparison";
+import { trackRepoPageView } from "@/lib/analytics/track-repo-page-view";
 
 type PageParams = {
   teamSlugOrId: string;
@@ -147,6 +148,15 @@ export default async function ComparisonPage({ params }: PageProps) {
     comparisonPromise,
     comparisonDetails,
   });
+
+  waitUntil(
+    trackRepoPageView({
+      repo: `${githubOwner}/${repo}`,
+      pageType: "comparison",
+      comparison,
+      userId: user.id,
+    })
+  );
 
   return (
     <div className="min-h-dvh bg-neutral-50 text-neutral-900">
