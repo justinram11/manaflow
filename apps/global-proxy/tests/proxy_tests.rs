@@ -8,12 +8,14 @@ use futures_util::{SinkExt, StreamExt};
 use global_proxy::{ProxyConfig, spawn_proxy};
 use hyper::{
     Body, Method as HyperMethod, Request, Response, Server, StatusCode,
+    header::HeaderValue,
     service::{make_service_fn, service_fn},
 };
 use reqwest::Method;
 use tokio::{sync::oneshot, task::JoinHandle};
 use tokio_tungstenite::tungstenite::{
-    Message, client::IntoClientRequest, handshake::server::Request as WsHandshakeRequest,
+    Message, client::IntoClientRequest,
+    handshake::server::{Request as WsHandshakeRequest, Response as WsHandshakeResponse},
 };
 
 struct TestProxy {
@@ -188,6 +190,90 @@ impl TestWsBackend {
                             Ok((stream, _)) => {
                                 tokio::spawn(async move {
                                     match tokio_tungstenite::accept_async(stream).await {
+                                        Ok(mut ws) => {
+                                            while let Some(msg) = ws.next().await {
+                                                match msg {
+                                                    Ok(Message::Text(text)) => {
+                                                        if ws.send(Message::Text(text)).await.is_err() {
+                                                            break;
+                                                        }
+                                                    }
+                                                    Ok(Message::Binary(bin)) => {
+                                                        if ws.send(Message::Binary(bin)).await.is_err() {
+                                                            break;
+                                                        }
+                                                    }
+                                                    Ok(Message::Ping(data)) => {
+                                                        let _ = ws.send(Message::Pong(data)).await;
+                                                    }
+                                                    Ok(Message::Pong(_)) => {}
+                                                    Ok(Message::Frame(frame)) => {
+                                                        if ws.send(Message::Frame(frame)).await.is_err() {
+                                                            break;
+                                                        }
+                                                    }
+                                                    Ok(Message::Close(frame)) => {
+                                                        let _ = ws.close(frame).await;
+                                                        break;
+                                                    }
+                                                    Err(_) => break,
+                                                }
+                                            }
+                                        }
+                                        Err(err) => eprintln!("ws accept error: {err}"),
+                                    }
+                                });
+                            }
+                            Err(err) => {
+                                eprintln!("ws accept error: {err}");
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        Self {
+            addr,
+            shutdown: Some(tx),
+            task,
+        }
+    }
+
+    async fn spawn_with_handshake(
+        protocol: Option<&str>,
+        extensions: Option<&str>,
+    ) -> Self {
+        let listener = tokio::net::TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
+            .await
+            .expect("ws bind");
+        let addr = listener.local_addr().expect("ws addr");
+        let (tx, mut rx) = oneshot::channel();
+        let protocol_value = protocol
+            .map(|value| HeaderValue::from_str(value).expect("protocol header"));
+        let extensions_value = extensions
+            .map(|value| HeaderValue::from_str(value).expect("extensions header"));
+
+        let task = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = &mut rx => break,
+                    accept = listener.accept() => {
+                        match accept {
+                            Ok((stream, _)) => {
+                                let protocol_value = protocol_value.clone();
+                                let extensions_value = extensions_value.clone();
+                                tokio::spawn(async move {
+                                    match tokio_tungstenite::accept_hdr_async(stream, move |_req: &WsHandshakeRequest, mut response: WsHandshakeResponse| {
+                                        if let Some(value) = protocol_value.clone() {
+                                            response.headers_mut().append("Sec-WebSocket-Protocol", value);
+                                        }
+                                        if let Some(value) = extensions_value.clone() {
+                                            response.headers_mut().append("Sec-WebSocket-Extensions", value);
+                                        }
+                                        Ok(response)
+                                    }).await {
                                         Ok(mut ws) => {
                                             while let Some(msg) = ws.next().await {
                                                 match msg {
@@ -669,6 +755,43 @@ async fn html_responses_inject_scripts() {
 }
 
 #[tokio::test]
+async fn html_with_unsupported_encoding_skips_rewrite() {
+    static HTML_BODY: &str =
+        "<!DOCTYPE html><html><head><title>Encoded</title></head><body>Encoded Content</body></html>";
+    let backend = TestHttpBackend::serve(Arc::new(|_req| {
+        Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "text/html; charset=utf-8")
+            .header("content-encoding", "compress")
+            .body(Body::from(HTML_BODY))
+            .unwrap()
+    }))
+    .await;
+
+    let proxy = TestProxy::spawn().await;
+    let host = format!("port-{}-test.cmux.sh", backend.port());
+
+    let response = proxy.request(Method::GET, &host, "/", &[]).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("content-encoding")
+            .and_then(|value| value.to_str().ok()),
+        Some("compress")
+    );
+    let body = response.text().await.expect("body");
+    assert!(
+        !body.contains("window.__cmuxLocation"),
+        "unsupported encodings should not be rewritten"
+    );
+    assert!(body.contains("Encoded Content"));
+
+    proxy.shutdown().await;
+    backend.shutdown().await;
+}
+
+#[tokio::test]
 async fn html_responses_skip_service_worker_for_cmux_route() {
     let backend = TestHttpBackend::serve(Arc::new(|_req| {
         Response::builder()
@@ -1012,6 +1135,78 @@ async fn websocket_proxy_for_cmux_route() {
     ws.send(Message::Text("cmux".into())).await.expect("send");
     let reply = ws.next().await.expect("reply").expect("message");
     assert_eq!(reply.into_text().unwrap(), "cmux");
+    ws.close(None).await.unwrap();
+
+    proxy.shutdown().await;
+    backend.shutdown().await;
+}
+
+#[tokio::test]
+async fn websocket_subprotocol_matches_backend_choice() {
+    let backend =
+        TestWsBackend::spawn_with_handshake(Some("vite-hmr"), None).await;
+    let proxy = TestProxy::spawn().await;
+    let host = format!("cmux-demo-feature-{}.cmux.sh", backend.port());
+
+    let url = format!("ws://{}{}", proxy.addr, "/ws");
+    let mut request = url.into_client_request().expect("request");
+    request
+        .headers_mut()
+        .insert("Host", host.parse().expect("host header"));
+    request
+        .headers_mut()
+        .insert("Sec-WebSocket-Protocol", HeaderValue::from_str("foo, vite-hmr").unwrap());
+
+    let (mut ws, response) = tokio_tungstenite::connect_async(request)
+        .await
+        .expect("connect through proxy");
+    let protocol = response
+        .headers()
+        .get("sec-websocket-protocol")
+        .and_then(|value| value.to_str().ok());
+    assert_eq!(protocol, Some("vite-hmr"));
+
+    ws.send(Message::Text("subprotocol".into()))
+        .await
+        .expect("send");
+    let reply = ws.next().await.expect("reply").expect("message");
+    assert_eq!(reply.into_text().unwrap(), "subprotocol");
+    ws.close(None).await.unwrap();
+
+    proxy.shutdown().await;
+    backend.shutdown().await;
+}
+
+#[tokio::test]
+async fn websocket_extensions_are_forwarded() {
+    let backend =
+        TestWsBackend::spawn_with_handshake(None, Some("permessage-deflate")).await;
+    let proxy = TestProxy::spawn().await;
+    let host = format!("cmux-demo-feature-{}.cmux.sh", backend.port());
+
+    let url = format!("ws://{}{}", proxy.addr, "/ws");
+    let mut request = url.into_client_request().expect("request");
+    request
+        .headers_mut()
+        .insert("Host", host.parse().expect("host header"));
+    request
+        .headers_mut()
+        .insert("Sec-WebSocket-Extensions", HeaderValue::from_static("permessage-deflate"));
+
+    let (mut ws, response) = tokio_tungstenite::connect_async(request)
+        .await
+        .expect("connect through proxy");
+    let extensions = response
+        .headers()
+        .get("sec-websocket-extensions")
+        .and_then(|value| value.to_str().ok());
+    assert_eq!(extensions, Some("permessage-deflate"));
+
+    ws.send(Message::Text("extensions".into()))
+        .await
+        .expect("send");
+    let reply = ws.next().await.expect("reply").expect("message");
+    assert_eq!(reply.into_text().unwrap(), "extensions");
     ws.close(None).await.unwrap();
 
     proxy.shutdown().await;
