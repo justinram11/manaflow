@@ -121,11 +121,9 @@ export function releasePreviewProxy(webContentsId: number): void {
     webContentsId,
     persistKey: context.persistKey,
   });
-  void context.session
-    .setProxy({ mode: "direct" })
-    .catch(() => {
-      // Ignore proxy reset failures
-    });
+  void context.session.setProxy({ mode: "direct" }).catch((err) => {
+    console.error("Failed to reset preview proxy", err);
+  });
 }
 
 export async function configurePreviewProxyForView(
@@ -299,11 +297,7 @@ function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
   forwardHttpRequest(req, res, rewritten, context);
 }
 
-function handleConnect(
-  req: IncomingMessage,
-  socket: Socket,
-  head: Buffer
-) {
+function handleConnect(req: IncomingMessage, socket: Socket, head: Buffer) {
   const context = authenticateRequest(req.headers);
   if (!context) {
     respondProxyAuthRequiredSocket(socket);
@@ -406,7 +400,7 @@ function respondProxyAuthRequired(res: ServerResponse) {
 
 function respondProxyAuthRequiredSocket(socket: Socket) {
   socket.write(
-    "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"Cmux Preview Proxy\"\r\n\r\n"
+    'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="Cmux Preview Proxy"\r\n\r\n'
   );
   socket.end();
 }
@@ -414,9 +408,8 @@ function respondProxyAuthRequiredSocket(socket: Socket) {
 function parseProxyRequestTarget(req: IncomingMessage): URL | null {
   try {
     if (req.url && /^[a-z]+:\/\//i.test(req.url)) {
-      const normalized = req.url.replace(
-        /^ws(s)?:\/\//i,
-        (_match, secure) => (secure ? "https://" : "http://")
+      const normalized = req.url.replace(/^ws(s)?:\/\//i, (_match, secure) =>
+        secure ? "https://" : "http://"
       );
       return new URL(normalized);
     }
@@ -430,7 +423,9 @@ function parseProxyRequestTarget(req: IncomingMessage): URL | null {
   }
 }
 
-function parseConnectTarget(input: string): { hostname: string; port: number } | null {
+function parseConnectTarget(
+  input: string
+): { hostname: string; port: number } | null {
   if (!input) return null;
   const [host, portString] = input.split(":");
   const port = Number.parseInt(portString ?? "", 10);
@@ -630,7 +625,9 @@ function deriveRoute(url: string): ProxyRoute | null {
         continue;
       }
       const remainder = subdomain.slice("cmux-".length);
-      const segments = remainder.split("-").filter((segment) => segment.length > 0);
+      const segments = remainder
+        .split("-")
+        .filter((segment) => segment.length > 0);
       if (segments.length < 3) {
         continue;
       }

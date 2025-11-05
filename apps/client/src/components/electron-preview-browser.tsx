@@ -28,6 +28,7 @@ import clsx from "clsx";
 interface ElectronPreviewBrowserProps {
   persistKey: string;
   src: string;
+  requestUrl?: string;
   borderRadius?: number;
   terminalVisible?: boolean;
   onToggleTerminal?: () => void;
@@ -86,10 +87,12 @@ function useLoadingProgress(isLoading: boolean) {
 export function ElectronPreviewBrowser({
   persistKey,
   src,
+  requestUrl,
   terminalVisible = false,
   onToggleTerminal,
   renderBelowAddressBar,
 }: ElectronPreviewBrowserProps) {
+  const resolvedSrc = requestUrl ?? src;
   const [viewHandle, setViewHandle] = useState<NativeViewHandle | null>(null);
   const [addressValue, setAddressValue] = useState(src);
   const [committedUrl, setCommittedUrl] = useState(src);
@@ -803,7 +806,7 @@ export function ElectronPreviewBrowser({
         <div className="flex-1 overflow-hidden bg-white dark:bg-neutral-950 border-l">
           <PersistentWebView
             persistKey={persistKey}
-            src={src}
+            src={resolvedSrc}
             className="h-full w-full border-0"
             borderRadius={0}
             sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals allow-downloads"
