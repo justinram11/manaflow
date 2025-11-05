@@ -7,15 +7,15 @@ import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { useTheme } from "@/components/theme/use-theme";
 import { api } from "@cmux/convex/api";
-import type { Id } from "@cmux/convex/dataModel";
+import type { Doc, Id } from "@cmux/convex/dataModel";
 import type {
   CreateLocalWorkspaceResponse,
   CreateCloudWorkspaceResponse,
   CreateCloudWorkspace,
 } from "@cmux/shared";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { Server as ServerIcon, FolderOpen, Loader2 } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 type WorkspaceCreationButtonsProps = {
@@ -37,6 +37,46 @@ export function WorkspaceCreationButtons({
 
   const reserveLocalWorkspace = useMutation(api.localWorkspaces.reserve);
   const createTask = useMutation(api.tasks.create);
+  const environments = useQuery(api.environments.list, { teamSlugOrId });
+
+  const environmentById = useMemo(() => {
+    const map = new Map<Id<"environments">, Doc<"environments">>();
+    if (!environments) {
+      return map;
+    }
+    environments.forEach((environment) => {
+      map.set(environment._id, environment);
+    });
+    return map;
+  }, [environments]);
+
+  const selectionMeta = useMemo(() => {
+    const selection = selectedProject[0] ?? null;
+    if (!selection) {
+      return {
+        kind: "none" as const,
+        workspaceLabel: "Unknown Selection",
+      };
+    }
+
+    if (selection.startsWith("env:")) {
+      const environmentId = selection.replace(/^env:/, "") as Id<"environments">;
+      const environment = environmentById.get(environmentId);
+      return {
+        kind: "environment" as const,
+        environmentId,
+        environment,
+        workspaceLabel: environment?.name ?? "Unknown Environment",
+      };
+    }
+
+    return {
+      kind: "repository" as const,
+      projectFullName: selection,
+      workspaceLabel: selection,
+      repoUrl: `https://github.com/${selection}.git`,
+    };
+  }, [environmentById, selectedProject]);
 
   const handleCreateLocalWorkspace = useCallback(async () => {
     if (!socket) {
@@ -54,8 +94,16 @@ export function WorkspaceCreationButtons({
       return;
     }
 
-    const projectFullName = selectedProject[0];
-    const repoUrl = `https://github.com/${projectFullName}.git`;
+    const projectFullName = selectionMeta.kind === "repository"
+      ? selectionMeta.projectFullName
+      : undefined;
+
+    if (!projectFullName) {
+      toast.error("Local workspaces require a repository selection");
+      return;
+    }
+
+    const repoUrl = selectionMeta.repoUrl ?? `https://github.com/${projectFullName}.git`;
 
     setIsCreatingLocal(true);
 
@@ -111,6 +159,7 @@ export function WorkspaceCreationButtons({
     teamSlugOrId,
     reserveLocalWorkspace,
     addTaskToExpand,
+    selectionMeta,
   ]);
 
   const handleCreateCloudWorkspace = useCallback(async () => {
@@ -124,19 +173,14 @@ export function WorkspaceCreationButtons({
       return;
     }
 
-    const selection = selectedProject[0];
-    const selectionIsEnvironment =
-      isEnvSelected || selection.startsWith("env:");
-    const environmentId = selectionIsEnvironment
-      ? (selection.replace(/^env:/, "") as Id<"environments">)
+    const environmentId = selectionMeta.kind === "environment"
+      ? selectionMeta.environmentId
       : undefined;
-    const projectFullName = selectionIsEnvironment ? undefined : selection;
-    const workspaceLabel = selectionIsEnvironment
-      ? selection.split(":")[2] || "Unknown Environment"
-      : projectFullName ?? "Unknown Repository";
-    const repoUrl = projectFullName
-      ? `https://github.com/${projectFullName}.git`
+    const projectFullName = selectionMeta.kind === "repository"
+      ? selectionMeta.projectFullName
       : undefined;
+    const workspaceLabel = selectionMeta.workspaceLabel;
+    const repoUrl = selectionMeta.repoUrl;
 
     setIsCreatingCloud(true);
 
@@ -192,11 +236,11 @@ export function WorkspaceCreationButtons({
   }, [
     socket,
     selectedProject,
-    isEnvSelected,
     teamSlugOrId,
     createTask,
     addTaskToExpand,
     theme,
+    selectionMeta,
   ]);
 
   const canCreateLocal = selectedProject.length > 0 && !isEnvSelected;
