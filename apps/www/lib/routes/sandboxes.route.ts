@@ -314,6 +314,7 @@ sandboxesRouter.openapi(
             identifiers: scriptIdentifiers ?? undefined,
             convexUrl: env.NEXT_PUBLIC_CONVEX_URL,
             taskRunJwt: body.taskRunJwt || undefined,
+            agentName: body.metadata?.agentName || undefined,
           });
         })().catch((error) => {
           console.error(
