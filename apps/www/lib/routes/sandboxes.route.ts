@@ -5,6 +5,7 @@ import { stackServerAppJs } from "@/lib/utils/stack";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
 import { api } from "@cmux/convex/api";
+import { Id } from "@cmux/convex/dataModel";
 import { RESERVED_CMUX_PORT_SET } from "@cmux/shared/utils/reserved-cmux-ports";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
@@ -172,6 +173,20 @@ sandboxesRouter.openapi(
           ? allocateScriptIdentifiers()
           : null;
 
+      // Check if this is a cloud workspace by querying the taskRun
+      let isCloudWorkspace = false;
+      if (body.taskRunId) {
+        try {
+          const taskRun = await convex.query(api.taskRuns.get, {
+            teamSlugOrId: body.teamSlugOrId,
+            id: body.taskRunId as Id<"taskRuns">,
+          });
+          isCloudWorkspace = taskRun?.isCloudWorkspace ?? false;
+        } catch (error) {
+          console.warn("[sandboxes.start] Failed to query taskRun for isCloudWorkspace", error);
+        }
+      }
+
       const gitIdentityPromise = githubAccessTokenPromise.then(
         ({ githubAccessToken }) => {
           if (!githubAccessToken) {
@@ -314,6 +329,7 @@ sandboxesRouter.openapi(
             identifiers: scriptIdentifiers ?? undefined,
             convexUrl: env.NEXT_PUBLIC_CONVEX_URL,
             taskRunJwt: body.taskRunJwt || undefined,
+            isCloudWorkspace,
           });
         })().catch((error) => {
           console.error(

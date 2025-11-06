@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { computeNewLineNumber, parseDiff } from "react-diff-view";
 
-import { buildDiffHeatmap, parseReviewHeatmap } from "./heatmap";
+import {
+  HEATMAP_GRADIENT_STEPS,
+  buildDiffHeatmap,
+  buildHeatmapLineClass,
+  parseReviewHeatmap,
+} from "./heatmap";
 
 const SAMPLE_DIFF = `
 diff --git a/example.ts b/example.ts
@@ -99,8 +104,14 @@ describe("buildDiffHeatmap", () => {
     }
 
     expect(heatmap.entries.get(2)?.score).toBeCloseTo(0.7, 5);
-    expect(heatmap.lineClasses.get(2)).toBe("cmux-heatmap-tier-3");
-    expect(heatmap.lineClasses.get(4)).toBe("cmux-heatmap-tier-4");
+    const lineTwoStep = Math.round(0.7 * HEATMAP_GRADIENT_STEPS);
+    const lineFourStep = Math.round(0.92 * HEATMAP_GRADIENT_STEPS);
+    expect(heatmap.lineClasses.get(2)).toBe(
+      buildHeatmapLineClass(lineTwoStep)
+    );
+    expect(heatmap.lineClasses.get(4)).toBe(
+      buildHeatmapLineClass(lineFourStep)
+    );
     expect(Array.isArray(heatmap.oldRanges)).toBe(true);
     expect(heatmap.oldRanges).toHaveLength(0);
 

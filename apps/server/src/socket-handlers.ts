@@ -971,127 +971,11 @@ export function setupSocketHandlers(
         const {
           teamSlugOrId: requestedTeamSlugOrId,
           environmentId,
-          projectFullName: rawProjectFullName,
-          repoUrl: explicitRepoUrl,
-          branch: requestedBranch,
           taskId: providedTaskId,
         } = parsed.data;
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
 
-        const projectFullName = rawProjectFullName?.trim();
-        const branch = requestedBranch?.trim();
-
-        if (!environmentId && !projectFullName) {
-          callback({
-            success: false,
-            error: "Environment ID or repository is required",
-          });
-          return;
-        }
-
-        if (environmentId && projectFullName) {
-          callback({
-            success: false,
-            error: "Specify either an environment or a repository, not both",
-          });
-          return;
-        }
-
-        if (projectFullName && projectFullName.startsWith("env:")) {
-          callback({
-            success: false,
-            error: "Repositories cannot start with the env: prefix",
-          });
-          return;
-        }
-
-        if (
-          projectFullName &&
-          !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(projectFullName)
-        ) {
-          callback({
-            success: false,
-            error: "Invalid repository name.",
-          });
-          return;
-        }
-
-        let repoUrl = explicitRepoUrl?.trim();
-        if (projectFullName) {
-          repoUrl =
-            repoUrl ?? `https://github.com/${projectFullName}.git`;
-        }
-
-        if (projectFullName && !repoUrl) {
-          callback({
-            success: false,
-            error: "Repository URL is required",
-          });
-          return;
-        }
-
         const convex = getConvex();
-
-        if (projectFullName) {
-          const normalizedRequestedRepo = projectFullName.toLowerCase();
-
-          if (!providedTaskId) {
-            callback({
-              success: false,
-              error: "taskId is required when launching a repo workspace",
-            });
-            return;
-          }
-
-          const task = await convex.query(api.tasks.getById, {
-            teamSlugOrId,
-            id: providedTaskId,
-          });
-
-          const normalizedTaskRepo = task?.projectFullName?.trim();
-          if (!task || !normalizedTaskRepo) {
-            callback({
-              success: false,
-              error: "Task not found or missing repository metadata",
-            });
-            return;
-          }
-
-          if (normalizedTaskRepo.toLowerCase() !== normalizedRequestedRepo) {
-            callback({
-              success: false,
-              error: "Task repository does not match requested repository",
-            });
-            return;
-          }
-
-          if (repoUrl) {
-            const repoUrlMatch = repoUrl.match(
-              /github\.com\/?([^\s/]+)\/([^\s/.]+)(?:\.git)?/i
-            );
-            if (!repoUrlMatch) {
-              callback({
-                success: false,
-                error: "Repository URL must reference GitHub",
-              });
-              return;
-            }
-
-            const derivedProjectFullName = `${repoUrlMatch[1]}/${repoUrlMatch[2]}`.toLowerCase();
-            if (derivedProjectFullName !== normalizedRequestedRepo) {
-              callback({
-                success: false,
-                error: "Repository URL does not match the selected repository",
-              });
-              return;
-            }
-          }
-        }
-
-        const workspaceTargetLabel = environmentId
-          ? `environment ${environmentId}`
-          : `repository ${projectFullName}`;
-
         let taskId: Id<"tasks"> | undefined = providedTaskId;
         let taskRunId: Id<"taskRuns"> | null = null;
         let responded = false;
@@ -1146,7 +1030,7 @@ export function setupSocketHandlers(
           const { postApiSandboxesStart } = await getWwwOpenApiModule();
 
           serverLogger.info(
-            `[create-cloud-workspace] Starting Morph sandbox for ${workspaceTargetLabel}`
+            `[create-cloud-workspace] Starting Morph sandbox for environment ${environmentId}`
           );
 
           const startRes = await postApiSandboxesStart({
@@ -1160,14 +1044,7 @@ export function setupSocketHandlers(
               },
               taskRunId,
               taskRunJwt,
-              ...(environmentId ? { environmentId } : {}),
-              ...(repoUrl
-                ? {
-                    repoUrl,
-                    branch: branch || undefined,
-                    depth: 1,
-                  }
-                : {}),
+              environmentId,
             },
           });
 
@@ -1224,7 +1101,7 @@ export function setupSocketHandlers(
           });
 
           serverLogger.info(
-            `Cloud workspace created successfully: ${taskId} for ${workspaceTargetLabel}`
+            `Cloud workspace created successfully: ${taskId} for environment ${environmentId}`
           );
         } catch (error) {
           serverLogger.error("Error creating cloud workspace:", error);

@@ -17,7 +17,6 @@ import type { Doc, Id } from "@cmux/convex/dataModel";
 import type {
   CreateLocalWorkspaceResponse,
   CreateCloudWorkspaceResponse,
-  CreateCloudWorkspace,
 } from "@cmux/shared";
 import { deriveRepoBaseName, generateWorkspaceName } from "@cmux/shared";
 import * as Dialog from "@radix-ui/react-dialog";
@@ -577,12 +576,12 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         const environment = environments?.find((env) => env._id === environmentId);
         const environmentName = environment?.name ?? "Unknown Environment";
 
-        // Create task in Convex
+        // Create task in Convex without task description (it's just a workspace)
         const taskId = await createTask({
           teamSlugOrId,
           text: `Cloud Workspace: ${environmentName}`,
-          projectFullName: undefined,
-          baseBranch: undefined,
+          projectFullName: undefined, // No repo for cloud environment workspaces
+          baseBranch: undefined, // No branch for environments
           environmentId,
           isCloudWorkspace: true,
         });
@@ -590,17 +589,15 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         // Hint the sidebar to auto-expand this task once it appears
         addTaskToExpand(taskId);
 
-        const payload: CreateCloudWorkspace = {
-          teamSlugOrId,
-          environmentId,
-          taskId,
-          theme,
-        };
-
         await new Promise<void>((resolve) => {
           socket.emit(
             "create-cloud-workspace",
-            payload,
+            {
+              teamSlugOrId,
+              environmentId,
+              taskId,
+              theme,
+            },
             async (response: CreateCloudWorkspaceResponse) => {
               try {
                 if (response.success) {

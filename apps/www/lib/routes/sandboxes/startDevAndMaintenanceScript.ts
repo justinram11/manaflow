@@ -51,6 +51,7 @@ export async function runMaintenanceAndDevScripts({
   identifiers,
   convexUrl,
   taskRunJwt,
+  isCloudWorkspace,
 }: {
   instance: MorphInstance;
   maintenanceScript?: string;
@@ -58,6 +59,7 @@ export async function runMaintenanceAndDevScripts({
   identifiers?: ScriptIdentifiers;
   convexUrl?: string;
   taskRunJwt?: string;
+  isCloudWorkspace?: boolean;
 }): Promise<void> {
   const ids = identifiers ?? allocateScriptIdentifiers();
 
@@ -129,6 +131,7 @@ ${devScript}
     CMUX_ORCH_HAS_DEV_SCRIPT: hasDevScript ? "1" : "0",
     CMUX_ORCH_CONVEX_URL: convexUrl,
     CMUX_ORCH_TASK_RUN_JWT: taskRunJwt,
+    CMUX_ORCH_IS_CLOUD_WORKSPACE: isCloudWorkspace ? "1" : "0",
   };
 
   const orchestratorEnvString = Object.entries(orchestratorEnvVars)

@@ -24,7 +24,7 @@ export type DiffHeatmap = {
 };
 
 export type HeatmapEntryArtifact = ResolvedHeatmapLine & {
-  tier: number;
+  gradientStep: number;
   highlight: { start: number; length: number } | null;
 };
 
@@ -60,16 +60,37 @@ type CollectedLineContent = {
 const SCORE_CLAMP_MIN = 0;
 const SCORE_CLAMP_MAX = 1;
 
-const HEATMAP_TIERS = [0.2, 0.4, 0.6, 0.8] as const;
+export const HEATMAP_GRADIENT_STEPS = 100;
+
+export const HEATMAP_LINE_CLASS_PREFIX = "cmux-heatmap-gradient-step";
+export const HEATMAP_CHAR_CLASS_PREFIX = "cmux-heatmap-char-gradient-step";
 
 const HEATMAP_SIDE_CLASS: Record<DiffLineSide, string> = {
   new: "cmux-heatmap-char-new",
   old: "cmux-heatmap-char-old",
 };
 
-function cnHeatmapCharClass(side: DiffLineSide, tier: number): string {
-  const tierClass = `cmux-heatmap-char-tier-${tier}`;
-  return `cmux-heatmap-char ${HEATMAP_SIDE_CLASS[side]} ${tierClass}`;
+export function buildHeatmapLineClass(step: number): string {
+  return `${HEATMAP_LINE_CLASS_PREFIX}-${step}`;
+}
+
+export function buildHeatmapCharClass(
+  side: DiffLineSide,
+  step: number
+): string {
+  const gradientClass = `${HEATMAP_CHAR_CLASS_PREFIX}-${step}`;
+  return `cmux-heatmap-char ${HEATMAP_SIDE_CLASS[side]} ${gradientClass}`;
+}
+
+export function extractHeatmapGradientStep(className: string): number {
+  const match = className.match(
+    new RegExp(`${HEATMAP_LINE_CLASS_PREFIX}-(\\d+)`)
+  );
+  if (!match) {
+    return 0;
+  }
+  const parsed = Number.parseInt(match[1] ?? "0", 10);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 export function parseReviewHeatmap(raw: unknown): ReviewHeatmapLine[] {
@@ -175,7 +196,7 @@ export function prepareDiffHeatmapArtifacts(
       entry.score === null
         ? null
         : clamp(entry.score, SCORE_CLAMP_MIN, SCORE_CLAMP_MAX);
-    const tier = computeHeatmapTier(normalizedScore);
+    const gradientStep = computeHeatmapGradientStep(normalizedScore);
 
     let highlight: { start: number; length: number } | null = null;
 
@@ -214,7 +235,7 @@ export function prepareDiffHeatmapArtifacts(
       score: normalizedScore,
       reason: entry.reason,
       mostImportantWord: entry.mostImportantWord,
-      tier,
+      gradientStep,
       highlight,
     };
 
@@ -271,18 +292,17 @@ export function renderDiffHeatmapFromArtifacts(
         mostImportantWord: artifact.mostImportantWord,
       });
 
-      if (artifact.tier > 0) {
-        classMap.set(lineNumber, `cmux-heatmap-tier-${artifact.tier}`);
+      if (artifact.gradientStep > 0) {
+        classMap.set(lineNumber, buildHeatmapLineClass(artifact.gradientStep));
       }
 
-      if (rangeCollector && artifact.highlight) {
-        const charTier = artifact.tier > 0 ? artifact.tier : 1;
+      if (rangeCollector && artifact.highlight && artifact.gradientStep > 0) {
         rangeCollector.push({
           type: "span",
           lineNumber,
           start: artifact.highlight.start,
           length: artifact.highlight.length,
-          className: cnHeatmapCharClass(side, charTier),
+          className: buildHeatmapCharClass(side, artifact.gradientStep),
         });
       }
     }
@@ -721,18 +741,16 @@ function sanitizeHighlightToken(value: string): string {
   return value.replace(/^[^A-Za-z0-9_$]+/, "").replace(/[^A-Za-z0-9_$]+$/, "");
 }
 
-function computeHeatmapTier(score: number | null): number {
+function computeHeatmapGradientStep(score: number | null): number {
   if (score === null) {
     return 0;
   }
-
-  for (let index = HEATMAP_TIERS.length - 1; index >= 0; index -= 1) {
-    if (score >= HEATMAP_TIERS[index]!) {
-      return index + 1;
-    }
+  const normalized = clamp(score, SCORE_CLAMP_MIN, SCORE_CLAMP_MAX);
+  if (normalized <= 0) {
+    return 0;
   }
-
-  return score > 0 ? 1 : 0;
+  const scaled = Math.round(normalized * HEATMAP_GRADIENT_STEPS);
+  return Math.max(1, Math.min(HEATMAP_GRADIENT_STEPS, scaled));
 }
 
 function clamp(value: number, min: number, max: number): number {

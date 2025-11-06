@@ -171,77 +171,6 @@ body {
   color: var(--diff-token-boolean);
 }
 
-.cmux-heatmap-tier-1 .diff-gutter,
-.cmux-heatmap-tier-1 .diff-code {
-  box-shadow: inset 0 0 0 999px rgba(254, 249, 195, 0.45);
-}
-
-.cmux-heatmap-tier-2 .diff-gutter,
-.cmux-heatmap-tier-2 .diff-code {
-  box-shadow: inset 0 0 0 999px rgba(253, 230, 138, 0.55);
-}
-
-.cmux-heatmap-tier-3 .diff-gutter,
-.cmux-heatmap-tier-3 .diff-code {
-  box-shadow: inset 0 0 0 999px rgba(252, 211, 77, 0.6);
-}
-
-.cmux-heatmap-tier-4 .diff-gutter,
-.cmux-heatmap-tier-4 .diff-code {
-  box-shadow: inset 0 0 0 999px rgba(245, 158, 11, 0.65);
-}
-
-.cmux-heatmap-tier-3 {
-  --cmux-heatmap-text: #422006;
-  --diff-token-comment: hsl(33 34% 32%);
-  --diff-token-punctuation: hsl(32 56% 28%);
-  --diff-token-operator: hsl(27 92% 28%);
-  --diff-token-string: hsl(29 90% 30%);
-  --diff-token-number: hsl(24 84% 29%);
-  --diff-token-keyword: hsl(20 92% 26%);
-  --diff-token-function: hsl(27 82% 29%);
-  --diff-token-variable: hsl(30 68% 28%);
-  --diff-token-attr: hsl(28 88% 28%);
-  --diff-token-boolean: hsl(18 90% 28%);
-  --diff-token-builtin: hsl(25 82% 28%);
-  --diff-token-inserted: hsl(148 45% 30%);
-  --diff-token-deleted: hsl(8 78% 32%);
-}
-
-.cmux-heatmap-tier-4 {
-  --cmux-heatmap-text: #431407;
-  --diff-token-comment: hsl(24 42% 28%);
-  --diff-token-punctuation: hsl(18 74% 24%);
-  --diff-token-operator: hsl(16 94% 22%);
-  --diff-token-string: hsl(20 92% 27%);
-  --diff-token-number: hsl(14 92% 27%);
-  --diff-token-keyword: hsl(12 96% 22%);
-  --diff-token-function: hsl(18 88% 25%);
-  --diff-token-variable: hsl(22 76% 24%);
-  --diff-token-attr: hsl(20 90% 23%);
-  --diff-token-boolean: hsl(14 94% 25%);
-  --diff-token-builtin: hsl(18 88% 24%);
-  --diff-token-inserted: hsl(145 46% 28%);
-  --diff-token-deleted: hsl(6 86% 30%);
-}
-
-.cmux-heatmap-tier-3 .diff-gutter,
-.cmux-heatmap-tier-3 .diff-code,
-.cmux-heatmap-tier-4 .diff-gutter,
-.cmux-heatmap-tier-4 .diff-code {
-  color: var(--cmux-heatmap-text);
-}
-
-.dark .cmux-heatmap-tier-1 .diff-gutter,
-.dark .cmux-heatmap-tier-1 .diff-code {
-  box-shadow: inset 0 0 0 999px rgba(254, 249, 195, 0.3);
-}
-
-.dark .cmux-heatmap-tier-2 .diff-gutter,
-.dark .cmux-heatmap-tier-2 .diff-code {
-  box-shadow: inset 0 0 0 999px rgba(253, 230, 138, 0.36);
-}
-
 .diff-hunk td:nth-of-type(3) {
   @apply border-l;
   border-color: rgb(229 229 229);
@@ -277,56 +206,6 @@ body {
   --diff-code-delete-text-color: rgb(212 212 212);
 }
 
-.dark .cmux-heatmap-tier-3 .diff-gutter,
-.dark .cmux-heatmap-tier-3 .diff-code {
-  box-shadow: inset 0 0 0 999px rgba(252, 211, 77, 0.42);
-}
-
-.dark .cmux-heatmap-tier-4 .diff-gutter,
-.dark .cmux-heatmap-tier-4 .diff-code {
-  box-shadow: inset 0 0 0 999px rgba(245, 158, 11, 0.48);
-}
-
-.dark .cmux-heatmap-tier-3 {
-  --cmux-heatmap-text: #fff7ed;
-  --diff-token-comment: hsl(39 100% 88%);
-  --diff-token-punctuation: hsl(36 96% 90%);
-  --diff-token-operator: hsl(31 96% 85%);
-  --diff-token-string: hsl(33 100% 88%);
-  --diff-token-number: hsl(28 100% 86%);
-  --diff-token-keyword: hsl(30 100% 84%);
-  --diff-token-function: hsl(33 100% 88%);
-  --diff-token-variable: hsl(36 100% 86%);
-  --diff-token-attr: hsl(32 100% 88%);
-  --diff-token-boolean: hsl(30 100% 86%);
-  --diff-token-builtin: hsl(29 100% 85%);
-  --diff-token-inserted: hsl(145 68% 82%);
-  --diff-token-deleted: hsl(16 90% 80%);
-}
-
-.dark .cmux-heatmap-tier-4 {
-  --cmux-heatmap-text: #ffedd5;
-  --diff-token-comment: hsl(32 100% 88%);
-  --diff-token-punctuation: hsl(28 96% 90%);
-  --diff-token-operator: hsl(24 98% 86%);
-  --diff-token-string: hsl(28 100% 90%);
-  --diff-token-number: hsl(24 100% 88%);
-  --diff-token-keyword: hsl(22 100% 85%);
-  --diff-token-function: hsl(26 100% 88%);
-  --diff-token-variable: hsl(29 100% 88%);
-  --diff-token-attr: hsl(26 100% 88%);
-  --diff-token-boolean: hsl(24 100% 87%);
-  --diff-token-builtin: hsl(23 100% 86%);
-  --diff-token-inserted: hsl(142 68% 82%);
-  --diff-token-deleted: hsl(16 92% 82%);
-}
-
-.dark .cmux-heatmap-tier-3 .diff-gutter,
-.dark .cmux-heatmap-tier-3 .diff-code,
-.dark .cmux-heatmap-tier-4 .diff-gutter,
-.dark .cmux-heatmap-tier-4 .diff-code {
-  color: var(--cmux-heatmap-text);
-}
 
 .cmux-heatmap-char {
   display: inline-block;
@@ -336,25 +215,6 @@ body {
 .cmux-heatmap-char-wrapper {
   display: inline-block;
   cursor: help;
-}
-
-.cmux-heatmap-char-tier-1 {
-  background-color: rgba(248, 240, 148, 0.7);
-}
-
-.cmux-heatmap-char-tier-2 {
-  background-color: rgb(255, 180, 104, 0.75);
-  /* background-color: blue; */
-}
-
-.cmux-heatmap-char-tier-3 {
-  background-color: rgba(248, 174, 99, 0.8);
-  color: #422006;
-}
-
-.cmux-heatmap-char-tier-4 {
-  background-color: rgba(255, 144, 88, 0.7);
-  color: #431407;
 }
 
 .cmux-heatmap-focus td.diff-gutter,

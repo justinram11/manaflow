@@ -2,6 +2,7 @@
 
 import {
   Fragment,
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -9,7 +10,9 @@ import {
   useState,
   useId,
   useDeferredValue,
+  useTransition,
 } from "react";
+import { useClipboard } from "@mantine/hooks";
 import type {
   ReactElement,
   ReactNode,
@@ -70,6 +73,10 @@ import {
   MaterialSymbolsFolderSharp,
 } from "../icons/material-symbols";
 import {
+  HEATMAP_CHAR_CLASS_PREFIX,
+  HEATMAP_GRADIENT_STEPS,
+  HEATMAP_LINE_CLASS_PREFIX,
+  extractHeatmapGradientStep,
   parseReviewHeatmap,
   prepareDiffHeatmapArtifacts,
   renderDiffHeatmapFromArtifacts,
@@ -200,6 +207,29 @@ const filenameLanguageMap: Record<string, string> = {
 type RefractorLike = {
   highlight(code: string, language: string): unknown;
 };
+
+type HeatmapGradientStops = {
+  start: string;
+  end: string;
+};
+
+type HeatmapColorSettings = {
+  line: HeatmapGradientStops;
+  token: HeatmapGradientStops;
+};
+
+const DEFAULT_HEATMAP_COLORS: HeatmapColorSettings = {
+  line: {
+    start: "#fefce8",
+    end: "#f8e1c9",
+  },
+  token: {
+    start: "#fde047",
+    end: "#ffa270",
+  },
+};
+
+const HEATMAP_COLOR_STORAGE_KEY = "cmux:pr-diff-viewer:heatmap-colors";
 
 function createRefractorAdapter(base: RefractorLike) {
   const isNodeWithChildren = (
@@ -977,6 +1007,55 @@ export function PullRequestDiffViewer({
 
   const [heatmapThresholdInput, setHeatmapThresholdInput] = useState(0);
   const heatmapThreshold = useDeferredValue(heatmapThresholdInput);
+  const [heatmapColors, setHeatmapColors] = useState<HeatmapColorSettings>(
+    DEFAULT_HEATMAP_COLORS
+  );
+  const [, startHeatmapColorTransition] = useTransition();
+  const deferredHeatmapColors = useDeferredValue(heatmapColors);
+  const clipboard = useClipboard({ timeout: 2000 });
+  const handleHeatmapColorsChange = useCallback(
+    (next: HeatmapColorSettings) => {
+      startHeatmapColorTransition(() => {
+        setHeatmapColors(next);
+      });
+    },
+    [startHeatmapColorTransition]
+  );
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    try {
+      const raw = window.localStorage.getItem(HEATMAP_COLOR_STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      const normalized = normalizeHeatmapColorSettings(parsed);
+      if (normalized) {
+        startHeatmapColorTransition(() => {
+          setHeatmapColors(normalized);
+        });
+      }
+    } catch (error) {
+      console.error("[heatmap-colors] Failed to load settings", error);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    try {
+      window.localStorage.setItem(
+        HEATMAP_COLOR_STORAGE_KEY,
+        JSON.stringify(heatmapColors)
+      );
+    } catch (error) {
+      console.error("[heatmap-colors] Failed to persist settings", error);
+    }
+  }, [heatmapColors]);
 
   const [isNotificationSupported, setIsNotificationSupported] = useState(false);
   const [notificationPermission, setNotificationPermission] =
@@ -1924,6 +2003,41 @@ export function PullRequestDiffViewer({
     return kitties[Math.floor(Math.random() * kitties.length)];
   }, []);
 
+  const heatmapGradientCss = useMemo(
+    () => buildHeatmapGradientStyles(deferredHeatmapColors),
+    [deferredHeatmapColors]
+  );
+  const handleCopyHeatmapConfig = useCallback(() => {
+    const compact = JSON.stringify(heatmapColors);
+    clipboard.copy(compact);
+  }, [clipboard, heatmapColors]);
+
+  const handlePromptLoadColors = useCallback(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const existing = JSON.stringify(heatmapColors, null, 2);
+    const input = window.prompt(
+      "Paste heatmap color configuration JSON",
+      existing
+    );
+    if (input === null) {
+      return;
+    }
+    try {
+      const parsed = JSON.parse(input);
+      const normalized = normalizeHeatmapColorSettings(parsed);
+      if (!normalized) {
+        window.alert?.("Invalid configuration. Please verify the JSON shape.");
+        return;
+      }
+      handleHeatmapColorsChange(normalized);
+    } catch (error) {
+      console.error("[heatmap-colors] Invalid configuration", error);
+      window.alert?.("Invalid configuration. Please verify the JSON content.");
+    }
+  }, [handleHeatmapColorsChange, heatmapColors]);
+
   if (totalFileCount === 0) {
     return (
       <div className="border border-neutral-200 bg-white p-8 text-sm text-neutral-600">
@@ -1933,7 +2047,12 @@ export function PullRequestDiffViewer({
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <>
+      <style
+        data-heatmap-gradient
+        dangerouslySetInnerHTML={{ __html: heatmapGradientCss }}
+      />
+      <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0">
         <aside
           id={sidebarPanelId}
@@ -1958,6 +2077,11 @@ export function PullRequestDiffViewer({
             <HeatmapThresholdControl
               value={heatmapThresholdInput}
               onChange={setHeatmapThresholdInput}
+              colors={heatmapColors}
+              onColorsChange={handleHeatmapColorsChange}
+              onCopyStyles={handleCopyHeatmapConfig}
+              onLoadConfig={handlePromptLoadColors}
+              copyStatus={clipboard.copied}
             />
             <CmuxPromoCard />
             {targetCount > 0 ? (
@@ -2089,6 +2213,7 @@ export function PullRequestDiffViewer({
         </div>
       </div>
     </div>
+    </>
   );
 }
 
@@ -2236,12 +2361,36 @@ function CmuxPromoCard() {
   );
 }
 
+const COLOR_SECTION_METADATA: Record<
+  keyof HeatmapColorSettings,
+  { title: string; helper: string }
+> = {
+  line: {
+    title: "Line highlight gradient",
+    helper: "",
+  },
+  token: {
+    title: "Token highlight gradient",
+    helper: "",
+  },
+};
+
 function HeatmapThresholdControl({
   value,
   onChange,
+  colors,
+  onColorsChange,
+  onCopyStyles,
+  onLoadConfig,
+  copyStatus,
 }: {
   value: number;
   onChange: (next: number) => void;
+  colors: HeatmapColorSettings;
+  onColorsChange: (next: HeatmapColorSettings) => void;
+  onCopyStyles: () => void;
+  onLoadConfig: () => void;
+  copyStatus: boolean;
 }) {
   const sliderId = useId();
   const descriptionId = `${sliderId}-description`;
@@ -2257,6 +2406,24 @@ function HeatmapThresholdControl({
       onChange(normalized);
     },
     [onChange]
+  );
+
+  const handleColorChange = useCallback(
+    (section: keyof HeatmapColorSettings, stop: keyof HeatmapGradientStops) =>
+      (event: ChangeEvent<HTMLInputElement>) => {
+        const nextValue = event.target.value;
+        if (!isValidHexColor(nextValue) || nextValue === colors[section][stop]) {
+          return;
+        }
+        onColorsChange({
+          ...colors,
+          [section]: {
+            ...colors[section],
+            [stop]: nextValue,
+          },
+        });
+      },
+    [colors, onColorsChange]
   );
 
   return (
@@ -2287,6 +2454,58 @@ function HeatmapThresholdControl({
       <p id={descriptionId} className="mt-2 text-xs text-neutral-500">
         Only show heatmap highlights with a score at or above this value.
       </p>
+      <div className="mt-4 space-y-5">
+        {(Object.keys(COLOR_SECTION_METADATA) as Array<
+          keyof HeatmapColorSettings
+        >).map((section) => {
+          const meta = COLOR_SECTION_METADATA[section];
+          return (
+            <div key={section} className="space-y-2">
+              <p className="text-xs font-semibold text-neutral-700">
+                {meta.title}
+              </p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label className="flex items-center justify-between gap-3 text-xs font-medium text-neutral-700">
+                  <span className="flex-1 text-left">Low score</span>
+                  <input
+                    type="color"
+                    value={colors[section].start}
+                    onChange={handleColorChange(section, "start")}
+                    className="h-8 w-16 cursor-pointer rounded border border-neutral-300 bg-transparent p-0"
+                    aria-label={`${meta.title} low score color`}
+                  />
+                </label>
+                <label className="flex items-center justify-between gap-3 text-xs font-medium text-neutral-700">
+                  <span className="flex-1 text-left">High score</span>
+                  <input
+                    type="color"
+                    value={colors[section].end}
+                    onChange={handleColorChange(section, "end")}
+                    className="h-8 w-16 cursor-pointer rounded border border-neutral-300 bg-transparent p-0"
+                    aria-label={`${meta.title} high score color`}
+                  />
+                </label>
+              </div>
+            </div>
+          );
+        })}
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={onCopyStyles}
+            className="inline-flex items-center justify-center rounded border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500"
+          >
+            {copyStatus ? "Copied!" : "Copy config"}
+          </button>
+          <button
+            type="button"
+            onClick={onLoadConfig}
+            className="inline-flex items-center justify-center rounded border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500"
+          >
+            Load config
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2498,17 +2717,7 @@ function FileTreeNavigator({
   );
 }
 
-function FileDiffCard({
-  entry,
-  isActive,
-  review,
-  diffHeatmap,
-  focusedLine,
-  focusedChangeKey,
-  autoTooltipLine,
-  isLoading,
-  streamState,
-}: {
+type FileDiffCardProps = {
   entry: ParsedFileDiff;
   isActive: boolean;
   review: FileOutput | null;
@@ -2518,7 +2727,19 @@ function FileDiffCard({
   autoTooltipLine: DiffLineLocation | null;
   isLoading: boolean;
   streamState: StreamFileState | null;
-}) {
+};
+
+const FileDiffCard = memo(function FileDiffCardComponent({
+  entry,
+  isActive,
+  review,
+  diffHeatmap,
+  focusedLine,
+  focusedChangeKey,
+  autoTooltipLine,
+  isLoading,
+  streamState,
+}: FileDiffCardProps) {
   const { file, diff, anchorId, error } = entry;
   const cardRef = useRef<HTMLElement | null>(null);
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -2633,7 +2854,7 @@ function FileDiffCard({
           className &&
           lineNumber !== null &&
           (className.includes("cmux-heatmap-char") ||
-            className.includes("cmux-heatmap-char-tier"))
+            className.includes(HEATMAP_CHAR_CLASS_PREFIX))
         ) {
           const tooltipMeta = selectTooltipMeta(
             className,
@@ -2932,9 +3153,11 @@ function FileDiffCard({
                         bestHeatmapClass = candidate;
                         return;
                       }
-                      const currentTier = extractHeatmapTier(bestHeatmapClass);
-                      const nextTier = extractHeatmapTier(candidate);
-                      if (nextTier > currentTier) {
+                      const currentStep = extractHeatmapGradientStep(
+                        bestHeatmapClass
+                      );
+                      const nextStep = extractHeatmapGradientStep(candidate);
+                      if (nextStep > currentStep) {
                         bestHeatmapClass = candidate;
                       }
                     };
@@ -2985,6 +3208,36 @@ function FileDiffCard({
         </div>
       </article>
     </TooltipProvider>
+  );
+}, areFileDiffCardPropsEqual);
+
+function areDiffLineLocationsEqual(
+  a: DiffLineLocation | null,
+  b: DiffLineLocation | null
+): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (!a || !b) {
+    return false;
+  }
+  return a.side === b.side && a.lineNumber === b.lineNumber;
+}
+
+function areFileDiffCardPropsEqual(
+  prev: FileDiffCardProps,
+  next: FileDiffCardProps
+): boolean {
+  return (
+    prev.entry === next.entry &&
+    prev.isActive === next.isActive &&
+    prev.review === next.review &&
+    prev.diffHeatmap === next.diffHeatmap &&
+    prev.focusedChangeKey === next.focusedChangeKey &&
+    prev.isLoading === next.isLoading &&
+    prev.streamState === next.streamState &&
+    areDiffLineLocationsEqual(prev.focusedLine, next.focusedLine) &&
+    areDiffLineLocationsEqual(prev.autoTooltipLine, next.autoTooltipLine)
   );
 }
 
@@ -3119,16 +3372,6 @@ function getHeatmapTooltipTheme(score: number): HeatmapTooltipTheme {
         reasonClass: "text-neutral-300",
       };
   }
-}
-
-function extractHeatmapTier(className: string): number {
-  const match = className.match(/cmux-heatmap-tier-(\d+)/);
-  if (!match) {
-    return 0;
-  }
-
-  const parsed = Number.parseInt(match[1] ?? "0", 10);
-  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function _extractAutomatedReviewText(value: unknown): string | null {
@@ -3453,4 +3696,169 @@ function buildRenameMissingDiffMessage(file: GithubFileChange): string {
     return `File renamed from ${previousPath} to ${file.filename}.`;
   }
   return "File renamed without diff details.";
+}
+
+type RgbColor = {
+  r: number;
+  g: number;
+  b: number;
+};
+
+function normalizeHeatmapColorSettings(value: unknown): HeatmapColorSettings | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const line = normalizeHeatmapGradientStops(record.line);
+  const token = normalizeHeatmapGradientStops(record.token);
+  if (!line || !token) {
+    return null;
+  }
+  return { line, token };
+}
+
+function normalizeHeatmapGradientStops(value: unknown): HeatmapGradientStops | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const record = value as { start?: unknown; end?: unknown };
+  const start = typeof record.start === "string" ? normalizeHexColor(record.start) : null;
+  const end = typeof record.end === "string" ? normalizeHexColor(record.end) : null;
+  if (!start || !end) {
+    return null;
+  }
+  return { start, end };
+}
+
+function normalizeHexColor(value: string): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const withHash = trimmed.startsWith("#") ? trimmed : `#${trimmed}`;
+  return isValidHexColor(withHash) ? withHash.toLowerCase() : null;
+}
+
+function buildHeatmapGradientStyles(colors: HeatmapColorSettings): string {
+  const fallbackLineStart =
+    parseHexColor(DEFAULT_HEATMAP_COLORS.line.start) ?? {
+      r: 254,
+      g: 249,
+      b: 195,
+    };
+  const fallbackLineEnd =
+    parseHexColor(DEFAULT_HEATMAP_COLORS.line.end) ?? {
+      r: 253,
+      g: 186,
+      b: 116,
+    };
+  const fallbackTokenStart =
+    parseHexColor(DEFAULT_HEATMAP_COLORS.token.start) ?? {
+      r: 253,
+      g: 224,
+      b: 71,
+    };
+  const fallbackTokenEnd =
+    parseHexColor(DEFAULT_HEATMAP_COLORS.token.end) ?? {
+      r: 234,
+      g: 88,
+      b: 12,
+    };
+
+  const lineStart = parseHexColor(colors.line.start) ?? fallbackLineStart;
+  const lineEnd = parseHexColor(colors.line.end) ?? fallbackLineEnd;
+  const tokenStart = parseHexColor(colors.token.start) ?? fallbackTokenStart;
+  const tokenEnd = parseHexColor(colors.token.end) ?? fallbackTokenEnd;
+  const steps = HEATMAP_GRADIENT_STEPS;
+  const rules: string[] = [];
+
+  for (let step = 1; step <= steps; step += 1) {
+    const ratio = step / steps;
+    const mixedLine = mixRgb(lineStart, lineEnd, ratio);
+    const mixedToken = mixRgb(tokenStart, tokenEnd, ratio);
+    const lineAlpha = clampAlpha(0.35 + 0.3 * ratio);
+    const charAlpha = clampAlpha(0.55 + 0.25 * ratio);
+    const lineColor = rgbaString(mixedLine, lineAlpha);
+    const charColor = rgbaString(mixedToken, charAlpha);
+    const charTextColor = getContrastingTextColor(mixedToken);
+
+    rules.push(
+      `.${HEATMAP_LINE_CLASS_PREFIX}-${step} .diff-gutter, .${HEATMAP_LINE_CLASS_PREFIX}-${step} .diff-code { box-shadow: inset 0 0 0 999px ${lineColor}; }`
+    );
+    rules.push(
+      `.${HEATMAP_CHAR_CLASS_PREFIX}-${step} { background-color: ${charColor}; color: ${charTextColor}; }`
+    );
+  }
+
+  return rules.join("\n");
+}
+
+function parseHexColor(value: string): RgbColor | null {
+  if (!isValidHexColor(value)) {
+    return null;
+  }
+  const normalized = value.replace("#", "");
+  if (normalized.length === 3) {
+    const [r, g, b] = normalized
+      .split("")
+      .map((char) => Number.parseInt(char.repeat(2), 16));
+    if (r === undefined || g === undefined || b === undefined) {
+      return null;
+    }
+    return { r, g, b };
+  }
+  const r = Number.parseInt(normalized.slice(0, 2), 16);
+  const g = Number.parseInt(normalized.slice(2, 4), 16);
+  const b = Number.parseInt(normalized.slice(4, 6), 16);
+  if (
+    Number.isNaN(r) ||
+    Number.isNaN(g) ||
+    Number.isNaN(b)
+  ) {
+    return null;
+  }
+  return { r, g, b };
+}
+
+function mixRgb(start: RgbColor, end: RgbColor, ratio: number): RgbColor {
+  const clampRatio = Math.min(Math.max(ratio, 0), 1);
+  const lerp = (a: number, b: number) =>
+    Math.round(a + (b - a) * clampRatio);
+  return {
+    r: lerp(start.r, end.r),
+    g: lerp(start.g, end.g),
+    b: lerp(start.b, end.b),
+  };
+}
+
+function rgbaString(color: RgbColor, alpha: number): string {
+  return `rgba(${color.r}, ${color.g}, ${color.b}, ${alpha.toFixed(3)})`;
+}
+
+function clampAlpha(value: number): number {
+  if (Number.isNaN(value)) {
+    return 0;
+  }
+  return Math.min(Math.max(value, 0.1), 0.85);
+}
+
+function getContrastingTextColor(color: RgbColor): string {
+  const normalized = {
+    r: color.r / 255,
+    g: color.g / 255,
+    b: color.b / 255,
+  };
+  const luminance =
+    0.2126 * normalized.r +
+    0.7152 * normalized.g +
+    0.0722 * normalized.b;
+  return luminance > 0.6 ? "#1f2937" : "#fefefe";
+}
+
+function isValidHexColor(value: string): boolean {
+  return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(value);
 }
