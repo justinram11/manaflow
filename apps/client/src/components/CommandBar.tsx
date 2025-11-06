@@ -303,7 +303,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
           return b.createdAt - a.createdAt;
         })
         .map((env) => ({
-          type: "environment" as const,
+          type: "environment",
           environmentId: env._id,
           name: env.name,
           keywords: compactStrings([
@@ -318,7 +318,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
 
     // Add repo-based cloud workspaces
     const repoOptions: CloudWorkspaceOption[] = localWorkspaceOptions.map((repo) => ({
-      type: "repo" as const,
+      type: "repo",
       fullName: repo.fullName,
       repoBaseName: repo.repoBaseName,
       keywords: repo.keywords,
