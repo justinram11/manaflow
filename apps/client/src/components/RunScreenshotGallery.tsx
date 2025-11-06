@@ -203,11 +203,11 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                         <ChevronLeft className="h-5 w-5" />
                       </button>
                     ) : null}
-                    <div className="relative flex max-h-[70vh] flex-1 items-center justify-center overflow-hidden border border-neutral-200 bg-neutral-50 p-2 dark:border-neutral-800 dark:bg-neutral-900">
+                    <div className="relative flex max-h-[70vh] flex-1 items-center justify-center border border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-800 dark:bg-neutral-900">
                       <img
                         src={currentEntry.image.url ?? undefined}
                         alt={currentEntry.image.fileName ?? "Screenshot"}
-                        className="max-h-full w-full object-contain"
+                        className="max-h-[calc(70vh-2rem)] max-w-full object-contain"
                       />
                     </div>
                     {flattenedImages.length > 1 ? (
