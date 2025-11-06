@@ -47,11 +47,38 @@ const STATUS_STYLES: Record<ScreenshotStatus, string> = {
 
 export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
   const { screenshotSets, highlightedSetId } = props;
-  const hasScreenshots = screenshotSets.length > 0;
+  if (!screenshotSets || screenshotSets.length === 0) {
+    return null;
+  }
+  return (
+    <RunScreenshotGalleryContent
+      screenshotSets={screenshotSets}
+      highlightedSetId={highlightedSetId}
+    />
+  );
+}
+
+interface RunScreenshotGalleryContentProps {
+  screenshotSets: RunScreenshotSet[];
+  highlightedSetId?: Id<"taskRunScreenshotSets"> | null;
+}
+
+function RunScreenshotGalleryContent(props: RunScreenshotGalleryContentProps) {
+  const { screenshotSets, highlightedSetId } = props;
+  const sortedScreenshotSets = useMemo(
+    () =>
+      [...screenshotSets].sort((a, b) => {
+        if (a.capturedAt === b.capturedAt) {
+          return a._id.localeCompare(b._id);
+        }
+        return a.capturedAt - b.capturedAt;
+      }),
+    [screenshotSets],
+  );
 
   const flattenedImages = useMemo(
     () =>
-      screenshotSets.flatMap((set) =>
+      sortedScreenshotSets.flatMap((set) =>
         set.images.flatMap((image, indexInSet) =>
           image.url
             ? [
@@ -64,7 +91,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
             : [],
         ),
       ),
-    [screenshotSets],
+    [sortedScreenshotSets],
   );
 
   const [activeImageIndex, setActiveImageIndex] = useState<number | null>(null);
@@ -79,7 +106,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
   const effectiveHighlight =
     highlightedSetId ??
     currentEntry?.set._id ??
-    (hasScreenshots ? screenshotSets[0]._id : null);
+    sortedScreenshotSets[sortedScreenshotSets.length - 1]?._id;
 
   useEffect(() => {
     if (activeImageIndex === null) {
@@ -145,10 +172,6 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
     };
   }, [goNext, goPrev, isSlideshowOpen]);
 
-  if (!hasScreenshots) {
-    return null;
-  }
-
   let runningImageIndex = -1;
 
   return (
@@ -158,8 +181,8 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
           Screenshots
         </h2>
         <span className="text-xs text-neutral-600 dark:text-neutral-400">
-          {screenshotSets.length}{" "}
-          {screenshotSets.length === 1 ? "capture" : "captures"}
+          {sortedScreenshotSets.length}{" "}
+          {sortedScreenshotSets.length === 1 ? "capture" : "captures"}
         </span>
       </div>
       <div className="px-3.5 pb-4 space-y-4">
@@ -241,7 +264,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
             </Dialog.Portal>
           </Dialog.Root>
         ) : null}
-        {screenshotSets.map((set) => {
+        {sortedScreenshotSets.map((set) => {
           const capturedAtDate = new Date(set.capturedAt);
           const relativeCapturedAt = formatDistanceToNow(capturedAtDate, {
             addSuffix: true,
