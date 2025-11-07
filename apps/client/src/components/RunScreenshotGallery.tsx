@@ -31,14 +31,6 @@ interface RunScreenshotGalleryProps {
   highlightedSetId?: Id<"taskRunScreenshotSets"> | null;
 }
 
-function makeImageKey(
-  setId: Id<"taskRunScreenshotSets">,
-  image: ScreenshotImage,
-  indexInSet: number,
-) {
-  return `${setId}:${image.storageId}:${indexInSet}`;
-}
-
 const STATUS_LABELS: Record<ScreenshotStatus, string> = {
   completed: "Completed",
   failed: "Failed",
@@ -83,7 +75,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
           set,
           image,
           indexInSet,
-          key: makeImageKey(set._id, image, indexInSet),
+          key: image.url as string,
           globalIndex: entries.length,
         });
       });
@@ -326,18 +318,19 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                   {set.images.length > 0 ? (
                 <div className="mt-3 flex gap-3 overflow-x-auto pb-1">
                   {set.images.map((image, indexInSet) => {
-                    const imageKey = makeImageKey(set._id, image, indexInSet);
                     const displayName = image.fileName ?? "Screenshot";
                     if (!image.url) {
+                      const placeholderKey = `${set._id}:${image.storageId}:${indexInSet}`;
                       return (
                         <div
-                          key={imageKey}
+                          key={placeholderKey}
                           className="flex h-48 min-w-[200px] items-center justify-center rounded-lg border border-dashed border-neutral-300 bg-neutral-100 text-xs text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400"
                         >
                           URL expired
                         </div>
                       );
                     }
+                    const imageKey = image.url;
                     const flatIndex = globalIndexByKey.get(imageKey) ?? -1;
                     const humanIndex = flatIndex >= 0 ? flatIndex + 1 : null;
 
