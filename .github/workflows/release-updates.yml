@@ -225,10 +225,21 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+      - name: Configure Bun install dir
+        run: |
+          set -euo pipefail
+          temp_dir="${RUNNER_TEMP:-}"
+          if [[ -z "$temp_dir" ]]; then
+            temp_dir="$(mktemp -d)"
+          fi
+          bun_install="$temp_dir/bun-${GITHUB_RUN_ID}-${GITHUB_JOB}"
+          mkdir -p "$bun_install"
+          echo "BUN_INSTALL=$bun_install" >> "$GITHUB_ENV"
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.2.21
+          no-cache: true
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -310,10 +321,21 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Configure Bun install dir
+        run: |
+          set -euo pipefail
+          temp_dir="${RUNNER_TEMP:-}"
+          if [[ -z "$temp_dir" ]]; then
+            temp_dir="$(mktemp -d)"
+          fi
+          bun_install="$temp_dir/bun-${GITHUB_RUN_ID}-${GITHUB_JOB}"
+          mkdir -p "$bun_install"
+          echo "BUN_INSTALL=$bun_install" >> "$GITHUB_ENV"
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.2.21
+          no-cache: true
 
       # x86_64 toolchain for node-gyp and friends
       - name: Ensure Rosetta (for x64 toolchain)

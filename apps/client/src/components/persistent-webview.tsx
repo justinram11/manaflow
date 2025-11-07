@@ -15,6 +15,8 @@ export interface PersistentWebViewProps {
   requestUrl?: string;
   className?: string;
   style?: CSSProperties;
+  persistentWrapperClassName?: string;
+  persistentWrapperStyle?: CSSProperties;
   preload?: boolean;
   allow?: string;
   sandbox?: string;
@@ -58,6 +60,8 @@ export function PersistentWebView({
   sandbox,
   iframeClassName,
   iframeStyle,
+  persistentWrapperClassName,
+  persistentWrapperStyle,
   suspended,
   retainOnUnmount: _retainOnUnmount,
   backgroundColor,
@@ -113,6 +117,8 @@ export function PersistentWebView({
       sandbox={sandbox}
       iframeClassName={iframeClassName}
       iframeStyle={iframeStyle}
+      persistentWrapperClassName={persistentWrapperClassName}
+      persistentWrapperStyle={persistentWrapperStyle}
       onLoad={onLoad}
       onError={onError}
       loadingFallback={fallback}

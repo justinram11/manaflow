@@ -1146,15 +1146,8 @@ function TaskRunTreeInner({
                       Port {port.port}
                     </ContextMenu.Item>
                   ))}
-                  <div className="my-1 h-px bg-neutral-200 dark:bg-neutral-700" />
                 </>
               ) : null}
-              <ContextMenu.Item
-                className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
-                onClick={() => setRunExpanded(run._id, !isExpanded)}
-              >
-                {isExpanded ? "Collapse details" : "Expand details"}
-              </ContextMenu.Item>
             </ContextMenu.Popup>
           </ContextMenu.Positioner>
         </ContextMenu.Portal>

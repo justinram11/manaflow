@@ -118,11 +118,19 @@ type LocalWorkspaceOption = {
   keywords: string[];
 };
 
-type CloudWorkspaceOption = {
-  environmentId: Id<"environments">;
-  name: string;
-  keywords: string[];
-};
+type CloudWorkspaceOption =
+  | {
+    type: "environment";
+    environmentId: Id<"environments">;
+    name: string;
+    keywords: string[];
+  }
+  | {
+    type: "repo";
+    fullName: string;
+    repoBaseName: string;
+    keywords: string[];
+  };
 
 type CommandListEntry = {
   value: string;
@@ -285,25 +293,42 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   const isLocalWorkspaceLoading = reposByOrg === undefined;
 
   const cloudWorkspaceOptions = useMemo<CloudWorkspaceOption[]>(() => {
-    if (!environments) return [];
-    return environments
-      .sort((a, b) => {
-        // Sort by creation time, most recent first
-        return b.createdAt - a.createdAt;
-      })
-      .map((env) => ({
-        environmentId: env._id,
-        name: env.name,
-        keywords: compactStrings([
-          env.name,
-          env.description,
-          env.morphSnapshotId,
-          ...(env.selectedRepos ?? []),
-        ]),
-      }));
-  }, [environments]);
+    const options: CloudWorkspaceOption[] = [];
 
-  const isCloudWorkspaceLoading = environments === undefined;
+    // Add environment-based cloud workspaces
+    if (environments) {
+      const envOptions: CloudWorkspaceOption[] = environments
+        .sort((a, b) => {
+          // Sort by creation time, most recent first
+          return b.createdAt - a.createdAt;
+        })
+        .map((env) => ({
+          type: "environment",
+          environmentId: env._id,
+          name: env.name,
+          keywords: compactStrings([
+            env.name,
+            env.description,
+            env.morphSnapshotId,
+            ...(env.selectedRepos ?? []),
+          ]),
+        }));
+      options.push(...envOptions);
+    }
+
+    // Add repo-based cloud workspaces
+    const repoOptions: CloudWorkspaceOption[] = localWorkspaceOptions.map((repo) => ({
+      type: "repo",
+      fullName: repo.fullName,
+      repoBaseName: repo.repoBaseName,
+      keywords: repo.keywords,
+    }));
+    options.push(...repoOptions);
+
+    return options;
+  }, [environments, localWorkspaceOptions]);
+
+  const isCloudWorkspaceLoading = environments === undefined || reposByOrg === undefined;
 
   const getClientSlug = useCallback((meta: unknown): string | undefined => {
     if (!isRecord(meta)) return undefined;
@@ -470,9 +495,9 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
 
                 const normalizedWorkspaceUrl = response.workspaceUrl
                   ? rewriteLocalWorkspaceUrlIfNeeded(
-                      response.workspaceUrl,
-                      localServeWeb.data?.baseUrl
-                    )
+                    response.workspaceUrl,
+                    localServeWeb.data?.baseUrl
+                  )
                   : null;
 
                 if (response.workspaceUrl && effectiveTaskRunId) {
@@ -557,7 +582,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     [closeCommand, createLocalWorkspace]
   );
 
-  const createCloudWorkspace = useCallback(
+  const createCloudWorkspaceFromEnvironment = useCallback(
     async (environmentId: Id<"environments">) => {
       if (isCreatingCloudWorkspace) {
         return;
@@ -639,12 +664,96 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     ]
   );
 
-  const handleCloudWorkspaceSelect = useCallback(
-    (environmentId: Id<"environments">) => {
-      closeCommand();
-      void createCloudWorkspace(environmentId);
+  const createCloudWorkspaceFromRepo = useCallback(
+    async (projectFullName: string) => {
+      if (isCreatingCloudWorkspace) {
+        return;
+      }
+      if (!socket) {
+        console.warn(
+          "Socket is not connected yet. Please try again momentarily."
+        );
+        return;
+      }
+
+      setIsCreatingCloudWorkspace(true);
+
+      try {
+        const repoUrl = `https://github.com/${projectFullName}.git`;
+
+        // Create task in Convex for repo-based cloud workspace
+        const taskId = await createTask({
+          teamSlugOrId,
+          text: `Cloud Workspace: ${projectFullName}`,
+          projectFullName,
+          baseBranch: undefined,
+          environmentId: undefined, // No environment for repo-based cloud workspaces
+          isCloudWorkspace: true,
+        });
+
+        // Hint the sidebar to auto-expand this task once it appears
+        addTaskToExpand(taskId);
+
+        await new Promise<void>((resolve) => {
+          socket.emit(
+            "create-cloud-workspace",
+            {
+              teamSlugOrId,
+              projectFullName,
+              repoUrl,
+              taskId,
+              theme,
+            },
+            async (response: CreateCloudWorkspaceResponse) => {
+              try {
+                if (response.success) {
+                  toast.success("Cloud workspace created successfully");
+                } else {
+                  toast.error(
+                    response.error || "Failed to create cloud workspace"
+                  );
+                }
+              } catch (callbackError) {
+                const message =
+                  callbackError instanceof Error
+                    ? callbackError.message
+                    : String(callbackError ?? "Unknown");
+                console.error("Failed to create cloud workspace", message);
+              } finally {
+                resolve();
+              }
+            }
+          );
+        });
+
+        console.log("Cloud workspace created:", taskId);
+      } catch (error) {
+        console.error("Error creating cloud workspace:", error);
+        toast.error("Failed to create cloud workspace");
+      } finally {
+        setIsCreatingCloudWorkspace(false);
+      }
     },
-    [closeCommand, createCloudWorkspace]
+    [
+      addTaskToExpand,
+      createTask,
+      isCreatingCloudWorkspace,
+      socket,
+      teamSlugOrId,
+      theme,
+    ]
+  );
+
+  const handleCloudWorkspaceSelect = useCallback(
+    (option: CloudWorkspaceOption) => {
+      closeCommand();
+      if (option.type === "environment") {
+        void createCloudWorkspaceFromEnvironment(option.environmentId);
+      } else {
+        void createCloudWorkspaceFromRepo(option.fullName);
+      }
+    },
+    [closeCommand, createCloudWorkspaceFromEnvironment, createCloudWorkspaceFromRepo]
   );
 
   useEffect(() => {
@@ -1134,25 +1243,25 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       },
       ...(isDevEnvironment
         ? [
-            {
-              value: "dev:webcontents",
-              label: "Debug WebContents",
-              keywords: ["debug", "devtools", "electron"],
-              searchText: buildSearchText(
-                "Debug WebContents",
-                ["debug", "electron"],
-                ["dev:webcontents"]
-              ),
-              className: baseCommandItemClassName,
-              execute: () => handleSelect("dev:webcontents"),
-              renderContent: () => (
-                <>
-                  <Bug className="h-4 w-4 text-neutral-500" />
-                  <span className="text-sm">Debug WebContents</span>
-                </>
-              ),
-            },
-          ]
+          {
+            value: "dev:webcontents",
+            label: "Debug WebContents",
+            keywords: ["debug", "devtools", "electron"],
+            searchText: buildSearchText(
+              "Debug WebContents",
+              ["debug", "electron"],
+              ["dev:webcontents"]
+            ),
+            className: baseCommandItemClassName,
+            execute: () => handleSelect("dev:webcontents"),
+            renderContent: () => (
+              <>
+                <Bug className="h-4 w-4 text-neutral-500" />
+                <span className="text-sm">Debug WebContents</span>
+              </>
+            ),
+          },
+        ]
         : []),
       {
         value: "home",
@@ -1292,177 +1401,177 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       },
       ...(stackUser
         ? [
-            {
-              value: "sign-out",
-              label: "Sign out",
-              keywords: ["logout", "sign out", "account"],
-              searchText: buildSearchText(
-                "Sign out",
-                ["logout", "account"],
-                ["sign-out"]
-              ),
-              className: baseCommandItemClassName,
-              execute: () => handleSelect("sign-out"),
-              renderContent: () => (
-                <>
-                  <LogOut className="h-4 w-4 text-neutral-500" />
-                  <span className="text-sm">Sign out</span>
-                </>
-              ),
-            },
-          ]
+          {
+            value: "sign-out",
+            label: "Sign out",
+            keywords: ["logout", "sign out", "account"],
+            searchText: buildSearchText(
+              "Sign out",
+              ["logout", "account"],
+              ["sign-out"]
+            ),
+            className: baseCommandItemClassName,
+            execute: () => handleSelect("sign-out"),
+            renderContent: () => (
+              <>
+                <LogOut className="h-4 w-4 text-neutral-500" />
+                <span className="text-sm">Sign out</span>
+              </>
+            ),
+          },
+        ]
         : []),
     ];
 
     const taskEntries =
       allTasks && allTasks.length > 0
         ? allTasks.slice(0, 9).flatMap<CommandListEntry>((task, index) => {
-            const title =
-              task.pullRequestTitle || task.text || `Task ${index + 1}`;
-            const keywords = compactStrings([
-              title,
-              task.text,
-              task.pullRequestTitle,
-              String(task._id),
-              `task ${index + 1}`,
-            ]);
-            const baseSearch = buildSearchText(title, keywords, [
-              `${index + 1}`,
-              `task:${task._id}`,
-            ]);
-            const statusLabel = task.isCompleted ? "completed" : "in progress";
-            const statusClassName = task.isCompleted
-              ? "text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
-              : "text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400";
-            const run = task.selectedTaskRun;
+          const title =
+            task.pullRequestTitle || task.text || `Task ${index + 1}`;
+          const keywords = compactStrings([
+            title,
+            task.text,
+            task.pullRequestTitle,
+            String(task._id),
+            `task ${index + 1}`,
+          ]);
+          const baseSearch = buildSearchText(title, keywords, [
+            `${index + 1}`,
+            `task:${task._id}`,
+          ]);
+          const statusLabel = task.isCompleted ? "completed" : "in progress";
+          const statusClassName = task.isCompleted
+            ? "text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+            : "text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400";
+          const run = task.selectedTaskRun;
 
-            const entriesForTask: CommandListEntry[] = [
-              {
-                value: `${index + 1}:task:${task._id}`,
-                label: title,
-                keywords,
-                searchText: baseSearch,
-                className: taskCommandItemClassName,
-                execute: () => handleSelect(`task:${task._id}`),
-                renderContent: () => (
-                  <>
-                    <span className="flex h-5 w-5 items-center justify-center rounded text-xs font-semibold bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600">
-                      {index + 1}
-                    </span>
-                    <span className="flex-1 truncate text-sm">{title}</span>
-                    <span className={statusClassName}>{statusLabel}</span>
-                  </>
-                ),
-              },
-            ];
+          const entriesForTask: CommandListEntry[] = [
+            {
+              value: `${index + 1}:task:${task._id}`,
+              label: title,
+              keywords,
+              searchText: baseSearch,
+              className: taskCommandItemClassName,
+              execute: () => handleSelect(`task:${task._id}`),
+              renderContent: () => (
+                <>
+                  <span className="flex h-5 w-5 items-center justify-center rounded text-xs font-semibold bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600">
+                    {index + 1}
+                  </span>
+                  <span className="flex-1 truncate text-sm">{title}</span>
+                  <span className={statusClassName}>{statusLabel}</span>
+                </>
+              ),
+            },
+          ];
 
-            if (run) {
-              const vsKeywords = [...keywords, "vs", "vscode"];
-              entriesForTask.push({
-                value: `${index + 1} vs:task:${task._id}`,
-                label: `${title} (VS)`,
-                keywords: vsKeywords,
-                searchText: buildSearchText(`${title} VS`, vsKeywords, [
-                  `${index + 1} vs`,
-                  `task:${task._id}:vs`,
-                ]),
-                className: taskCommandItemClassName,
-                execute: () => handleSelect(`task:${task._id}:vs`),
-                renderContent: () => (
-                  <>
-                    <span className="flex h-5 w-8 items-center justify-center rounded text-xs font-semibold bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600">
-                      {index + 1} VS
-                    </span>
-                    <span className="flex-1 truncate text-sm">{title}</span>
-                    <span className={statusClassName}>{statusLabel}</span>
-                  </>
-                ),
-              });
+          if (run) {
+            const vsKeywords = [...keywords, "vs", "vscode"];
+            entriesForTask.push({
+              value: `${index + 1} vs:task:${task._id}`,
+              label: `${title} (VS)`,
+              keywords: vsKeywords,
+              searchText: buildSearchText(`${title} VS`, vsKeywords, [
+                `${index + 1} vs`,
+                `task:${task._id}:vs`,
+              ]),
+              className: taskCommandItemClassName,
+              execute: () => handleSelect(`task:${task._id}:vs`),
+              renderContent: () => (
+                <>
+                  <span className="flex h-5 w-8 items-center justify-center rounded text-xs font-semibold bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600">
+                    {index + 1} VS
+                  </span>
+                  <span className="flex-1 truncate text-sm">{title}</span>
+                  <span className={statusClassName}>{statusLabel}</span>
+                </>
+              ),
+            });
 
-              const diffKeywords = [...keywords, "git", "diff"];
-              entriesForTask.push({
-                value: `${index + 1} git diff:task:${task._id}`,
-                label: `${title} (git diff)`,
-                keywords: diffKeywords,
-                searchText: buildSearchText(`${title} git diff`, diffKeywords, [
-                  `${index + 1} git diff`,
-                  `task:${task._id}:gitdiff`,
-                ]),
-                className: taskCommandItemClassName,
-                execute: () => handleSelect(`task:${task._id}:gitdiff`),
-                renderContent: () => (
-                  <>
-                    <span className="flex h-5 px-2 items-center justify-center rounded text-xs font-semibold bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600">
-                      {index + 1} git diff
-                    </span>
-                    <span className="flex-1 truncate text-sm">{title}</span>
-                    <span className={statusClassName}>{statusLabel}</span>
-                  </>
-                ),
-              });
-            }
+            const diffKeywords = [...keywords, "git", "diff"];
+            entriesForTask.push({
+              value: `${index + 1} git diff:task:${task._id}`,
+              label: `${title} (git diff)`,
+              keywords: diffKeywords,
+              searchText: buildSearchText(`${title} git diff`, diffKeywords, [
+                `${index + 1} git diff`,
+                `task:${task._id}:gitdiff`,
+              ]),
+              className: taskCommandItemClassName,
+              execute: () => handleSelect(`task:${task._id}:gitdiff`),
+              renderContent: () => (
+                <>
+                  <span className="flex h-5 px-2 items-center justify-center rounded text-xs font-semibold bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600">
+                    {index + 1} git diff
+                  </span>
+                  <span className="flex-1 truncate text-sm">{title}</span>
+                  <span className={statusClassName}>{statusLabel}</span>
+                </>
+              ),
+            });
+          }
 
-            return entriesForTask;
-          })
+          return entriesForTask;
+        })
         : [];
 
     const electronEntries = isElectron
       ? [
-          {
-            value: "updates:check",
-            label: "Check for Updates",
-            keywords: ["update", "version", "desktop"],
-            searchText: buildSearchText(
-              "Check for Updates",
-              ["update", "desktop"],
-              ["updates:check"]
-            ),
-            className: baseCommandItemClassName,
-            execute: () => handleSelect("updates:check"),
-            renderContent: () => (
-              <>
-                <RefreshCw className="h-4 w-4 text-neutral-500" />
-                <span className="text-sm">Check for Updates</span>
-              </>
-            ),
-          },
-          {
-            value: "logs:view",
-            label: "Logs: View",
-            keywords: ["logs", "view", "desktop"],
-            searchText: buildSearchText(
-              "Logs View",
-              ["logs", "view"],
-              ["logs:view"]
-            ),
-            className: baseCommandItemClassName,
-            execute: () => handleSelect("logs:view"),
-            renderContent: () => (
-              <>
-                <ScrollText className="h-4 w-4 text-blue-500" />
-                <span className="text-sm">Logs: View</span>
-              </>
-            ),
-          },
-          {
-            value: "logs:copy",
-            label: "Logs: Copy all",
-            keywords: ["logs", "copy"],
-            searchText: buildSearchText(
-              "Logs Copy",
-              ["logs", "copy"],
-              ["logs:copy"]
-            ),
-            className: baseCommandItemClassName,
-            execute: () => handleSelect("logs:copy"),
-            renderContent: () => (
-              <>
-                <ClipboardCopy className="h-4 w-4 text-violet-500" />
-                <span className="text-sm">Logs: Copy all</span>
-              </>
-            ),
-          },
-        ]
+        {
+          value: "updates:check",
+          label: "Check for Updates",
+          keywords: ["update", "version", "desktop"],
+          searchText: buildSearchText(
+            "Check for Updates",
+            ["update", "desktop"],
+            ["updates:check"]
+          ),
+          className: baseCommandItemClassName,
+          execute: () => handleSelect("updates:check"),
+          renderContent: () => (
+            <>
+              <RefreshCw className="h-4 w-4 text-neutral-500" />
+              <span className="text-sm">Check for Updates</span>
+            </>
+          ),
+        },
+        {
+          value: "logs:view",
+          label: "Logs: View",
+          keywords: ["logs", "view", "desktop"],
+          searchText: buildSearchText(
+            "Logs View",
+            ["logs", "view"],
+            ["logs:view"]
+          ),
+          className: baseCommandItemClassName,
+          execute: () => handleSelect("logs:view"),
+          renderContent: () => (
+            <>
+              <ScrollText className="h-4 w-4 text-blue-500" />
+              <span className="text-sm">Logs: View</span>
+            </>
+          ),
+        },
+        {
+          value: "logs:copy",
+          label: "Logs: Copy all",
+          keywords: ["logs", "copy"],
+          searchText: buildSearchText(
+            "Logs Copy",
+            ["logs", "copy"],
+            ["logs:copy"]
+          ),
+          className: baseCommandItemClassName,
+          execute: () => handleSelect("logs:copy"),
+          renderContent: () => (
+            <>
+              <ClipboardCopy className="h-4 w-4 text-violet-500" />
+              <span className="text-sm">Logs: Copy all</span>
+            </>
+          ),
+        },
+      ]
       : [];
 
     return [...baseEntries, ...taskEntries, ...electronEntries];
@@ -1474,9 +1583,9 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       const predictedWorkspaceName =
         predictedWorkspaceSequence !== null
           ? generateWorkspaceName({
-              repoName: option.repoBaseName,
-              sequence: predictedWorkspaceSequence,
-            })
+            repoName: option.repoBaseName,
+            sequence: predictedWorkspaceSequence,
+          })
           : null;
       return {
         value,
@@ -1512,28 +1621,68 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
 
   const cloudWorkspaceEntries = useMemo<CommandListEntry[]>(() => {
     return cloudWorkspaceOptions.map((option) => {
-      const value = `cloud-workspace:${option.environmentId}`;
-      return {
-        value,
-        label: option.name,
-        keywords: option.keywords,
-        searchText: buildSearchText(option.name, option.keywords, [
-          option.environmentId,
-        ]),
-        className: baseCommandItemClassName,
-        disabled: isCreatingCloudWorkspace,
-        execute: () => handleCloudWorkspaceSelect(option.environmentId),
-        renderContent: () => (
-          <>
-            <Server className="h-4 w-4 text-neutral-500" />
-            <div className="flex min-w-0 flex-1 flex-col">
-              <span className="truncate text-sm">{option.name}</span>
-            </div>
-          </>
-        ),
-      };
+      if (option.type === "environment") {
+        const value = `cloud-workspace-env:${option.environmentId}`;
+        return {
+          value,
+          label: option.name,
+          keywords: option.keywords,
+          searchText: buildSearchText(option.name, option.keywords, [
+            option.environmentId,
+          ]),
+          className: baseCommandItemClassName,
+          disabled: isCreatingCloudWorkspace,
+          execute: () => handleCloudWorkspaceSelect(option),
+          renderContent: () => (
+            <>
+              <Server className="h-4 w-4 text-neutral-500" />
+              <div className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-sm">{option.name}</span>
+              </div>
+            </>
+          ),
+        };
+      } else {
+        const value = `cloud-workspace-repo:${option.fullName}`;
+        const predictedWorkspaceName =
+          predictedWorkspaceSequence !== null
+            ? generateWorkspaceName({
+              repoName: option.repoBaseName,
+              sequence: predictedWorkspaceSequence,
+            })
+            : null;
+        return {
+          value,
+          label: option.fullName,
+          keywords: option.keywords,
+          searchText: buildSearchText(option.fullName, option.keywords, [
+            option.repoBaseName,
+          ]),
+          className: baseCommandItemClassName,
+          disabled: isCreatingCloudWorkspace,
+          execute: () => handleCloudWorkspaceSelect(option),
+          renderContent: () => (
+            <>
+              <GitHubIcon className="h-4 w-4 text-neutral-500" />
+              <div className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-sm">{option.fullName}</span>
+                {predictedWorkspaceName ? (
+                  <span className="truncate text-xs text-neutral-500 dark:text-neutral-400">
+                    {predictedWorkspaceName}
+                  </span>
+                ) : null}
+              </div>
+            </>
+          ),
+        };
+      }
     });
-  }, [cloudWorkspaceOptions, handleCloudWorkspaceSelect, isCreatingCloudWorkspace]);
+  }, [
+    cloudWorkspaceOptions,
+    handleCloudWorkspaceSelect,
+    isCreatingCloudWorkspace,
+    predictedWorkspaceSequence,
+  ]);
 
   const {
     history: rootSuggestionHistory,
@@ -1756,7 +1905,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     if (!listEl) return;
     const escapeValue =
       typeof window.CSS !== "undefined" &&
-      typeof window.CSS.escape === "function"
+        typeof window.CSS.escape === "function"
         ? window.CSS.escape(value)
         : value.replace(/["\\]/g, "\\$&");
     const selector = `[data-value="${escapeValue}"]`;
@@ -1919,8 +2068,8 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                     : "No matching repositories."
                   : activePage === "cloud-workspaces"
                     ? isCloudWorkspaceLoading
-                      ? "Loading environments…"
-                      : "No matching environments."
+                      ? "Loading workspaces…"
+                      : "No matching workspaces."
                     : "No results found."}
             </Command.Empty>
 
@@ -1959,7 +2108,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                       </Command.Group>
                     ) : null}
                     {localWorkspaceSuggestionsToRender.length > 0 &&
-                    localWorkspaceCommandsToRender.length > 0 ? (
+                      localWorkspaceCommandsToRender.length > 0 ? (
                       <div className="px-2">
                         <hr className="border-neutral-200 dark:border-neutral-800" />
                       </div>
@@ -1980,7 +2129,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
               <>
                 {isCloudWorkspaceLoading ? (
                   <div className={placeholderClassName}>
-                    Loading environments…
+                    Loading workspaces…
                   </div>
                 ) : (
                   <>
@@ -1992,7 +2141,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                       </Command.Group>
                     ) : null}
                     {cloudWorkspaceSuggestionsToRender.length > 0 &&
-                    cloudWorkspaceCommandsToRender.length > 0 ? (
+                      cloudWorkspaceCommandsToRender.length > 0 ? (
                       <div className="px-2">
                         <hr className="border-neutral-200 dark:border-neutral-800" />
                       </div>

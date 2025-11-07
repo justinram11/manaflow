@@ -25,6 +25,8 @@ interface PersistentIframeProps {
   sandbox?: string;
   iframeClassName?: string;
   iframeStyle?: CSSProperties;
+  persistentWrapperClassName?: string;
+  persistentWrapperStyle?: CSSProperties;
   onLoad?: () => void;
   onError?: (error: Error) => void;
   loadingFallback?: ReactNode;
@@ -75,6 +77,8 @@ export function PersistentIframe({
   sandbox,
   iframeClassName,
   iframeStyle,
+  persistentWrapperClassName,
+  persistentWrapperStyle,
   onLoad,
   onError,
   loadingFallback,
@@ -117,7 +121,7 @@ export function PersistentIframe({
       setStatus("error");
       onError?.(error);
     },
-    [clearLoadTimeout, onError],
+    [clearLoadTimeout, onError]
   );
 
   const {
@@ -190,6 +194,17 @@ export function PersistentIframe({
     status,
   ]);
 
+  const wrapperClassName = cn(iframeClassName, persistentWrapperClassName);
+  const wrapperStyle = useMemo(() => {
+    if (!iframeStyle && !persistentWrapperStyle) {
+      return undefined;
+    }
+    return {
+      ...(iframeStyle ?? {}),
+      ...(persistentWrapperStyle ?? {}),
+    };
+  }, [iframeStyle, persistentWrapperStyle]);
+
   useEffect(() => {
     if (forcedStatus && forcedStatus !== "loading") {
       clearLoadTimeout();
@@ -209,8 +224,8 @@ export function PersistentIframe({
     loadTimeoutRef.current = window.setTimeout(() => {
       handleError(
         new Error(
-          `Timed out loading iframe "${persistKey}" after ${loadTimeoutMs}ms`,
-        ),
+          `Timed out loading iframe "${persistKey}" after ${loadTimeoutMs}ms`
+        )
       );
     }, loadTimeoutMs);
 
@@ -232,15 +247,17 @@ export function PersistentIframe({
     preload,
     allow,
     sandbox,
-    className: iframeClassName,
-    style: iframeStyle,
+    className: wrapperClassName,
+    style: wrapperStyle,
     onLoad: handleLoad,
     onError: handleError,
   });
 
   // Hide non-expanded iframes when another panel is expanded
   useEffect(() => {
-    const wrapper = document.querySelector(`[data-iframe-key="${persistKey}"]`) as HTMLElement;
+    const wrapper = document.querySelector(
+      `[data-iframe-key="${persistKey}"]`
+    ) as HTMLElement;
     if (!wrapper) return;
 
     if (isAnyPanelExpanded && !isExpanded) {
@@ -316,7 +333,7 @@ export function PersistentIframe({
       overlay.style.top = "0";
       overlay.style.left = "0";
       overlay.style.pointerEvents = "none";
-      overlay.style.zIndex = "var(--z-overlay, 9999)";
+      overlay.style.zIndex = "var(--z-overlay)";
       overlay.style.visibility = "hidden";
       overlayRef.current = overlay;
       document.body.appendChild(overlay);
@@ -331,8 +348,8 @@ export function PersistentIframe({
     const resizeObserver =
       typeof ResizeObserver !== "undefined"
         ? new ResizeObserver(() => {
-          syncOverlayPosition();
-        })
+            syncOverlayPosition();
+          })
         : null;
     resizeObserver?.observe(target);
 
@@ -342,14 +359,14 @@ export function PersistentIframe({
     };
 
     scrollParents.forEach((parent) =>
-      parent.addEventListener("scroll", handleReposition, { passive: true }),
+      parent.addEventListener("scroll", handleReposition, { passive: true })
     );
     window.addEventListener("resize", handleReposition);
 
     return () => {
       resizeObserver?.disconnect();
       scrollParents.forEach((parent) =>
-        parent.removeEventListener("scroll", handleReposition),
+        parent.removeEventListener("scroll", handleReposition)
       );
       window.removeEventListener("resize", handleReposition);
       if (overlay) {
@@ -371,20 +388,20 @@ export function PersistentIframe({
   const overlayElement = overlayRef.current;
   const overlayContent = showErrorOverlay
     ? {
-      node: errorFallback,
-      className: cn(
-        "pointer-events-none flex h-full w-full items-center justify-center bg-neutral-50/90 dark:bg-neutral-950/90",
-        errorClassName,
-      ),
-    }
-    : showLoadingOverlay
-      ? {
-        node: loadingFallback,
+        node: errorFallback,
         className: cn(
-          "pointer-events-none flex h-full w-full items-center justify-center bg-neutral-50 dark:bg-neutral-950",
-          loadingClassName,
+          "pointer-events-none flex h-full w-full items-center justify-center bg-neutral-50/90 dark:bg-neutral-950/90",
+          errorClassName
         ),
       }
+    : showLoadingOverlay
+      ? {
+          node: loadingFallback,
+          className: cn(
+            "pointer-events-none flex h-full w-full items-center justify-center bg-neutral-50 dark:bg-neutral-950",
+            loadingClassName
+          ),
+        }
       : null;
 
   return (
@@ -396,18 +413,18 @@ export function PersistentIframe({
       />
       {overlayElement && overlayContent && shouldShowOverlay
         ? createPortal(
-          <div className={overlayContent.className}>
-            <div className="pointer-events-auto flex flex-col items-center gap-3 text-center">
-              {overlayContent.node}
-              {resumeMessage ? (
-                <p className="text-sm text-neutral-600 dark:text-neutral-300">
-                  {resumeMessage}
-                </p>
-              ) : null}
-            </div>
-          </div>,
-          overlayElement,
-        )
+            <div className={overlayContent.className}>
+              <div className="pointer-events-auto flex flex-col items-center gap-3 text-center">
+                {overlayContent.node}
+                {resumeMessage ? (
+                  <p className="text-sm text-neutral-600 dark:text-neutral-300">
+                    {resumeMessage}
+                  </p>
+                ) : null}
+              </div>
+            </div>,
+            overlayElement
+          )
         : null}
     </>
   );
