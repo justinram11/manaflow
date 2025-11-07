@@ -432,6 +432,16 @@ async function reportErrorToConvex(
       console.error(`[ORCHESTRATOR] Dev script failed: ${devResult.error}`);
     } else {
       console.log("[ORCHESTRATOR] Dev script started successfully");
+
+      // Focus on the dev window for cloud environment workspaces
+      if (config.hasDevScript && config.isCloudWorkspace) {
+        console.log(`[ORCHESTRATOR] Focusing on ${config.devWindowName} window...`);
+        await runCommand(
+          `tmux select-window -t cmux:${config.devWindowName}`,
+          { throwOnError: false }
+        );
+        console.log(`[ORCHESTRATOR] Focused on ${config.devWindowName} window`);
+      }
     }
 
     const hasError = Boolean(maintenanceResult.error || devResult.error);

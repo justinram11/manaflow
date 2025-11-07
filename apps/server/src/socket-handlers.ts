@@ -971,6 +971,8 @@ export function setupSocketHandlers(
         const {
           teamSlugOrId: requestedTeamSlugOrId,
           environmentId,
+          projectFullName,
+          repoUrl,
           taskId: providedTaskId,
         } = parsed.data;
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
@@ -1030,7 +1032,9 @@ export function setupSocketHandlers(
           const { postApiSandboxesStart } = await getWwwOpenApiModule();
 
           serverLogger.info(
-            `[create-cloud-workspace] Starting Morph sandbox for environment ${environmentId}`
+            environmentId
+              ? `[create-cloud-workspace] Starting Morph sandbox for environment ${environmentId}`
+              : `[create-cloud-workspace] Starting Morph sandbox for repo ${projectFullName}`
           );
 
           const startRes = await postApiSandboxesStart({
@@ -1044,7 +1048,10 @@ export function setupSocketHandlers(
               },
               taskRunId,
               taskRunJwt,
-              environmentId,
+              isCloudWorkspace: true,
+              ...(environmentId
+                ? { environmentId }
+                : { projectFullName, repoUrl }),
             },
           });
 
@@ -1101,7 +1108,9 @@ export function setupSocketHandlers(
           });
 
           serverLogger.info(
-            `Cloud workspace created successfully: ${taskId} for environment ${environmentId}`
+            environmentId
+              ? `Cloud workspace created successfully: ${taskId} for environment ${environmentId}`
+              : `Cloud workspace created successfully: ${taskId} for repo ${projectFullName}`
           );
         } catch (error) {
           serverLogger.error("Error creating cloud workspace:", error);

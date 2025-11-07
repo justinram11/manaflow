@@ -7,9 +7,12 @@
   --z-sticky: 50; /* sticky headers, lightweight modals */
   --z-modal: var(--z-sticky); /* generic modal surfaces sharing 50 */
 
-  --z-iframe: 9997; /* persistent iframes; just below overlays */
-  --z-overlay-behind: 9997; /* behind primary overlays */
-  --z-overlay: 9999; /* general overlays; sits below context menus/tooltips */
+  --z-iframe: 9000; /* persistent iframes; just below overlays */
+  --z-maximized: 9501; /* maximized persistent iframes; above overlays */
+  --z-maximized-iframe: 9502; /* maximized iframe; above maximized persistent iframes */
+  --z-overlay-behind: 9499; /* behind primary overlays */
+  --z-overlay: 9500; /* general overlays; sits below context menus/tooltips */
+  --z-persistent-iframe-container: 9999; /* container for persistent iframes */
   --z-context-menu: 10000; /* context menus */
   --z-popover: 10001; /* anchored popovers/sheets */
   --z-popover-hover: 10010; /* hover states within popovers */

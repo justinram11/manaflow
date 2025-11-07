@@ -9,7 +9,15 @@ import { FlexiblePanelLayout } from "@/components/FlexiblePanelLayout";
 import { TaskRunGitDiffPanel } from "@/components/TaskRunGitDiffPanel";
 import { RenderPanel } from "@/components/TaskPanelFactory";
 import { PanelConfigModal } from "@/components/PanelConfigModal";
-import { loadPanelConfig, savePanelConfig, getAvailablePanels, getActivePanelPositions, removePanelFromAllPositions, getCurrentLayoutPanels, PANEL_LABELS } from "@/lib/panel-config";
+import {
+  loadPanelConfig,
+  savePanelConfig,
+  getAvailablePanels,
+  getActivePanelPositions,
+  removePanelFromAllPositions,
+  getCurrentLayoutPanels,
+  PANEL_LABELS,
+} from "@/lib/panel-config";
 import type { PanelConfig, PanelType, PanelPosition } from "@/lib/panel-config";
 import {
   getTaskRunBrowserPersistKey,
@@ -37,7 +45,14 @@ import { convexQuery } from "@convex-dev/react-query";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Code2, Globe2, TerminalSquare, GitCompare, MessageCircle } from "lucide-react";
+import {
+  Plus,
+  Code2,
+  Globe2,
+  TerminalSquare,
+  GitCompare,
+  MessageCircle,
+} from "lucide-react";
 import z from "zod";
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 
@@ -73,19 +88,19 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
         convexQuery(api.taskRuns.getByTask, {
           teamSlugOrId: opts.params.teamSlugOrId,
           taskId: opts.params.taskId,
-        }),
+        })
       ),
       queryClient.ensureQueryData(
         convexQuery(api.tasks.getById, {
           teamSlugOrId: opts.params.teamSlugOrId,
           id: opts.params.taskId,
-        }),
+        })
       ),
       queryClient.ensureQueryData(
         convexQuery(api.crown.getCrownEvaluation, {
           teamSlugOrId: opts.params.teamSlugOrId,
           taskId: opts.params.taskId,
-        }),
+        })
       ),
     ]);
 
@@ -100,7 +115,7 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
       ? typedZid("taskRuns").safeParse(runIdParam)
       : null;
     const selectedRun = parsedRunId?.success
-      ? taskRunIndex.get(parsedRunId.data) ?? taskRuns[0]
+      ? (taskRunIndex.get(parsedRunId.data) ?? taskRuns[0])
       : taskRuns[0];
 
     const rawWorkspaceUrl = selectedRun?.vscode?.workspaceUrl ?? null;
@@ -123,7 +138,7 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
             baseUrl,
             contextKey: rawWorkspaceUrl,
             enabled: true,
-          }),
+          })
         );
       } catch (error) {
         console.error("Failed to preload terminal tabs", error);
@@ -153,7 +168,7 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
 });
 
 function buildTaskRunIndex(
-  runs: TaskRunListItem[],
+  runs: TaskRunListItem[]
 ): Map<TaskRunListItem["_id"], TaskRunListItem> {
   const index = new Map<TaskRunListItem["_id"], TaskRunListItem>();
   const stack = [...runs];
@@ -178,7 +193,11 @@ interface EmptyPanelSlotProps {
   onAddPanel: (position: PanelPosition, panelType: PanelType) => void;
 }
 
-function EmptyPanelSlot({ position, availablePanels, onAddPanel }: EmptyPanelSlotProps) {
+function EmptyPanelSlot({
+  position,
+  availablePanels,
+  onAddPanel,
+}: EmptyPanelSlotProps) {
   const [isOpen, setIsOpen] = useState(false);
 
   const getPanelIcon = (panelType: PanelType) => {
@@ -254,68 +273,77 @@ function TaskDetailPage() {
     convexQuery(api.tasks.getById, {
       teamSlugOrId,
       id: taskId,
-    }),
+    })
   );
   const { data: taskRuns } = useSuspenseQuery(
     convexQuery(api.taskRuns.getByTask, {
       teamSlugOrId,
       taskId,
-    }),
+    })
   );
   const { data: crownEvaluation } = useSuspenseQuery(
     convexQuery(api.crown.getCrownEvaluation, {
       teamSlugOrId,
       taskId,
-    }),
+    })
   );
 
-  const [panelConfig, setPanelConfig] = useState<PanelConfig>(() => loadPanelConfig());
-  const [expandedPanel, setExpandedPanel] = useState<PanelPosition | null>(null);
+  const [panelConfig, setPanelConfig] = useState<PanelConfig>(() =>
+    loadPanelConfig()
+  );
+  const [expandedPanel, setExpandedPanel] = useState<PanelPosition | null>(
+    null
+  );
   const [isPanelSettingsOpen, setIsPanelSettingsOpen] = useState(false);
-  const [iframeStatusByKey, setIframeStatusByKey] = useState<Record<string, IframeStatusEntry>>({});
+  const [iframeStatusByKey, setIframeStatusByKey] = useState<
+    Record<string, IframeStatusEntry>
+  >({});
   const previousSelectedRunIdRef = useRef<string | null>(null);
 
   const handleToggleExpand = useCallback((position: PanelPosition) => {
     setExpandedPanel((current) => (current === position ? null : position));
   }, []);
 
-  const handlePanelSwap = useCallback((fromPosition: PanelPosition, toPosition: PanelPosition) => {
-    // Use startTransition to mark this as a non-urgent update
-    // This helps React keep the UI stable during the swap
-    setPanelConfig(prev => {
-      const currentLayout = getCurrentLayoutPanels(prev);
-      const temp = currentLayout[fromPosition];
-      const newConfig = {
-        ...prev,
-        layouts: {
-          ...prev.layouts,
-          [prev.layoutMode]: {
-            ...currentLayout,
-            [fromPosition]: currentLayout[toPosition],
-            [toPosition]: temp,
+  const handlePanelSwap = useCallback(
+    (fromPosition: PanelPosition, toPosition: PanelPosition) => {
+      // Use startTransition to mark this as a non-urgent update
+      // This helps React keep the UI stable during the swap
+      setPanelConfig((prev) => {
+        const currentLayout = getCurrentLayoutPanels(prev);
+        const temp = currentLayout[fromPosition];
+        const newConfig = {
+          ...prev,
+          layouts: {
+            ...prev.layouts,
+            [prev.layoutMode]: {
+              ...currentLayout,
+              [fromPosition]: currentLayout[toPosition],
+              [toPosition]: temp,
+            },
           },
-        },
-      };
-      savePanelConfig(newConfig);
-      return newConfig;
-    });
+        };
+        savePanelConfig(newConfig);
+        return newConfig;
+      });
 
-    // Trigger resize events after React completes the swap
-    // Multiple RAF calls ensure all layout recalculations are done
-    requestAnimationFrame(() => {
+      // Trigger resize events after React completes the swap
+      // Multiple RAF calls ensure all layout recalculations are done
       requestAnimationFrame(() => {
-        window.dispatchEvent(new Event('resize'));
-        // Third RAF to ensure iframes have repositioned
         requestAnimationFrame(() => {
-          window.dispatchEvent(new Event('resize'));
+          window.dispatchEvent(new Event("resize"));
+          // Third RAF to ensure iframes have repositioned
+          requestAnimationFrame(() => {
+            window.dispatchEvent(new Event("resize"));
+          });
         });
       });
-    });
-  }, []);
+    },
+    []
+  );
 
   const handlePanelClose = useCallback((position: PanelPosition) => {
     setExpandedPanel((current) => (current === position ? null : current));
-    setPanelConfig(prev => {
+    setPanelConfig((prev) => {
       const currentLayout = getCurrentLayoutPanels(prev);
       const newConfig = {
         ...prev,
@@ -333,52 +361,58 @@ function TaskDetailPage() {
     // Trigger resize event to help iframes reposition correctly
     // Use requestAnimationFrame to ensure React has finished re-rendering
     requestAnimationFrame(() => {
-      window.dispatchEvent(new Event('resize'));
+      window.dispatchEvent(new Event("resize"));
       // Double RAF to ensure layout is complete
       requestAnimationFrame(() => {
-        window.dispatchEvent(new Event('resize'));
+        window.dispatchEvent(new Event("resize"));
       });
     });
   }, []);
 
-  const handleAddPanel = useCallback((position: PanelPosition, panelType: PanelType) => {
-    setPanelConfig(prev => {
-      // First, remove the panel from all positions to prevent duplicates
-      const newConfigWithoutPanel = removePanelFromAllPositions(prev, panelType);
-      // Then add it to the target position in the current layout
-      const updatedLayout = newConfigWithoutPanel.layouts[prev.layoutMode];
-      const newConfig = {
-        ...newConfigWithoutPanel,
-        layouts: {
-          ...newConfigWithoutPanel.layouts,
-          [prev.layoutMode]: {
-            ...updatedLayout,
-            [position]: panelType,
+  const handleAddPanel = useCallback(
+    (position: PanelPosition, panelType: PanelType) => {
+      setPanelConfig((prev) => {
+        // First, remove the panel from all positions to prevent duplicates
+        const newConfigWithoutPanel = removePanelFromAllPositions(
+          prev,
+          panelType
+        );
+        // Then add it to the target position in the current layout
+        const updatedLayout = newConfigWithoutPanel.layouts[prev.layoutMode];
+        const newConfig = {
+          ...newConfigWithoutPanel,
+          layouts: {
+            ...newConfigWithoutPanel.layouts,
+            [prev.layoutMode]: {
+              ...updatedLayout,
+              [position]: panelType,
+            },
           },
-        },
-      };
-      savePanelConfig(newConfig);
-      return newConfig;
-    });
-    // Trigger resize event to help iframes reposition correctly
-    // Use requestAnimationFrame to ensure React has finished re-rendering
-    requestAnimationFrame(() => {
-      window.dispatchEvent(new Event('resize'));
-      // Double RAF to ensure layout is complete
-      requestAnimationFrame(() => {
-        window.dispatchEvent(new Event('resize'));
+        };
+        savePanelConfig(newConfig);
+        return newConfig;
       });
-    });
-  }, []);
+      // Trigger resize event to help iframes reposition correctly
+      // Use requestAnimationFrame to ensure React has finished re-rendering
+      requestAnimationFrame(() => {
+        window.dispatchEvent(new Event("resize"));
+        // Double RAF to ensure layout is complete
+        requestAnimationFrame(() => {
+          window.dispatchEvent(new Event("resize"));
+        });
+      });
+    },
+    []
+  );
 
   const handlePanelConfigChange = useCallback((newConfig: PanelConfig) => {
     setPanelConfig(newConfig);
     savePanelConfig(newConfig);
     // Trigger resize event to help iframes reposition correctly
     requestAnimationFrame(() => {
-      window.dispatchEvent(new Event('resize'));
+      window.dispatchEvent(new Event("resize"));
       requestAnimationFrame(() => {
-        window.dispatchEvent(new Event('resize'));
+        window.dispatchEvent(new Event("resize"));
       });
     });
   }, []);
@@ -393,7 +427,7 @@ function TaskDetailPage() {
 
   const taskRunIndex = useMemo(
     () => (taskRuns ? buildTaskRunIndex(taskRuns) : new Map()),
-    [taskRuns],
+    [taskRuns]
   );
 
   const selectedRun = useMemo(() => {
@@ -401,7 +435,7 @@ function TaskDetailPage() {
       return null;
     }
     const runFromSearch = search.runId
-      ? taskRunIndex.get(search.runId) ?? null
+      ? (taskRunIndex.get(search.runId) ?? null)
       : null;
     if (runFromSearch) {
       return runFromSearch;
@@ -440,7 +474,11 @@ function TaskDetailPage() {
   }, [selectedRunId, workspaceUrl]);
 
   const updateIframeStatus = useCallback(
-    (persistKey: string | null, url: string | null, status: PersistentIframeStatus) => {
+    (
+      persistKey: string | null,
+      url: string | null,
+      status: PersistentIframeStatus
+    ) => {
       if (!persistKey) {
         return;
       }
@@ -449,7 +487,12 @@ function TaskDetailPage() {
         if (current && current.status === status && current.url === url) {
           return prev;
         }
-        if (current && current.status === "loaded" && status === "loading" && current.url === url) {
+        if (
+          current &&
+          current.status === "loaded" &&
+          status === "loading" &&
+          current.url === url
+        ) {
           return prev;
         }
         return {
@@ -461,14 +504,14 @@ function TaskDetailPage() {
         };
       });
     },
-    [],
+    []
   );
 
   const handleWorkspaceStatusChange = useCallback(
     (status: PersistentIframeStatus) => {
       updateIframeStatus(workspacePersistKey, workspaceUrl, status);
     },
-    [updateIframeStatus, workspacePersistKey, workspaceUrl],
+    [updateIframeStatus, workspacePersistKey, workspaceUrl]
   );
 
   const onEditorLoad = useCallback(() => {
@@ -477,27 +520,34 @@ function TaskDetailPage() {
     }
   }, [selectedRunId]);
 
-  const onEditorError = useCallback((error: Error) => {
-    if (selectedRunId) {
-      console.error(`Failed to load workspace view for task run ${selectedRunId}:`, error);
-    }
-  }, [selectedRunId]);
+  const onEditorError = useCallback(
+    (error: Error) => {
+      if (selectedRunId) {
+        console.error(
+          `Failed to load workspace view for task run ${selectedRunId}:`,
+          error
+        );
+      }
+    },
+    [selectedRunId]
+  );
 
   const isLocalWorkspace = selectedRun?.vscode?.provider === "other";
 
   const editorLoadingFallback = useMemo(
     () =>
-      isLocalWorkspace
-        ? null
-        : <WorkspaceLoadingIndicator variant="vscode" status="loading" />,
-    [isLocalWorkspace],
+      isLocalWorkspace ? null : (
+        <WorkspaceLoadingIndicator variant="vscode" status="loading" />
+      ),
+    [isLocalWorkspace]
   );
   const editorErrorFallback = useMemo(
     () => <WorkspaceLoadingIndicator variant="vscode" status="error" />,
-    [],
+    []
   );
 
-  const rawBrowserUrl = selectedRun?.vscode?.url ?? selectedRun?.vscode?.workspaceUrl ?? null;
+  const rawBrowserUrl =
+    selectedRun?.vscode?.url ?? selectedRun?.vscode?.workspaceUrl ?? null;
   const browserUrl = useMemo(() => {
     if (!rawBrowserUrl) {
       return null;
@@ -514,24 +564,26 @@ function TaskDetailPage() {
     (status: PersistentIframeStatus) => {
       updateIframeStatus(browserPersistKey, browserUrl, status);
     },
-    [updateIframeStatus, browserPersistKey, browserUrl],
+    [updateIframeStatus, browserPersistKey, browserUrl]
   );
 
   const editorStatus = workspacePersistKey
-    ? iframeStatusByKey[workspacePersistKey]?.status ?? "loading"
+    ? (iframeStatusByKey[workspacePersistKey]?.status ?? "loading")
     : "loading";
   const browserStatus = browserPersistKey
-    ? iframeStatusByKey[browserPersistKey]?.status ?? "loading"
+    ? (iframeStatusByKey[browserPersistKey]?.status ?? "loading")
     : "loading";
-  const isEditorBusy = Boolean(selectedRun) && (!workspaceUrl || editorStatus !== "loaded");
-  const isBrowserBusy = Boolean(selectedRun) && (!hasBrowserView || browserStatus !== "loaded");
+  const isEditorBusy =
+    Boolean(selectedRun) && (!workspaceUrl || editorStatus !== "loaded");
+  const isBrowserBusy =
+    Boolean(selectedRun) && (!hasBrowserView || browserStatus !== "loaded");
 
   const workspacePlaceholder = useMemo(() => {
     if (!taskRuns?.length) {
       return {
         title: "Workspace becomes available once a run starts.",
         description: "Run the task in a cloud workspace to launch VS Code.",
-      }
+      };
     }
 
     return null;
@@ -542,24 +594,38 @@ function TaskDetailPage() {
       if (taskRuns?.length) {
         return {
           title: "Select a run to open the browser preview.",
-          description: "Pick a run with a workspace to inspect its live preview.",
-        }
+          description:
+            "Pick a run with a workspace to inspect its live preview.",
+        };
       }
     }
 
     return {
       title: "Browser preview becomes available once a run starts.",
-      description: "Start a cloud workspace run to expose a live browser session.",
-    }
+      description:
+        "Start a cloud workspace run to expose a live browser session.",
+    };
   }, [selectedRun, taskRuns?.length]);
 
-  const currentLayout = useMemo(() => getCurrentLayoutPanels(panelConfig), [panelConfig]);
-  const availablePanels = useMemo(() => getAvailablePanels(panelConfig), [panelConfig]);
-  const activePanelPositions = useMemo(() => getActivePanelPositions(panelConfig.layoutMode), [panelConfig.layoutMode]);
+  const currentLayout = useMemo(
+    () => getCurrentLayoutPanels(panelConfig),
+    [panelConfig]
+  );
+  const availablePanels = useMemo(
+    () => getAvailablePanels(panelConfig),
+    [panelConfig]
+  );
+  const activePanelPositions = useMemo(
+    () => getActivePanelPositions(panelConfig.layoutMode),
+    [panelConfig.layoutMode]
+  );
 
-  const isPanelPositionActive = useCallback((position: PanelPosition) => {
-    return activePanelPositions.includes(position);
-  }, [activePanelPositions]);
+  const isPanelPositionActive = useCallback(
+    (position: PanelPosition) => {
+      return activePanelPositions.includes(position);
+    },
+    [activePanelPositions]
+  );
 
   const panelProps = useMemo(
     () => ({
@@ -593,31 +659,32 @@ function TaskDetailPage() {
       TASK_RUN_IFRAME_ALLOW,
       TASK_RUN_IFRAME_SANDBOX,
       onClose: handlePanelClose,
-    }), [
-    task,
-    taskRuns,
-    crownEvaluation,
-    workspaceUrl,
-    workspacePersistKey,
-    selectedRun,
-    editorStatus,
-    handleWorkspaceStatusChange,
-    onEditorLoad,
-    onEditorError,
-    editorLoadingFallback,
-    editorErrorFallback,
-    isEditorBusy,
-    workspacePlaceholder,
-    rawWorkspaceUrl,
-    browserUrl,
-    browserPersistKey,
-    browserStatus,
-    handleBrowserStatusChange,
-    browserPlaceholder,
-    isMorphProvider,
-    isBrowserBusy,
-    handlePanelClose,
-  ],
+    }),
+    [
+      task,
+      taskRuns,
+      crownEvaluation,
+      workspaceUrl,
+      workspacePersistKey,
+      selectedRun,
+      editorStatus,
+      handleWorkspaceStatusChange,
+      onEditorLoad,
+      onEditorError,
+      editorLoadingFallback,
+      editorErrorFallback,
+      isEditorBusy,
+      workspacePlaceholder,
+      rawWorkspaceUrl,
+      browserUrl,
+      browserPersistKey,
+      browserStatus,
+      handleBrowserStatusChange,
+      browserPlaceholder,
+      isMorphProvider,
+      isBrowserBusy,
+      handlePanelClose,
+    ]
   );
 
   return (
@@ -637,11 +704,11 @@ function TaskDetailPage() {
           config={panelConfig}
           onChange={handlePanelConfigChange}
         />
-        <div className="relative flex flex-1 min-h-0 px-1 py-1">
+        <div className="relative flex flex-1 min-h-0 w-full h-full p-1">
           {expandedPanel ? (
             <div
               aria-hidden
-              className="absolute inset-0 z-40 rounded-lg bg-neutral-900/20 backdrop-blur-sm"
+              className="absolute inset-0 z-40 rounded-lg bg-white m-1"
               onClick={() => setExpandedPanel(null)}
             />
           ) : null}
@@ -661,7 +728,11 @@ function TaskDetailPage() {
                   isAnyPanelExpanded={expandedPanel !== null}
                 />
               ) : isPanelPositionActive("topLeft") ? (
-                <EmptyPanelSlot position="topLeft" availablePanels={availablePanels} onAddPanel={handleAddPanel} />
+                <EmptyPanelSlot
+                  position="topLeft"
+                  availablePanels={availablePanels}
+                  onAddPanel={handleAddPanel}
+                />
               ) : (
                 <div />
               )
@@ -679,13 +750,18 @@ function TaskDetailPage() {
                   isAnyPanelExpanded={expandedPanel !== null}
                 />
               ) : isPanelPositionActive("topRight") ? (
-                <EmptyPanelSlot position="topRight" availablePanels={availablePanels} onAddPanel={handleAddPanel} />
+                <EmptyPanelSlot
+                  position="topRight"
+                  availablePanels={availablePanels}
+                  onAddPanel={handleAddPanel}
+                />
               ) : (
                 <div />
               )
             }
             bottomLeft={
-              isPanelPositionActive("bottomLeft") && currentLayout.bottomLeft ? (
+              isPanelPositionActive("bottomLeft") &&
+              currentLayout.bottomLeft ? (
                 <RenderPanel
                   key={currentLayout.bottomLeft}
                   {...panelProps}
@@ -697,13 +773,18 @@ function TaskDetailPage() {
                   isAnyPanelExpanded={expandedPanel !== null}
                 />
               ) : isPanelPositionActive("bottomLeft") ? (
-                <EmptyPanelSlot position="bottomLeft" availablePanels={availablePanels} onAddPanel={handleAddPanel} />
+                <EmptyPanelSlot
+                  position="bottomLeft"
+                  availablePanels={availablePanels}
+                  onAddPanel={handleAddPanel}
+                />
               ) : (
                 <div />
               )
             }
             bottomRight={
-              isPanelPositionActive("bottomRight") && currentLayout.bottomRight ? (
+              isPanelPositionActive("bottomRight") &&
+              currentLayout.bottomRight ? (
                 <RenderPanel
                   key={currentLayout.bottomRight}
                   {...panelProps}
@@ -715,7 +796,11 @@ function TaskDetailPage() {
                   isAnyPanelExpanded={expandedPanel !== null}
                 />
               ) : isPanelPositionActive("bottomRight") ? (
-                <EmptyPanelSlot position="bottomRight" availablePanels={availablePanels} onAddPanel={handleAddPanel} />
+                <EmptyPanelSlot
+                  position="bottomRight"
+                  availablePanels={availablePanels}
+                  onAddPanel={handleAddPanel}
+                />
               ) : (
                 <div />
               )
