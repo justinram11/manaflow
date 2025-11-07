@@ -18,10 +18,10 @@ import type {
   CreateLocalWorkspaceResponse,
   CreateCloudWorkspaceResponse,
 } from "@cmux/shared";
-import { deriveRepoBaseName, generateWorkspaceName } from "@cmux/shared";
-import * as Dialog from "@radix-ui/react-dialog";
+import { deriveRepoBaseName } from "@cmux/shared";
 import { useUser, type Team } from "@stackframe/react";
 import { useNavigate, useRouter } from "@tanstack/react-router";
+import { useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
 import { Command, useCommandState } from "cmdk";
 import { useMutation, useQuery } from "convex/react";
 import {
@@ -45,6 +45,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -60,9 +61,11 @@ import {
   selectSuggestedItems,
   useSuggestionHistory,
 } from "./command-bar/useSuggestionHistory";
+import clsx from "clsx";
 
 interface CommandBarProps {
   teamSlugOrId: string;
+  stateResetDelayMs?: number;
 }
 
 const environmentSearchDefaults = {
@@ -103,6 +106,39 @@ const taskCommandItemClassName =
 const placeholderClassName =
   "flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md text-sm text-neutral-500 dark:text-neutral-400";
 
+const COMMAND_LIST_VIRTUALIZATION_THRESHOLD = 40;
+const COMMAND_LIST_ESTIMATED_ROW_HEIGHT = 44;
+const COMMAND_LIST_VIRTUALIZED_FALLBACK_COUNT = 20;
+const COMMAND_PANEL_MAX_HEIGHT_PX = 475; // Keep in sync with container max-h class
+const COMMAND_LIST_VERTICAL_MARGIN_PX = 12; // pt-1 (4px) + pb-2 (8px)
+const COMMAND_LIST_SCROLL_PADDING_TOP_PX = 4;
+const COMMAND_LIST_SCROLL_PADDING_BOTTOM_PX =
+  COMMAND_LIST_SCROLL_PADDING_TOP_PX;
+const adjustContainerScrollForChild = (
+  container: HTMLElement,
+  target: HTMLElement
+): boolean => {
+  const containerRect = container.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+
+  const offsetAbove =
+    targetRect.top - (containerRect.top + COMMAND_LIST_SCROLL_PADDING_TOP_PX);
+  if (offsetAbove < 0) {
+    container.scrollTop += offsetAbove;
+    return true;
+  }
+
+  const offsetBelow =
+    targetRect.bottom -
+    (containerRect.bottom - COMMAND_LIST_SCROLL_PADDING_BOTTOM_PX);
+  if (offsetBelow > 0) {
+    container.scrollTop += offsetBelow;
+    return true;
+  }
+
+  return false;
+};
+
 type TeamCommandItem = {
   id: string;
   label: string;
@@ -120,17 +156,17 @@ type LocalWorkspaceOption = {
 
 type CloudWorkspaceOption =
   | {
-    type: "environment";
-    environmentId: Id<"environments">;
-    name: string;
-    keywords: string[];
-  }
+      type: "environment";
+      environmentId: Id<"environments">;
+      name: string;
+      keywords: string[];
+    }
   | {
-    type: "repo";
-    fullName: string;
-    repoBaseName: string;
-    keywords: string[];
-  };
+      type: "repo";
+      fullName: string;
+      repoBaseName: string;
+      keywords: string[];
+    };
 
 type CommandListEntry = {
   value: string;
@@ -144,6 +180,80 @@ type CommandListEntry = {
   dataValue?: string;
   trackUsage?: boolean;
 };
+
+type FocusSnapshot = {
+  element: HTMLElement;
+  selection?: {
+    start: number;
+    end: number;
+    direction?: "forward" | "backward" | "none";
+  };
+  contentEditableRange?: {
+    startPath: number[];
+    startOffset: number;
+    endPath: number[];
+    endOffset: number;
+  };
+};
+
+function VirtualizedCommandItems({
+  entries,
+  virtualizer,
+  renderEntry,
+  fallbackCount = COMMAND_LIST_VIRTUALIZED_FALLBACK_COUNT,
+}: {
+  entries: CommandListEntry[];
+  virtualizer: Virtualizer<HTMLDivElement, HTMLDivElement>;
+  renderEntry: (entry: CommandListEntry) => ReactNode;
+  fallbackCount?: number;
+}) {
+  if (entries.length === 0) {
+    return null;
+  }
+
+  const virtualizationEnabled = virtualizer.options.enabled !== false;
+  const virtualItems = virtualizationEnabled
+    ? virtualizer.getVirtualItems()
+    : [];
+
+  if (!virtualizationEnabled) {
+    return <>{entries.map((entry) => renderEntry(entry))}</>;
+  }
+
+  if (virtualItems.length === 0) {
+    const fallbackEntries = entries.slice(0, fallbackCount);
+    return <>{fallbackEntries.map((entry) => renderEntry(entry))}</>;
+  }
+
+  return (
+    <div
+      style={{
+        height: virtualizer.getTotalSize(),
+        position: "relative",
+      }}
+    >
+      {virtualItems.map((virtualItem) => {
+        const entry = entries[virtualItem.index]!;
+        return (
+          <div
+            key={entry.value}
+            data-index={virtualItem.index}
+            ref={virtualizer.measureElement}
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              transform: `translateY(${virtualItem.start}px)`,
+            }}
+          >
+            {renderEntry(entry)}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function CommandHighlightListener({
   onHighlight,
@@ -170,10 +280,16 @@ function CommandHighlightListener({
   return null;
 }
 
-export function CommandBar({ teamSlugOrId }: CommandBarProps) {
+export function CommandBar({
+  teamSlugOrId,
+  stateResetDelayMs = 30_000,
+}: CommandBarProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [openedWithShift, setOpenedWithShift] = useState(false);
+  const clearCommandInput = useCallback(() => {
+    setSearch("");
+  }, [setSearch]);
   const [activePage, setActivePage] = useState<
     "root" | "teams" | "local-workspaces" | "cloud-workspaces"
   >("root");
@@ -184,13 +300,19 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   const [commandValue, setCommandValue] = useState<string | undefined>(
     undefined
   );
+  const [commandListMaxHeight, setCommandListMaxHeight] = useState(
+    COMMAND_PANEL_MAX_HEIGHT_PX
+  );
   const openRef = useRef<boolean>(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const commandListRef = useRef<HTMLDivElement | null>(null);
   const previousSearchRef = useRef(search);
   const skipNextCloseRef = useRef(false);
+  const stateResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
   // Used only in non-Electron fallback
-  const prevFocusedElRef = useRef<HTMLElement | null>(null);
+  const prevFocusSnapshotRef = useRef<FocusSnapshot | null>(null);
   const navigate = useNavigate();
   const router = useRouter();
   const { setTheme, theme } = useTheme();
@@ -207,21 +329,119 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     },
     [router]
   );
+  const updateCommandListMaxHeight = useCallback(() => {
+    const inputHeight = inputRef.current?.offsetHeight ?? 0;
+    const availableHeight =
+      COMMAND_PANEL_MAX_HEIGHT_PX -
+      inputHeight -
+      COMMAND_LIST_VERTICAL_MARGIN_PX;
+    setCommandListMaxHeight((current) => {
+      const next = Math.max(0, availableHeight);
+      return Math.abs(next - current) < 0.5 ? current : next;
+    });
+  }, []);
+
+  const captureFocusBeforeOpen = useCallback(() => {
+    if (typeof document === "undefined") return;
+    const active = document.activeElement;
+    if (!(active instanceof HTMLElement)) {
+      prevFocusSnapshotRef.current = null;
+      return;
+    }
+
+    const snapshot: FocusSnapshot = { element: active };
+    if (
+      active instanceof HTMLInputElement ||
+      active instanceof HTMLTextAreaElement
+    ) {
+      try {
+        const { selectionStart, selectionEnd, selectionDirection } = active;
+        if (
+          typeof selectionStart === "number" &&
+          typeof selectionEnd === "number"
+        ) {
+          snapshot.selection = {
+            start: selectionStart,
+            end: selectionEnd,
+            direction: selectionDirection ?? "none",
+          };
+        }
+      } catch {
+        // Ignore selection capture failures (e.g. unsupported input type)
+      }
+    }
+
+    if (active.isContentEditable) {
+      try {
+        const selection = window.getSelection();
+        if (selection && selection.rangeCount > 0) {
+          const range = selection.getRangeAt(0);
+          if (
+            active.contains(range.startContainer) &&
+            active.contains(range.endContainer)
+          ) {
+            const startPath = buildNodePath(active, range.startContainer);
+            const endPath = buildNodePath(active, range.endContainer);
+            if (startPath && endPath) {
+              snapshot.contentEditableRange = {
+                startPath,
+                startOffset: range.startOffset,
+                endPath,
+                endOffset: range.endOffset,
+              };
+            }
+          }
+        }
+      } catch {
+        // ignore contenteditable selection capture failures
+      }
+    }
+
+    prevFocusSnapshotRef.current = snapshot;
+  }, []);
+
+  const clearPendingStateReset = useCallback(() => {
+    if (stateResetTimeoutRef.current !== null) {
+      clearTimeout(stateResetTimeoutRef.current);
+      stateResetTimeoutRef.current = null;
+    }
+  }, []);
+
+  const resetCommandState = useCallback(() => {
+    clearCommandInput();
+    setActivePage("root");
+    setCommandValue(undefined);
+  }, [clearCommandInput]);
+
+  const scheduleCommandStateReset = useCallback(() => {
+    if (stateResetDelayMs <= 0) {
+      clearPendingStateReset();
+      resetCommandState();
+      return;
+    }
+
+    clearPendingStateReset();
+    stateResetTimeoutRef.current = setTimeout(() => {
+      stateResetTimeoutRef.current = null;
+      if (openRef.current) {
+        return;
+      }
+      resetCommandState();
+    }, stateResetDelayMs);
+  }, [clearPendingStateReset, resetCommandState, stateResetDelayMs]);
 
   const closeCommand = useCallback(() => {
     skipNextCloseRef.current = false;
     setOpen(false);
-    setSearch("");
     setOpenedWithShift(false);
-    setActivePage("root");
-    setCommandValue(undefined);
-  }, [setOpen, setSearch, setOpenedWithShift, setActivePage, setCommandValue]);
+    scheduleCommandStateReset();
+  }, [scheduleCommandStateReset, setOpen, setOpenedWithShift]);
 
   const handleEscape = useCallback(() => {
     skipNextCloseRef.current = false;
     if (search.length > 0) {
       skipNextCloseRef.current = true;
-      setSearch("");
+      clearCommandInput();
       return;
     }
     if (activePage !== "root") {
@@ -230,7 +450,42 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       return;
     }
     closeCommand();
-  }, [activePage, closeCommand, search, setActivePage, setSearch]);
+  }, [activePage, clearCommandInput, closeCommand, search, setActivePage]);
+
+  useEffect(() => {
+    if (!open) return;
+    clearPendingStateReset();
+  }, [open, clearPendingStateReset]);
+
+  useEffect(() => {
+    return () => {
+      clearPendingStateReset();
+    };
+  }, [clearPendingStateReset]);
+  useLayoutEffect(() => {
+    if (!open || typeof window === "undefined") {
+      return;
+    }
+    updateCommandListMaxHeight();
+    const handleResize = () => {
+      updateCommandListMaxHeight();
+    };
+    window.addEventListener("resize", handleResize);
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      const inputElement = inputRef.current;
+      if (inputElement) {
+        resizeObserver = new ResizeObserver(() => {
+          updateCommandListMaxHeight();
+        });
+        resizeObserver.observe(inputElement);
+      }
+    }
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      resizeObserver?.disconnect();
+    };
+  }, [open, updateCommandListMaxHeight]);
 
   const stackUser = useUser({ or: "return-null" });
   const stackTeams = stackUser?.useTeams() ?? EMPTY_TEAM_LIST;
@@ -317,18 +572,21 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     }
 
     // Add repo-based cloud workspaces
-    const repoOptions: CloudWorkspaceOption[] = localWorkspaceOptions.map((repo) => ({
-      type: "repo",
-      fullName: repo.fullName,
-      repoBaseName: repo.repoBaseName,
-      keywords: repo.keywords,
-    }));
+    const repoOptions: CloudWorkspaceOption[] = localWorkspaceOptions.map(
+      (repo) => ({
+        type: "repo",
+        fullName: repo.fullName,
+        repoBaseName: repo.repoBaseName,
+        keywords: repo.keywords,
+      })
+    );
     options.push(...repoOptions);
 
     return options;
   }, [environments, localWorkspaceOptions]);
 
-  const isCloudWorkspaceLoading = environments === undefined || reposByOrg === undefined;
+  const isCloudWorkspaceLoading =
+    environments === undefined || reposByOrg === undefined;
 
   const getClientSlug = useCallback((meta: unknown): string | undefined => {
     if (!isRecord(meta)) return undefined;
@@ -372,7 +630,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         slug,
         teamSlugOrId: teamSlugOrIdTarget,
         isCurrent: selectedTeamId === team.id,
-        keywords: compactStrings([label, slug, team.id, teamSlugOrIdTarget]),
+        keywords: compactStrings([label, slug]),
       });
     }
 
@@ -391,8 +649,6 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         value: `team:${item.id}:${item.teamSlugOrId}`,
         searchText: buildSearchText(item.label, item.keywords, [
           item.slug,
-          item.teamSlugOrId,
-          item.id,
           item.isCurrent ? "current" : undefined,
         ]),
         item,
@@ -406,16 +662,24 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     : "Sign in to view teams.";
 
   const allTasks = useQuery(api.tasks.getTasksWithTaskRuns, { teamSlugOrId });
-  const nextWorkspaceSequence = useQuery(api.localWorkspaces.nextSequence, {
-    teamSlugOrId,
-  });
-  const predictedWorkspaceSequence = nextWorkspaceSequence?.sequence ?? null;
   const reserveLocalWorkspace = useMutation(api.localWorkspaces.reserve);
   const createTask = useMutation(api.tasks.create);
   const failTaskRun = useMutation(api.taskRuns.fail);
 
   useEffect(() => {
     openRef.current = open;
+  }, [open]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    if (open) {
+      document.body.dataset.cmuxCommandPaletteOpen = "true";
+    } else {
+      delete document.body.dataset.cmuxCommandPaletteOpen;
+    }
+    return () => {
+      delete document.body.dataset.cmuxCommandPaletteOpen;
+    };
   }, [open]);
 
   const createLocalWorkspace = useCallback(
@@ -495,9 +759,9 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
 
                 const normalizedWorkspaceUrl = response.workspaceUrl
                   ? rewriteLocalWorkspaceUrlIfNeeded(
-                    response.workspaceUrl,
-                    localServeWeb.data?.baseUrl
-                  )
+                      response.workspaceUrl,
+                      localServeWeb.data?.baseUrl
+                    )
                   : null;
 
                 if (response.workspaceUrl && effectiveTaskRunId) {
@@ -576,10 +840,11 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
 
   const handleLocalWorkspaceSelect = useCallback(
     (projectFullName: string) => {
+      clearCommandInput();
       closeCommand();
       void createLocalWorkspace(projectFullName);
     },
-    [closeCommand, createLocalWorkspace]
+    [clearCommandInput, closeCommand, createLocalWorkspace]
   );
 
   const createCloudWorkspaceFromEnvironment = useCallback(
@@ -598,7 +863,9 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
 
       try {
         // Find environment name for the task text
-        const environment = environments?.find((env) => env._id === environmentId);
+        const environment = environments?.find(
+          (env) => env._id === environmentId
+        );
         const environmentName = environment?.name ?? "Unknown Environment";
 
         // Create task in Convex without task description (it's just a workspace)
@@ -746,6 +1013,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
 
   const handleCloudWorkspaceSelect = useCallback(
     (option: CloudWorkspaceOption) => {
+      clearCommandInput();
       closeCommand();
       if (option.type === "environment") {
         void createCloudWorkspaceFromEnvironment(option.environmentId);
@@ -753,7 +1021,12 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         void createCloudWorkspaceFromRepo(option.fullName);
       }
     },
-    [closeCommand, createCloudWorkspaceFromEnvironment, createCloudWorkspaceFromRepo]
+    [
+      clearCommandInput,
+      closeCommand,
+      createCloudWorkspaceFromEnvironment,
+      createCloudWorkspaceFromRepo,
+    ]
   );
 
   useEffect(() => {
@@ -761,14 +1034,13 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     if (isElectron) {
       const off = window.cmux.on("shortcut:cmd-k", () => {
         // Only handle Cmd+K (no shift/ctrl variations)
-        setOpenedWithShift(false);
-        setActivePage("root");
         if (openRef.current) {
-          // About to CLOSE via toggle: normalize state like Esc path
-          setSearch("");
-          setOpenedWithShift(false);
+          closeCommand();
+          return;
         }
-        setOpen((cur) => !cur);
+        setOpenedWithShift(false);
+        captureFocusBeforeOpen();
+        setOpen(true);
       });
       return () => {
         // Unsubscribe if available
@@ -787,22 +1059,18 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         !e.ctrlKey
       ) {
         e.preventDefault();
-        setActivePage("root");
         if (openRef.current) {
-          setOpenedWithShift(false);
-          setSearch("");
-        } else {
-          setOpenedWithShift(false);
-          // Capture the currently focused element before opening (web only)
-          prevFocusedElRef.current =
-            document.activeElement as HTMLElement | null;
+          closeCommand();
+          return;
         }
-        setOpen((cur) => !cur);
+        setOpenedWithShift(false);
+        captureFocusBeforeOpen();
+        setOpen(true);
       }
     };
     document.addEventListener("keydown", down);
     return () => document.removeEventListener("keydown", down);
-  }, []);
+  }, [captureFocusBeforeOpen, closeCommand]);
 
   // Track and restore focus across open/close, including iframes/webviews.
   useEffect(() => {
@@ -812,29 +1080,101 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     }
 
     if (!open) {
-      if (isElectron && window.cmux?.ui?.restoreLastFocus) {
-        // Ask main to restore using stored info for this window
+      const snapshot = prevFocusSnapshotRef.current;
+      if (
+        isElectron &&
+        !snapshot?.contentEditableRange &&
+        window.cmux?.ui?.restoreLastFocus
+      ) {
+        prevFocusSnapshotRef.current = null;
         void window.cmux.ui.restoreLastFocus();
-      } else {
-        // Web-only fallback: restore previously focused element in same doc
-        const el = prevFocusedElRef.current;
-        if (el) {
-          const id = window.setTimeout(() => {
-            try {
-              el.focus({ preventScroll: true });
-              if ((el as HTMLIFrameElement).tagName === "IFRAME") {
-                try {
-                  (el as HTMLIFrameElement).contentWindow?.focus?.();
-                } catch {
-                  // ignore
-                }
+      } else if (snapshot) {
+        const { element, selection, contentEditableRange } = snapshot;
+        const id = window.setTimeout(() => {
+          try {
+            element.focus({ preventScroll: true });
+            if (
+              selection &&
+              (element instanceof HTMLInputElement ||
+                element instanceof HTMLTextAreaElement) &&
+              typeof element.setSelectionRange === "function"
+            ) {
+              try {
+                element.setSelectionRange(
+                  selection.start,
+                  selection.end,
+                  selection.direction
+                );
+              } catch (error) {
+                console.error("Failed to restore selection", error);
               }
-            } catch {
-              // ignore
+            } else if (contentEditableRange && element.isContentEditable) {
+              try {
+                const selectionObj = window.getSelection();
+                if (selectionObj) {
+                  const startNode = resolveNodePath(
+                    element,
+                    contentEditableRange.startPath
+                  );
+                  const endNode = resolveNodePath(
+                    element,
+                    contentEditableRange.endPath
+                  );
+                  if (startNode && endNode) {
+                    const newRange = document.createRange();
+                    const clampOffset = (node: Node, offset: number) => {
+                      if (
+                        node.nodeType === Node.TEXT_NODE &&
+                        typeof node.textContent === "string"
+                      ) {
+                        return Math.min(
+                          Math.max(offset, 0),
+                          node.textContent.length
+                        );
+                      }
+                      if (node.childNodes.length > 0) {
+                        return Math.min(
+                          Math.max(offset, 0),
+                          node.childNodes.length
+                        );
+                      }
+                      return Math.max(offset, 0);
+                    };
+                    newRange.setStart(
+                      startNode,
+                      clampOffset(startNode, contentEditableRange.startOffset)
+                    );
+                    newRange.setEnd(
+                      endNode,
+                      clampOffset(endNode, contentEditableRange.endOffset)
+                    );
+                    selectionObj.removeAllRanges();
+                    selectionObj.addRange(newRange);
+                  }
+                }
+              } catch (error) {
+                console.error("Failed to restore contenteditable range", error);
+              }
+            } else if (element.tagName === "IFRAME") {
+              try {
+                (element as HTMLIFrameElement).contentWindow?.focus?.();
+              } catch {
+                // ignore iframe focus errors
+              }
             }
-          }, 0);
-          return () => window.clearTimeout(id);
-        }
+            if (prevFocusSnapshotRef.current === snapshot) {
+              prevFocusSnapshotRef.current = null;
+            }
+          } catch (error) {
+            console.error("Failed to restore focus", error);
+          }
+        }, 0);
+        return () => {
+          window.clearTimeout(id);
+          if (prevFocusSnapshotRef.current === snapshot) {
+            prevFocusSnapshotRef.current = null;
+          }
+        };
       }
     }
     return undefined;
@@ -844,6 +1184,15 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     if (!open || !openedWithShift) return;
     setCommandValue("new-task");
   }, [open, openedWithShift]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (typeof window === "undefined") return;
+    const id = window.setTimeout(() => {
+      inputRef.current?.focus({ preventScroll: true });
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [open]);
 
   const handleHighlight = useCallback(
     async (value: string) => {
@@ -953,9 +1302,9 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
 
   const handleSelect = useCallback(
     async (value: string) => {
+      clearCommandInput();
       if (value === "teams:switch") {
         setActivePage("teams");
-        setSearch("");
         return;
       } else if (value === "new-task") {
         navigate({
@@ -964,11 +1313,9 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         });
       } else if (value === "local-workspaces") {
         setActivePage("local-workspaces");
-        setSearch("");
         return;
       } else if (value === "cloud-workspaces") {
         setActivePage("cloud-workspaces");
-        setSearch("");
         return;
       } else if (value === "pull-requests") {
         navigate({
@@ -1157,6 +1504,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       closeCommand();
     },
     [
+      clearCommandInput,
       navigate,
       teamSlugOrId,
       setTheme,
@@ -1243,25 +1591,25 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       },
       ...(isDevEnvironment
         ? [
-          {
-            value: "dev:webcontents",
-            label: "Debug WebContents",
-            keywords: ["debug", "devtools", "electron"],
-            searchText: buildSearchText(
-              "Debug WebContents",
-              ["debug", "electron"],
-              ["dev:webcontents"]
-            ),
-            className: baseCommandItemClassName,
-            execute: () => handleSelect("dev:webcontents"),
-            renderContent: () => (
-              <>
-                <Bug className="h-4 w-4 text-neutral-500" />
-                <span className="text-sm">Debug WebContents</span>
-              </>
-            ),
-          },
-        ]
+            {
+              value: "dev:webcontents",
+              label: "Debug WebContents",
+              keywords: ["debug", "devtools", "electron"],
+              searchText: buildSearchText(
+                "Debug WebContents",
+                ["debug", "electron"],
+                ["dev:webcontents"]
+              ),
+              className: baseCommandItemClassName,
+              execute: () => handleSelect("dev:webcontents"),
+              renderContent: () => (
+                <>
+                  <Bug className="h-4 w-4 text-neutral-500" />
+                  <span className="text-sm">Debug WebContents</span>
+                </>
+              ),
+            },
+          ]
         : []),
       {
         value: "home",
@@ -1401,177 +1749,177 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       },
       ...(stackUser
         ? [
-          {
-            value: "sign-out",
-            label: "Sign out",
-            keywords: ["logout", "sign out", "account"],
-            searchText: buildSearchText(
-              "Sign out",
-              ["logout", "account"],
-              ["sign-out"]
-            ),
-            className: baseCommandItemClassName,
-            execute: () => handleSelect("sign-out"),
-            renderContent: () => (
-              <>
-                <LogOut className="h-4 w-4 text-neutral-500" />
-                <span className="text-sm">Sign out</span>
-              </>
-            ),
-          },
-        ]
+            {
+              value: "sign-out",
+              label: "Sign out",
+              keywords: ["logout", "sign out", "account"],
+              searchText: buildSearchText(
+                "Sign out",
+                ["logout", "account"],
+                ["sign-out"]
+              ),
+              className: baseCommandItemClassName,
+              execute: () => handleSelect("sign-out"),
+              renderContent: () => (
+                <>
+                  <LogOut className="h-4 w-4 text-neutral-500" />
+                  <span className="text-sm">Sign out</span>
+                </>
+              ),
+            },
+          ]
         : []),
     ];
 
     const taskEntries =
       allTasks && allTasks.length > 0
         ? allTasks.slice(0, 9).flatMap<CommandListEntry>((task, index) => {
-          const title =
-            task.pullRequestTitle || task.text || `Task ${index + 1}`;
-          const keywords = compactStrings([
-            title,
-            task.text,
-            task.pullRequestTitle,
-            String(task._id),
-            `task ${index + 1}`,
-          ]);
-          const baseSearch = buildSearchText(title, keywords, [
-            `${index + 1}`,
-            `task:${task._id}`,
-          ]);
-          const statusLabel = task.isCompleted ? "completed" : "in progress";
-          const statusClassName = task.isCompleted
-            ? "text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
-            : "text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400";
-          const run = task.selectedTaskRun;
+            const title =
+              task.pullRequestTitle || task.text || `Task ${index + 1}`;
+            const keywords = compactStrings([
+              title,
+              task.text,
+              task.pullRequestTitle,
+              `task ${index + 1}`,
+            ]);
+            const baseSearch = buildSearchText(title, keywords, [
+              `${index + 1}`,
+            ]);
+            const statusLabel = task.isCompleted ? "completed" : "in progress";
+            const statusClassName = task.isCompleted
+              ? "text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+              : "text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400";
+            const run = task.selectedTaskRun;
 
-          const entriesForTask: CommandListEntry[] = [
-            {
-              value: `${index + 1}:task:${task._id}`,
-              label: title,
-              keywords,
-              searchText: baseSearch,
-              className: taskCommandItemClassName,
-              execute: () => handleSelect(`task:${task._id}`),
-              renderContent: () => (
-                <>
-                  <span className="flex h-5 w-5 items-center justify-center rounded text-xs font-semibold bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600">
-                    {index + 1}
-                  </span>
-                  <span className="flex-1 truncate text-sm">{title}</span>
-                  <span className={statusClassName}>{statusLabel}</span>
-                </>
-              ),
-            },
-          ];
+            const entriesForTask: CommandListEntry[] = [
+              {
+                value: `${index + 1}:task:${task._id}`,
+                label: title,
+                keywords,
+                searchText: baseSearch,
+                className: taskCommandItemClassName,
+                execute: () => handleSelect(`task:${task._id}`),
+                renderContent: () => (
+                  <>
+                    <span className="flex h-5 w-5 items-center justify-center rounded text-xs font-semibold bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600">
+                      {index + 1}
+                    </span>
+                    <span className="flex-1 truncate text-sm">{title}</span>
+                    <span className={statusClassName}>{statusLabel}</span>
+                  </>
+                ),
+              },
+            ];
 
-          if (run) {
-            const vsKeywords = [...keywords, "vs", "vscode"];
-            entriesForTask.push({
-              value: `${index + 1} vs:task:${task._id}`,
-              label: `${title} (VS)`,
-              keywords: vsKeywords,
-              searchText: buildSearchText(`${title} VS`, vsKeywords, [
-                `${index + 1} vs`,
-                `task:${task._id}:vs`,
-              ]),
-              className: taskCommandItemClassName,
-              execute: () => handleSelect(`task:${task._id}:vs`),
-              renderContent: () => (
-                <>
-                  <span className="flex h-5 w-8 items-center justify-center rounded text-xs font-semibold bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600">
-                    {index + 1} VS
-                  </span>
-                  <span className="flex-1 truncate text-sm">{title}</span>
-                  <span className={statusClassName}>{statusLabel}</span>
-                </>
-              ),
-            });
+            if (run) {
+              const vsKeywords = [...keywords, "vs", "vscode"];
+              entriesForTask.push({
+                value: `${index + 1} vs:task:${task._id}`,
+                label: `${title} (VS)`,
+                keywords: vsKeywords,
+                searchText: buildSearchText(`${title} VS`, vsKeywords, [
+                  `${index + 1} vs`,
+                  `${index + 1}vs`,
+                  `${index + 1}v`,
+                ]),
+                className: taskCommandItemClassName,
+                execute: () => handleSelect(`task:${task._id}:vs`),
+                renderContent: () => (
+                  <>
+                    <span className="flex h-5 w-8 items-center justify-center rounded text-xs font-semibold bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600">
+                      {index + 1} VS
+                    </span>
+                    <span className="flex-1 truncate text-sm">{title}</span>
+                    <span className={statusClassName}>{statusLabel}</span>
+                  </>
+                ),
+              });
 
-            const diffKeywords = [...keywords, "git", "diff"];
-            entriesForTask.push({
-              value: `${index + 1} git diff:task:${task._id}`,
-              label: `${title} (git diff)`,
-              keywords: diffKeywords,
-              searchText: buildSearchText(`${title} git diff`, diffKeywords, [
-                `${index + 1} git diff`,
-                `task:${task._id}:gitdiff`,
-              ]),
-              className: taskCommandItemClassName,
-              execute: () => handleSelect(`task:${task._id}:gitdiff`),
-              renderContent: () => (
-                <>
-                  <span className="flex h-5 px-2 items-center justify-center rounded text-xs font-semibold bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600">
-                    {index + 1} git diff
-                  </span>
-                  <span className="flex-1 truncate text-sm">{title}</span>
-                  <span className={statusClassName}>{statusLabel}</span>
-                </>
-              ),
-            });
-          }
+              const diffKeywords = [...keywords, "git", "diff"];
+              entriesForTask.push({
+                value: `${index + 1} git diff:task:${task._id}`,
+                label: `${title} (git diff)`,
+                keywords: diffKeywords,
+                searchText: buildSearchText(`${title} git diff`, diffKeywords, [
+                  `${index + 1} git diff`,
+                  `${index + 1}gitdiff`,
+                  `${index + 1}gd`,
+                ]),
+                className: taskCommandItemClassName,
+                execute: () => handleSelect(`task:${task._id}:gitdiff`),
+                renderContent: () => (
+                  <>
+                    <span className="flex h-5 px-2 items-center justify-center rounded text-xs font-semibold bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600">
+                      {index + 1} git diff
+                    </span>
+                    <span className="flex-1 truncate text-sm">{title}</span>
+                    <span className={statusClassName}>{statusLabel}</span>
+                  </>
+                ),
+              });
+            }
 
-          return entriesForTask;
-        })
+            return entriesForTask;
+          })
         : [];
 
     const electronEntries = isElectron
       ? [
-        {
-          value: "updates:check",
-          label: "Check for Updates",
-          keywords: ["update", "version", "desktop"],
-          searchText: buildSearchText(
-            "Check for Updates",
-            ["update", "desktop"],
-            ["updates:check"]
-          ),
-          className: baseCommandItemClassName,
-          execute: () => handleSelect("updates:check"),
-          renderContent: () => (
-            <>
-              <RefreshCw className="h-4 w-4 text-neutral-500" />
-              <span className="text-sm">Check for Updates</span>
-            </>
-          ),
-        },
-        {
-          value: "logs:view",
-          label: "Logs: View",
-          keywords: ["logs", "view", "desktop"],
-          searchText: buildSearchText(
-            "Logs View",
-            ["logs", "view"],
-            ["logs:view"]
-          ),
-          className: baseCommandItemClassName,
-          execute: () => handleSelect("logs:view"),
-          renderContent: () => (
-            <>
-              <ScrollText className="h-4 w-4 text-blue-500" />
-              <span className="text-sm">Logs: View</span>
-            </>
-          ),
-        },
-        {
-          value: "logs:copy",
-          label: "Logs: Copy all",
-          keywords: ["logs", "copy"],
-          searchText: buildSearchText(
-            "Logs Copy",
-            ["logs", "copy"],
-            ["logs:copy"]
-          ),
-          className: baseCommandItemClassName,
-          execute: () => handleSelect("logs:copy"),
-          renderContent: () => (
-            <>
-              <ClipboardCopy className="h-4 w-4 text-violet-500" />
-              <span className="text-sm">Logs: Copy all</span>
-            </>
-          ),
-        },
-      ]
+          {
+            value: "updates:check",
+            label: "Check for Updates",
+            keywords: ["update", "version", "desktop"],
+            searchText: buildSearchText(
+              "Check for Updates",
+              ["update", "desktop"],
+              ["updates:check"]
+            ),
+            className: baseCommandItemClassName,
+            execute: () => handleSelect("updates:check"),
+            renderContent: () => (
+              <>
+                <RefreshCw className="h-4 w-4 text-neutral-500" />
+                <span className="text-sm">Check for Updates</span>
+              </>
+            ),
+          },
+          {
+            value: "logs:view",
+            label: "Logs: View",
+            keywords: ["logs", "view", "desktop"],
+            searchText: buildSearchText(
+              "Logs View",
+              ["logs", "view"],
+              ["logs:view"]
+            ),
+            className: baseCommandItemClassName,
+            execute: () => handleSelect("logs:view"),
+            renderContent: () => (
+              <>
+                <ScrollText className="h-4 w-4 text-blue-500" />
+                <span className="text-sm">Logs: View</span>
+              </>
+            ),
+          },
+          {
+            value: "logs:copy",
+            label: "Logs: Copy all",
+            keywords: ["logs", "copy"],
+            searchText: buildSearchText(
+              "Logs Copy",
+              ["logs", "copy"],
+              ["logs:copy"]
+            ),
+            className: baseCommandItemClassName,
+            execute: () => handleSelect("logs:copy"),
+            renderContent: () => (
+              <>
+                <ClipboardCopy className="h-4 w-4 text-violet-500" />
+                <span className="text-sm">Logs: Copy all</span>
+              </>
+            ),
+          },
+        ]
       : [];
 
     return [...baseEntries, ...taskEntries, ...electronEntries];
@@ -1580,13 +1928,6 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   const localWorkspaceEntries = useMemo<CommandListEntry[]>(() => {
     return localWorkspaceOptions.map((option) => {
       const value = `local-workspace:${option.fullName}`;
-      const predictedWorkspaceName =
-        predictedWorkspaceSequence !== null
-          ? generateWorkspaceName({
-            repoName: option.repoBaseName,
-            sequence: predictedWorkspaceSequence,
-          })
-          : null;
       return {
         value,
         label: option.fullName,
@@ -1602,11 +1943,6 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
             <GitHubIcon className="h-4 w-4 text-neutral-500" />
             <div className="flex min-w-0 flex-1 flex-col">
               <span className="truncate text-sm">{option.fullName}</span>
-              {predictedWorkspaceName ? (
-                <span className="truncate text-xs text-neutral-500 dark:text-neutral-400">
-                  {predictedWorkspaceName}
-                </span>
-              ) : null}
             </div>
           </>
         ),
@@ -1616,7 +1952,6 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     handleLocalWorkspaceSelect,
     isCreatingLocalWorkspace,
     localWorkspaceOptions,
-    predictedWorkspaceSequence,
   ]);
 
   const cloudWorkspaceEntries = useMemo<CommandListEntry[]>(() => {
@@ -1627,9 +1962,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
           value,
           label: option.name,
           keywords: option.keywords,
-          searchText: buildSearchText(option.name, option.keywords, [
-            option.environmentId,
-          ]),
+          searchText: buildSearchText(option.name, option.keywords),
           className: baseCommandItemClassName,
           disabled: isCreatingCloudWorkspace,
           execute: () => handleCloudWorkspaceSelect(option),
@@ -1644,13 +1977,6 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         };
       } else {
         const value = `cloud-workspace-repo:${option.fullName}`;
-        const predictedWorkspaceName =
-          predictedWorkspaceSequence !== null
-            ? generateWorkspaceName({
-              repoName: option.repoBaseName,
-              sequence: predictedWorkspaceSequence,
-            })
-            : null;
         return {
           value,
           label: option.fullName,
@@ -1666,11 +1992,6 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
               <GitHubIcon className="h-4 w-4 text-neutral-500" />
               <div className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate text-sm">{option.fullName}</span>
-                {predictedWorkspaceName ? (
-                  <span className="truncate text-xs text-neutral-500 dark:text-neutral-400">
-                    {predictedWorkspaceName}
-                  </span>
-                ) : null}
               </div>
             </>
           ),
@@ -1681,7 +2002,6 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     cloudWorkspaceOptions,
     handleCloudWorkspaceSelect,
     isCreatingCloudWorkspace,
-    predictedWorkspaceSequence,
   ]);
 
   const {
@@ -1867,6 +2187,72 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     [cloudWorkspaceCommandsToRender, cloudWorkspaceSuggestionsToRender]
   );
 
+  const shouldVirtualizeRoot =
+    rootCommandsToRender.length > COMMAND_LIST_VIRTUALIZATION_THRESHOLD;
+  const shouldVirtualizeLocal =
+    localWorkspaceCommandsToRender.length >
+    COMMAND_LIST_VIRTUALIZATION_THRESHOLD;
+  const shouldVirtualizeCloud =
+    cloudWorkspaceCommandsToRender.length >
+    COMMAND_LIST_VIRTUALIZATION_THRESHOLD;
+
+  const rootVirtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
+    count: rootCommandsToRender.length,
+    getScrollElement: () => commandListRef.current,
+    estimateSize: () => COMMAND_LIST_ESTIMATED_ROW_HEIGHT,
+    overscan: 24,
+    initialRect: { width: 720, height: 400 },
+    enabled: shouldVirtualizeRoot && activePage === "root" && open,
+  });
+
+  const localWorkspaceVirtualizer = useVirtualizer<
+    HTMLDivElement,
+    HTMLDivElement
+  >({
+    count: localWorkspaceCommandsToRender.length,
+    getScrollElement: () => commandListRef.current,
+    estimateSize: () => COMMAND_LIST_ESTIMATED_ROW_HEIGHT,
+    overscan: 24,
+    initialRect: { width: 720, height: 400 },
+    enabled: shouldVirtualizeLocal && activePage === "local-workspaces" && open,
+  });
+
+  const cloudWorkspaceVirtualizer = useVirtualizer<
+    HTMLDivElement,
+    HTMLDivElement
+  >({
+    count: cloudWorkspaceCommandsToRender.length,
+    getScrollElement: () => commandListRef.current,
+    estimateSize: () => COMMAND_LIST_ESTIMATED_ROW_HEIGHT,
+    overscan: 24,
+    initialRect: { width: 720, height: 400 },
+    enabled: shouldVirtualizeCloud && activePage === "cloud-workspaces" && open,
+  });
+
+  const rootCommandIndexMap = useMemo(() => {
+    const map = new Map<string, number>();
+    rootCommandsToRender.forEach((entry, index) => {
+      map.set(entry.value, index);
+    });
+    return map;
+  }, [rootCommandsToRender]);
+
+  const localWorkspaceCommandIndexMap = useMemo(() => {
+    const map = new Map<string, number>();
+    localWorkspaceCommandsToRender.forEach((entry, index) => {
+      map.set(entry.value, index);
+    });
+    return map;
+  }, [localWorkspaceCommandsToRender]);
+
+  const cloudWorkspaceCommandIndexMap = useMemo(() => {
+    const map = new Map<string, number>();
+    cloudWorkspaceCommandsToRender.forEach((entry, index) => {
+      map.set(entry.value, index);
+    });
+    return map;
+  }, [cloudWorkspaceCommandsToRender]);
+
   const teamVisibleValues = useMemo(() => {
     if (!filteredTeamEntries.length) return [];
     return filteredTeamEntries.map((entry) => entry.value);
@@ -1898,27 +2284,109 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     []
   );
 
-  const scrollCommandItemIntoView = useCallback((value: string | undefined) => {
-    if (!value) return;
-    if (typeof window === "undefined") return;
-    const listEl = commandListRef.current;
-    if (!listEl) return;
-    const escapeValue =
-      typeof window.CSS !== "undefined" &&
+  const renderRootCommandEntry = useCallback(
+    (entry: CommandListEntry) => renderCommandItem(entry, recordRootUsage),
+    [recordRootUsage, renderCommandItem]
+  );
+
+  const renderLocalWorkspaceCommandEntry = useCallback(
+    (entry: CommandListEntry) =>
+      renderCommandItem(entry, recordLocalWorkspaceUsage),
+    [recordLocalWorkspaceUsage, renderCommandItem]
+  );
+
+  const renderCloudWorkspaceCommandEntry = useCallback(
+    (entry: CommandListEntry) =>
+      renderCommandItem(entry, recordCloudWorkspaceUsage),
+    [recordCloudWorkspaceUsage, renderCommandItem]
+  );
+
+  const scrollCommandItemIntoView = useCallback(
+    (value: string | undefined) => {
+      if (!value) return;
+
+      if (activePage === "root" && shouldVirtualizeRoot) {
+        const index = rootCommandIndexMap.get(value);
+        if (index !== undefined) {
+          try {
+            rootVirtualizer.scrollToIndex(index, {
+              align: "auto",
+              behavior: "auto",
+            });
+            return;
+          } catch {
+            // ignore and fall back to DOM-based scrolling
+          }
+        }
+      } else if (activePage === "local-workspaces" && shouldVirtualizeLocal) {
+        const index = localWorkspaceCommandIndexMap.get(value);
+        if (index !== undefined) {
+          try {
+            localWorkspaceVirtualizer.scrollToIndex(index, {
+              align: "auto",
+              behavior: "auto",
+            });
+            return;
+          } catch {
+            // ignore and fall back to DOM-based scrolling
+          }
+        }
+      } else if (activePage === "cloud-workspaces" && shouldVirtualizeCloud) {
+        const index = cloudWorkspaceCommandIndexMap.get(value);
+        if (index !== undefined) {
+          try {
+            cloudWorkspaceVirtualizer.scrollToIndex(index, {
+              align: "auto",
+              behavior: "auto",
+            });
+            return;
+          } catch {
+            // ignore and fall back to DOM-based scrolling
+          }
+        }
+      }
+
+      if (typeof window === "undefined") return;
+      const listEl = commandListRef.current;
+      if (!listEl) return;
+      const escapeValue =
+        typeof window.CSS !== "undefined" &&
         typeof window.CSS.escape === "function"
-        ? window.CSS.escape(value)
-        : value.replace(/["\\]/g, "\\$&");
-    const selector = `[data-value="${escapeValue}"]`;
-    const run = () => {
-      const target = listEl.querySelector<HTMLElement>(selector);
-      target?.scrollIntoView({ block: "nearest", behavior: "instant" });
-    };
-    if (typeof window.requestAnimationFrame === "function") {
-      window.requestAnimationFrame(run);
-    } else {
-      run();
-    }
-  }, []);
+          ? window.CSS.escape(value)
+          : value.replace(/["\\]/g, "\\$&");
+      const selector = `[data-value="${escapeValue}"]`;
+      const run = () => {
+        const target = listEl.querySelector<HTMLElement>(selector);
+        if (!target) return;
+        const scrolled = adjustContainerScrollForChild(listEl, target);
+        if (!scrolled) {
+          target.scrollIntoView({
+            block: "nearest",
+            inline: "nearest",
+            behavior: "auto",
+          });
+        }
+      };
+      setTimeout(run, 0);
+    },
+    [
+      activePage,
+      cloudWorkspaceCommandIndexMap,
+      cloudWorkspaceVirtualizer,
+      localWorkspaceCommandIndexMap,
+      localWorkspaceVirtualizer,
+      rootCommandIndexMap,
+      rootVirtualizer,
+      shouldVirtualizeCloud,
+      shouldVirtualizeLocal,
+      shouldVirtualizeRoot,
+    ]
+  );
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    scrollCommandItemIntoView(commandValue);
+  }, [commandValue, open, scrollCommandItemIntoView]);
 
   useEffect(() => {
     if (!open) return;
@@ -1996,221 +2464,283 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     teamVisibleValues,
   ]);
 
-  if (!open) return null;
-
   return (
     <>
       <div
-        className="fixed inset-0 z-[var(--z-commandbar)]"
+        className={clsx(
+          "fixed inset-0 z-[var(--z-commandbar)]",
+          open
+            ? "opacity-100 pointer-events-auto"
+            : "opacity-0 pointer-events-none"
+        )}
+        aria-hidden={!open}
         onClick={closeCommand}
       />
-      <Command.Dialog
-        open={open}
-        value={commandValue}
-        shouldFilter={false}
-        onOpenChange={(nextOpen) => {
-          if (!nextOpen) {
-            if (skipNextCloseRef.current) {
-              skipNextCloseRef.current = false;
-              return;
-            }
-            closeCommand();
-          } else {
-            setActivePage("root");
-            setOpen(true);
-          }
-        }}
-        onValueChange={(value) => {
-          setCommandValue(value || undefined);
-        }}
-        label="Command Menu"
-        title="Command Menu"
-        loop
-        className="fixed inset-0 z-[var(--z-commandbar)] flex items-start justify-center pt-[20vh] pointer-events-none"
-        onKeyDownCapture={(e) => {
-          if (e.key === "Escape") {
-            e.preventDefault();
-            e.stopPropagation();
-            handleEscape();
-          } else if (
-            e.key === "Backspace" &&
-            activePage !== "root" &&
-            search.length === 0 &&
-            inputRef.current &&
-            e.target === inputRef.current
-          ) {
-            e.preventDefault();
-            setActivePage("root");
-          }
-        }}
+      <div
+        className={clsx(
+          "fixed inset-x-0 top-[230px] z-[var(--z-commandbar)] flex items-start justify-center pointer-events-none",
+          open ? "opacity-100" : "opacity-0"
+        )}
+        aria-hidden={!open}
       >
-        <Dialog.Title className="sr-only">Command Menu</Dialog.Title>
-
-        <div className="w-full max-w-2xl bg-white dark:bg-neutral-900 rounded-xl shadow-2xl border border-neutral-200 dark:border-neutral-700 overflow-hidden pointer-events-auto">
-          <Command.Input
-            value={search}
-            onValueChange={setSearch}
-            placeholder="Type a command or search..."
-            ref={inputRef}
-            className="w-full px-4 py-3 text-sm bg-transparent border-b border-neutral-200 dark:border-neutral-700 outline-none placeholder:text-neutral-500 dark:placeholder:text-neutral-400"
-          />
-          <CommandHighlightListener onHighlight={handleHighlight} />
-          <Command.List
-            ref={commandListRef}
-            className="max-h-[400px] overflow-y-auto px-1 pb-2 flex flex-col gap-2 pt-1"
+        <div
+          className={`w-full max-w-2xl h-auto max-h-[475px] bg-white dark:bg-neutral-900 rounded-xl shadow-2xl border border-neutral-200 dark:border-neutral-700 overflow-hidden flex flex-col ${
+            open
+              ? "opacity-100 pointer-events-auto"
+              : "opacity-0 pointer-events-none"
+          }`}
+          aria-hidden={!open}
+        >
+          <Command
+            value={commandValue}
+            shouldFilter={false}
+            onValueChange={(value) => {
+              setCommandValue(value || undefined);
+            }}
+            label="Command Menu"
+            className="flex h-full flex-col"
+            onKeyDownCapture={(e) => {
+              if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                handleEscape();
+              } else if (
+                e.key === "Backspace" &&
+                activePage !== "root" &&
+                search.length === 0 &&
+                inputRef.current &&
+                e.target === inputRef.current
+              ) {
+                e.preventDefault();
+                setActivePage("root");
+              }
+            }}
           >
-            <Command.Empty className="py-6 text-center text-sm text-neutral-500 dark:text-neutral-400">
-              {activePage === "teams"
-                ? "No matching teams."
-                : activePage === "local-workspaces"
-                  ? isLocalWorkspaceLoading
-                    ? "Loading repositories…"
-                    : "No matching repositories."
-                  : activePage === "cloud-workspaces"
-                    ? isCloudWorkspaceLoading
-                      ? "Loading workspaces…"
-                      : "No matching workspaces."
-                    : "No results found."}
-            </Command.Empty>
+            <h2 className="sr-only">Command Menu</h2>
+            <Command.Input
+              value={search}
+              onValueChange={setSearch}
+              placeholder="Type a command or search..."
+              ref={inputRef}
+              className="w-full px-4 py-3 text-sm bg-transparent border-b border-neutral-200 dark:border-neutral-700 outline-none placeholder:text-neutral-500 dark:placeholder:text-neutral-400"
+            />
+            <CommandHighlightListener onHighlight={handleHighlight} />
+            <Command.List
+              ref={commandListRef}
+              style={{
+                maxHeight: commandListMaxHeight,
+                scrollPaddingTop: `${COMMAND_LIST_SCROLL_PADDING_TOP_PX}px`,
+                scrollPaddingBottom: `${COMMAND_LIST_SCROLL_PADDING_BOTTOM_PX}px`,
+                scrollPaddingBlockStart: `${COMMAND_LIST_SCROLL_PADDING_TOP_PX}px`,
+                scrollPaddingBlockEnd: `${COMMAND_LIST_SCROLL_PADDING_BOTTOM_PX}px`,
+              }}
+              className="flex-1 min-h-0 overflow-y-auto px-1 pt-1 pb-2 flex flex-col gap-2"
+            >
+              <Command.Empty className="py-6 text-center text-sm text-neutral-500 dark:text-neutral-400">
+                {activePage === "teams"
+                  ? "No matching teams."
+                  : activePage === "local-workspaces"
+                    ? isLocalWorkspaceLoading
+                      ? "Loading repositories…"
+                      : "No matching repositories."
+                    : activePage === "cloud-workspaces"
+                      ? isCloudWorkspaceLoading
+                        ? "Loading workspaces…"
+                        : "No matching workspaces."
+                      : "No results found."}
+              </Command.Empty>
 
-            {activePage === "root" ? (
-              <>
-                {rootSuggestionsToRender.length > 0 ? (
-                  <Command.Group>
-                    {rootSuggestionsToRender.map((entry) =>
-                      renderCommandItem(entry, recordRootUsage)
-                    )}
-                  </Command.Group>
-                ) : null}
-                {rootCommandsToRender.length > 0 ? (
-                  <Command.Group>
-                    {rootCommandsToRender.map((entry) =>
-                      renderCommandItem(entry, recordRootUsage)
-                    )}
-                  </Command.Group>
-                ) : null}
-              </>
-            ) : null}
+              {activePage === "root" ? (
+                <>
+                  {rootSuggestionsToRender.length > 0 ? (
+                    <Command.Group>
+                      {rootSuggestionsToRender.map((entry) =>
+                        renderRootCommandEntry(entry)
+                      )}
+                    </Command.Group>
+                  ) : null}
+                  {rootCommandsToRender.length > 0 ? (
+                    <Command.Group>
+                      {shouldVirtualizeRoot ? (
+                        <VirtualizedCommandItems
+                          entries={rootCommandsToRender}
+                          virtualizer={rootVirtualizer}
+                          renderEntry={renderRootCommandEntry}
+                        />
+                      ) : (
+                        rootCommandsToRender.map((entry) =>
+                          renderRootCommandEntry(entry)
+                        )
+                      )}
+                    </Command.Group>
+                  ) : null}
+                </>
+              ) : null}
 
-            {activePage === "local-workspaces" ? (
-              <>
-                {isLocalWorkspaceLoading ? (
-                  <div className={placeholderClassName}>
-                    Loading repositories…
-                  </div>
-                ) : (
-                  <>
-                    {localWorkspaceSuggestionsToRender.length > 0 ? (
-                      <Command.Group>
-                        {localWorkspaceSuggestionsToRender.map((entry) =>
-                          renderCommandItem(entry, recordLocalWorkspaceUsage)
-                        )}
-                      </Command.Group>
-                    ) : null}
-                    {localWorkspaceSuggestionsToRender.length > 0 &&
+              {activePage === "local-workspaces" ? (
+                <>
+                  {isLocalWorkspaceLoading ? (
+                    <div className={placeholderClassName}>
+                      Loading repositories…
+                    </div>
+                  ) : (
+                    <>
+                      {localWorkspaceSuggestionsToRender.length > 0 ? (
+                        <Command.Group>
+                          {localWorkspaceSuggestionsToRender.map((entry) =>
+                            renderLocalWorkspaceCommandEntry(entry)
+                          )}
+                        </Command.Group>
+                      ) : null}
+                      {localWorkspaceSuggestionsToRender.length > 0 &&
                       localWorkspaceCommandsToRender.length > 0 ? (
-                      <div className="px-2">
-                        <hr className="border-neutral-200 dark:border-neutral-800" />
-                      </div>
-                    ) : null}
-                    {localWorkspaceCommandsToRender.length > 0 ? (
-                      <Command.Group>
-                        {localWorkspaceCommandsToRender.map((entry) =>
-                          renderCommandItem(entry, recordLocalWorkspaceUsage)
-                        )}
-                      </Command.Group>
-                    ) : null}
-                  </>
-                )}
-              </>
-            ) : null}
+                        <div className="px-2">
+                          <hr className="border-neutral-200 dark:border-neutral-800" />
+                        </div>
+                      ) : null}
+                      {localWorkspaceCommandsToRender.length > 0 ? (
+                        <Command.Group>
+                          {shouldVirtualizeLocal ? (
+                            <VirtualizedCommandItems
+                              entries={localWorkspaceCommandsToRender}
+                              virtualizer={localWorkspaceVirtualizer}
+                              renderEntry={renderLocalWorkspaceCommandEntry}
+                            />
+                          ) : (
+                            localWorkspaceCommandsToRender.map((entry) =>
+                              renderLocalWorkspaceCommandEntry(entry)
+                            )
+                          )}
+                        </Command.Group>
+                      ) : null}
+                    </>
+                  )}
+                </>
+              ) : null}
 
-            {activePage === "cloud-workspaces" ? (
-              <>
-                {isCloudWorkspaceLoading ? (
-                  <div className={placeholderClassName}>
-                    Loading workspaces…
-                  </div>
-                ) : (
-                  <>
-                    {cloudWorkspaceSuggestionsToRender.length > 0 ? (
-                      <Command.Group>
-                        {cloudWorkspaceSuggestionsToRender.map((entry) =>
-                          renderCommandItem(entry, recordCloudWorkspaceUsage)
-                        )}
-                      </Command.Group>
-                    ) : null}
-                    {cloudWorkspaceSuggestionsToRender.length > 0 &&
+              {activePage === "cloud-workspaces" ? (
+                <>
+                  {isCloudWorkspaceLoading ? (
+                    <div className={placeholderClassName}>
+                      Loading workspaces…
+                    </div>
+                  ) : (
+                    <>
+                      {cloudWorkspaceSuggestionsToRender.length > 0 ? (
+                        <Command.Group>
+                          {cloudWorkspaceSuggestionsToRender.map((entry) =>
+                            renderCloudWorkspaceCommandEntry(entry)
+                          )}
+                        </Command.Group>
+                      ) : null}
+                      {cloudWorkspaceSuggestionsToRender.length > 0 &&
                       cloudWorkspaceCommandsToRender.length > 0 ? (
-                      <div className="px-2">
-                        <hr className="border-neutral-200 dark:border-neutral-800" />
-                      </div>
-                    ) : null}
-                    {cloudWorkspaceCommandsToRender.length > 0 ? (
-                      <Command.Group>
-                        {cloudWorkspaceCommandsToRender.map((entry) =>
-                          renderCommandItem(entry, recordCloudWorkspaceUsage)
-                        )}
-                      </Command.Group>
-                    ) : null}
-                  </>
-                )}
-              </>
-            ) : null}
+                        <div className="px-2">
+                          <hr className="border-neutral-200 dark:border-neutral-800" />
+                        </div>
+                      ) : null}
+                      {cloudWorkspaceCommandsToRender.length > 0 ? (
+                        <Command.Group>
+                          {shouldVirtualizeCloud ? (
+                            <VirtualizedCommandItems
+                              entries={cloudWorkspaceCommandsToRender}
+                              virtualizer={cloudWorkspaceVirtualizer}
+                              renderEntry={renderCloudWorkspaceCommandEntry}
+                            />
+                          ) : (
+                            cloudWorkspaceCommandsToRender.map((entry) =>
+                              renderCloudWorkspaceCommandEntry(entry)
+                            )
+                          )}
+                        </Command.Group>
+                      ) : null}
+                    </>
+                  )}
+                </>
+              ) : null}
 
-            {activePage === "teams" ? (
-              <>
-                <Command.Group>
-                  <div className="px-2 py-1.5 text-xs text-neutral-500 dark:text-neutral-400">
-                    Teams
-                  </div>
-                  {isTeamsLoading ? (
-                    <Command.Item
-                      value="teams:loading"
-                      disabled
-                      className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-default text-sm text-neutral-500 dark:text-neutral-400"
-                    >
-                      Loading teams…
-                    </Command.Item>
-                  ) : teamCommandEntries.length > 0 ? (
-                    filteredTeamEntries.map(({ value, item }) => (
+              {activePage === "teams" ? (
+                <>
+                  <Command.Group>
+                    <div className="px-2 py-1.5 text-xs text-neutral-500 dark:text-neutral-400">
+                      Teams
+                    </div>
+                    {isTeamsLoading ? (
                       <Command.Item
-                        key={value}
-                        value={value}
-                        data-value={value}
-                        keywords={item.keywords}
-                        onSelect={() => handleSelect(value)}
-                        className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer
+                        value="teams:loading"
+                        disabled
+                        className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-default text-sm text-neutral-500 dark:text-neutral-400"
+                      >
+                        Loading teams…
+                      </Command.Item>
+                    ) : teamCommandEntries.length > 0 ? (
+                      filteredTeamEntries.map(({ value, item }) => (
+                        <Command.Item
+                          key={value}
+                          value={value}
+                          data-value={value}
+                          keywords={item.keywords}
+                          onSelect={() => handleSelect(value)}
+                          className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer
                 hover:bg-neutral-100 dark:hover:bg-neutral-800
                 data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
                 data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100"
-                      >
-                        <Users className="h-4 w-4 text-neutral-500" />
-                        <span className="flex-1 truncate text-sm">
-                          {item.label}
-                        </span>
-                        {item.isCurrent ? (
-                          <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
-                            current
+                        >
+                          <Users className="h-4 w-4 text-neutral-500" />
+                          <span className="flex-1 truncate text-sm">
+                            {item.label}
                           </span>
-                        ) : null}
+                          {item.isCurrent ? (
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
+                              current
+                            </span>
+                          ) : null}
+                        </Command.Item>
+                      ))
+                    ) : (
+                      <Command.Item
+                        value="teams:none"
+                        disabled
+                        className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-default text-sm text-neutral-500 dark:text-neutral-400"
+                      >
+                        {teamPageEmptyMessage}
                       </Command.Item>
-                    ))
-                  ) : (
-                    <Command.Item
-                      value="teams:none"
-                      disabled
-                      className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-default text-sm text-neutral-500 dark:text-neutral-400"
-                    >
-                      {teamPageEmptyMessage}
-                    </Command.Item>
-                  )}
-                </Command.Group>
-              </>
-            ) : null}
-          </Command.List>
+                    )}
+                  </Command.Group>
+                </>
+              ) : null}
+            </Command.List>
+          </Command>
         </div>
-      </Command.Dialog>
+      </div>
     </>
   );
 }
+const buildNodePath = (
+  root: HTMLElement,
+  target: Node | null
+): number[] | null => {
+  if (!target) return null;
+  const path: number[] = [];
+  let current: Node | null = target;
+  while (current && current !== root && current.parentNode) {
+    const parent = current.parentNode as Node | null;
+    if (!parent) return null;
+    const index = Array.prototype.indexOf.call(parent.childNodes, current);
+    if (index === -1) return null;
+    path.unshift(index);
+    current = parent;
+  }
+  return current === root ? path : null;
+};
+
+const resolveNodePath = (root: HTMLElement, path: number[]): Node | null => {
+  let current: Node | null = root;
+  for (const index of path) {
+    if (!current || !current.childNodes[index]) {
+      return null;
+    }
+    current = current.childNodes[index];
+  }
+  return current;
+};
