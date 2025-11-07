@@ -7,6 +7,10 @@ import React, {
 } from "react";
 import type { LayoutMode } from "@/lib/panel-config";
 
+const PANEL_GAP = 4;
+const PANEL_GAP_HALF = PANEL_GAP / 2;
+const HANDLE_SIZE = 8;
+
 interface FlexiblePanelLayoutProps {
   layoutMode: LayoutMode;
   topLeft: React.ReactNode;
@@ -170,8 +174,20 @@ export function FlexiblePanelLayout({
       )}
       style={
         orientation === "horizontal"
-          ? { width: "8px", left: position }
-          : { height: "8px", top: position }
+          ? {
+              top: 0,
+              bottom: 0,
+              left: position,
+              width: `${HANDLE_SIZE}px`,
+              transform: "translate(-50%, -2px)",
+            }
+          : {
+              left: 0,
+              right: 0,
+              top: position,
+              height: `${HANDLE_SIZE}px`,
+              transform: "translate(-2px, -50%)",
+            }
       }
       title={`Resize ${orientation === "horizontal" ? "columns" : "rows"}`}
     >
@@ -179,15 +195,25 @@ export function FlexiblePanelLayout({
         className="absolute bg-transparent group-hover:bg-neutral-400 dark:group-hover:bg-neutral-600 group-active:bg-neutral-500 dark:group-active:bg-neutral-500 transition-colors"
         style={
           orientation === "horizontal"
-            ? { top: 0, bottom: 0, width: "1px", left: "calc(50% + 2px)" }
-            : { left: 0, right: 0, height: "1px", top: "calc(50% + 2px)" }
+            ? { top: 0, bottom: 0, width: "1px", left: "50%", transform: "translateX(-50%)" }
+            : { left: 0, right: 0, height: "1px", top: "50%", transform: "translateY(-50%)" }
         }
       />
     </div>
   );
 
   const renderLayout = () => {
-    const gap = 4;
+    const gapPx = `${PANEL_GAP}px`;
+    const createSplitTrackSizes = (split: number) =>
+      `calc(${split}% - ${PANEL_GAP_HALF}px) calc(${100 - split}% - ${PANEL_GAP_HALF}px)`;
+    const horizontalTracks = createSplitTrackSizes(horizontalSplit);
+    const verticalTracks = createSplitTrackSizes(verticalSplit);
+    const horizontalHandlePosition = `${horizontalSplit}%`;
+    const verticalHandlePosition = `${verticalSplit}%`;
+    const rightColumnStart = `calc(${horizontalSplit}% + ${PANEL_GAP_HALF}px)`;
+    const leftColumnEnd = `calc(${100 - horizontalSplit}% + ${PANEL_GAP_HALF}px)`;
+    const topRowStart = `calc(${verticalSplit}% + ${PANEL_GAP_HALF}px)`;
+    const bottomRowEnd = `calc(${100 - verticalSplit}% + ${PANEL_GAP_HALF}px)`;
 
     switch (layoutMode) {
       case "four-panel":
@@ -196,9 +222,9 @@ export function FlexiblePanelLayout({
             <div
               className="h-full w-full grid"
               style={{
-                gridTemplateColumns: `${horizontalSplit}% ${100 - horizontalSplit}%`,
-                gridTemplateRows: `${verticalSplit}% ${100 - verticalSplit}%`,
-                gap: `${gap}px`,
+                gridTemplateColumns: horizontalTracks,
+                gridTemplateRows: verticalTracks,
+                gap: gapPx,
               }}
             >
               <div className="min-h-0 min-w-0">{topLeft}</div>
@@ -206,8 +232,8 @@ export function FlexiblePanelLayout({
               <div className="min-h-0 min-w-0">{bottomLeft}</div>
               <div className="min-h-0 min-w-0">{bottomRight}</div>
             </div>
-            {renderResizeHandle("horizontal", `calc(${horizontalSplit}% - 4px)`, startResizingHorizontal)}
-            {renderResizeHandle("vertical", `calc(${verticalSplit}% - 4px)`, startResizingVertical)}
+            {renderResizeHandle("horizontal", horizontalHandlePosition, startResizingHorizontal)}
+            {renderResizeHandle("vertical", verticalHandlePosition, startResizingVertical)}
           </>
         );
 
@@ -217,14 +243,14 @@ export function FlexiblePanelLayout({
             <div
               className="h-full w-full grid"
               style={{
-                gridTemplateColumns: `${horizontalSplit}% ${100 - horizontalSplit}%`,
-                gap: `${gap}px`,
+                gridTemplateColumns: horizontalTracks,
+                gap: gapPx,
               }}
             >
               <div className="min-h-0 min-w-0">{topLeft}</div>
               <div className="min-h-0 min-w-0">{topRight}</div>
             </div>
-            {renderResizeHandle("horizontal", `calc(${horizontalSplit}% - 4px)`, startResizingHorizontal)}
+            {renderResizeHandle("horizontal", horizontalHandlePosition, startResizingHorizontal)}
           </>
         );
 
@@ -234,14 +260,14 @@ export function FlexiblePanelLayout({
             <div
               className="h-full w-full grid"
               style={{
-                gridTemplateRows: `${verticalSplit}% ${100 - verticalSplit}%`,
-                gap: `${gap}px`,
+                gridTemplateRows: verticalTracks,
+                gap: gapPx,
               }}
             >
               <div className="min-h-0 min-w-0">{topLeft}</div>
               <div className="min-h-0 min-w-0">{bottomLeft}</div>
             </div>
-            {renderResizeHandle("vertical", `calc(${verticalSplit}% - 4px)`, startResizingVertical)}
+            {renderResizeHandle("vertical", verticalHandlePosition, startResizingVertical)}
           </>
         );
 
@@ -252,31 +278,31 @@ export function FlexiblePanelLayout({
             <div
               className="h-full w-full grid"
               style={{
-                gridTemplateColumns: `${horizontalSplit}% ${100 - horizontalSplit}%`,
+                gridTemplateColumns: horizontalTracks,
                 gridTemplateRows: "100%",
-                gap: `${gap}px`,
+                gap: gapPx,
               }}
             >
               <div className="min-h-0 min-w-0">{topLeft}</div>
               <div
                 className="min-h-0 min-w-0 grid"
                 style={{
-                  gridTemplateRows: `${verticalSplit}% ${100 - verticalSplit}%`,
-                  gap: `${gap}px`,
+                  gridTemplateRows: verticalTracks,
+                  gap: gapPx,
                 }}
               >
                 <div className="min-h-0 min-w-0">{topRight}</div>
                 <div className="min-h-0 min-w-0">{bottomRight}</div>
               </div>
             </div>
-            {renderResizeHandle("horizontal", `calc(${horizontalSplit}% - 4px)`, startResizingHorizontal)}
+            {renderResizeHandle("horizontal", horizontalHandlePosition, startResizingHorizontal)}
             <div
               style={{
                 position: "absolute",
-                left: `calc(${horizontalSplit}% + ${gap / 2}px)`,
+                left: rightColumnStart,
                 right: 0,
-                top: `calc(${verticalSplit}% - 4px)`,
-                height: "8px",
+                top: verticalHandlePosition,
+                height: `${HANDLE_SIZE}px`,
               }}
             >
               {renderResizeHandle("vertical", "0px", startResizingVertical)}
@@ -291,16 +317,16 @@ export function FlexiblePanelLayout({
             <div
               className="h-full w-full grid"
               style={{
-                gridTemplateColumns: `${horizontalSplit}% ${100 - horizontalSplit}%`,
+                gridTemplateColumns: horizontalTracks,
                 gridTemplateRows: "100%",
-                gap: `${gap}px`,
+                gap: gapPx,
               }}
             >
               <div
                 className="min-h-0 min-w-0 grid"
                 style={{
-                  gridTemplateRows: `${verticalSplit}% ${100 - verticalSplit}%`,
-                  gap: `${gap}px`,
+                  gridTemplateRows: verticalTracks,
+                  gap: gapPx,
                 }}
               >
                 <div className="min-h-0 min-w-0">{topLeft}</div>
@@ -308,14 +334,14 @@ export function FlexiblePanelLayout({
               </div>
               <div className="min-h-0 min-w-0">{bottomRight}</div>
             </div>
-            {renderResizeHandle("horizontal", `calc(${horizontalSplit}% - 4px)`, startResizingHorizontal)}
+            {renderResizeHandle("horizontal", horizontalHandlePosition, startResizingHorizontal)}
             <div
               style={{
                 position: "absolute",
                 left: 0,
-                right: `calc(${100 - horizontalSplit}% + ${gap / 2}px)`,
-                top: `calc(${verticalSplit}% - 4px)`,
-                height: "8px",
+                right: leftColumnEnd,
+                top: verticalHandlePosition,
+                height: `${HANDLE_SIZE}px`,
               }}
             >
               {renderResizeHandle("vertical", "0px", startResizingVertical)}
@@ -330,31 +356,31 @@ export function FlexiblePanelLayout({
             <div
               className="h-full w-full grid"
               style={{
-                gridTemplateRows: `${verticalSplit}% ${100 - verticalSplit}%`,
+                gridTemplateRows: verticalTracks,
                 gridTemplateColumns: "100%",
-                gap: `${gap}px`,
+                gap: gapPx,
               }}
             >
               <div className="min-h-0 min-w-0">{topLeft}</div>
               <div
                 className="min-h-0 min-w-0 grid"
                 style={{
-                  gridTemplateColumns: `${horizontalSplit}% ${100 - horizontalSplit}%`,
-                  gap: `${gap}px`,
+                  gridTemplateColumns: horizontalTracks,
+                  gap: gapPx,
                 }}
               >
                 <div className="min-h-0 min-w-0">{bottomLeft}</div>
                 <div className="min-h-0 min-w-0">{bottomRight}</div>
               </div>
             </div>
-            {renderResizeHandle("vertical", `calc(${verticalSplit}% - 4px)`, startResizingVertical)}
+            {renderResizeHandle("vertical", verticalHandlePosition, startResizingVertical)}
             <div
               style={{
                 position: "absolute",
-                top: `calc(${verticalSplit}% + ${gap / 2}px)`,
+                top: topRowStart,
                 bottom: 0,
-                left: `calc(${horizontalSplit}% - 4px)`,
-                width: "8px",
+                left: horizontalHandlePosition,
+                width: `${HANDLE_SIZE}px`,
               }}
             >
               {renderResizeHandle("horizontal", "0px", startResizingHorizontal)}
@@ -369,16 +395,16 @@ export function FlexiblePanelLayout({
             <div
               className="h-full w-full grid"
               style={{
-                gridTemplateRows: `${verticalSplit}% ${100 - verticalSplit}%`,
+                gridTemplateRows: verticalTracks,
                 gridTemplateColumns: "100%",
-                gap: `${gap}px`,
+                gap: gapPx,
               }}
             >
               <div
                 className="min-h-0 min-w-0 grid"
                 style={{
-                  gridTemplateColumns: `${horizontalSplit}% ${100 - horizontalSplit}%`,
-                  gap: `${gap}px`,
+                  gridTemplateColumns: horizontalTracks,
+                  gap: gapPx,
                 }}
               >
                 <div className="min-h-0 min-w-0">{topLeft}</div>
@@ -386,14 +412,14 @@ export function FlexiblePanelLayout({
               </div>
               <div className="min-h-0 min-w-0">{bottomRight}</div>
             </div>
-            {renderResizeHandle("vertical", `calc(${verticalSplit}% - 4px)`, startResizingVertical)}
+            {renderResizeHandle("vertical", verticalHandlePosition, startResizingVertical)}
             <div
               style={{
                 position: "absolute",
                 top: 0,
-                bottom: `calc(${100 - verticalSplit}% + ${gap / 2}px)`,
-                left: `calc(${horizontalSplit}% - 4px)`,
-                width: "8px",
+                bottom: bottomRowEnd,
+                left: horizontalHandlePosition,
+                width: `${HANDLE_SIZE}px`,
               }}
             >
               {renderResizeHandle("horizontal", "0px", startResizingHorizontal)}

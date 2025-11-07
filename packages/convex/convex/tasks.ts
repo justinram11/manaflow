@@ -76,6 +76,7 @@ export const getTasksWithTaskRuns = authQuery({
           .query("taskRuns")
           .withIndex("by_task", (query) => query.eq("taskId", task._id))
           .filter((query) => query.eq(query.field("isCrowned"), true))
+          .filter((query) => query.neq(query.field("isArchived"), true))
           .first();
 
         let selectedTaskRun = crownedRun ?? null;
@@ -84,6 +85,7 @@ export const getTasksWithTaskRuns = authQuery({
           const [latestRun] = await ctx.db
             .query("taskRuns")
             .withIndex("by_task", (query) => query.eq("taskId", task._id))
+            .filter((query) => query.neq(query.field("isArchived"), true))
             .order("desc")
             .take(1);
           selectedTaskRun = latestRun ?? null;

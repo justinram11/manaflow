@@ -6,6 +6,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import {
   internalMutation,
   internalQuery,
+  type MutationCtx,
   type QueryCtx,
 } from "./_generated/server";
 import { authMutation, authQuery, taskIdWithFake } from "./users/utils";
@@ -120,11 +121,44 @@ type TaskRunWithChildren = Doc<"taskRuns"> & {
   environment: EnvironmentSummary | null;
 };
 
+async function collectRunSubtreeIds(
+  ctx: MutationCtx,
+  rootRunId: Id<"taskRuns">,
+  teamId: string,
+  userId: string,
+): Promise<Id<"taskRuns">[]> {
+  const visited = new Set<Id<"taskRuns">>();
+  const stack: Id<"taskRuns">[] = [rootRunId];
+
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (visited.has(current)) {
+      continue;
+    }
+    visited.add(current);
+
+    const children = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_parent", (q) => q.eq("parentRunId", current))
+      .collect();
+
+    for (const child of children) {
+      if (child.teamId !== teamId || child.userId !== userId) {
+        continue;
+      }
+      stack.push(child._id);
+    }
+  }
+
+  return Array.from(visited);
+}
+
 async function fetchTaskRunsForTask(
   ctx: QueryCtx,
   teamId: string,
   userId: string,
   taskId: Id<"tasks">,
+  includeArchived = true,
 ): Promise<TaskRunWithChildren[]> {
   const runs = await ctx.db
     .query("taskRuns")
@@ -165,6 +199,9 @@ async function fetchTaskRunsForTask(
   const rootRuns: TaskRunWithChildren[] = [];
 
   runs.forEach((run) => {
+    if (!includeArchived && run.isArchived) {
+      return;
+    }
     const networking = run.networking?.map((item) => ({
       ...item,
       url: rewriteMorphUrl(item.url),
@@ -182,6 +219,9 @@ async function fetchTaskRunsForTask(
   });
 
   runs.forEach((run) => {
+    if (!includeArchived && run.isArchived) {
+      return;
+    }
     const runWithChildren = runMap.get(run._id)!;
     if (run.parentRunId) {
       const parent = runMap.get(run.parentRunId);
@@ -272,7 +312,11 @@ export const create = authMutation({
 
 // Get all task runs for a task, organized in tree structure
 export const getByTask = authQuery({
-  args: { teamSlugOrId: v.string(), taskId: taskIdWithFake },
+  args: {
+    teamSlugOrId: v.string(),
+    taskId: taskIdWithFake,
+    includeArchived: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
     if (typeof args.taskId === "string" && args.taskId.startsWith("fake-")) {
       return [];
@@ -285,6 +329,7 @@ export const getByTask = authQuery({
       teamId,
       userId,
       args.taskId as Id<"tasks">,
+      args.includeArchived ?? true,
     );
   },
 });
@@ -388,7 +433,7 @@ export const getRunDiffContext = authQuery({
 
     const [taskDoc, taskRuns] = await Promise.all([
       ctx.db.get(args.taskId),
-      fetchTaskRunsForTask(ctx, teamId, userId, args.taskId),
+      fetchTaskRunsForTask(ctx, teamId, userId, args.taskId, true),
     ]);
 
     if (!taskDoc || taskDoc.teamId !== teamId || taskDoc.userId !== userId) {
@@ -1254,6 +1299,41 @@ export const updateEnvironmentErrorFromWorker = internalMutation({
       environmentError,
       updatedAt: Date.now(),
     });
+  },
+});
+
+export const archive = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    id: v.id("taskRuns"),
+    archive: v.boolean(),
+    includeChildren: v.optional(v.boolean()),
+    taskId: v.optional(v.id("tasks")),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    const run = await ctx.db.get(args.id);
+    if (!run || run.teamId !== teamId || run.userId !== userId) {
+      throw new Error("Task run not found or unauthorized");
+    }
+    if (args.taskId && run.taskId !== args.taskId) {
+      throw new Error("Task run does not belong to provided task");
+    }
+
+    const targetIds = args.includeChildren
+      ? await collectRunSubtreeIds(ctx, args.id, teamId, userId)
+      : [args.id];
+
+    await Promise.all(
+      targetIds.map((runId) =>
+        ctx.db.patch(runId, {
+          isArchived: args.archive,
+          updatedAt: Date.now(),
+        }),
+      ),
+    );
   },
 });
 

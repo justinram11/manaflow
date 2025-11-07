@@ -174,6 +174,7 @@ const convexSchema = defineSchema({
       v.literal("completed"),
       v.literal("failed")
     ),
+    isArchived: v.optional(v.boolean()), // Whether this run is hidden from default views
     isLocalWorkspace: v.optional(v.boolean()),
     isCloudWorkspace: v.optional(v.boolean()),
     // Optional log retained for backward compatibility; no longer written to.

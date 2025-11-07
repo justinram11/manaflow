@@ -111,7 +111,8 @@ class PersistentIframeManager {
         width: 0;
         height: 0;
         pointer-events: none;
-        z-index: var(--z-floating-high, 999999);
+        z-index: var(--z-persistent-iframe-container);
+        isolation: isolate;
       `;
       document.body.appendChild(this.container);
     };
@@ -129,7 +130,7 @@ class PersistentIframeManager {
   getOrCreateIframe(
     key: string,
     url: string,
-    options?: { allow?: string; sandbox?: string },
+    options?: { allow?: string; sandbox?: string }
   ): HTMLIFrameElement {
     const existing = this.iframes.get(key);
 
@@ -166,7 +167,8 @@ class PersistentIframeManager {
       width: 100vw;
       height: 100vh;
       backface-visibility: hidden;
-      z-index: var(--z-floating-high, 999999);
+      z-index: var(--z-iframe);
+      isolation: isolate;
     `;
     wrapper.setAttribute("data-iframe-key", key);
 
@@ -222,7 +224,7 @@ class PersistentIframeManager {
   mountIframe(
     key: string,
     targetElement: HTMLElement,
-    options?: MountOptions,
+    options?: MountOptions
   ): () => void {
     if (this.debugMode) console.log(`[Mount] Starting mount for ${key}`);
 
@@ -264,11 +266,11 @@ class PersistentIframeManager {
 
           const cssKey = styleKey.replace(
             /[A-Z]/g,
-            (match) => `-${match.toLowerCase()}`,
+            (match) => `-${match.toLowerCase()}`
           );
           const cssValue =
             typeof styleValue === "number" &&
-              !UNITLESS_CSS_PROPERTIES.has(cssKey)
+            !UNITLESS_CSS_PROPERTIES.has(cssKey)
               ? `${styleValue}px`
               : String(styleValue);
           entry.wrapper.style.setProperty(cssKey, cssValue);
@@ -277,7 +279,8 @@ class PersistentIframeManager {
 
       // Set default z-index if not provided in options
       if (!options?.style?.zIndex) {
-        entry.wrapper.style.zIndex = "var(--z-floating-high, 999999)";
+        entry.wrapper.style.zIndex = "var(--z-iframe)";
+        entry.wrapper.style.isolation = "isolate";
       }
 
       // Ensure the iframe wrapper reflects any layout changes triggered by new styles
@@ -330,7 +333,7 @@ class PersistentIframeManager {
     if (!entry) return;
 
     const targetElement = document.querySelector(
-      `[data-iframe-target="${key}"]`,
+      `[data-iframe-target="${key}"]`
     );
     if (!targetElement || !(targetElement instanceof HTMLElement)) {
       this.moveIframeOffscreen(entry);
@@ -416,7 +419,6 @@ class PersistentIframeManager {
     entry.wrapper.style.pointerEvents = "none";
     this.moveIframeOffscreen(entry);
     entry.isVisible = false;
-
   }
 
   /**
@@ -425,7 +427,7 @@ class PersistentIframeManager {
   preloadIframe(
     key: string,
     url: string,
-    options?: { allow?: string; sandbox?: string },
+    options?: { allow?: string; sandbox?: string }
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       const iframe = this.getOrCreateIframe(key, url, options);
@@ -485,7 +487,7 @@ class PersistentIframeManager {
 
     const toRemove = sorted.slice(
       0,
-      Math.max(0, this.iframes.size - this.maxIframes),
+      Math.max(0, this.iframes.size - this.maxIframes)
     );
 
     for (const [key] of toRemove) {
@@ -502,12 +504,12 @@ class PersistentIframeManager {
       url: string;
       allow?: string;
       sandbox?: string;
-    }>,
+    }>
   ): Promise<void> {
     await Promise.all(
       entries.map(({ key, url, allow, sandbox }) =>
-        this.preloadIframe(key, url, { allow, sandbox }),
-      ),
+        this.preloadIframe(key, url, { allow, sandbox })
+      )
     );
   }
 
@@ -548,12 +550,12 @@ class PersistentIframeManager {
     const viewportWidth = Math.max(
       1,
       window.innerWidth || 0,
-      document.documentElement?.clientWidth ?? 0,
+      document.documentElement?.clientWidth ?? 0
     );
     const viewportHeight = Math.max(
       1,
       window.innerHeight || 0,
-      document.documentElement?.clientHeight ?? 0,
+      document.documentElement?.clientHeight ?? 0
     );
 
     entry.wrapper.style.width = `${viewportWidth}px`;

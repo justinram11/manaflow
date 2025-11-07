@@ -502,6 +502,7 @@ function EnvironmentDetailsPage() {
           teamSlugOrId,
           environmentId: String(environmentId),
           snapshotId: environment.morphSnapshotId ?? undefined,
+          isCloudWorkspace: true,
         },
       },
       {
@@ -523,6 +524,7 @@ function EnvironmentDetailsPage() {
           teamSlugOrId,
           environmentId: String(environmentId),
           snapshotId: environment.morphSnapshotId,
+          isCloudWorkspace: true,
         },
       },
       {
