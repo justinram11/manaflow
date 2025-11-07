@@ -594,7 +594,7 @@ const SearchableSelect = forwardRef<
                     setSearch("");
                   }
                 }}
-                onPaste={(event) => {
+                onPaste={async (event) => {
                   if (!onSearchPaste) {
                     return;
                   }
@@ -603,16 +603,15 @@ const SearchableSelect = forwardRef<
                   if (!trimmed) {
                     return;
                   }
-                  Promise.resolve(onSearchPaste(trimmed))
-                    .then((handled) => {
-                      if (handled) {
-                        setSearch("");
-                        setOpen(false);
-                      }
-                    })
-                    .catch((error) => {
-                      console.error("Failed to handle search paste:", error);
-                    });
+                  try {
+                    const handled = await onSearchPaste(trimmed);
+                    if (handled) {
+                      setSearch("");
+                      setOpen(false);
+                    }
+                  } catch (error) {
+                    console.error("Failed to handle search paste:", error);
+                  }
                 }}
                 className={clsx("text-[13.5px] py-2", classNames.commandInput)}
               />

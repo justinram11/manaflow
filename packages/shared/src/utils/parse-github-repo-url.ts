@@ -15,7 +15,7 @@ export function parseGithubRepoUrl(input: string): {
   url: string;
   gitUrl: string;
 } | null {
-  if (!input || typeof input !== "string") {
+  if (!input) {
     return null;
   }
 
