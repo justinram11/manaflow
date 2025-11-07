@@ -64,6 +64,7 @@ import {
 
 interface CommandBarProps {
   teamSlugOrId: string;
+  stateResetDelayMs?: number;
 }
 
 const environmentSearchDefaults = {
@@ -249,7 +250,10 @@ function CommandHighlightListener({
   return null;
 }
 
-export function CommandBar({ teamSlugOrId }: CommandBarProps) {
+export function CommandBar({
+  teamSlugOrId,
+  stateResetDelayMs = 30_000,
+}: CommandBarProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [openedWithShift, setOpenedWithShift] = useState(false);
@@ -268,6 +272,8 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   const commandListRef = useRef<HTMLDivElement | null>(null);
   const previousSearchRef = useRef(search);
   const skipNextCloseRef = useRef(false);
+  const stateResetTimeoutRef =
+    useRef<ReturnType<typeof setTimeout> | null>(null);
   // Used only in non-Electron fallback
   const prevFocusSnapshotRef = useRef<FocusSnapshot | null>(null);
   const navigate = useNavigate();
@@ -377,14 +383,42 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     });
   }, []);
 
+  const clearPendingStateReset = useCallback(() => {
+    if (stateResetTimeoutRef.current !== null) {
+      clearTimeout(stateResetTimeoutRef.current);
+      stateResetTimeoutRef.current = null;
+    }
+  }, []);
+
+  const resetCommandState = useCallback(() => {
+    setSearch("");
+    setActivePage("root");
+    setCommandValue(undefined);
+  }, []);
+
+  const scheduleCommandStateReset = useCallback(() => {
+    if (stateResetDelayMs <= 0) {
+      clearPendingStateReset();
+      resetCommandState();
+      return;
+    }
+
+    clearPendingStateReset();
+    stateResetTimeoutRef.current = setTimeout(() => {
+      stateResetTimeoutRef.current = null;
+      if (openRef.current) {
+        return;
+      }
+      resetCommandState();
+    }, stateResetDelayMs);
+  }, [clearPendingStateReset, resetCommandState, stateResetDelayMs]);
+
   const closeCommand = useCallback(() => {
     skipNextCloseRef.current = false;
     setOpen(false);
-    setSearch("");
     setOpenedWithShift(false);
-    setActivePage("root");
-    setCommandValue(undefined);
-  }, [setOpen, setSearch, setOpenedWithShift, setActivePage, setCommandValue]);
+    scheduleCommandStateReset();
+  }, [scheduleCommandStateReset, setOpen, setOpenedWithShift]);
 
   const handleEscape = useCallback(() => {
     skipNextCloseRef.current = false;
@@ -400,6 +434,17 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     }
     closeCommand();
   }, [activePage, closeCommand, search, setActivePage, setSearch]);
+
+  useEffect(() => {
+    if (!open) return;
+    clearPendingStateReset();
+  }, [open, clearPendingStateReset]);
+
+  useEffect(() => {
+    return () => {
+      clearPendingStateReset();
+    };
+  }, [clearPendingStateReset]);
 
   const stackUser = useUser({ or: "return-null" });
   const stackTeams = stackUser?.useTeams() ?? EMPTY_TEAM_LIST;
@@ -958,17 +1003,13 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       const off = window.cmux.on("shortcut:cmd-k", () => {
         console.log("[CommandBar] Cmd+K detected via Electron shortcut");
         // Only handle Cmd+K (no shift/ctrl variations)
-        setOpenedWithShift(false);
-        setActivePage("root");
         if (openRef.current) {
-          // About to CLOSE via toggle: normalize state like Esc path
-          setSearch("");
-          setOpenedWithShift(false);
+          closeCommand();
+          return;
         }
-        if (!openRef.current) {
-          captureFocusBeforeOpen();
-        }
-        setOpen((cur) => !cur);
+        setOpenedWithShift(false);
+        captureFocusBeforeOpen();
+        setOpen(true);
       });
       return () => {
         // Unsubscribe if available
@@ -988,20 +1029,18 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       ) {
         console.log("[CommandBar] Cmd+K detected via web shortcut");
         e.preventDefault();
-        setActivePage("root");
         if (openRef.current) {
-          setOpenedWithShift(false);
-          setSearch("");
-        } else {
-          setOpenedWithShift(false);
-          captureFocusBeforeOpen();
+          closeCommand();
+          return;
         }
-        setOpen((cur) => !cur);
+        setOpenedWithShift(false);
+        captureFocusBeforeOpen();
+        setOpen(true);
       }
     };
     document.addEventListener("keydown", down);
     return () => document.removeEventListener("keydown", down);
-  }, [captureFocusBeforeOpen]);
+  }, [captureFocusBeforeOpen, closeCommand]);
 
   // Track and restore focus across open/close, including iframes/webviews.
   useEffect(() => {
