@@ -46,6 +46,9 @@ interface RunScreenshotGalleryProps {
   highlightedSetId?: Id<"taskRunScreenshotSets"> | null;
 }
 
+const MIN_ZOOM = 0.2;
+const MAX_ZOOM = 40;
+
 const STATUS_LABELS: Record<ScreenshotStatus, string> = {
   completed: "Completed",
   failed: "Failed",
@@ -116,6 +119,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
+  const [baseImageScale, setBaseImageScale] = useState(1);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const panPointerIdRef = useRef<number | null>(null);
   const lastPanPositionRef = useRef<{ x: number; y: number } | null>(null);
@@ -123,7 +127,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
   const defaultOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const clampZoom = useCallback((value: number) => {
-    return Math.min(4, Math.max(0.4, value));
+    return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value));
   }, []);
 
   const setZoomWithFocus = useCallback(
@@ -163,36 +167,37 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
     [clampZoom],
   );
 
-  const getSuggestedDefaultZoom = (width: number, height: number) => {
-    if (width <= 0 || height <= 0) {
-      return 1;
-    }
-    const aspectRatio = height / width;
-    // Start tall/portrait screenshots a bit zoomed out so it's clear there's more to explore.
-    if (aspectRatio >= 1.8) {
-      return 0.6;
-    }
-    if (aspectRatio >= 1.4) {
-      return 0.75;
-    }
-    if (aspectRatio >= 1.15) {
-      return 0.9;
-    }
-    return 1;
-  };
-
   const handleImageLoad = (event: SyntheticEvent<HTMLImageElement>) => {
     const { naturalWidth, naturalHeight } = event.currentTarget;
-    const suggestedZoom = getSuggestedDefaultZoom(naturalWidth, naturalHeight);
-    const clampedZoom = clampZoom(suggestedZoom);
     const viewportRect = viewportRef.current?.getBoundingClientRect();
-    const initialOffset = { x: 0, y: 0 };
-    if (viewportRect) {
-      const scaledHeight = naturalHeight * clampedZoom;
-      if (scaledHeight > viewportRect.height) {
-        initialOffset.y = (scaledHeight - viewportRect.height) / 2;
-      }
+    if (!viewportRect || naturalWidth <= 0 || naturalHeight <= 0) {
+      setBaseImageScale(1);
+      defaultZoomRef.current = 1;
+      defaultOffsetRef.current = { x: 0, y: 0 };
+      resetZoomState({ zoom: 1, offset: { x: 0, y: 0 } });
+      return;
     }
+
+    const viewportWidth = viewportRect.width;
+    const viewportHeight = viewportRect.height;
+    const baseScale = Math.min(
+      viewportWidth / naturalWidth,
+      viewportHeight / naturalHeight,
+    );
+    const normalizedBaseScale = Math.min(1, baseScale);
+    setBaseImageScale(normalizedBaseScale);
+    const baseWidth = naturalWidth * baseScale;
+    const baseHeight = naturalHeight * baseScale;
+
+    const fitHeightZoom = viewportHeight / baseHeight;
+    const fitWidthZoom = viewportWidth / baseWidth;
+    const desiredZoom = Math.min(1, fitHeightZoom, fitWidthZoom);
+    const clampedZoom = clampZoom(desiredZoom);
+
+    const scaledHeight = baseHeight * clampedZoom;
+    const offsetY = -((viewportHeight - scaledHeight) / 2);
+    const initialOffset = { x: 0, y: offsetY };
+
     defaultZoomRef.current = clampedZoom;
     defaultOffsetRef.current = initialOffset;
     resetZoomState({ zoom: clampedZoom, offset: initialOffset });
@@ -228,6 +233,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
   useEffect(() => {
     defaultZoomRef.current = 1;
     defaultOffsetRef.current = { x: 0, y: 0 };
+    setBaseImageScale(1);
     resetZoomState({ zoom: 1, offset: { x: 0, y: 0 } });
   }, [currentEntry?.key, resetZoomState]);
 
@@ -262,9 +268,10 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
   const isSlideshowOpen = Boolean(currentEntry);
   const hasMultipleImages = flattenedImages.length > 1;
   const showNavButtons = hasMultipleImages;
-  const zoomPercent = Math.round(zoom * 100);
-  const canZoomIn = zoom < 3.9;
-  const canZoomOut = zoom > 0.45;
+  const effectiveScale = Math.max(0, zoom * baseImageScale);
+  const zoomPercent = Math.round(effectiveScale * 100);
+  const canZoomIn = zoom < MAX_ZOOM - 0.001;
+  const canZoomOut = zoom > MIN_ZOOM + 0.001;
   const canResetZoom = zoom !== 1 || offset.x !== 0 || offset.y !== 0;
 
   const handleWheel = useCallback(
@@ -276,12 +283,18 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
       const rect = viewportRef.current.getBoundingClientRect();
       const pointerX = event.clientX - (rect.left + rect.width / 2);
       const pointerY = event.clientY - (rect.top + rect.height / 2);
-      const deltaY = event.deltaY;
-      if (deltaY === 0) {
+      const { deltaMode, deltaY } = event;
+      let pixelDelta = deltaY;
+      if (deltaMode === 1) {
+        pixelDelta *= 16;
+      } else if (deltaMode === 2) {
+        pixelDelta *= rect.height;
+      }
+      if (pixelDelta === 0) {
         return;
       }
-      const normalized = Math.max(-1, Math.min(1, deltaY / 120));
-      const factor = 1 - normalized * 0.2;
+      const sensitivity = event.ctrlKey ? 0.0016 : 0.0009;
+      const factor = Math.exp(-pixelDelta * sensitivity);
       setZoomWithFocus((prevZoom) => prevZoom * factor, {
         x: pointerX,
         y: pointerY,
@@ -430,7 +443,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
           >
             <Dialog.Portal>
               <Dialog.Overlay className="fixed inset-0 bg-neutral-950/60 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in data-[state=closed]:fade-out" />
-              <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex h-full max-h-[calc(100vh-2rem)] w-full max-w-[min(1600px,95vw)] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-3xl border border-neutral-200 bg-white/95 p-4 shadow-2xl focus:outline-none dark:border-neutral-800 dark:bg-neutral-950/95 sm:p-6">
+              <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100vh-4rem)] w-[min(2600px,calc(100vw-4rem))] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-3xl border border-neutral-200 bg-white/95 p-4 shadow-2xl focus:outline-none dark:border-neutral-800 dark:bg-neutral-950/95 sm:max-h-[calc(100vh-6rem)] sm:w-[min(2600px,calc(100vw-6rem))] sm:p-6">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="space-y-1">
                     <Dialog.Title className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
@@ -523,7 +536,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                     <img
                       src={currentEntry.image.url ?? undefined}
                       alt={currentEntry.image.fileName ?? "Screenshot"}
-                      className="select-none object-contain"
+                      className="select-none h-full w-full object-contain"
                       draggable={false}
                       onLoad={handleImageLoad}
                       style={{
