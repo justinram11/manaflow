@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { waitUntil } from "@vercel/functions";
 import { type Team } from "@stackframe/stack";
+import type { ModelConfig } from "@/lib/services/code-review/run-simple-anthropic-review";
 
 import {
   fetchPullRequest,
@@ -43,6 +44,7 @@ type PageParams = {
 
 type PageProps = {
   params: Promise<PageParams>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 };
 
 export const dynamic = "force-dynamic";
@@ -84,6 +86,19 @@ async function getFirstTeam(): Promise<Team | null> {
     return null;
   }
   return firstTeam;
+}
+
+function parseModelConfigFromSearchParams(
+  searchParams: { [key: string]: string | string[] | undefined }
+): ModelConfig | undefined {
+  // Check for ?ft0 query parameter to use fine-tuned OpenAI model
+  if ("ft0" in searchParams) {
+    return {
+      provider: "openai",
+      model: "ft:gpt-4.1-mini-2025-04-14:lawrence:cmux-heatmap-sft:CZW6Lc77",
+    };
+  }
+  return undefined;
 }
 
 export async function generateMetadata({
@@ -138,8 +153,9 @@ export async function generateMetadata({
   }
 }
 
-export default async function PullRequestPage({ params }: PageProps) {
+export default async function PullRequestPage({ params, searchParams }: PageProps) {
   const resolvedParams = await params;
+  const resolvedSearchParams = await searchParams;
 
   const {
     teamSlugOrId: githubOwner,
@@ -147,6 +163,7 @@ export default async function PullRequestPage({ params }: PageProps) {
     pullNumber: pullNumberRaw,
   } = resolvedParams;
   const pullNumber = parsePullNumber(pullNumberRaw);
+  const modelConfig = parseModelConfigFromSearchParams(resolvedSearchParams);
 
   if (pullNumber === null) {
     notFound();
@@ -244,6 +261,7 @@ export default async function PullRequestPage({ params }: PageProps) {
       repo,
       pullNumber,
       pullRequestPromise,
+      modelConfig,
     });
   }
 
@@ -290,12 +308,14 @@ function scheduleCodeReviewStart({
   repo,
   pullNumber,
   pullRequestPromise,
+  modelConfig,
 }: {
   teamSlugOrId: string;
   githubOwner: string;
   repo: string;
   pullNumber: number;
   pullRequestPromise: Promise<GithubPullRequest>;
+  modelConfig?: ModelConfig;
 }): void {
   waitUntil(
     (async () => {
@@ -408,6 +428,7 @@ function scheduleCodeReviewStart({
           simpleReviewPromise = runSimpleAnthropicReviewStream({
             prIdentifier: githubLink,
             githubToken: simpleReviewToken,
+            modelConfig,
           }).catch((error) => {
             const message =
               error instanceof Error ? error.message : String(error ?? "");

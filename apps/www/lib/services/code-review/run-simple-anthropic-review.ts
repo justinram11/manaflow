@@ -1,4 +1,5 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { createOpenAI } from "@ai-sdk/openai";
 import { streamText } from "ai";
 
 import { CLOUDFLARE_ANTHROPIC_BASE_URL } from "@cmux/shared";
@@ -111,9 +112,15 @@ type RepoSlug = {
   repo: string;
 };
 
+export type ModelConfig = {
+  provider: "anthropic" | "openai";
+  model: string;
+};
+
 export type SimpleReviewStreamOptions = {
   prIdentifier: string;
   githubToken?: string | null;
+  modelConfig?: ModelConfig;
   onChunk?: (chunk: string) => void | Promise<void>;
   onEvent?: (event: SimpleReviewParsedEvent) => void | Promise<void>;
   signal?: AbortSignal;
@@ -281,6 +288,7 @@ export async function runSimpleAnthropicReviewStream(
   const {
     prIdentifier,
     githubToken: providedGithubToken = null,
+    modelConfig,
     onChunk,
     signal,
   } = options;
@@ -333,9 +341,19 @@ export async function runSimpleAnthropicReviewStream(
     metadata.prUrl ??
     `${metadata.owner}/${metadata.repo}#${metadata.number ?? "unknown"}`;
 
+  // Determine which model to use based on configuration
+  const effectiveModelConfig: ModelConfig = modelConfig ?? {
+    provider: "anthropic",
+    model: "claude-opus-4-1-20250805",
+  };
+
   const anthropic = createAnthropic({
     apiKey: env.ANTHROPIC_API_KEY,
     baseURL: CLOUDFLARE_ANTHROPIC_BASE_URL,
+  });
+
+  const openai = createOpenAI({
+    apiKey: env.OPENAI_API_KEY,
   });
 
   const runWithSemaphore = createSemaphore(MAX_CONCURRENCY);
@@ -368,9 +386,13 @@ export async function runSimpleAnthropicReviewStream(
         const prompt = buildFilePrompt(prLabel, file.filePath, file.diffText);
 
         try {
+          const modelInstance =
+            effectiveModelConfig.provider === "openai"
+              ? openai(effectiveModelConfig.model)
+              : anthropic(effectiveModelConfig.model);
+
           const stream = streamText({
-            model: anthropic("claude-opus-4-1-20250805"),
-            // model: anthropic("claude-haiku-4-5"),
+            model: modelInstance,
             prompt,
             temperature: 0,
             maxRetries: 2,

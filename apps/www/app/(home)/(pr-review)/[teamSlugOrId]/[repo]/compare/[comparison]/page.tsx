@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { waitUntil } from "@vercel/functions";
 import { type Team } from "@stackframe/stack";
+import type { ModelConfig } from "@/lib/services/code-review/run-simple-anthropic-review";
 
 import {
   DiffViewerSkeleton,
@@ -37,6 +38,7 @@ type PageParams = {
 
 type PageProps = {
   params: Promise<PageParams>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 };
 
 export const dynamic = "force-dynamic";
@@ -48,6 +50,19 @@ async function getFirstTeam(): Promise<Team | null> {
     return null;
   }
   return firstTeam;
+}
+
+function parseModelConfigFromSearchParams(
+  searchParams: { [key: string]: string | string[] | undefined }
+): ModelConfig | undefined {
+  // Check for ?ft0 query parameter to use fine-tuned OpenAI model
+  if ("ft0" in searchParams) {
+    return {
+      provider: "openai",
+      model: "ft:gpt-4.1-mini-2025-04-14:lawrence:cmux-heatmap-sft:CZW6Lc77",
+    };
+  }
+  return undefined;
 }
 
 function parseComparisonSlug(

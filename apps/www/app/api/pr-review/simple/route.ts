@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { stackServerApp } from "@/lib/utils/stack";
-import { runSimpleAnthropicReviewStream } from "@/lib/services/code-review/run-simple-anthropic-review";
+import { runSimpleAnthropicReviewStream, type ModelConfig } from "@/lib/services/code-review/run-simple-anthropic-review";
 import { isRepoPublic } from "@/lib/github/check-repo-visibility";
 
 export const runtime = "nodejs";
@@ -35,11 +35,23 @@ function parsePrNumber(raw: string | null): number | null {
   return parsed;
 }
 
+function parseModelConfig(searchParams: URLSearchParams): ModelConfig | undefined {
+  // Check for ?ft0 query parameter to use fine-tuned OpenAI model
+  if (searchParams.has("ft0")) {
+    return {
+      provider: "openai",
+      model: "ft:gpt-4.1-mini-2025-04-14:lawrence:cmux-heatmap-sft:CZW6Lc77",
+    };
+  }
+  return undefined;
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = request.nextUrl;
     const repoFullName = parseRepoFullName(searchParams.get("repoFullName"));
     const prNumber = parsePrNumber(searchParams.get("prNumber"));
+    const modelConfig = parseModelConfig(searchParams);
 
     if (!repoFullName || prNumber === null) {
       return NextResponse.json(
@@ -113,6 +125,7 @@ export async function GET(request: NextRequest) {
           await runSimpleAnthropicReviewStream({
             prIdentifier,
             githubToken: normalizedGithubToken,
+            modelConfig,
             signal: abortController.signal,
             onEvent: async (event) => {
               switch (event.type) {
