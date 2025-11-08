@@ -26,63 +26,22 @@ wait_for_process_exit() {
 
 stop_staging_app_instances() {
   local pattern="$1"
-  local bundle_id="$2"
+  local _bundle_id="$2"
 
   if ! pgrep -f "$pattern" >/dev/null 2>&1; then
     echo "==> No running $pattern instances detected."
     return 0
   fi
 
-  echo "==> Attempting graceful shutdown for existing $pattern..."
-  local graceful_shutdown=0
-  if command -v osascript >/dev/null 2>&1; then
-    if osascript - "$pattern" <<'OSA' >/dev/null 2>&1; then
-on run argv
-  if (count of argv) is 0 then return
-  set targetName to item 1 of argv
-
-  tell application "System Events"
-    try
-      set matchingProcesses to every process whose name is targetName
-    on error
-      set matchingProcesses to {}
-    end try
-  end tell
-
-  repeat with procRef in matchingProcesses
-    try
-      set appAlias to application file of procRef as alias
-      tell application appAlias to quit
-    end try
-  end repeat
-end run
-OSA
-      if wait_for_process_exit "$pattern" 5; then
-        echo "==> $pattern exited after AppleScript quit request."
-        graceful_shutdown=1
-      fi
-    fi
+  echo "==> Forcing SIGKILL for $pattern..."
+  pkill -KILL -f "$pattern" >/dev/null 2>&1 || true
+  if wait_for_process_exit "$pattern" 5; then
+    echo "==> $pattern processes terminated after SIGKILL."
+    return 0
   fi
 
-  if (( graceful_shutdown == 0 )); then
-    echo "==> Sending SIGTERM to $pattern..."
-    pkill -TERM -f "$pattern" >/dev/null 2>&1 || true
-    if wait_for_process_exit "$pattern" 10; then
-      echo "==> $pattern terminated after SIGTERM."
-      graceful_shutdown=1
-    fi
-  fi
-
-  if (( graceful_shutdown == 0 )); then
-    echo "==> Forcing SIGKILL for remaining $pattern processes..." >&2
-    pkill -KILL -f "$pattern" >/dev/null 2>&1 || true
-    if ! wait_for_process_exit "$pattern" 5; then
-      echo "WARNING: $pattern processes still running after SIGKILL." >&2
-      return 1
-    fi
-  fi
-
-  return 0
+  echo "WARNING: $pattern processes still running after SIGKILL." >&2
+  return 1
 }
 
 current_git_ref() {
