@@ -1,6 +1,6 @@
 "use node";
 import { v } from "convex/values";
-import type { Doc, Id } from "./_generated/dataModel";
+import type { Id } from "./_generated/dataModel";
 import { api, internal } from "./_generated/api";
 import { action } from "./_generated/server";
 import { Octokit } from "octokit";
