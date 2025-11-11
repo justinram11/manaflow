@@ -6,7 +6,7 @@ import {
   postApiWorkspaceConfigsMutation,
 } from "@cmux/www-openapi-client/react-query";
 import { useQuery, useMutation as useRQMutation } from "@tanstack/react-query";
-import { AlertTriangle, ChevronDown, ChevronRight, Minus, Plus } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Loader2, Minus, Plus } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -254,7 +254,14 @@ export function WorkspaceSetupPanel({
             Configure workspace for{" "}
             <span className="font-semibold">{projectFullName}</span>
           </span>
-          {shouldShowSetupWarning ? (
+          {configQuery.isPending ? (
+            <span className="inline-flex animate-in fade-in-0 duration-300">
+              <Loader2
+                className="w-3.5 h-3.5 text-neutral-500 dark:text-neutral-400 animate-spin"
+                aria-label="Loading configuration"
+              />
+            </span>
+          ) : shouldShowSetupWarning ? (
             <Tooltip delayDuration={0}>
               <TooltipTrigger asChild>
                 <span className="inline-flex animate-in fade-in-0 duration-300">
