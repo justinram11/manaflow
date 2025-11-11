@@ -171,7 +171,7 @@ export const TaskList = memo(function TaskList({
       <div className="flex flex-col gap-1 w-full">
         {tab === "archived" ? (
           archivedTasks === undefined ? (
-            <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 select-none">
+            <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 pl-4 select-none">
               Loading...
             </div>
           ) : archivedTasks.length === 0 ? (
@@ -188,7 +188,7 @@ export const TaskList = memo(function TaskList({
             ))
           )
         ) : allTasks === undefined ? (
-          <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 select-none">
+          <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 pl-4 select-none">
             Loading...
           </div>
         ) : (
