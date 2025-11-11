@@ -13,12 +13,33 @@ export type HeatmapModelQueryValue =
 
 const FINE_TUNED_OPENAI_MODEL_ID =
   "ft:gpt-4.1-mini-2025-04-14:lawrence:cmux-heatmap-sft:CZW6Lc77";
+const ANTHROPIC_OPUS_MODEL_ID = "claude-opus-4-1-20250805";
 
 function createFineTunedOpenAiConfig(): ModelConfig {
   return {
     provider: "openai",
     model: FINE_TUNED_OPENAI_MODEL_ID,
   };
+}
+
+function createAnthropicOpusConfig(): ModelConfig {
+  return {
+    provider: "anthropic",
+    model: ANTHROPIC_OPUS_MODEL_ID,
+  };
+}
+
+export function getDefaultHeatmapModelConfig(): ModelConfig {
+  return createFineTunedOpenAiConfig();
+}
+
+export function getHeatmapModelConfigForSelection(
+  selection: HeatmapModelQueryValue
+): ModelConfig {
+  if (selection === HEATMAP_MODEL_ANTHROPIC_QUERY_VALUE) {
+    return createAnthropicOpusConfig();
+  }
+  return createFineTunedOpenAiConfig();
 }
 
 export function normalizeHeatmapModelQueryValue(
@@ -71,18 +92,12 @@ export function parseModelConfigFromRecord(
   searchParams: SearchParamsRecord
 ): ModelConfig | undefined {
   const selection = resolveModelSelectionFromRecord(searchParams);
-  if (selection === HEATMAP_MODEL_FINETUNE_QUERY_VALUE) {
-    return createFineTunedOpenAiConfig();
-  }
-  return undefined;
+  return getHeatmapModelConfigForSelection(selection);
 }
 
 export function parseModelConfigFromUrlSearchParams(
   searchParams: URLSearchParams
 ): ModelConfig | undefined {
   const selection = resolveModelSelectionFromUrlSearchParams(searchParams);
-  if (selection === HEATMAP_MODEL_FINETUNE_QUERY_VALUE) {
-    return createFineTunedOpenAiConfig();
-  }
-  return undefined;
+  return getHeatmapModelConfigForSelection(selection);
 }

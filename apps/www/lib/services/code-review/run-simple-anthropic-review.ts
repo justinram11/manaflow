@@ -2,7 +2,10 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { streamText } from "ai";
 
-import { CLOUDFLARE_ANTHROPIC_BASE_URL } from "@cmux/shared";
+import {
+  CLOUDFLARE_ANTHROPIC_BASE_URL,
+  CLOUDFLARE_OPENAI_BASE_URL,
+} from "@cmux/shared";
 import { collectPrDiffs, collectPrDiffsViaGhCli } from "@/scripts/pr-review-heatmap";
 import { env } from "@/lib/utils/www-env";
 import {
@@ -14,6 +17,7 @@ import {
   getInstallationForRepo,
 } from "@/lib/utils/github-app-token";
 import { checkRepoVisibility } from "@/lib/github/check-repo-visibility";
+import { getDefaultHeatmapModelConfig } from "./model-config";
 
 const SIMPLE_REVIEW_INSTRUCTIONS = `Dannotate every modified/deleted/added line of this diff with a "fake" comment at the end of each line.
 
@@ -342,10 +346,8 @@ export async function runSimpleAnthropicReviewStream(
     `${metadata.owner}/${metadata.repo}#${metadata.number ?? "unknown"}`;
 
   // Determine which model to use based on configuration
-  const effectiveModelConfig: ModelConfig = modelConfig ?? {
-    provider: "anthropic",
-    model: "claude-opus-4-1-20250805",
-  };
+  const effectiveModelConfig: ModelConfig =
+    modelConfig ?? getDefaultHeatmapModelConfig();
 
   const anthropic = createAnthropic({
     apiKey: env.ANTHROPIC_API_KEY,
@@ -354,6 +356,7 @@ export async function runSimpleAnthropicReviewStream(
 
   const openai = createOpenAI({
     apiKey: env.OPENAI_API_KEY,
+    baseURL: CLOUDFLARE_OPENAI_BASE_URL,
   });
 
   const runWithSemaphore = createSemaphore(MAX_CONCURRENCY);

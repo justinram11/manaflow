@@ -2,6 +2,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { streamObject } from "ai";
 import { api } from "@cmux/convex/api";
 import type { Id } from "@cmux/convex/dataModel";
+import { CLOUDFLARE_OPENAI_BASE_URL } from "@cmux/shared";
 import { getConvex } from "@/lib/utils/get-convex";
 import {
   collectPrDiffs,
@@ -9,6 +10,7 @@ import {
 } from "@/scripts/pr-review-heatmap";
 import { formatUnifiedDiffWithLineNumbers } from "@/scripts/pr-review/diff-utils";
 import type { ModelConfig } from "./run-simple-anthropic-review";
+import { getDefaultHeatmapModelConfig } from "./model-config";
 import {
   buildHeatmapPrompt,
   heatmapSchema,
@@ -87,26 +89,30 @@ export async function runHeatmapReview(
       fileCount: sortedFiles.length,
     });
 
-    const openai = createOpenAI({ apiKey: openAiApiKey });
+    const openai = createOpenAI({
+      apiKey: openAiApiKey,
+      baseURL: CLOUDFLARE_OPENAI_BASE_URL,
+    });
+    const defaultModelConfig = getDefaultHeatmapModelConfig();
     const selectedModel = (() => {
-      if (!config.modelConfig) {
-        return "gpt-5";
-      }
-      if (config.modelConfig.provider !== "openai") {
+      const resolvedConfig = config.modelConfig ?? defaultModelConfig;
+      if (resolvedConfig.provider !== "openai") {
         console.warn(
           "[heatmap-review] Ignoring unsupported model provider override",
           {
-            provider: config.modelConfig.provider,
+            provider: resolvedConfig.provider,
             jobId: config.jobId,
           }
         );
-        return "gpt-5";
+        return defaultModelConfig.model;
       }
-      console.info("[heatmap-review] Using fine-tuned OpenAI model override", {
-        jobId: config.jobId,
-        model: config.modelConfig.model,
-      });
-      return config.modelConfig.model;
+      if (config.modelConfig) {
+        console.info("[heatmap-review] Using OpenAI model override", {
+          jobId: config.jobId,
+          model: resolvedConfig.model,
+        });
+      }
+      return resolvedConfig.model;
     })();
     const allResults: Array<{ filePath: string; lines: HeatmapLine[] }> = [];
     const failures: Array<{ filePath: string; message: string }> = [];
