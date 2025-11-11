@@ -1091,69 +1091,66 @@ export function EnvironmentConfiguration({
               </div>
 
               <div className="space-y-2">
-                {envVars.map((row, idx) => {
-                  const rowKey = idx;
-                  return (
-                    <div
-                      key={rowKey}
-                      className="grid gap-3 items-center"
-                      style={{
-                        gridTemplateColumns:
-                          "minmax(0, 1fr) minmax(0, 1.4fr) 44px",
+                {envVars.map((row, idx) => (
+                  <div
+                    key={idx}
+                    className="grid gap-3 items-center"
+                    style={{
+                      gridTemplateColumns:
+                        "minmax(0, 1fr) minmax(0, 1.4fr) 44px",
+                    }}
+                  >
+                    <input
+                      type="text"
+                      value={row.name}
+                      ref={(el) => {
+                        keyInputRefs.current[idx] = el;
                       }}
-                    >
-                      <input
-                        type="text"
-                        value={row.name}
-                        ref={(el) => {
-                          keyInputRefs.current[idx] = el;
-                        }}
-                        onChange={(e) => {
-                          const v = e.target.value;
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        updateEnvVars((prev) => {
+                          const next = [...prev];
+                          next[idx] = { ...next[idx]!, name: v };
+                          return next;
+                        });
+                      }}
+                      placeholder="EXAMPLE_NAME"
+                      className="w-full min-w-0 self-start rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
+                    />
+                    <TextareaAutosize
+                      value={row.value}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        updateEnvVars((prev) => {
+                          const next = [...prev];
+                          next[idx] = { ...next[idx]!, value: v };
+                          return next;
+                        });
+                      }}
+                      placeholder="I9JU23NF394R6HH"
+                      minRows={1}
+                      maxRows={10}
+                      className="w-full min-w-0 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-none"
+                    />
+                    <div className="self-start flex items-center justify-end w-[44px]">
+                      <button
+                        type="button"
+                        onClick={() => {
                           updateEnvVars((prev) => {
-                            const next = [...prev];
-                            next[idx] = { ...next[idx]!, name: v };
-                            return next;
+                            const next = prev.filter((_, i) => i !== idx);
+                            return next.length > 0
+                              ? next
+                              : [{ name: "", value: "", isSecret: true }];
                           });
                         }}
-                        placeholder="EXAMPLE_NAME"
-                        className="w-full min-w-0 self-start rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
-                      />
-                      <TextareaAutosize
-                        value={row.value}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          updateEnvVars((prev) => {
-                            const next = [...prev];
-                            next[idx] = { ...next[idx]!, value: v };
-                            return next;
-                          });
-                        }}
-                        placeholder="example-secret-value"
-                        minRows={1}
-                        maxRows={10}
-                        className="w-full min-w-0 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-none"
-                      />
-                      <div className="self-start flex items-center justify-end w-[44px]">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            updateEnvVars((prev) => {
-                              const next = prev.filter((_, i) => i !== idx);
-                              return next.length > 0
-                                ? next
-                                : [{ name: "", value: "", isSecret: true }];
-                            });
-                          }}
-                          className="h-10 w-[44px] rounded-md border border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 grid place-items-center hover:bg-neutral-50 dark:hover:bg-neutral-900"
-                          aria-label="Remove variable"
-                        >
-                          <Minus className="w-4 h-4" />
-                        </button>
-                      </div>
+                        className="h-10 w-[44px] rounded-md border border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 grid place-items-center hover:bg-neutral-50 dark:hover:bg-neutral-900"
+                        aria-label="Remove variable"
+                      >
+                        <Minus className="w-4 h-4" />
+                      </button>
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
 
               <div className="pt-2">
