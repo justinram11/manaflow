@@ -493,19 +493,22 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
           const teamId = conn?.teamId;
           if (!teamId) break;
 
-          // Update PR record in database
-          await _ctx.runMutation(internal.github_prs.upsertFromWebhookPayload, {
-            installationId: installation,
-            repoFullName,
-            teamId,
-            payload: prPayload,
-          });
-
-          // Handle PR merge/close events to update taskRuns and tasks
-          await _ctx.runMutation(internal.github_pr_merge_handler.processPullRequestWebhook, {
-            teamId,
-            payload: prPayload,
-          });
+          // Run both mutations in parallel for better performance
+          // These are independent operations that don't depend on each other
+          await Promise.all([
+            // Update PR record in database
+            _ctx.runMutation(internal.github_prs.upsertFromWebhookPayload, {
+              installationId: installation,
+              repoFullName,
+              teamId,
+              payload: prPayload,
+            }),
+            // Handle PR merge/close events to update taskRuns and tasks
+            _ctx.runMutation(internal.github_pr_merge_handler.processPullRequestWebhook, {
+              teamId,
+              payload: prPayload,
+            }),
+          ]);
 
           // Add eyes emoji reaction when a new PR is opened
           if (
