@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
-import type { TaskAcknowledged, TaskStarted, TaskError } from "@cmux/shared";
+import type { TaskAcknowledged, TaskStarted, TaskError, CreateLocalWorkspaceResponse } from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
@@ -613,6 +613,7 @@ export const Route = createFileRoute(
 function RunDiffPage() {
   const { taskId, teamSlugOrId, runId } = Route.useParams();
   const [diffControls, setDiffControls] = useState<DiffControls | null>(null);
+  const { socket } = useSocket();
   const task = useQuery(api.tasks.getById, {
     teamSlugOrId,
     id: taskId,
@@ -746,6 +747,61 @@ function RunDiffPage() {
   const taskRunId = selectedRun?._id ?? runId;
   const restartTaskPersistenceKey = `restart-task-${taskId}-${runId}`;
 
+  const navigate = useNavigate();
+
+  const handleOpenLocalWorkspace = useCallback(() => {
+    if (!socket) {
+      toast.error("Socket not connected");
+      return;
+    }
+
+    if (!primaryRepo) {
+      toast.error("No repository information available");
+      return;
+    }
+
+    if (!selectedRun?.newBranch) {
+      toast.error("No branch information available");
+      return;
+    }
+
+    const loadingToast = toast.loading("Creating local workspace...");
+
+    socket.emit(
+      "create-local-workspace",
+      {
+        teamSlugOrId,
+        projectFullName: primaryRepo,
+        repoUrl: `https://github.com/${primaryRepo}.git`,
+        branch: selectedRun.newBranch,
+      },
+      (response: CreateLocalWorkspaceResponse) => {
+        if (response.success && response.workspacePath) {
+          toast.success("Workspace created successfully!", {
+            id: loadingToast,
+            description: `Opening workspace at ${response.workspacePath}`,
+          });
+
+          // Navigate to the vscode view for this task run
+          if (response.taskRunId) {
+            navigate({
+              to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
+              params: {
+                teamSlugOrId,
+                taskId,
+                runId: response.taskRunId,
+              },
+            });
+          }
+        } else {
+          toast.error(response.error || "Failed to create workspace", {
+            id: loadingToast,
+          });
+        }
+      }
+    );
+  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, navigate, taskId]);
+
   // 404 if selected run is missing
   if (!selectedRun) {
     return (
@@ -761,6 +817,9 @@ function RunDiffPage() {
     Boolean(primaryRepo) && Boolean(baseRef) && Boolean(headRef);
   const shouldPrefixDiffs = repoFullNames.length > 1;
 
+  // Only show the "Open local workspace" button for regular tasks (not local/cloud workspaces)
+  const isWorkspace = task?.isLocalWorkspace || task?.isCloudWorkspace;
+
   return (
     <FloatingPane>
       <div className="flex h-full min-h-0 flex-col relative isolate">
@@ -774,6 +833,7 @@ function RunDiffPage() {
             onCollapseAll={diffControls?.collapseAll}
             onExpandAllChecks={expandAllChecks}
             onCollapseAllChecks={collapseAllChecks}
+            onOpenLocalWorkspace={isWorkspace ? undefined : handleOpenLocalWorkspace}
             teamSlugOrId={teamSlugOrId}
           />
           {task?.text && (
