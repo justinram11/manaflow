@@ -1,6 +1,9 @@
 import { PERMISSIVE_IFRAME_ALLOW, PERMISSIVE_IFRAME_SANDBOX } from "./iframePermissions";
 import { persistentIframeManager } from "./persistentIframeManager";
-import { getTaskRunPersistKey } from "./persistent-webview-keys";
+import {
+  getTaskRunBrowserPersistKey,
+  getTaskRunPersistKey,
+} from "./persistent-webview-keys";
 
 /**
  * Preload iframes for task runs
@@ -40,6 +43,20 @@ export async function preloadTaskRunIframe(
     allow: TASK_RUN_IFRAME_ALLOW,
     sandbox: TASK_RUN_IFRAME_SANDBOX,
   });
+}
+
+export async function preloadTaskRunBrowserIframe(
+  taskRunId: string,
+  url: string
+): Promise<void> {
+  await persistentIframeManager.preloadIframe(
+    getTaskRunBrowserPersistKey(taskRunId),
+    url,
+    {
+      allow: TASK_RUN_IFRAME_ALLOW,
+      sandbox: TASK_RUN_IFRAME_SANDBOX,
+    }
+  );
 }
 
 /**

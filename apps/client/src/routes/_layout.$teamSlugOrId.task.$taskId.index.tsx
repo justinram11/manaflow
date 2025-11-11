@@ -31,6 +31,7 @@ import {
 import {
   TASK_RUN_IFRAME_ALLOW,
   TASK_RUN_IFRAME_SANDBOX,
+  preloadTaskRunBrowserIframe,
   preloadTaskRunIframes,
 } from "../lib/preloadTaskRunIframes";
 import {
@@ -126,6 +127,19 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
       const selectedRun = parsedRunId?.success
         ? (taskRunIndex.get(parsedRunId.data) ?? taskRuns[0])
         : taskRuns[0];
+
+      const rawBrowserUrl =
+        selectedRun?.vscode?.url ?? selectedRun?.vscode?.workspaceUrl ?? null;
+      if (selectedRun && rawBrowserUrl) {
+        const vncUrl = toMorphVncUrl(rawBrowserUrl);
+        if (vncUrl) {
+          void preloadTaskRunBrowserIframe(selectedRun._id, vncUrl).catch(
+            (error) => {
+              console.error("Failed to preload browser iframe", error);
+            }
+          );
+        }
+      }
 
       const rawWorkspaceUrl = selectedRun?.vscode?.workspaceUrl ?? null;
       if (!rawWorkspaceUrl) {
