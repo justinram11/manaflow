@@ -2,7 +2,10 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateObject, type LanguageModel } from "ai";
-import { CLOUDFLARE_ANTHROPIC_BASE_URL } from "@cmux/shared";
+import {
+  CLOUDFLARE_ANTHROPIC_BASE_URL,
+  CLOUDFLARE_OPENAI_BASE_URL,
+} from "@cmux/shared";
 import { z } from "zod";
 import { env } from "./www-env";
 
@@ -99,6 +102,7 @@ function getModelAndProvider(
   if (apiKeys.OPENAI_API_KEY) {
     const openai = createOpenAI({
       apiKey: apiKeys.OPENAI_API_KEY,
+      baseURL: CLOUDFLARE_OPENAI_BASE_URL,
     });
     return {
       model: openai("gpt-5-nano"),

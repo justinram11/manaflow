@@ -11,6 +11,7 @@ import {
   type CrownEvaluationResponse,
   type CrownSummarizationResponse,
 } from "@cmux/shared/convex-safe";
+import { CLOUDFLARE_OPENAI_BASE_URL } from "@cmux/shared";
 import { env } from "../../_shared/convex-env";
 import { action } from "../_generated/server";
 
@@ -32,7 +33,10 @@ function resolveCrownModel(): {
 } {
   const openaiKey = env.OPENAI_API_KEY;
   if (openaiKey) {
-    const openai = createOpenAI({ apiKey: openaiKey });
+    const openai = createOpenAI({
+      apiKey: openaiKey,
+      baseURL: CLOUDFLARE_OPENAI_BASE_URL,
+    });
     return { provider: "openai", model: openai(OPENAI_CROWN_MODEL) };
   }
 

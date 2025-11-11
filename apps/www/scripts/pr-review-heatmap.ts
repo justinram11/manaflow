@@ -7,6 +7,7 @@ import process from "node:process";
 import { promisify } from "node:util";
 import { createOpenAI } from "@ai-sdk/openai";
 import { streamObject, type LanguageModel } from "ai";
+import { CLOUDFLARE_OPENAI_BASE_URL } from "@cmux/shared";
 import { formatUnifiedDiffWithLineNumbers } from "./pr-review/diff-utils";
 import {
   buildHeatmapPrompt,
@@ -1087,7 +1088,10 @@ async function main(): Promise<void> {
   const absoluteOutputDir = resolvePath(process.cwd(), options.outputDir);
   await mkdir(absoluteOutputDir, { recursive: true });
 
-  const openai = createOpenAI({ apiKey });
+  const openai = createOpenAI({
+    apiKey,
+    baseURL: CLOUDFLARE_OPENAI_BASE_URL,
+  });
   const modelFactory = (modelId: string): LanguageModel => openai(modelId);
 
   let fileDiffs: FileDiff[] = [];

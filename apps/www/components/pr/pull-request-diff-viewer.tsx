@@ -225,7 +225,7 @@ const HEATMAP_MODEL_OPTIONS: ReadonlyArray<{
 }> = [
   {
     value: HEATMAP_MODEL_FINETUNE_QUERY_VALUE,
-    label: "GPT-4.1 mini (fine-tuned)",
+    label: "cmux-heatmap-0",
   },
   {
     value: HEATMAP_MODEL_ANTHROPIC_QUERY_VALUE,
