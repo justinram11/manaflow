@@ -1,5 +1,6 @@
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
+import { useLocalStorage } from "@mantine/hooks";
 import { useQuery } from "convex/react";
 import clsx from "clsx";
 import { memo, useCallback, useMemo, useState } from "react";
@@ -114,16 +115,28 @@ export const TaskList = memo(function TaskList({
 
   const categorizedTasks = useMemo(() => categorizeTasks(allTasks), [allTasks]);
   const categoryBuckets = categorizedTasks ?? createEmptyCategoryBuckets();
-  const [collapsedCategories, setCollapsedCategories] = useState<
+  const collapsedStorageKey = useMemo(
+    () => `dashboard-collapsed-categories-${teamSlugOrId}`,
+    [teamSlugOrId]
+  );
+  const defaultCollapsedState = useMemo(
+    () => createCollapsedCategoryState(),
+    []
+  );
+  const [collapsedCategories, setCollapsedCategories] = useLocalStorage<
     Record<TaskCategoryKey, boolean>
-  >(() => createCollapsedCategoryState());
+  >({
+    key: collapsedStorageKey,
+    defaultValue: defaultCollapsedState,
+    getInitialValueInEffect: true,
+  });
 
   const toggleCategoryCollapse = useCallback((categoryKey: TaskCategoryKey) => {
     setCollapsedCategories((prev) => ({
       ...prev,
       [categoryKey]: !prev[categoryKey],
     }));
-  }, []);
+  }, [setCollapsedCategories]);
 
   return (
     <div className="mt-6 w-full">
@@ -186,7 +199,7 @@ export const TaskList = memo(function TaskList({
                 categoryKey={categoryKey}
                 tasks={categoryBuckets[categoryKey]}
                 teamSlugOrId={teamSlugOrId}
-                collapsed={collapsedCategories[categoryKey]}
+                collapsed={Boolean(collapsedCategories[categoryKey])}
                 onToggle={toggleCategoryCollapse}
               />
             ))}
