@@ -649,7 +649,11 @@ function SocketActions({
     }>,
   ) => {
     prs.forEach((pr) => {
-      if (pr.repoFullName && pr.number) {
+      // Open GitHub URL directly in new tab if available
+      if (pr.url) {
+        window.open(pr.url, '_blank', 'noopener,noreferrer');
+      } else if (pr.repoFullName && pr.number) {
+        // Fallback to internal viewer if URL not available
         const [owner = "", repo = ""] = pr.repoFullName.split("/", 2);
         navigate({
           to: "/$teamSlugOrId/prs-only/$owner/$repo/$number",
@@ -961,7 +965,11 @@ function SocketActions({
                   key={repoName}
                   disabled={!hasUrl}
                   onClick={() => {
-                    if (pr?.repoFullName && pr?.number) {
+                    // Open GitHub URL directly in new tab if available
+                    if (pr?.url) {
+                      window.open(pr.url, '_blank', 'noopener,noreferrer');
+                    } else if (pr?.repoFullName && pr?.number) {
+                      // Fallback to internal viewer if URL not available
                       const [owner = "", repo = ""] =
                         pr.repoFullName.split("/", 2);
                       navigate({
