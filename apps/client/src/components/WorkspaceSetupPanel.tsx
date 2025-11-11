@@ -20,26 +20,6 @@ import { Button } from "./ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 const MASKED_ENV_VALUE = "••••••••••••••••";
-type EnvVarWithRowKey = EnvVar & { __rowKey?: string };
-
-const generateWorkspaceEnvVarRowKey = (): string => {
-  if (
-    typeof globalThis.crypto !== "undefined" &&
-    typeof globalThis.crypto.randomUUID === "function"
-  ) {
-    return globalThis.crypto.randomUUID();
-  }
-  return `workspace-env-var-${Date.now()}-${Math.random()
-    .toString(36)
-    .slice(2)}`;
-};
-
-const ensureWorkspaceEnvVarRowKey = (row: EnvVarWithRowKey): string => {
-  if (!row.__rowKey) {
-    row.__rowKey = generateWorkspaceEnvVarRowKey();
-  }
-  return row.__rowKey;
-};
 
 type WorkspaceSetupPanelProps = {
   teamSlugOrId: string;
@@ -399,13 +379,12 @@ export function WorkspaceSetupPanel({
 
                     <div className="space-y-1.5">
                       {envVars.map((row, idx) => {
+                        const rowKey = idx;
                         const isEditingValue = activeEnvValueIndex === idx;
                         const shouldMaskValue =
                           areEnvValuesHidden &&
                           row.value.trim().length > 0 &&
                           !isEditingValue;
-                        const envRow = row as EnvVarWithRowKey;
-                        const rowKey = ensureWorkspaceEnvVarRowKey(envRow);
                         return (
                           <div
                             key={rowKey}
