@@ -96,7 +96,7 @@ export function TaskRunGitDiffPanel({ task, selectedRun }: TaskRunGitDiffPanelPr
   }
 
   return (
-    <div className="h-full overflow-auto">
+    <div className="relative h-full min-h-0 overflow-auto">
       <MonacoGitDiffViewer diffs={allDiffs} />
     </div>
   );

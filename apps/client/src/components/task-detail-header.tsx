@@ -708,6 +708,12 @@ function SocketActions({
           Boolean(result.repoFullName?.trim()) &&
           Boolean(result.number),
       );
+
+      // Get the PR URL(s) for copying
+      const prUrls = actionable
+        .map((result) => result.url)
+        .filter((url): url is string => Boolean(url));
+
       toast.success(openedLabel, {
         id: context?.toastId,
         description: summarizeResults(response.results),
@@ -716,6 +722,23 @@ function SocketActions({
             ? {
               label: actionable.length === 1 ? "View PR" : "View PRs",
               onClick: () => navigateToPrs(actionable),
+            }
+            : undefined,
+        cancel:
+          prUrls.length > 0
+            ? {
+              label: "Copy URL",
+              onClick: () => {
+                const urlText = prUrls.join("\n");
+                navigator.clipboard
+                  .writeText(urlText)
+                  .then(() => {
+                    toast.success("URL copied to clipboard");
+                  })
+                  .catch(() => {
+                    toast.error("Failed to copy URL");
+                  });
+              },
             }
             : undefined,
       });
