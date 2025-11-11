@@ -66,6 +66,7 @@ import {
 } from "react";
 import { VSCodeIcon } from "./icons/VSCodeIcon";
 import { SidebarListItem } from "./sidebar/SidebarListItem";
+import { SIDEBAR_SCROLL_CONTAINER_SELECTOR } from "./sidebar/const";
 import { annotateAgentOrdinals } from "./task-tree/annotateAgentOrdinals";
 
 type PreviewService = NonNullable<TaskRunWithChildren["networking"]>[number];
@@ -365,6 +366,7 @@ function TaskTreeInner({
     [flattenedRuns]
   );
   const prefetched = useRef(false);
+  const taskLinkRef = useRef<HTMLAnchorElement | null>(null);
   const prefetchTaskRuns = useCallback(() => {
     if (prefetched.current || isOptimisticTask) {
       return;
@@ -450,6 +452,46 @@ function TaskTreeInner({
   const handlePrefetch = useCallback(() => {
     prefetchTaskRuns();
   }, [prefetchTaskRuns]);
+  useEffect(() => {
+    if (!isTaskSelected) {
+      return;
+    }
+    const linkElement = taskLinkRef.current;
+    if (!linkElement) {
+      return;
+    }
+    const scrollContainerCandidate = linkElement.closest(
+      SIDEBAR_SCROLL_CONTAINER_SELECTOR
+    );
+    const scrollContainer =
+      scrollContainerCandidate instanceof HTMLElement
+        ? scrollContainerCandidate
+        : null;
+    const scrollIntoView = () => {
+      linkElement.scrollIntoView({
+        block: "center",
+        inline: "nearest",
+        behavior: "smooth",
+      });
+    };
+    const rafId = window.requestAnimationFrame(() => {
+      const itemRect = linkElement.getBoundingClientRect();
+      const containerRect = scrollContainer?.getBoundingClientRect();
+      if (!containerRect) {
+        scrollIntoView();
+        return;
+      }
+      const isFullyVisible =
+        itemRect.top >= containerRect.top &&
+        itemRect.bottom <= containerRect.bottom;
+      if (!isFullyVisible) {
+        scrollIntoView();
+      }
+    });
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [isTaskSelected]);
   const [isTaskLinkFocusVisible, setIsTaskLinkFocusVisible] = useState(false);
   const handleTaskLinkFocus = useCallback(
     (event: FocusEvent<HTMLAnchorElement>) => {
@@ -670,6 +712,7 @@ function TaskTreeInner({
         <ContextMenu.Root>
           <ContextMenu.Trigger>
             <Link
+              ref={taskLinkRef}
               to="/$teamSlugOrId/task/$taskId"
               params={{ teamSlugOrId, taskId: task._id }}
               search={{ runId: undefined }}
