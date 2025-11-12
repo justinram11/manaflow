@@ -3,6 +3,8 @@ import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { isElectron } from "@/lib/electron";
 import { type Doc } from "@cmux/convex/dataModel";
+import { api } from "@cmux/convex/api";
+import { useQuery } from "convex/react";
 import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
 import { Home, Plus, Server, Settings } from "lucide-react";
@@ -80,6 +82,9 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   });
 
   const { expandTaskIds } = useExpandTasks();
+
+  // Fetch pinned items
+  const pinnedData = useQuery(api.tasks.getPinned, { teamSlugOrId });
 
   useEffect(() => {
     localStorage.setItem("sidebarWidth", String(width));
@@ -296,14 +301,37 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
               {tasks === undefined ? (
                 <TaskTreeSkeleton count={5} />
               ) : tasks && tasks.length > 0 ? (
-                tasks.map((task) => (
-                  <TaskTree
-                    key={task._id}
-                    task={task}
-                    defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
-                    teamSlugOrId={teamSlugOrId}
-                  />
-                ))
+                <>
+                  {/* Pinned items at the top */}
+                  {pinnedData && pinnedData.length > 0 && (
+                    <>
+                      {pinnedData.map((task) => (
+                        <TaskTree
+                          key={task._id}
+                          task={task}
+                          defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
+                          teamSlugOrId={teamSlugOrId}
+                        />
+                      ))}
+                      {/* Horizontal divider after pinned items */}
+                      <hr className="mx-2 border-t border-neutral-200 dark:border-neutral-800" />
+                    </>
+                  )}
+                  {/* Regular (non-pinned) tasks */}
+                  {tasks
+                    .filter((task) => {
+                      // Only filter out directly pinned tasks
+                      return !task.pinned;
+                    })
+                    .map((task) => (
+                      <TaskTree
+                        key={task._id}
+                        task={task}
+                        defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
+                        teamSlugOrId={teamSlugOrId}
+                      />
+                    ))}
+                </>
               ) : (
                 <p className="pl-2 pr-3 py-1.5 text-xs text-neutral-500 dark:text-neutral-400 select-none">
                   No recent tasks

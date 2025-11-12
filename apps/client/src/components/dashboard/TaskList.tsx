@@ -8,12 +8,14 @@ import { TaskItem } from "./TaskItem";
 import { ChevronRight } from "lucide-react";
 
 type TaskCategoryKey =
+  | "pinned"
   | "workspaces"
   | "ready_to_review"
   | "in_progress"
   | "merged";
 
 const CATEGORY_ORDER: TaskCategoryKey[] = [
+  "pinned",
   "workspaces",
   "ready_to_review",
   "in_progress",
@@ -24,6 +26,10 @@ const CATEGORY_META: Record<
   TaskCategoryKey,
   { title: string; emptyLabel: string }
 > = {
+  pinned: {
+    title: "Pinned",
+    emptyLabel: "No pinned items.",
+  },
   workspaces: {
     title: "Workspaces",
     emptyLabel: "No workspace sessions yet.",
@@ -46,6 +52,7 @@ const createEmptyCategoryBuckets = (): Record<
   TaskCategoryKey,
   Doc<"tasks">[]
 > => ({
+  pinned: [],
   workspaces: [],
   ready_to_review: [],
   in_progress: [],
@@ -95,6 +102,7 @@ const categorizeTasks = (
 const createCollapsedCategoryState = (
   defaultValue = false
 ): Record<TaskCategoryKey, boolean> => ({
+  pinned: defaultValue,
   workspaces: defaultValue,
   ready_to_review: defaultValue,
   in_progress: defaultValue,
@@ -111,9 +119,26 @@ export const TaskList = memo(function TaskList({
     teamSlugOrId,
     archived: true,
   });
+  const pinnedData = useQuery(api.tasks.getPinned, { teamSlugOrId });
   const [tab, setTab] = useState<"all" | "archived">("all");
 
-  const categorizedTasks = useMemo(() => categorizeTasks(allTasks), [allTasks]);
+  const categorizedTasks = useMemo(() => {
+    const categorized = categorizeTasks(allTasks);
+    if (categorized && pinnedData) {
+      // Filter pinned tasks out from other categories
+      const pinnedTaskIds = new Set(pinnedData.map(t => t._id));
+
+      for (const key of CATEGORY_ORDER) {
+        if (key !== 'pinned') {
+          categorized[key] = categorized[key].filter(t => !pinnedTaskIds.has(t._id));
+        }
+      }
+
+      // Add pinned tasks to the pinned category (already sorted by the API)
+      categorized.pinned = pinnedData;
+    }
+    return categorized;
+  }, [allTasks, pinnedData]);
   const categoryBuckets = categorizedTasks ?? createEmptyCategoryBuckets();
   const collapsedStorageKey = useMemo(
     () => `dashboard-collapsed-categories-${teamSlugOrId}`,
@@ -193,16 +218,22 @@ export const TaskList = memo(function TaskList({
           </div>
         ) : (
           <div className="mt-1 w-full flex flex-col space-y-[-1px] transform -translate-y-px">
-            {CATEGORY_ORDER.map((categoryKey) => (
-              <TaskCategorySection
-                key={categoryKey}
-                categoryKey={categoryKey}
-                tasks={categoryBuckets[categoryKey]}
-                teamSlugOrId={teamSlugOrId}
-                collapsed={Boolean(collapsedCategories[categoryKey])}
-                onToggle={toggleCategoryCollapse}
-              />
-            ))}
+            {CATEGORY_ORDER.map((categoryKey) => {
+              // Don't render the pinned category if it's empty
+              if (categoryKey === 'pinned' && categoryBuckets[categoryKey].length === 0) {
+                return null;
+              }
+              return (
+                <TaskCategorySection
+                  key={categoryKey}
+                  categoryKey={categoryKey}
+                  tasks={categoryBuckets[categoryKey]}
+                  teamSlugOrId={teamSlugOrId}
+                  collapsed={Boolean(collapsedCategories[categoryKey])}
+                  onToggle={toggleCategoryCollapse}
+                />
+              );
+            })}
           </div>
         )}
       </div>

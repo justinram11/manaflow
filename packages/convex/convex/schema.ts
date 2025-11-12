@@ -161,7 +161,8 @@ const convexSchema = defineSchema({
   })
     .index("by_created", ["createdAt"])
     .index("by_user", ["userId", "createdAt"])
-    .index("by_team_user", ["teamId", "userId"]),
+    .index("by_team_user", ["teamId", "userId"])
+    .index("by_pinned", ["pinned", "teamId", "userId"]),
 
   taskRuns: defineTable({
     taskId: v.id("tasks"),

@@ -38,6 +38,27 @@ export const get = authQuery({
   },
 });
 
+export const getPinned = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    // Get pinned tasks
+    const pinnedTasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_pinned", (idx) =>
+        idx.eq("pinned", true).eq("teamId", teamId).eq("userId", userId),
+      )
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .collect();
+
+    return pinnedTasks.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+  },
+});
+
 export const getTasksWithTaskRuns = authQuery({
   args: {
     teamSlugOrId: v.string(),
@@ -301,6 +322,32 @@ export const unarchive = authMutation({
       throw new Error("Task not found or unauthorized");
     }
     await ctx.db.patch(args.id, { isArchived: false, updatedAt: Date.now() });
+  },
+});
+
+export const pin = authMutation({
+  args: { teamSlugOrId: v.string(), id: v.id("tasks") },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const task = await ctx.db.get(args.id);
+    if (task === null || task.teamId !== teamId || task.userId !== userId) {
+      throw new Error("Task not found or unauthorized");
+    }
+    await ctx.db.patch(args.id, { pinned: true, updatedAt: Date.now() });
+  },
+});
+
+export const unpin = authMutation({
+  args: { teamSlugOrId: v.string(), id: v.id("tasks") },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const task = await ctx.db.get(args.id);
+    if (task === null || task.teamId !== teamId || task.userId !== userId) {
+      throw new Error("Task not found or unauthorized");
+    }
+    await ctx.db.patch(args.id, { pinned: false, updatedAt: Date.now() });
   },
 });
 
