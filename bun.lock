@@ -25,7 +25,7 @@
     },
     "apps/client": {
       "name": "@cmux/client",
-      "version": "1.0.153",
+      "version": "1.0.167",
       "dependencies": {
         "@base-ui-components/react": "1.0.0-beta.2",
         "@cmux/convex": "workspace:*",
@@ -408,6 +408,19 @@
         "vitest": "3.2.4",
       },
     },
+    "packages/morphcloud-openapi-client": {
+      "name": "@cmux/morphcloud-openapi-client",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@eslint/js": "^9.34.0",
+        "@hey-api/client-fetch": "^0.13.1",
+        "@hey-api/openapi-ts": "^0.82.1",
+        "@types/node": "^24.9.1",
+        "eslint": "^9.34.0",
+        "typescript": "^5.9.3",
+        "typescript-eslint": "^8.41.0",
+      },
+    },
     "packages/shared": {
       "name": "@cmux/shared",
       "version": "1.0.0",
@@ -749,6 +762,8 @@
     "@cmux/convex": ["@cmux/convex@workspace:packages/convex"],
 
     "@cmux/edge-router": ["@cmux/edge-router@workspace:apps/edge-router"],
+
+    "@cmux/morphcloud-openapi-client": ["@cmux/morphcloud-openapi-client@workspace:packages/morphcloud-openapi-client"],
 
     "@cmux/scripts": ["@cmux/scripts@workspace:scripts"],
 

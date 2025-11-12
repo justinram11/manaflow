@@ -29,7 +29,7 @@
   "scripts": {
     "clean": "bash scripts/clean.sh",
     "clean:node_modules": "bash scripts/clean.sh",
-    "precheck": "bun run generate-openapi-client",
+    "precheck": "bun run generate-openapi-client && bun run generate-morphcloud-openapi-client",
     "check": "bun run scripts/check.ts",
     "lint": "bun run scripts/lint.ts",
     "test": "bun run scripts/test.ts",
@@ -42,11 +42,13 @@
     "typecheck:vscode-extension": "cd packages/vscode-extension && bun run typecheck",
     "typecheck:convex": "cd packages/convex && bun run typecheck",
     "typecheck:cmux": "cd packages/cmux && bun run typecheck",
+    "typecheck:morphcloud-openapi-client": "cd packages/morphcloud-openapi-client && bun run typecheck",
     "typecheck:www-openapi-client": "cd packages/www-openapi-client && bun run typecheck",
     "typecheck:www": "cd apps/www && pnpm run typecheck",
-    "gen": "run-p generate-openapi-client generate-routes",
+    "gen": "run-p generate-openapi-client generate-morphcloud-openapi-client generate-routes",
     "generate-routes": "cd apps/client && bun run generate-routes",
     "generate-openapi-client": "cd apps/www && bun run generate-openapi-client",
+    "generate-morphcloud-openapi-client": "cd packages/morphcloud-openapi-client && bun run generate",
     "build:mac-arm64-prod": "bash scripts/build-prod-mac-arm64.sh",
     "convex:deploy:prod": "(cd packages/convex && bun run deploy:prod)"
   },
