@@ -10,15 +10,6 @@ const normalizeProjectFullName = (value: string): string => {
   return trimmed;
 };
 
-const normalizeScript = (
-  script: string | undefined,
-): string | undefined => {
-  if (script === undefined) {
-    return undefined;
-  }
-  const trimmed = script.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-};
 
 export const get = authQuery({
   args: {
@@ -52,14 +43,11 @@ export const upsert = authMutation({
   args: {
     teamSlugOrId: v.string(),
     projectFullName: v.string(),
-    maintenanceScript: v.optional(v.string()),
-    dataVaultKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
     const projectFullName = normalizeProjectFullName(args.projectFullName);
-    const maintenanceScript = normalizeScript(args.maintenanceScript);
     const now = Date.now();
 
     if (!userId) {
@@ -79,8 +67,6 @@ export const upsert = authMutation({
 
     if (existing) {
       await ctx.db.patch(existing._id, {
-        maintenanceScript,
-        dataVaultKey: args.dataVaultKey ?? existing.dataVaultKey,
         updatedAt: now,
       });
       return existing._id;
@@ -89,8 +75,6 @@ export const upsert = authMutation({
     // No existing config, create new
     const id = await ctx.db.insert("workspaceConfigs", {
       projectFullName,
-      maintenanceScript,
-      dataVaultKey: args.dataVaultKey,
       createdAt: now,
       updatedAt: now,
       userId,

@@ -1,6 +1,5 @@
 import { api } from "@cmux/convex/api";
 import type { Id } from "@cmux/convex/dataModel";
-import type { WorkspaceConfigResponse } from "@cmux/www-openapi-client";
 import {
   ArchiveTaskSchema,
   GitFullDiffRequestSchema,
@@ -28,7 +27,6 @@ import {
   type StoredPullRequestInfo,
 } from "@cmux/shared/pull-request-state";
 import fuzzysort from "fuzzysort";
-import { parse as parseDotenv } from "dotenv";
 import { minimatch } from "minimatch";
 import { exec, execFile, spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
@@ -79,75 +77,6 @@ const execFileAsync = promisify(execFile);
 interface ExecError extends Error {
   stderr?: string;
   stdout?: string;
-}
-
-const isWindows = process.platform === "win32";
-
-function sanitizeShellPath(candidate: string | undefined | null): string | null {
-  if (!candidate) {
-    return null;
-  }
-  const trimmed = candidate.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function getUserLoginShell(): string {
-  const override = sanitizeShellPath(process.env.CMUX_LOGIN_SHELL);
-  if (override) {
-    return override;
-  }
-
-  if (!isWindows) {
-    try {
-      const userShell = sanitizeShellPath(os.userInfo().shell);
-      if (userShell) {
-        return userShell;
-      }
-    } catch {
-      // Ignore failures – we'll fall back to other sources.
-    }
-
-    const envShell = sanitizeShellPath(process.env.SHELL);
-    if (envShell) {
-      return envShell;
-    }
-
-    return "/bin/zsh";
-  }
-
-  const envShell = sanitizeShellPath(process.env.SHELL);
-  if (envShell) {
-    return envShell;
-  }
-
-  const comspec = sanitizeShellPath(process.env.COMSPEC);
-  if (comspec) {
-    return comspec;
-  }
-
-  return "cmd.exe";
-}
-
-function buildLoginShellArgs(
-  shellPath: string,
-  command: string
-): string[] {
-  if (isWindows) {
-    const normalized = shellPath.toLowerCase();
-    if (normalized.includes("powershell") || normalized.includes("pwsh")) {
-      // PowerShell prefers -Command and does not distinguish login shells.
-      return ["-Command", command];
-    }
-
-    if (normalized.endsWith("cmd.exe")) {
-      return ["/d", "/c", command];
-    }
-
-    // Fall back to POSIX-style flags (e.g., Git Bash on Windows).
-    return ["-l", "-c", command];
-  }
-
-  return ["-l", "-c", command];
 }
 
 function isExecError(error: unknown): error is ExecError {
@@ -762,30 +691,6 @@ export function setupSocketHandlers(
             : undefined);
         const branch = requestedBranch?.trim();
 
-        let workspaceConfig: WorkspaceConfigResponse | null = null;
-        if (projectFullName) {
-          try {
-            const { getApiWorkspaceConfigs } =
-              await getWwwOpenApiModule();
-            const response = await getApiWorkspaceConfigs({
-              client: getWwwClient(),
-              query: {
-                teamSlugOrId,
-                projectFullName,
-              },
-            });
-            workspaceConfig = response.data ?? null;
-          } catch (error) {
-            serverLogger.warn(
-              "[create-local-workspace] Failed to load saved workspace config",
-              {
-                projectFullName,
-                error,
-              }
-            );
-          }
-        }
-
         let taskId: Id<"tasks"> | null =
           providedTaskId !== undefined ? providedTaskId : null;
         let taskRunId: Id<"taskRuns"> | null =
@@ -845,126 +750,18 @@ export function setupSocketHandlers(
               .catch(() => undefined);
           };
 
+          // Workspace configs no longer support env vars or maintenance scripts
+          // These should come from environments instead
           const writeEnvVariablesIfPresent = async (): Promise<
             Record<string, string>
           > => {
-            if (!workspaceConfig || !taskRunId) {
-              return {};
-            }
-
-            const envVarsContent = workspaceConfig.envVarsContent ?? "";
-            const trimmedEnvVars = envVarsContent.trim();
-            let parsedEnvVars: Record<string, string> = {};
-
-            if (trimmedEnvVars.length > 0) {
-              try {
-                parsedEnvVars = parseDotenv(envVarsContent);
-              } catch (error) {
-                serverLogger.warn(
-                  "[create-local-workspace] Failed to parse saved env vars for local workspace config",
-                  {
-                    projectFullName,
-                    error,
-                  }
-                );
-                parsedEnvVars = {};
-              }
-
-              try {
-                const envFile = path.join(resolvedWorkspacePath, ".env");
-                await fs.writeFile(envFile, envVarsContent, {
-                  encoding: "utf8",
-                  mode: 0o600,
-                });
-                serverLogger.info(
-                  `[create-local-workspace] Wrote env vars to ${envFile}`
-                );
-              } catch (error) {
-                serverLogger.warn(
-                  "[create-local-workspace] Failed to write saved env vars to disk",
-                  {
-                    projectFullName,
-                    error,
-                  }
-                );
-              }
-            }
-
-            return parsedEnvVars;
+            return {};
           };
 
-          // Run maintenance script asynchronously in background (doesn't block VSCode loading)
           const runMaintenanceScriptAsync = (
-            parsedEnvVars: Record<string, string>
+            _parsedEnvVars: Record<string, string>
           ) => {
-            if (!workspaceConfig || !taskRunId) {
-              return;
-            }
-
-            const maintenanceScript =
-              workspaceConfig.maintenanceScript?.trim() ?? "";
-            if (!maintenanceScript) {
-              return;
-            }
-
-            // Fire and forget - run in background without blocking
-            void (async () => {
-              const scriptPreamble = "set -euo pipefail";
-              const maintenancePayload = `${scriptPreamble}\n${maintenanceScript}`;
-              const loginShell = getUserLoginShell();
-              const shellArgs = buildLoginShellArgs(
-                loginShell,
-                maintenancePayload
-              );
-
-              serverLogger.info(
-                `[create-local-workspace] Running local maintenance script for ${workspaceName} in background (shell: ${loginShell})`
-              );
-
-              try {
-                await execFileAsync(loginShell, shellArgs, {
-                  cwd: resolvedWorkspacePath,
-                  env: {
-                    ...process.env,
-                    ...parsedEnvVars,
-                  },
-                  maxBuffer: 10 * 1024 * 1024,
-                });
-                await convex.mutation(api.taskRuns.updateEnvironmentError, {
-                  teamSlugOrId,
-                  id: taskRunId,
-                  maintenanceError: undefined,
-                  devError: undefined,
-                });
-                serverLogger.info(
-                  `[create-local-workspace] Maintenance script completed successfully for ${workspaceName}`
-                );
-              } catch (error) {
-                const execErr = isExecError(error) ? error : null;
-                const stderr = execErr?.stderr?.trim() ?? "";
-                const stdout = execErr?.stdout?.trim() ?? "";
-                const baseMessage =
-                  stderr ||
-                  stdout ||
-                  (error instanceof Error ? error.message : String(error));
-
-                const maintenanceErrorMessage = baseMessage
-                  ? `Maintenance script failed: ${baseMessage}`
-                  : "Maintenance script failed";
-
-                serverLogger.error(
-                  `[create-local-workspace] ${maintenanceErrorMessage}`,
-                  error
-                );
-
-                await convex.mutation(api.taskRuns.updateEnvironmentError, {
-                  teamSlugOrId,
-                  id: taskRunId,
-                  maintenanceError: maintenanceErrorMessage,
-                  devError: undefined,
-                });
-              }
-            })();
+            // No-op: workspace configs no longer support maintenance scripts
           };
 
           const baseServeWebUrl =

@@ -22,7 +22,7 @@ const DEBUG_FLAGS = {
 };
 
 const FEATURE_FLAGS = {
-  githubEyesReactionOnPrOpen: false,
+  githubEyesReactionOnPrOpen: true,
 };
 
 async function verifySignature(

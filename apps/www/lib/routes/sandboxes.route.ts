@@ -169,33 +169,7 @@ sandboxesRouter.openapi(
       // Parse repo URL once if provided
       const parsedRepoUrl = body.repoUrl ? parseGithubRepoUrl(body.repoUrl) : null;
 
-      // Load workspace config if we're in cloud mode with a repository (not an environment)
-      let workspaceConfig: { maintenanceScript?: string; envVarsContent?: string } | null = null;
-      if (parsedRepoUrl && !body.environmentId) {
-        try {
-          const config = await convex.query(api.workspaceConfigs.get, {
-            teamSlugOrId: body.teamSlugOrId,
-            projectFullName: parsedRepoUrl.fullName,
-          });
-          if (config) {
-            const envVarsContent = config.dataVaultKey
-              ? await loadEnvironmentEnvVars(config.dataVaultKey)
-              : null;
-            workspaceConfig = {
-              maintenanceScript: config.maintenanceScript ?? undefined,
-              envVarsContent: envVarsContent ?? undefined,
-            };
-            console.log(`[sandboxes.start] Loaded workspace config for ${parsedRepoUrl.fullName}`, {
-              hasMaintenanceScript: Boolean(workspaceConfig.maintenanceScript),
-              hasEnvVars: Boolean(workspaceConfig.envVarsContent),
-            });
-          }
-        } catch (error) {
-          console.error(`[sandboxes.start] Failed to load workspace config for ${parsedRepoUrl.fullName}`, error);
-        }
-      }
-
-      const maintenanceScript = environmentMaintenanceScript ?? workspaceConfig?.maintenanceScript ?? null;
+      const maintenanceScript = environmentMaintenanceScript ?? null;
       const devScript = environmentDevScript ?? null;
 
       const isCloudWorkspace =
@@ -243,8 +217,7 @@ sandboxesRouter.openapi(
       const environmentEnvVarsContent = await environmentEnvVarsPromise;
 
       // Prepare environment variables including task JWT if present
-      // Workspace env vars take precedence if no environment is configured
-      let envVarsToApply = environmentEnvVarsContent || workspaceConfig?.envVarsContent || "";
+      let envVarsToApply = environmentEnvVarsContent || "";
 
       // Add CMUX task-related env vars if present
       if (body.taskRunId) {
@@ -264,7 +237,6 @@ sandboxesRouter.openapi(
               `[sandboxes.start] Applied environment variables via envctl`,
               {
                 hasEnvironmentVars: Boolean(environmentEnvVarsContent),
-                hasWorkspaceVars: Boolean(workspaceConfig?.envVarsContent),
                 hasTaskRunId: Boolean(body.taskRunId),
                 hasTaskRunJwt: Boolean(body.taskRunJwt),
               },
