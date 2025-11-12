@@ -1,7 +1,7 @@
 import { v } from "convex/values";
-import { env } from "../_shared/convex-env";
 import { internal } from "./_generated/api";
 import { internalAction } from "./_generated/server";
+import { runPreviewJob } from "./preview_jobs_worker";
 
 export const requestDispatch = internalAction({
   args: {
@@ -29,13 +29,6 @@ export const requestDispatch = internalAction({
       status: payload.run.status,
     });
 
-    const baseUrl = env.BASE_APP_URL;
-    const secret = env.CMUX_TASK_RUN_JWT_SECRET;
-    if (!baseUrl || !secret) {
-      console.warn("[preview-jobs] BASE_APP_URL or CMUX_TASK_RUN_JWT_SECRET missing");
-      return;
-    }
-
     try {
       await ctx.runMutation(internal.previewRuns.markDispatched, {
         previewRunId: args.previewRunId,
@@ -51,51 +44,35 @@ export const requestDispatch = internalAction({
       return;
     }
 
-    const dispatchUrl = `${baseUrl}/api/preview/jobs/dispatch`;
-    console.log("[preview-jobs] Calling dispatcher", {
+    console.log("[preview-jobs] Scheduling preview job execution", {
       previewRunId: args.previewRunId,
-      dispatchUrl,
     });
 
     try {
-      const response = await fetch(dispatchUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${secret}`,
+      await ctx.scheduler.runAfter(
+        0,
+        internal.preview_jobs.executePreviewJob,
+        {
+          previewRunId: args.previewRunId,
         },
-        body: JSON.stringify({
-          previewRunId: payload.run._id,
-          run: payload.run,
-          config: payload.config,
-        }),
-      });
-
-      console.log("[preview-jobs] Dispatcher response", {
+      );
+      console.log("[preview-jobs] Preview job scheduled", {
         previewRunId: args.previewRunId,
-        status: response.status,
-        statusText: response.statusText,
       });
-
-      if (!response.ok) {
-        const text = await response.text();
-        console.error("[preview-jobs] Dispatch request failed", {
-          previewRunId: args.previewRunId,
-          status: response.status,
-          body: text.slice(0, 256),
-        });
-      } else {
-        console.log("[preview-jobs] Preview job successfully dispatched to background worker", {
-          previewRunId: args.previewRunId,
-          repoFullName: payload.run.repoFullName,
-          prNumber: payload.run.prNumber,
-        });
-      }
     } catch (error) {
-      console.error("[preview-jobs] Failed to invoke preview job dispatcher", {
+      console.error("[preview-jobs] Failed to schedule preview job", {
         previewRunId: args.previewRunId,
         error,
       });
     }
+  },
+});
+
+export const executePreviewJob = internalAction({
+  args: {
+    previewRunId: v.id("previewRuns"),
+  },
+  handler: async (ctx, args) => {
+    await runPreviewJob(ctx, args.previewRunId);
   },
 });

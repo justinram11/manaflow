@@ -566,6 +566,7 @@ const convexSchema = defineSchema({
     prUrl: v.string(),
     headSha: v.string(),
     baseSha: v.optional(v.string()),
+    taskRunId: v.optional(v.id("taskRuns")),
     status: v.union(
       v.literal("pending"),
       v.literal("running"),

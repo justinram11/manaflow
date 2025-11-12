@@ -19,6 +19,11 @@ import { githubSetup } from "./github_setup";
 import { githubWebhook } from "./github_webhook";
 import { reportEnvironmentError } from "./taskRuns_http";
 import { stackWebhook } from "./stack_webhook";
+import {
+  updatePreviewStatus,
+  createScreenshotSet,
+  dispatchPreviewJob,
+} from "./preview_jobs_http";
 
 const http = httpRouter();
 
@@ -110,6 +115,24 @@ http.route({
   path: "/api/task-runs/report-environment-error",
   method: "POST",
   handler: reportEnvironmentError,
+});
+
+http.route({
+  path: "/api/preview/jobs/dispatch",
+  method: "POST",
+  handler: dispatchPreviewJob,
+});
+
+http.route({
+  path: "/api/preview/update-status",
+  method: "POST",
+  handler: updatePreviewStatus,
+});
+
+http.route({
+  path: "/api/preview/create-screenshot-set",
+  method: "POST",
+  handler: createScreenshotSet,
 });
 
 export default http;

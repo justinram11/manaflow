@@ -62,6 +62,23 @@ export const enqueueFromWebhook = internalMutation({
   },
 });
 
+export const linkTaskRun = internalMutation({
+  args: {
+    previewRunId: v.id("previewRuns"),
+    taskRunId: v.id("taskRuns"),
+  },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.previewRunId);
+    if (!run) {
+      throw new Error("Preview run not found");
+    }
+    await ctx.db.patch(run._id, {
+      taskRunId: args.taskRunId,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
 export const markDispatched = internalMutation({
   args: {
     previewRunId: v.id("previewRuns"),

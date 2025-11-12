@@ -1545,3 +1545,48 @@ export const getRunningContainersByCleanupPriority = authQuery({
     };
   },
 });
+
+export const createForPreview = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+    teamId: v.string(),
+    userId: v.string(),
+    prUrl: v.string(),
+    environmentId: v.optional(v.id("environments")),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const task = await ctx.db.get(args.taskId);
+    if (!task) {
+      throw new Error("Task not found");
+    }
+
+    const taskRunId = await ctx.db.insert("taskRuns", {
+      taskId: args.taskId,
+      parentRunId: undefined,
+      prompt: `Capture UI screenshots for ${args.prUrl}`,
+      agentName: "screenshot-collector",
+      newBranch: undefined,
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+      userId: args.userId,
+      teamId: args.teamId,
+      environmentId: args.environmentId,
+      isLocalWorkspace: task.isLocalWorkspace,
+      isCloudWorkspace: task.isCloudWorkspace,
+    });
+
+    const jwt = await new SignJWT({
+      taskRunId,
+      teamId: args.teamId,
+      userId: args.userId,
+    })
+      .setProtectedHeader({ alg: "HS256" })
+      .setIssuedAt()
+      .setExpirationTime("12h")
+      .sign(new TextEncoder().encode(env.CMUX_TASK_RUN_JWT_SECRET));
+
+    return { taskRunId, jwt };
+  },
+});

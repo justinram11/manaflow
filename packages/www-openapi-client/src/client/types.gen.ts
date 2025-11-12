@@ -664,16 +664,6 @@ export type PreviewRunsResponse = {
     runs: Array<PreviewRun>;
 };
 
-export type PreviewJobDispatch = {
-    previewRunId: string;
-    run: {
-        [key: string]: unknown;
-    };
-    config: {
-        [key: string]: unknown;
-    };
-};
-
 export type GetApiHealthData = {
     body?: never;
     path?: never;
@@ -2411,27 +2401,6 @@ export type GetApiPreviewConfigsByPreviewConfigIdRunsResponses = {
 };
 
 export type GetApiPreviewConfigsByPreviewConfigIdRunsResponse = GetApiPreviewConfigsByPreviewConfigIdRunsResponses[keyof GetApiPreviewConfigsByPreviewConfigIdRunsResponses];
-
-export type PostApiPreviewJobsDispatchData = {
-    body: PreviewJobDispatch;
-    path?: never;
-    query?: never;
-    url: '/api/preview/jobs/dispatch';
-};
-
-export type PostApiPreviewJobsDispatchErrors = {
-    /**
-     * Unauthorized
-     */
-    401: unknown;
-};
-
-export type PostApiPreviewJobsDispatchResponses = {
-    /**
-     * Job accepted
-     */
-    202: unknown;
-};
 
 export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});

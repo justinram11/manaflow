@@ -39,6 +39,8 @@ import type * as previewConfigs from "../previewConfigs.js";
 import type * as previewRuns from "../previewRuns.js";
 import type * as previewScreenshots from "../previewScreenshots.js";
 import type * as preview_jobs from "../preview_jobs.js";
+import type * as preview_jobs_http from "../preview_jobs_http.js";
+import type * as preview_jobs_worker from "../preview_jobs_worker.js";
 import type * as preview_screenshots_http from "../preview_screenshots_http.js";
 import type * as screenshots_http from "../screenshots_http.js";
 import type * as stack from "../stack.js";
@@ -103,6 +105,8 @@ declare const fullApi: ApiFromModules<{
   previewRuns: typeof previewRuns;
   previewScreenshots: typeof previewScreenshots;
   preview_jobs: typeof preview_jobs;
+  preview_jobs_http: typeof preview_jobs_http;
+  preview_jobs_worker: typeof preview_jobs_worker;
   preview_screenshots_http: typeof preview_screenshots_http;
   screenshots_http: typeof screenshots_http;
   stack: typeof stack;

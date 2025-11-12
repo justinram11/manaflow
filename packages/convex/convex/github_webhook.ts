@@ -574,15 +574,45 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                     prUrl,
                   });
 
-                  await _ctx.scheduler.runAfter(
-                    0,
-                    internal.preview_jobs.requestDispatch,
-                    { previewRunId: runId },
+                  // Create task and taskRun for screenshot collection
+                  // The existing worker infrastructure will pick this up and process it
+                  const taskId = await _ctx.runMutation(
+                    internal.tasks.createForPreview,
+                    {
+                      teamId,
+                      userId: previewConfig.createdByUserId,
+                      previewRunId: runId,
+                      repoFullName,
+                      prNumber,
+                      prUrl,
+                      headSha,
+                      baseBranch: previewConfig.repoDefaultBranch,
+                    },
                   );
 
-                  console.log("[preview-jobs] Preview job dispatched", {
+                  const { taskRunId } = await _ctx.runMutation(
+                    internal.taskRuns.createForPreview,
+                    {
+                      taskId,
+                      teamId,
+                      userId: previewConfig.createdByUserId,
+                      prUrl,
+                      environmentId: previewConfig.environmentId,
+                    },
+                  );
+
+                  // Link the taskRun to the preview run
+                  await _ctx.runMutation(internal.previewRuns.linkTaskRun, {
+                    previewRunId: runId,
+                    taskRunId,
+                  });
+
+                  console.log("[preview-jobs] Task and taskRun created", {
                     runId,
-                    dispatchUrl: `${env.BASE_APP_URL}/api/preview/jobs/dispatch`,
+                    taskId,
+                    taskRunId,
+                    repoFullName,
+                    prNumber,
                   });
                 } catch (error) {
                   console.error("[preview-jobs] Failed to enqueue preview run", {
