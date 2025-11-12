@@ -23,7 +23,10 @@ import {
   postApiSandboxesStartMutation,
 } from "@cmux/www-openapi-client/react-query";
 import { convexQuery } from "@convex-dev/react-query";
-import { useMutation as useRQMutation } from "@tanstack/react-query";
+import {
+  useMutation as useRQMutation,
+  useSuspenseQuery,
+} from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
 import { formatDistanceToNow } from "date-fns";
@@ -65,6 +68,12 @@ export const Route = createFileRoute(
         environmentId: params.environmentId,
       },
     });
+    void convexQueryClient.queryClient.ensureQueryData(
+      convexQuery(api.environments.get, {
+        teamSlugOrId: params.teamSlugOrId,
+        id: params.environmentId,
+      })
+    );
   },
   component: EnvironmentDetailsPage,
   validateSearch: () => ({}),
@@ -74,10 +83,13 @@ function EnvironmentDetailsPage() {
   const { teamSlugOrId, environmentId } = Route.useParams();
   const navigate = useNavigate({ from: Route.fullPath });
   const [isDeleting, setIsDeleting] = useState(false);
-  const environment = useQuery(api.environments.get, {
-    teamSlugOrId,
-    id: environmentId,
-  });
+  const environmentQuery = useSuspenseQuery(
+    convexQuery(api.environments.get, {
+      teamSlugOrId,
+      id: environmentId,
+    })
+  );
+  const environment = environmentQuery.data;
   if (!environment) {
     throw new Error("Environment not found");
   }
@@ -108,7 +120,7 @@ function EnvironmentDetailsPage() {
   const [renameError, setRenameError] = useState<string | null>(null);
   const [isEditingPorts, setIsEditingPorts] = useState(false);
   const [portsDraft, setPortsDraft] = useState<number[]>(
-    environment.exposedPorts ?? []
+    environment?.exposedPorts ?? []
   );
   const [portInput, setPortInput] = useState("");
   const [portsError, setPortsError] = useState<string | null>(null);
@@ -120,12 +132,12 @@ function EnvironmentDetailsPage() {
   );
   const [isEditingDevScript, setIsEditingDevScript] = useState(false);
   const [devScriptDraft, setDevScriptDraft] = useState(
-    environment.devScript ?? ""
+    environment?.devScript ?? ""
   );
   const [isEditingMaintenanceScript, setIsEditingMaintenanceScript] =
     useState(false);
   const [maintenanceScriptDraft, setMaintenanceScriptDraft] = useState(
-    environment.maintenanceScript ?? ""
+    environment?.maintenanceScript ?? ""
   );
 
   const handleRenameStart = () => {
