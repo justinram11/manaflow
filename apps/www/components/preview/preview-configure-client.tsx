@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -207,8 +208,20 @@ etc.`,
 };
 
 // Persistent iframe manager for Next.js
+type PersistentIframeOptions = {
+  allow?: string;
+  sandbox?: string;
+};
+
+type MountOptions = {
+  backgroundColor?: string;
+};
+
 class SimplePersistentIframeManager {
-  private iframes = new Map<string, { iframe: HTMLIFrameElement; wrapper: HTMLDivElement }>();
+  private iframes = new Map<
+    string,
+    { iframe: HTMLIFrameElement; wrapper: HTMLDivElement; allow?: string; sandbox?: string }
+  >();
   private container: HTMLDivElement | null = null;
 
   constructor() {
@@ -241,9 +254,21 @@ class SimplePersistentIframeManager {
     entry.wrapper.style.pointerEvents = visible ? "auto" : "none";
   }
 
-  getOrCreateIframe(key: string, url: string, isBrowser: boolean = false): HTMLIFrameElement {
+  getOrCreateIframe(
+    key: string,
+    url: string,
+    options?: PersistentIframeOptions
+  ): HTMLIFrameElement {
     const existing = this.iframes.get(key);
     if (existing) {
+      if (options?.allow && existing.allow !== options.allow) {
+        existing.iframe.allow = options.allow;
+        existing.allow = options.allow;
+      }
+      if (options?.sandbox && existing.sandbox !== options.sandbox) {
+        existing.iframe.setAttribute("sandbox", options.sandbox);
+        existing.sandbox = options.sandbox;
+      }
       if (existing.iframe.src !== url) {
         existing.iframe.src = url;
       }
@@ -256,59 +281,71 @@ class SimplePersistentIframeManager {
       visibility: hidden;
       pointer-events: none;
       transform: translate(-100vw, -100vh);
+      width: 0;
+      height: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
     `;
     wrapper.setAttribute("data-iframe-key", key);
 
     const iframe = document.createElement("iframe");
-    // For VNC/browser, use transform to scale the content to fit
-    if (isBrowser) {
-      iframe.style.cssText = `
-        width: 1920px;
-        height: 1080px;
-        border: 0;
-        display: block;
-        transform-origin: 0 0;
-      `;
-    } else {
-      iframe.style.cssText = `
-        width: 100%;
-        height: 100%;
-        border: 0;
-        display: block;
-      `;
-    }
+    iframe.style.cssText = `
+      width: 100%;
+      height: 100%;
+      border: 0;
+      display: block;
+      background: transparent;
+    `;
+    iframe.style.transform = "none";
     iframe.src = url;
-    iframe.allow = "cross-origin-isolated; clipboard-read; clipboard-write";
-    iframe.setAttribute("sandbox", "allow-same-origin allow-scripts allow-forms allow-downloads allow-modals allow-popups");
+    if (options?.allow) {
+      iframe.allow = options.allow;
+    } else {
+      iframe.allow = "clipboard-read; clipboard-write; cross-origin-isolated; fullscreen";
+    }
+    if (options?.sandbox) {
+      iframe.setAttribute("sandbox", options.sandbox);
+    } else {
+      iframe.setAttribute(
+        "sandbox",
+        "allow-same-origin allow-scripts allow-forms allow-downloads allow-modals allow-popups"
+      );
+    }
 
     wrapper.appendChild(iframe);
     this.container?.appendChild(wrapper);
-    this.iframes.set(key, { iframe, wrapper });
+    this.iframes.set(key, {
+      iframe,
+      wrapper,
+      allow: options?.allow,
+      sandbox: options?.sandbox,
+    });
 
     return iframe;
   }
 
-  mountIframe(key: string, targetElement: HTMLElement, isBrowser: boolean = false): () => void {
+  mountIframe(
+    key: string,
+    targetElement: HTMLElement,
+    options?: MountOptions
+  ): () => void {
     const entry = this.iframes.get(key);
     if (!entry) return () => {};
+
+    entry.wrapper.style.background = options?.backgroundColor ?? "transparent";
 
     const syncPosition = () => {
       const rect = targetElement.getBoundingClientRect();
       entry.wrapper.style.transform = `translate(${rect.left}px, ${rect.top}px)`;
       entry.wrapper.style.width = `${rect.width}px`;
       entry.wrapper.style.height = `${rect.height}px`;
-
-      // Scale browser/VNC iframe to fit
-      if (isBrowser) {
-        const scaleX = rect.width / 1920;
-        const scaleY = rect.height / 1080;
-        const scale = Math.min(scaleX, scaleY);
-        entry.iframe.style.transform = `scale(${scale})`;
-      }
     };
 
     entry.wrapper.style.visibility = "visible";
     entry.wrapper.style.pointerEvents = "auto";
+    entry.iframe.style.transform = "none";
     syncPosition();
 
     const observer = new ResizeObserver(syncPosition);
@@ -650,6 +687,20 @@ export function PreviewConfigureClient({
   const [pendingFocusIndex, setPendingFocusIndex] = useState<number | null>(null);
 
   const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+    const previousOverflow = document.body.style.overflow;
+    const previousOverscroll = document.body.style.overscrollBehavior;
+    document.body.style.overflow = "hidden";
+    document.body.style.overscrollBehavior = "none";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.body.style.overscrollBehavior = previousOverscroll;
+    };
+  }, []);
 
   // Panel state - vertical split
   const [panelLayout, setPanelLayout] = useState<Record<PanelPosition, PanelType>>({
@@ -1280,24 +1331,26 @@ export function PreviewConfigureClient({
   );
 
   // Mount iframes
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!instance || !iframeManager) return;
 
     const cleanupFunctions: Array<() => void> = [];
 
     if (instance.vscodeUrl) {
-      iframeManager.getOrCreateIframe(vscodePersistKey, `${instance.vscodeUrl}?folder=/root/workspace`, false);
+      iframeManager.getOrCreateIframe(vscodePersistKey, `${instance.vscodeUrl}?folder=/root/workspace`);
       const target = document.querySelector(`[data-iframe-target="${vscodePersistKey}"]`) as HTMLElement;
       if (target) {
-        cleanupFunctions.push(iframeManager.mountIframe(vscodePersistKey, target, false));
+        cleanupFunctions.push(iframeManager.mountIframe(vscodePersistKey, target));
       }
     }
 
     if (resolvedVncUrl) {
-      iframeManager.getOrCreateIframe(browserPersistKey, resolvedVncUrl, true);
+      iframeManager.getOrCreateIframe(browserPersistKey, resolvedVncUrl);
       const target = document.querySelector(`[data-iframe-target="${browserPersistKey}"]`) as HTMLElement;
       if (target) {
-        cleanupFunctions.push(iframeManager.mountIframe(browserPersistKey, target, true));
+        cleanupFunctions.push(
+          iframeManager.mountIframe(browserPersistKey, target, { backgroundColor: "#000000" })
+        );
       }
     }
 
@@ -1397,7 +1450,7 @@ export function PreviewConfigureClient({
   }
 
   return (
-    <div className="flex h-screen bg-neutral-50 dark:bg-neutral-950">
+    <div className="flex h-screen overflow-hidden bg-neutral-50 dark:bg-neutral-950">
       {/* Left: Configuration Form */}
       <div className="w-96 overflow-y-auto border-r border-neutral-200 dark:border-neutral-800 bg-white dark:bg-black p-6">
         <Link
@@ -1682,7 +1735,7 @@ export function PreviewConfigureClient({
       </div>
 
       {/* Right: Preview Panels */}
-      <div className="flex-1 flex flex-col bg-neutral-50 dark:bg-neutral-950">
+      <div className="flex-1 flex flex-col bg-neutral-50 dark:bg-neutral-950 overflow-hidden">
         <div className="flex items-center justify-between border-b border-neutral-200 dark:border-neutral-800 px-4 py-2">
           <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-500">
             Preview
@@ -1732,7 +1785,7 @@ export function PreviewConfigureClient({
             </button>
           </div>
         </div>
-        <div className="flex-1 min-h-0 p-2">
+        <div className="flex-1 min-h-0 p-2 overflow-hidden">
           {previewContent}
         </div>
       </div>
