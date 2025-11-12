@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
-import { createFakeConvexId, isFakeConvexId } from "@/lib/fakeConvexId";
+import { createFakeConvexId } from "@/lib/fakeConvexId";
 import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListeners";
 import { branchesQueryOptions } from "@/queries/branches";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
