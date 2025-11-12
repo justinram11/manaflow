@@ -3,7 +3,7 @@ import { getTaskRunPreviewPersistKey } from "@/lib/persistent-webview-keys";
 import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "convex/react";
+import { useQuery as useConvexQuery } from "convex/react";
 import { useMemo, useState, useEffect, useRef } from "react";
 import z from "zod";
 import { TaskRunTerminalSession } from "@/components/task-run-terminal-session";
@@ -14,7 +14,7 @@ import {
   terminalTabsQueryOptions,
   type TerminalTabId,
 } from "@/queries/terminals";
-import { useSuspenseQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { convexQuery } from "@convex-dev/react-query";
 import { isElectron } from "@/lib/electron";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
@@ -137,7 +137,7 @@ export const Route = createFileRoute(
 function PreviewPage() {
   const { taskId, teamSlugOrId, runId, port } = Route.useParams();
 
-  const taskRuns = useQuery(api.taskRuns.getByTask, {
+  const taskRuns = useConvexQuery(api.taskRuns.getByTask, {
     teamSlugOrId,
     taskId,
   });
@@ -184,7 +184,7 @@ function PreviewPage() {
     return toMorphXtermBaseUrl(rawMorphUrl);
   }, [isMorphProvider, rawMorphUrl]);
 
-  const terminalTabsQuery = useSuspenseQuery(
+  const terminalTabsQuery = useQuery(
     terminalTabsQueryOptions({
       baseUrl,
       contextKey: runId,
@@ -257,7 +257,10 @@ function PreviewPage() {
             terminalVisible={isTerminalVisible}
             onToggleTerminal={toggleTerminal}
             renderBelowAddressBar={() =>
-              isTerminalVisible && baseUrl && activeTerminalId ? (
+              isTerminalVisible &&
+              baseUrl &&
+              activeTerminalId &&
+              !terminalTabsQuery.isLoading ? (
                 <div
                   className="border-l border-neutral-200 dark:border-neutral-800 flex bg-white dark:bg-neutral-950 flex-shrink-0 relative"
                   style={{ width: `${terminalWidth}px` }}

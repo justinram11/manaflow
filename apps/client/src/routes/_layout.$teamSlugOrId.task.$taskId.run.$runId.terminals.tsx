@@ -1,11 +1,7 @@
 import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery as useConvexQuery } from "convex/react";
 import clsx from "clsx";
@@ -317,7 +313,10 @@ function TaskRunTerminals() {
 
   const closeTerminalTab = useCallback(
     (tabId: TerminalTabId) => {
-      if ((isDeletingTerminal && deletingTerminalId === tabId) || !hasTerminalBackend) {
+      if (
+        (isDeletingTerminal && deletingTerminalId === tabId) ||
+        !hasTerminalBackend
+      ) {
         return;
       }
       deleteTerminalMutation.mutate(tabId);

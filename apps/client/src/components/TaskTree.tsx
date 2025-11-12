@@ -123,7 +123,7 @@ function SidebarArchiveOverlay({
           <button
             type="button"
             aria-label={label}
-            className="peer absolute inset-0 flex items-center justify-center rounded-sm text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-50 opacity-0 pointer-events-none focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover:opacity-100 group-hover:pointer-events-auto group-data-[focus-visible=true]:opacity-100 group-data-[focus-visible=true]:pointer-events-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-400 dark:focus-visible:outline-neutral-500"
+            className="peer absolute inset-0 flex items-center justify-center rounded-sm text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-50 opacity-0 pointer-events-none focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover:opacity-100 group-hover:pointer-events-auto group-data-[focus-visible=true]:opacity-100 group-data-[focus-visible=true]:pointer-events-auto focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-400 dark:focus-visible:outline-neutral-500"
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -1245,12 +1245,6 @@ function TaskRunTreeInner({
     return run.networking.filter((service) => service.status === "running");
   }, [run.networking]);
 
-  // Get task to extract repo information
-  const task = useQuery(api.tasks.getById, {
-    teamSlugOrId,
-    id: taskId,
-  });
-
   const {
     actions: openWithActions,
     executeOpenAction,
@@ -1542,9 +1536,7 @@ function TaskRunDetails({
         className="max-w-sm p-3 z-[var(--z-global-blocking)]"
       >
         <div className="space-y-1.5">
-          <p className="font-medium text-sm text-neutral-200">
-            Scripts error
-          </p>
+          <p className="font-medium text-sm text-neutral-200">Scripts error</p>
           {environmentError?.maintenanceError && (
             <p className="text-xs text-neutral-400">
               Maintenance: {environmentError.maintenanceError}
