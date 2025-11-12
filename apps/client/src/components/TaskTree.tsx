@@ -66,7 +66,6 @@ import {
 } from "react";
 import { VSCodeIcon } from "./icons/VSCodeIcon";
 import { SidebarListItem } from "./sidebar/SidebarListItem";
-import { SIDEBAR_SCROLL_CONTAINER_SELECTOR } from "./sidebar/const";
 import { annotateAgentOrdinals } from "./task-tree/annotateAgentOrdinals";
 
 type PreviewService = NonNullable<TaskRunWithChildren["networking"]>[number];
@@ -452,50 +451,26 @@ function TaskTreeInner({
   const handlePrefetch = useCallback(() => {
     prefetchTaskRuns();
   }, [prefetchTaskRuns]);
+
+  // Expand and scroll into view when task becomes selected
   useEffect(() => {
     if (!isTaskSelected) {
       return;
     }
-    if (!isExpanded) {
-      setIsExpanded(true);
-    }
-    prefetchTaskRuns();
+
+    // Expand the task if not already expanded
+    setIsExpanded((prev) => prev || true);
+
+    // Scroll into view
     const linkElement = taskLinkRef.current;
-    if (!linkElement) {
-      return;
-    }
-    const scrollContainerCandidate = linkElement.closest(
-      SIDEBAR_SCROLL_CONTAINER_SELECTOR
-    );
-    const scrollContainer =
-      scrollContainerCandidate instanceof HTMLElement
-        ? scrollContainerCandidate
-        : null;
-    const scrollIntoView = () => {
+    if (linkElement) {
       linkElement.scrollIntoView({
         block: "center",
         inline: "nearest",
         behavior: "smooth",
       });
-    };
-    const rafId = window.requestAnimationFrame(() => {
-      const itemRect = linkElement.getBoundingClientRect();
-      const containerRect = scrollContainer?.getBoundingClientRect();
-      if (!containerRect) {
-        scrollIntoView();
-        return;
-      }
-      const isFullyVisible =
-        itemRect.top >= containerRect.top &&
-        itemRect.bottom <= containerRect.bottom;
-      if (!isFullyVisible) {
-        scrollIntoView();
-      }
-    });
-    return () => {
-      window.cancelAnimationFrame(rafId);
-    };
-  }, [isExpanded, isTaskSelected, prefetchTaskRuns]);
+    }
+  }, [isTaskSelected]);
   const [isTaskLinkFocusVisible, setIsTaskLinkFocusVisible] = useState(false);
   const handleTaskLinkFocus = useCallback(
     (event: FocusEvent<HTMLAnchorElement>) => {
