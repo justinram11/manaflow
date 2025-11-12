@@ -1,12 +1,12 @@
 import { useMemo } from "react";
-import { useQueries, useQuery as useRQ } from "@tanstack/react-query";
+import { useQueries } from "@tanstack/react-query";
+import { useQuery } from "convex/react";
 import { MonacoGitDiffViewer } from "./monaco/monaco-git-diff-viewer";
 import { RunScreenshotGallery } from "./RunScreenshotGallery";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
 import type { TaskRunWithChildren } from "@/types/task";
 import type { Doc, Id } from "@cmux/convex/dataModel";
-import { convexQuery } from "@convex-dev/react-query";
 import { api } from "@cmux/convex/api";
 
 export interface TaskRunGitDiffPanelProps {
@@ -14,9 +14,10 @@ export interface TaskRunGitDiffPanelProps {
   selectedRun: TaskRunWithChildren | null | undefined;
   teamSlugOrId: string;
   taskId: Id<"tasks">;
+  selectedRunId: Id<"taskRuns"> | null | undefined;
 }
 
-export function TaskRunGitDiffPanel({ task, selectedRun, teamSlugOrId, taskId }: TaskRunGitDiffPanelProps) {
+export function TaskRunGitDiffPanel({ task, selectedRun, teamSlugOrId, taskId, selectedRunId }: TaskRunGitDiffPanelProps) {
   const normalizedBaseBranch = useMemo(() => {
     const candidate = task?.baseBranch;
     if (candidate && candidate.trim()) {
@@ -69,18 +70,15 @@ export function TaskRunGitDiffPanel({ task, selectedRun, teamSlugOrId, taskId }:
   const hasError = diffQueries.some((query) => query.isError);
 
   // Fetch screenshot sets for the selected run
-  const runDiffContextQuery = useRQ({
-    ...convexQuery(api.taskRuns.getRunDiffContext, {
-      teamSlugOrId,
-      taskId,
-      runId: selectedRun?._id ?? ("" as Id<"taskRuns">),
-    }),
-    enabled: Boolean(selectedRun?._id && teamSlugOrId && taskId),
-  });
+  const runDiffContext = useQuery(
+    api.taskRuns.getRunDiffContext,
+    selectedRunId && teamSlugOrId && taskId
+      ? { teamSlugOrId, taskId, runId: selectedRunId }
+      : "skip"
+  );
 
-  const screenshotSets = runDiffContextQuery.data?.screenshotSets ?? [];
-  const screenshotSetsLoading =
-    runDiffContextQuery.isLoading && screenshotSets.length === 0;
+  const screenshotSets = runDiffContext?.screenshotSets ?? [];
+  const screenshotSetsLoading = runDiffContext === undefined && screenshotSets.length === 0;
 
   if (!selectedRun || !normalizedHeadBranch) {
     return (

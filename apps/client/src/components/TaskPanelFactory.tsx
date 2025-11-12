@@ -635,6 +635,7 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
             selectedRun={selectedRun}
             teamSlugOrId={teamSlugOrId}
             taskId={taskId}
+            selectedRunId={selectedRun?._id}
           />
         </div>
       );
