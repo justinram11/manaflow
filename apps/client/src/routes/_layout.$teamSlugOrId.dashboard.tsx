@@ -20,9 +20,10 @@ import {
 } from "@/components/ui/tooltip";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
-import { createFakeConvexId } from "@/lib/fakeConvexId";
+import { createFakeConvexId, isFakeConvexId } from "@/lib/fakeConvexId";
 import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListeners";
 import { branchesQueryOptions } from "@/queries/branches";
+import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
 import type {
@@ -43,6 +44,23 @@ import { z } from "zod";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/dashboard")({
   component: DashboardComponent,
+  loader: async (opts) => {
+    const { teamSlugOrId } = opts.params;
+    // Prewarm queries used in the dashboard
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.github.getReposByOrg,
+      args: { teamSlugOrId },
+    });
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.environments.list,
+      args: { teamSlugOrId },
+    });
+    // Prewarm queries used in TaskList
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.tasks.get,
+      args: { teamSlugOrId },
+    });
+  },
 });
 
 // Default agents (not persisted to localStorage)
