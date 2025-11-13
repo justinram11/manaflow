@@ -95,6 +95,8 @@ let pendingProtocolUrl: string | null = null;
 let mainWindow: BrowserWindow | null = null;
 let previewReloadMenuItem: MenuItem | null = null;
 let previewReloadMenuVisible = false;
+let historyBackMenuItem: MenuItem | null = null;
+let historyForwardMenuItem: MenuItem | null = null;
 
 function getTimestamp(): string {
   return new Date().toISOString();
@@ -129,6 +131,47 @@ function writeRendererLogLine(
     `[${getTimestamp()}] [RENDERER] [${level.toUpperCase()}] ${line}\n`,
     LOG_ROTATION
   );
+}
+
+function getActiveBrowserWindow(): BrowserWindow | null {
+  const target =
+    BrowserWindow.getFocusedWindow() ??
+    mainWindow ??
+    BrowserWindow.getAllWindows()[0] ??
+    null;
+  if (!target || target.isDestroyed()) {
+    return null;
+  }
+  return target;
+}
+
+function updateHistoryMenuState(target?: BrowserWindow | null): void {
+  if (!historyBackMenuItem && !historyForwardMenuItem) return;
+  const window =
+    target && !target.isDestroyed() ? target : getActiveBrowserWindow();
+  const contents = window && !window.isDestroyed() ? window.webContents : null;
+  const canGoBack = Boolean(contents?.canGoBack?.());
+  const canGoForward = Boolean(contents?.canGoForward?.());
+  if (historyBackMenuItem) {
+    historyBackMenuItem.enabled = canGoBack;
+  }
+  if (historyForwardMenuItem) {
+    historyForwardMenuItem.enabled = canGoForward;
+  }
+}
+
+function navigateHistory(direction: "back" | "forward"): void {
+  const target = getActiveBrowserWindow();
+  if (!target) return;
+  const contents = target.webContents;
+  if (direction === "back") {
+    if (contents.canGoBack()) {
+      contents.goBack();
+    }
+  } else if (direction === "forward" && contents.canGoForward()) {
+    contents.goForward();
+  }
+  updateHistoryMenuState(target);
 }
 
 function setupConsoleFileMirrors(): void {
@@ -228,12 +271,8 @@ function sendShortcutToFocusedWindow(
   payload?: unknown
 ): boolean {
   try {
-    const target =
-      BrowserWindow.getFocusedWindow() ??
-      mainWindow ??
-      BrowserWindow.getAllWindows()[0] ??
-      null;
-    if (!target || target.isDestroyed()) {
+    const target = getActiveBrowserWindow();
+    if (!target) {
       return false;
     }
     target.webContents.send(`cmux:event:shortcut:${eventName}`, payload);
@@ -687,6 +726,19 @@ function createWindow(): void {
   }
 }
 
+app.on("browser-window-created", (_event, window) => {
+  const updateForWindow = () => updateHistoryMenuState(window);
+  window.webContents.on("did-navigate", updateForWindow);
+  window.webContents.on("did-navigate-in-page", updateForWindow);
+  window.on("focus", updateForWindow);
+  window.on("closed", () => updateHistoryMenuState());
+  updateHistoryMenuState(window);
+});
+
+app.on("browser-window-focus", (_event, window) => {
+  updateHistoryMenuState(window);
+});
+
 app.on("login", (event, webContents, _request, authInfo, callback) => {
   if (!authInfo.isProxy) {
     return;
@@ -887,11 +939,6 @@ app.whenReady().then(async () => {
     } else {
       template.push({ label: "File", submenu: [{ role: "quit" }] });
     }
-    const resolveTargetWindow = () =>
-      BrowserWindow.getFocusedWindow() ??
-      mainWindow ??
-      BrowserWindow.getAllWindows()[0] ??
-      null;
     const viewMenu: MenuItemConstructorOptions = {
       label: "View",
       submenu: [
@@ -939,7 +986,7 @@ app.whenReady().then(async () => {
         {
           label: "Reload Application",
           click: () => {
-            const target = resolveTargetWindow();
+            const target = getActiveBrowserWindow();
             target?.webContents.reload();
           },
         },
@@ -952,8 +999,32 @@ app.whenReady().then(async () => {
         { role: "toggleDevTools" },
       ],
     };
+    const historyMenu: MenuItemConstructorOptions = {
+      label: "History",
+      submenu: [
+        {
+          id: "cmux-history-back",
+          label: "Back",
+          accelerator: "CommandOrControl+[",
+          enabled: false,
+          click: () => {
+            navigateHistory("back");
+          },
+        },
+        {
+          id: "cmux-history-forward",
+          label: "Forward",
+          accelerator: "CommandOrControl+]",
+          enabled: false,
+          click: () => {
+            navigateHistory("forward");
+          },
+        },
+      ],
+    };
     template.push(
       { role: "editMenu" },
+      historyMenu,
       {
         label: "Commands",
         submenu: [
@@ -962,7 +1033,7 @@ app.whenReady().then(async () => {
             accelerator: "CommandOrControl+K",
             click: () => {
               try {
-                const target = resolveTargetWindow();
+                const target = getActiveBrowserWindow();
                 keyDebug("menu-accelerator-cmdk", {
                   to: target?.webContents.id,
                 });
@@ -1021,8 +1092,13 @@ app.whenReady().then(async () => {
       ],
     });
     const menu = Menu.buildFromTemplate(template);
-    previewReloadMenuItem = menu.getMenuItemById("cmux-preview-reload") ?? null;
+    previewReloadMenuItem =
+      menu.getMenuItemById("cmux-preview-reload") ?? null;
+    historyBackMenuItem = menu.getMenuItemById("cmux-history-back") ?? null;
+    historyForwardMenuItem =
+      menu.getMenuItemById("cmux-history-forward") ?? null;
     setPreviewReloadMenuVisibility(previewReloadMenuVisible);
+    updateHistoryMenuState();
     Menu.setApplicationMenu(menu);
   } catch (e) {
     mainWarn("Failed to set application menu", e);
