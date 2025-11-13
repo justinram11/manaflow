@@ -868,11 +868,6 @@ app.whenReady().then(async () => {
       }
     });
   });
-  const rendererBaseUrl =
-    is.dev && process.env["ELECTRON_RENDERER_URL"]
-      ? process.env["ELECTRON_RENDERER_URL"]
-      : `https://${APP_HOST}`;
-
   registerWebContentsViewHandlers({
     logger: {
       log: mainLog,
@@ -880,7 +875,6 @@ app.whenReady().then(async () => {
       error: mainError,
     },
     maxSuspendedEntries: resolveMaxSuspendedWebContents(),
-    rendererBaseUrl,
     onPreviewWebContentsChange: ({ webContentsId, present }) => {
       if (present) {
         previewWebContentsIds.add(webContentsId);

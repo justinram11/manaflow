@@ -7,6 +7,7 @@ import {
   type Session,
   type WebContents,
 } from "electron";
+import { Buffer } from "node:buffer";
 import { STATUS_CODES } from "node:http";
 import type {
   ElectronDevToolsMode,
@@ -27,7 +28,6 @@ import { normalizeBrowserUrl } from "@cmux/shared";
 interface RegisterOptions {
   logger: Logger;
   maxSuspendedEntries?: number;
-  rendererBaseUrl: string;
   onPreviewWebContentsChange?: (payload: {
     webContentsId: number;
     present: boolean;
@@ -89,7 +89,6 @@ const suspendedQueue: number[] = [];
 const suspendedByKey = new Map<string, Entry>();
 let suspendedCount = 0;
 let maxSuspendedEntries = 25;
-let rendererBaseUrl = "";
 let previewWebContentsChangeHandler:
   | ((payload: { webContentsId: number; present: boolean }) => void)
   | null = null;
@@ -122,6 +121,286 @@ function notifyPreviewWebContentsPresence(
   }
 }
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+interface ErrorDisplay {
+  title: string;
+  description: string;
+  badgeLabel: string;
+  details: Array<{ label: string; value: string }>;
+}
+
+interface NavigationMatch {
+  test: RegExp;
+  title: string;
+  description: string;
+}
+
+const NAVIGATION_ERROR_MAPPINGS: NavigationMatch[] = [
+  {
+    test: /ERR_NAME_NOT_RESOLVED/i,
+    title: "Domain not found",
+    description:
+      "The domain name couldn't be resolved. Verify the hostname or update your DNS settings.",
+  },
+  {
+    test: /ERR_CONNECTION_REFUSED/i,
+    title: "Connection refused",
+    description:
+      "The server refused the connection. Make sure the service is running and accepting connections.",
+  },
+  {
+    test: /ERR_CONNECTION_TIMED_OUT/i,
+    title: "Connection timed out",
+    description:
+      "The server took too long to respond. Check the server status or network connectivity.",
+  },
+  {
+    test: /ERR_INTERNET_DISCONNECTED/i,
+    title: "No internet connection",
+    description:
+      "We couldn't reach the internet. Check your network connection and try again.",
+  },
+  {
+    test: /ERR_SSL_PROTOCOL_ERROR|ERR_CERT/i,
+    title: "Secure connection failed",
+    description:
+      "The secure connection could not be established. Verify the TLS certificate or try HTTP.",
+  },
+  {
+    test: /ERR_ADDRESS_UNREACHABLE|ERR_CONNECTION_RESET/i,
+    title: "Host unreachable",
+    description:
+      "We couldn't reach the host. Confirm the service address and network routes.",
+  },
+];
+
+function describeNavigationError(
+  code: number,
+  description: string,
+  url: string
+): ErrorDisplay {
+  const match = NAVIGATION_ERROR_MAPPINGS.find(({ test }) =>
+    test.test(description)
+  );
+
+  const title = match?.title ?? "Failed to load page";
+  const desc =
+    match?.description ??
+    "Something went wrong while loading this page. Try refreshing or check the network logs.";
+
+  const badgeLabel = `Code ${code}`;
+
+  const details: Array<{ label: string; value: string }> = [
+    { label: "Error", value: description || `Code ${code}` },
+    { label: "URL", value: url },
+  ];
+
+  return {
+    title,
+    description: desc,
+    badgeLabel,
+    details,
+  };
+}
+
+function describeHttpError(
+  statusCode: number,
+  statusText: string | undefined,
+  url: string
+): ErrorDisplay {
+  let title = "Request failed";
+  let description =
+    "The server responded with an error. Try refreshing the page or checking the service logs.";
+
+  if (statusCode === 404) {
+    title = "Page not found";
+    description =
+      "We couldn't find that page. Double-check the URL or make sure the route is available.";
+  } else if (statusCode === 401 || statusCode === 403) {
+    title = "Access denied";
+    description =
+      "This page requires authentication or additional permissions. Sign in or update the request headers.";
+  } else if (statusCode >= 500) {
+    title = "Server error";
+    description =
+      "The server encountered an error while handling the request. Check the service logs or try again.";
+  } else if (statusCode >= 400) {
+    title = "Request blocked";
+    description =
+      "The server rejected the request. Review the request payload or try again.";
+  }
+
+  const statusDetail = statusText
+    ? `HTTP ${statusCode} · ${statusText}`
+    : `HTTP ${statusCode}`;
+
+  return {
+    title,
+    description,
+    badgeLabel: statusDetail,
+    details: [
+      { label: "Status", value: statusDetail },
+      { label: "URL", value: url },
+    ],
+  };
+}
+
+function buildErrorHtml(errorDisplay: ErrorDisplay): string {
+  const detailsHtml = errorDisplay.details
+    .map(
+      ({ label, value }) => `
+        <div>
+          <dt class="font-medium uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+            ${escapeHtml(label)}
+          </dt>
+          <dd class="mt-0.5 break-words text-neutral-600 dark:text-neutral-300">
+            ${escapeHtml(value)}
+          </dd>
+        </div>
+      `
+    )
+    .join("");
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(errorDisplay.title)}</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: white;
+      color: #171717;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 1.5rem;
+    }
+    @media (prefers-color-scheme: dark) {
+      body {
+        background: #0a0a0a;
+        color: #fafafa;
+      }
+    }
+    .container {
+      width: 100%;
+      max-width: 24rem;
+      padding: 1.5rem;
+      background: white;
+      border: 1px solid #e5e5e5;
+      border-radius: 0.5rem;
+      box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);
+    }
+    @media (prefers-color-scheme: dark) {
+      .container {
+        background: #171717;
+        border-color: #262626;
+      }
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.125rem 0.625rem;
+      margin-bottom: 0.75rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      border-radius: 9999px;
+      background: #e5e5e5;
+      color: #404040;
+    }
+    @media (prefers-color-scheme: dark) {
+      .badge {
+        background: #262626;
+        color: #d4d4d4;
+      }
+    }
+    h1 {
+      font-size: 1.125rem;
+      font-weight: 600;
+      line-height: 1.75rem;
+      color: #171717;
+    }
+    @media (prefers-color-scheme: dark) {
+      h1 {
+        color: #fafafa;
+      }
+    }
+    .description {
+      margin-top: 0.5rem;
+      font-size: 0.875rem;
+      line-height: 1.5;
+      color: #525252;
+    }
+    @media (prefers-color-scheme: dark) {
+      .description {
+        color: #d4d4d4;
+      }
+    }
+    dl {
+      margin-top: 1rem;
+      font-size: 0.75rem;
+      color: #737373;
+    }
+    @media (prefers-color-scheme: dark) {
+      dl {
+        color: #a3a3a3;
+      }
+    }
+    dl > div {
+      margin-top: 0.5rem;
+    }
+    dl > div:first-child {
+      margin-top: 0;
+    }
+    dt {
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.025em;
+      color: #a3a3a3;
+    }
+    @media (prefers-color-scheme: dark) {
+      dt {
+        color: #737373;
+      }
+    }
+    dd {
+      margin-top: 0.125rem;
+      word-break: break-all;
+      color: #525252;
+    }
+    @media (prefers-color-scheme: dark) {
+      dd {
+        color: #d4d4d4;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    ${errorDisplay.badgeLabel ? `<span class="badge">${escapeHtml(errorDisplay.badgeLabel)}</span>` : ""}
+    <h1>${escapeHtml(errorDisplay.title)}</h1>
+    <p class="description">${escapeHtml(errorDisplay.description)}</p>
+    ${errorDisplay.details.length > 0 ? `<dl>${detailsHtml}</dl>` : ""}
+  </div>
+</body>
+</html>`;
+}
+
 function buildErrorUrl(params: {
   type: "navigation" | "http";
   url: string;
@@ -130,21 +409,22 @@ function buildErrorUrl(params: {
   statusCode?: number;
   statusText?: string;
 }): string {
-  const url = new URL("/electron-error", rendererBaseUrl);
-  url.searchParams.set("type", params.type);
-  if (params.url) url.searchParams.set("url", params.url);
-  if (params.type === "navigation") {
-    if (params.code !== undefined)
-      url.searchParams.set("code", String(params.code));
-    if (params.description)
-      url.searchParams.set("description", params.description);
-  } else if (params.type === "http") {
-    if (params.statusCode !== undefined)
-      url.searchParams.set("statusCode", String(params.statusCode));
-    if (params.statusText)
-      url.searchParams.set("statusText", params.statusText);
-  }
-  return url.toString();
+  const errorDisplay: ErrorDisplay =
+    params.type === "http"
+      ? describeHttpError(
+          params.statusCode ?? 0,
+          params.statusText,
+          params.url ?? ""
+        )
+      : describeNavigationError(
+          params.code ?? 0,
+          params.description ?? "",
+          params.url ?? ""
+        );
+
+  const html = buildErrorHtml(errorDisplay);
+  const base64Html = Buffer.from(html, "utf-8").toString("base64");
+  return `data:text/html;base64,${base64Html}`;
 }
 
 function sendEventToOwner(
@@ -612,11 +892,9 @@ function destroyWebContents(contents: WebContents) {
 export function registerWebContentsViewHandlers({
   logger,
   maxSuspendedEntries: providedMax,
-  rendererBaseUrl: providedBaseUrl,
   onPreviewWebContentsChange,
 }: RegisterOptions): void {
   setMaxSuspendedEntries(providedMax);
-  rendererBaseUrl = providedBaseUrl;
   previewWebContentsChangeHandler = onPreviewWebContentsChange ?? null;
 
   ipcMain.handle(
