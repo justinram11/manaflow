@@ -1,109 +1,37 @@
+import {
+  createMorphCloudClient,
+  startInstanceInstancePost,
+  getInstanceInstanceInstanceIdGet,
+  execInstanceInstanceIdExecPost,
+  stopInstanceInstanceInstanceIdDelete,
+  type InstanceModel,
+} from "@cmux/morphcloud-openapi-client";
 import { env } from "../_shared/convex-env";
 import { fetchInstallationAccessToken } from "../_shared/githubApp";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import type { ActionCtx } from "./_generated/server";
 
-const MORPH_API_BASE_URL = "https://cloud.morph.so/api";
-
-type InstanceHttpService = {
-  name: string;
-  port: number;
-  url: string;
-};
-
-type MorphInstance = {
-  id: string;
-  status: string;
-  networking: {
-    http_services: InstanceHttpService[];
-  };
-};
-
-type MorphRequestOptions = {
-  apiKey: string;
-  path: string;
-  method?: "GET" | "POST" | "DELETE";
-  query?: Record<string, string | number | undefined>;
-  body?: Record<string, unknown>;
-  timeoutMs?: number;
-};
-
-type StartInstanceOptions = {
-  apiKey: string;
-  snapshotId: string;
-  metadata?: Record<string, string>;
-  ttlSeconds?: number;
-  ttlAction?: "stop" | "pause";
-  readinessTimeoutMs?: number;
-};
-
-async function morphRequest<T>({
-  apiKey,
-  path,
-  method = "GET",
-  query,
-  body,
-  timeoutMs = 600_000,
-}: MorphRequestOptions): Promise<T> {
-  const url = new URL(`${MORPH_API_BASE_URL}${path}`);
-  if (query) {
-    for (const [key, value] of Object.entries(query)) {
-      if (value === undefined) continue;
-      url.searchParams.set(key, String(value));
-    }
-  }
-
-  const response = await fetch(url, {
-    method,
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(
-      `[preview-jobs] Morph request failed (${response.status} ${response.statusText}) for ${path}: ${text.slice(0, 512)}`,
-    );
-  }
-
-  if (response.status === 204) {
-    return undefined as T;
-  }
-
-  const raw = await response.text();
-  if (!raw) {
-    return undefined as T;
-  }
-  try {
-    return JSON.parse(raw) as T;
-  } catch (error) {
-    throw new Error(
-      `[preview-jobs] Failed to parse Morph response for ${path}: ${String(
-        error,
-      )}`,
-    );
-  }
-}
-
 async function waitForInstanceReady(
-  apiKey: string,
+  morphClient: ReturnType<typeof createMorphCloudClient>,
   instanceId: string,
   readinessTimeoutMs = 5 * 60 * 1000,
-): Promise<MorphInstance> {
+): Promise<InstanceModel> {
   const start = Date.now();
   while (true) {
-    const instance = await morphRequest<MorphInstance>({
-      apiKey,
-      path: `/instance/${instanceId}`,
-      method: "GET",
-      timeoutMs: 60_000,
+    const response = await getInstanceInstanceInstanceIdGet({
+      client: morphClient,
+      path: { instance_id: instanceId },
     });
+
+    if (response.error) {
+      throw new Error(`Failed to get instance status: ${JSON.stringify(response.error)}`);
+    }
+
+    const instance = response.data;
+    if (!instance) {
+      throw new Error("Instance data missing from response");
+    }
 
     if (instance.status === "ready") {
       return instance;
@@ -118,37 +46,51 @@ async function waitForInstanceReady(
   }
 }
 
-async function startMorphInstance({
-  apiKey,
-  snapshotId,
-  metadata,
-  ttlSeconds,
-  ttlAction,
-  readinessTimeoutMs,
-}: StartInstanceOptions): Promise<MorphInstance> {
-  const instance = await morphRequest<MorphInstance>({
-    apiKey,
-    path: "/instance",
-    method: "POST",
+async function startMorphInstance(
+  morphClient: ReturnType<typeof createMorphCloudClient>,
+  options: {
+    snapshotId: string;
+    metadata?: Record<string, string>;
+    ttlSeconds?: number;
+    ttlAction?: "stop" | "pause";
+    readinessTimeoutMs?: number;
+  },
+): Promise<InstanceModel> {
+  const response = await startInstanceInstancePost({
+    client: morphClient,
     query: {
-      snapshot_id: snapshotId,
+      snapshot_id: options.snapshotId,
     },
     body: {
-      metadata,
-      ttl_seconds: ttlSeconds,
-      ttl_action: ttlAction,
+      metadata: options.metadata,
+      ttl_seconds: options.ttlSeconds,
+      ttl_action: options.ttlAction,
     },
-    timeoutMs: 120_000,
   });
-  return await waitForInstanceReady(apiKey, instance.id, readinessTimeoutMs);
+
+  if (response.error) {
+    throw new Error(`Failed to start instance: ${JSON.stringify(response.error)}`);
+  }
+
+  const instance = response.data;
+  if (!instance) {
+    throw new Error("Instance data missing from start response");
+  }
+
+  return await waitForInstanceReady(
+    morphClient,
+    instance.id,
+    options.readinessTimeoutMs,
+  );
 }
 
-async function stopMorphInstance(apiKey: string, instanceId: string) {
-  await morphRequest<void>({
-    apiKey,
-    path: `/instance/${instanceId}`,
-    method: "DELETE",
-    timeoutMs: 60_000,
+async function stopMorphInstance(
+  morphClient: ReturnType<typeof createMorphCloudClient>,
+  instanceId: string,
+) {
+  await stopInstanceInstanceInstanceIdDelete({
+    client: morphClient,
+    path: { instance_id: instanceId },
   });
 }
 
@@ -205,6 +147,10 @@ export async function runPreviewJob(
     });
     return;
   }
+
+  const morphClient = createMorphCloudClient({
+    auth: morphApiKey,
+  });
 
   const payload = await ctx.runQuery(internal.previewRuns.getRunWithConfig, {
     previewRunId,
@@ -263,7 +209,7 @@ export async function runPreviewJob(
   }
 
   const snapshotId = environment.morphSnapshotId;
-  let instance: MorphInstance | null = null;
+  let instance: InstanceModel | null = null;
 
   console.log("[preview-jobs] Launching Morph instance", {
     previewRunId,
@@ -281,8 +227,7 @@ export async function runPreviewJob(
   });
 
   try {
-    instance = await startMorphInstance({
-      apiKey: morphApiKey,
+    instance = await startMorphInstance(morphClient, {
       snapshotId,
       metadata: {
         app: "cmux-preview",
@@ -297,7 +242,7 @@ export async function runPreviewJob(
     });
 
     const workerService = instance.networking?.http_services?.find(
-      (service) => service.port === 39377,
+      (service: { port?: number }) => service.port === 39377,
     );
     if (!workerService) {
       throw new Error("Worker service not found on instance");
@@ -311,7 +256,7 @@ export async function runPreviewJob(
       screenshotLogUrl: `${workerService.url.replace(':39377', ':39376')}/file?path=/root/.cmux/screenshot-collector/screenshot-collector.log`,
     });
 
-    // Step 1: Clone the repository
+    // Step 2: Clone the repository
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "running",
@@ -332,20 +277,73 @@ export async function runPreviewJob(
       }
     }
 
-    const cloneResult = await morphRequest<{ stdout: string; stderr: string; exitCode: number }>({
-      apiKey: morphApiKey,
-      path: `/instance/${instance.id}/exec`,
-      method: "POST",
-      body: {
-        command: ["git", "clone", cloneUrl, "/workspace"],
-        cwd: "/root",
-      },
-      timeoutMs: 180_000, // 3 minutes for clone
+    const workspaceDir = "/workspace";
+
+    console.log("[preview-jobs] Executing git clone", {
+      previewRunId,
+      repoFullName: run.repoFullName,
+      targetDir: workspaceDir,
+      hasToken: cloneUrl.includes("x-access-token"),
     });
 
-    if (cloneResult.exitCode !== 0) {
+    const cloneResponse = await execInstanceInstanceIdExecPost({
+      client: morphClient,
+      path: { instance_id: instance.id },
+      body: {
+        command: ["git", "clone", cloneUrl, workspaceDir],
+      },
+    });
+
+    if (cloneResponse.error) {
       throw new Error(
-        `Failed to clone repository ${run.repoFullName}: ${cloneResult.stderr || cloneResult.stdout}`,
+        `Failed to clone repository ${run.repoFullName}: ${JSON.stringify(cloneResponse.error)}`,
+      );
+    }
+
+    const cloneResult = cloneResponse.data;
+    if (!cloneResult) {
+      throw new Error("Clone command returned no data");
+    }
+
+    console.log("[preview-jobs] Clone command output", {
+      previewRunId,
+      exitCode: cloneResult.exit_code,
+      stdout: cloneResult.stdout?.slice(0, 500),
+      stderr: cloneResult.stderr?.slice(0, 500),
+    });
+
+    if (cloneResult.exit_code !== 0) {
+      console.error("[preview-jobs] Clone failed - full output", {
+        previewRunId,
+        exitCode: cloneResult.exit_code,
+        stdout: cloneResult.stdout,
+        stderr: cloneResult.stderr,
+        stdoutLength: cloneResult.stdout?.length || 0,
+        stderrLength: cloneResult.stderr?.length || 0,
+      });
+      throw new Error(
+        `Failed to clone repository ${run.repoFullName} (exit ${cloneResult.exit_code}): stderr="${cloneResult.stderr}" stdout="${cloneResult.stdout}"`,
+      );
+    }
+
+    // Verify the clone created a .git directory
+    const verifyResponse = await execInstanceInstanceIdExecPost({
+      client: morphClient,
+      path: { instance_id: instance.id },
+      body: {
+        command: ["test", "-d", `${workspaceDir}/.git`],
+      },
+    });
+
+    const verifyResult = verifyResponse.data;
+    console.log("[preview-jobs] Verify .git directory", {
+      previewRunId,
+      exitCode: verifyResult?.exit_code,
+    });
+
+    if (verifyResult?.exit_code !== 0) {
+      throw new Error(
+        `Git clone succeeded but ${workspaceDir}/.git not found. Clone output: ${cloneResult.stdout}`
       );
     }
 
@@ -354,37 +352,52 @@ export async function runPreviewJob(
       repoFullName: run.repoFullName,
     });
 
-    // Step 2: Checkout the PR branch
+    // Step 3: Checkout the PR branch
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "running",
       stateReason: "Checking out PR branch",
     });
 
-    const checkoutResult = await morphRequest<{ stdout: string; stderr: string; exitCode: number }>({
-      apiKey: morphApiKey,
-      path: `/instance/${instance.id}/exec`,
-      method: "POST",
+    const checkoutResponse = await execInstanceInstanceIdExecPost({
+      client: morphClient,
+      path: { instance_id: instance.id },
       body: {
-        command: ["git", "checkout", run.headSha],
-        cwd: "/workspace",
+        command: ["git", "-C", workspaceDir, "checkout", run.headSha],
       },
-      timeoutMs: 60_000,
     });
 
-    if (checkoutResult.exitCode !== 0) {
+    if (checkoutResponse.error) {
       throw new Error(
-        `Failed to checkout PR branch ${run.headSha}: ${checkoutResult.stderr || checkoutResult.stdout}`,
+        `Failed to checkout PR branch ${run.headSha}: ${JSON.stringify(checkoutResponse.error)}`,
+      );
+    }
+
+    const checkoutResult = checkoutResponse.data;
+    if (!checkoutResult) {
+      throw new Error("Checkout command returned no data");
+    }
+
+    if (checkoutResult.exit_code !== 0) {
+      console.error("[preview-jobs] Checkout failed - full output", {
+        previewRunId,
+        headSha: run.headSha,
+        exitCode: checkoutResult.exit_code,
+        stdout: checkoutResult.stdout,
+        stderr: checkoutResult.stderr,
+      });
+      throw new Error(
+        `Failed to checkout PR branch ${run.headSha} (exit ${checkoutResult.exit_code}): stderr="${checkoutResult.stderr}" stdout="${checkoutResult.stdout}"`,
       );
     }
 
     console.log("[preview-jobs] Checked out PR branch", {
       previewRunId,
       headSha: run.headSha,
-      stdout: checkoutResult.stdout.slice(0, 200),
+      stdout: checkoutResult.stdout?.slice(0, 200),
     });
 
-    // Step 3: Trigger screenshot collection
+    // Step 4: Trigger screenshot collection
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "running",
@@ -403,7 +416,7 @@ export async function runPreviewJob(
       previewRunId,
     });
 
-    // Step 4: Wait for screenshots to complete (give Claude time to collect)
+    // Step 5: Wait for screenshots to complete (give Claude time to collect)
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "running",
@@ -418,7 +431,7 @@ export async function runPreviewJob(
     // Wait 2 minutes for Claude to collect screenshots
     await new Promise((resolve) => setTimeout(resolve, 120_000));
 
-    // Step 5: Fetch screenshot file list
+    // Step 6: Fetch screenshot file list
     const fileServiceUrl = workerService.url.replace(':39377', ':39376');
     const screenshotDirPath = "/root/.cmux/screenshot-collector/screenshots";
 
@@ -429,21 +442,25 @@ export async function runPreviewJob(
     });
 
     // List files via Morph exec
-    const listResult = await morphRequest<{ stdout: string; stderr: string; exitCode: number }>({
-      apiKey: morphApiKey,
-      path: `/instance/${instance.id}/exec`,
-      method: "POST",
+    const listResponse = await execInstanceInstanceIdExecPost({
+      client: morphClient,
+      path: { instance_id: instance.id },
       body: {
         command: ["find", screenshotDirPath, "-type", "f", "-name", "*.png"],
-        cwd: "/workspace",
       },
-      timeoutMs: 30_000,
     });
 
-    const screenshotPaths = listResult.stdout
-      .split('\n')
-      .map(p => p.trim())
-      .filter(p => p.length > 0);
+    if (listResponse.error) {
+      console.warn("[preview-jobs] Failed to list screenshots", {
+        previewRunId,
+        error: listResponse.error,
+      });
+    }
+
+    const listResult = listResponse.data;
+    const screenshotPaths = listResult?.stdout
+      ? listResult.stdout.split('\n').map((p: string) => p.trim()).filter((p: string) => p.length > 0)
+      : [];
 
     console.log("[preview-jobs] Found screenshots", {
       previewRunId,
@@ -460,7 +477,7 @@ export async function runPreviewJob(
       return;
     }
 
-    // Step 6: Download and upload screenshots
+    // Step 7: Download and upload screenshots
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "running",
@@ -524,7 +541,7 @@ export async function runPreviewJob(
       }
     }
 
-    // Step 7: Create screenshot set and trigger GitHub comment
+    // Step 8: Create screenshot set and trigger GitHub comment
     const screenshotSetId = await ctx.runMutation(
       internal.previewScreenshots.createScreenshotSet,
       {
@@ -598,7 +615,7 @@ export async function runPreviewJob(
   } finally {
     if (instance) {
       try {
-        await stopMorphInstance(morphApiKey, instance.id);
+        await stopMorphInstance(morphClient, instance.id);
       } catch (stopError) {
         console.warn("[preview-jobs] Failed to stop Morph instance", {
           previewRunId,
