@@ -574,6 +574,9 @@ const convexSchema = defineSchema({
     prUrl: v.string(),
     headSha: v.string(),
     baseSha: v.optional(v.string()),
+    headRef: v.optional(v.string()), // Branch name in head repo
+    headRepoFullName: v.optional(v.string()), // Fork repo full name (if from fork)
+    headRepoCloneUrl: v.optional(v.string()), // Fork repo clone URL (if from fork)
     taskRunId: v.optional(v.id("taskRuns")),
     status: v.union(
       v.literal("pending"),

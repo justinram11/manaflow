@@ -491,28 +491,85 @@ managementIO.on("connection", (socket) => {
           );
         }
       }
+
       try {
-        const result = await startScreenshotCollection({
-          anthropicApiKey: config?.anthropicApiKey,
-          outputPath: config?.outputPath,
-        });
-        log(
-          "INFO",
-          "Screenshot collection completed",
-          {
-            result,
-          },
-          WORKER_ID,
-        );
+        // If taskId and taskRunId are provided, use the full screenshot workflow
+        // which uploads to taskRunScreenshotSets
+        if (config?.taskId && config?.taskRunId) {
+          const { runTaskScreenshots } = await import("./screenshotCollector/runTaskScreenshots");
+
+          if (!config.taskRunJwt) {
+            throw new Error("taskRunJwt is required when taskId/taskRunId are provided");
+          }
+
+          log("INFO", "Running task screenshot workflow", {
+            taskId: config.taskId,
+            taskRunId: config.taskRunId,
+          });
+
+          await runTaskScreenshots({
+            taskId: config.taskId,
+            taskRunId: config.taskRunId,
+            token: config.taskRunJwt,
+            convexUrl: config.convexUrl,
+            anthropicApiKey: config.anthropicApiKey,
+            taskRunJwt: config.taskRunJwt,
+          });
+
+          log("INFO", "Task screenshot workflow completed", {
+            taskId: config.taskId,
+            taskRunId: config.taskRunId,
+          });
+
+          // Emit completion event
+          socket.emit("worker:screenshot-collection-complete", {
+            workerId: WORKER_ID,
+            status: "completed",
+          });
+        } else {
+          // Legacy path: just collect screenshots without uploading
+          const result = await startScreenshotCollection({
+            anthropicApiKey: config?.anthropicApiKey,
+            outputPath: config?.outputPath,
+          });
+
+          log(
+            "INFO",
+            "Screenshot collection completed",
+            {
+              result,
+            },
+            WORKER_ID,
+          );
+
+          // Emit completion event
+          socket.emit("worker:screenshot-collection-complete", {
+            workerId: WORKER_ID,
+            status: result.status,
+            screenshotCount: result.status === "completed" ? result.screenshots.length : undefined,
+            screenshotPaths: result.status === "completed" ? result.screenshots.map(s => s.path) : undefined,
+            commitSha: result.status === "completed" ? result.commitSha : undefined,
+            reason: result.status === "skipped" ? result.reason : undefined,
+            error: result.status === "failed" ? result.error : undefined,
+          });
+        }
       } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
         log(
           "ERROR",
           "Failed to start screenshot collection",
           {
-            error: error instanceof Error ? error.message : String(error),
+            error: errorMessage,
           },
           WORKER_ID
         );
+
+        // Emit failure event
+        socket.emit("worker:screenshot-collection-complete", {
+          workerId: WORKER_ID,
+          status: "failed",
+          error: errorMessage,
+        });
       }
     }
   );

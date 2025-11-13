@@ -17,9 +17,16 @@ export const enqueueFromWebhook = internalMutation({
     prUrl: v.string(),
     headSha: v.string(),
     baseSha: v.optional(v.string()),
+    headRef: v.optional(v.string()),
+    headRepoFullName: v.optional(v.string()),
+    headRepoCloneUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const repoFullName = normalizeRepoFullName(args.repoFullName);
+    const headRepoFullName = args.headRepoFullName
+      ? normalizeRepoFullName(args.headRepoFullName)
+      : undefined;
+
     const existing = await ctx.db
       .query("previewRuns")
       .withIndex("by_config_head", (q) =>
@@ -42,6 +49,9 @@ export const enqueueFromWebhook = internalMutation({
       prUrl: args.prUrl,
       headSha: args.headSha,
       baseSha: args.baseSha,
+      headRef: args.headRef,
+      headRepoFullName,
+      headRepoCloneUrl: args.headRepoCloneUrl,
       status: "pending",
       stateReason: undefined,
       dispatchedAt: undefined,

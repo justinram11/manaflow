@@ -542,12 +542,18 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
               const prUrl = prPayload.pull_request?.html_url ?? null;
               const headSha = prPayload.pull_request?.head?.sha ?? null;
               const baseSha = prPayload.pull_request?.base?.sha ?? undefined;
+              const headRef = prPayload.pull_request?.head?.ref ?? undefined;
+              const headRepoFullName = prPayload.pull_request?.head?.repo?.full_name ?? undefined;
+              const headRepoCloneUrl = prPayload.pull_request?.head?.repo?.clone_url ?? undefined;
 
               console.log("[preview-jobs] Preview config found for PR", {
                 repoFullName,
                 prNumber,
                 prUrl,
                 headSha: headSha?.slice(0, 7),
+                headRef,
+                headRepoFullName,
+                isFromFork: headRepoFullName && headRepoFullName !== repoFullName,
                 previewConfigId: previewConfig._id,
               });
 
@@ -564,6 +570,9 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                       prUrl,
                       headSha,
                       baseSha,
+                      headRef,
+                      headRepoFullName,
+                      headRepoCloneUrl,
                     },
                   );
 

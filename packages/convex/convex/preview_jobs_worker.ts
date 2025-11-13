@@ -6,30 +6,164 @@ import {
   stopInstanceInstanceInstanceIdDelete,
   type InstanceModel,
 } from "@cmux/morphcloud-openapi-client";
+import { SignJWT } from "jose";
 import { env } from "../_shared/convex-env";
 import { fetchInstallationAccessToken } from "../_shared/githubApp";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import type { ActionCtx } from "./_generated/server";
 
-const TOKEN_REDACTION = "[TOKEN_REDACTED]";
+const sliceOutput = (value?: string | null, length = 200): string | undefined =>
+  value?.slice(0, length);
 
-const maskSensitiveValue = (
-  value: string | undefined | null,
-  sensitiveValues: Array<string | undefined>,
-): string | undefined => {
-  if (value == null) {
-    return undefined;
+const singleQuote = (value: string): string =>
+  `'${value.replace(/'/g, "'\\''")}'`;
+
+async function repoHasCommit({
+  morphClient,
+  instanceId,
+  repoDir,
+  commitSha,
+  previewRunId,
+}: {
+  morphClient: ReturnType<typeof createMorphCloudClient>;
+  instanceId: string;
+  repoDir: string;
+  commitSha: string;
+  previewRunId: Id<"previewRuns">;
+}): Promise<boolean> {
+  const response = await execInstanceInstanceIdExecPost({
+    client: morphClient,
+    path: { instance_id: instanceId },
+    body: {
+      command: ["git", "-C", repoDir, "cat-file", "-e", `${commitSha}^{commit}`],
+    },
+  });
+
+  if (response.error) {
+    console.warn("[preview-jobs] Failed to check commit availability", {
+      previewRunId,
+      commitSha,
+      error: response.error,
+    });
+    return false;
   }
-  let masked = value;
-  for (const sensitive of sensitiveValues) {
-    if (!sensitive) {
+
+  return response.data?.exit_code === 0;
+}
+
+async function ensureCommitAvailable({
+  morphClient,
+  instanceId,
+  repoDir,
+  commitSha,
+  prNumber,
+  previewRunId,
+  headRepoCloneUrl,
+  headRef,
+}: {
+  morphClient: ReturnType<typeof createMorphCloudClient>;
+  instanceId: string;
+  repoDir: string;
+  commitSha: string;
+  prNumber: number;
+  previewRunId: Id<"previewRuns">;
+  headRepoCloneUrl?: string;
+  headRef?: string;
+}): Promise<void> {
+  if (await repoHasCommit({ morphClient, instanceId, repoDir, commitSha, previewRunId })) {
+    return;
+  }
+
+  console.warn("[preview-jobs] Commit missing after initial fetch, attempting targeted fetches", {
+    previewRunId,
+    commitSha,
+    prNumber,
+    headRepoCloneUrl,
+    headRef,
+  });
+
+  const fetchAttempts: Array<{
+    description: string;
+    command: string[];
+  }> = [
+    {
+      description: "fetch commit by sha",
+      command: ["git", "-C", repoDir, "fetch", "origin", commitSha],
+    },
+    {
+      description: "fetch PR head ref",
+      command: [
+        "git",
+        "-C",
+        repoDir,
+        "fetch",
+        "origin",
+        `+refs/pull/${prNumber}/head:refs/cmux/preview/pull/${prNumber}`,
+      ],
+    },
+  ];
+
+  // If PR is from a fork, add fork fetch as the highest priority
+  if (headRepoCloneUrl && headRef) {
+    fetchAttempts.unshift({
+      description: "fetch from fork",
+      command: [
+        "git",
+        "-C",
+        repoDir,
+        "fetch",
+        headRepoCloneUrl,
+        `${headRef}:refs/cmux/preview/fork/${prNumber}`,
+      ],
+    });
+  }
+
+  for (const attempt of fetchAttempts) {
+    console.log("[preview-jobs] Targeted fetch attempt", {
+      previewRunId,
+      commitSha,
+      prNumber,
+      description: attempt.description,
+    });
+
+    const fetchResponse = await execInstanceInstanceIdExecPost({
+      client: morphClient,
+      path: { instance_id: instanceId },
+      body: {
+        command: attempt.command,
+      },
+    });
+
+    if (fetchResponse.error || fetchResponse.data?.exit_code !== 0) {
+      console.warn("[preview-jobs] Targeted fetch failed", {
+        previewRunId,
+        commitSha,
+        prNumber,
+        description: attempt.description,
+        exitCode: fetchResponse.data?.exit_code,
+        stderr: sliceOutput(fetchResponse.data?.stderr),
+        stdout: sliceOutput(fetchResponse.data?.stdout),
+        error: fetchResponse.error,
+      });
       continue;
     }
-    masked = masked.split(sensitive).join(TOKEN_REDACTION);
+
+    if (await repoHasCommit({ morphClient, instanceId, repoDir, commitSha, previewRunId })) {
+      console.log("[preview-jobs] Commit available after targeted fetch", {
+        previewRunId,
+        commitSha,
+        prNumber,
+        description: attempt.description,
+      });
+      return;
+    }
   }
-  return masked;
-};
+
+  throw new Error(
+    `Commit ${commitSha} is unavailable after targeted fetch attempts for PR #${prNumber}`,
+  );
+}
 
 async function waitForInstanceReady(
   morphClient: ReturnType<typeof createMorphCloudClient>,
@@ -115,38 +249,98 @@ async function stopMorphInstance(
 
 async function triggerWorkerScreenshotCollection(
   workerUrl: string,
+  previewRunId: Id<"previewRuns">,
+  config?: {
+    taskId?: Id<"tasks">;
+    taskRunId?: Id<"taskRuns">;
+    taskRunJwt?: string;
+    convexUrl?: string;
+    anthropicApiKey?: string;
+  },
 ): Promise<void> {
   const pollingBase = `${workerUrl}/socket.io/?EIO=4&transport=polling`;
+
+  console.log("[preview-jobs] Starting Socket.IO handshake", {
+    previewRunId,
+    workerUrl,
+    pollingBase,
+  });
 
   // Step 1: Handshake to get session ID
   const handshakeResponse = await fetch(`${pollingBase}&t=${Date.now()}`, {
     signal: AbortSignal.timeout(10_000),
   });
+
+  if (!handshakeResponse.ok) {
+    throw new Error(`Socket.IO handshake failed: ${handshakeResponse.status} ${handshakeResponse.statusText}`);
+  }
+
   const handshakeText = await handshakeResponse.text();
+  console.log("[preview-jobs] Socket.IO handshake response", {
+    previewRunId,
+    status: handshakeResponse.status,
+    responseLength: handshakeText.length,
+    responsePreview: handshakeText.slice(0, 200),
+  });
 
   // Parse session ID from response like: 0{"sid":"xxx","upgrades":[],"pingInterval":25000,"pingTimeout":20000}
   const startIdx = handshakeText.indexOf('{');
   const endIdx = handshakeText.lastIndexOf('}') + 1;
   if (startIdx === -1 || endIdx === 0) {
-    throw new Error("Failed to parse Socket.IO handshake response");
+    throw new Error(`Failed to parse Socket.IO handshake response: ${handshakeText.slice(0, 200)}`);
   }
   const handshake = JSON.parse(handshakeText.slice(startIdx, endIdx)) as { sid: string };
   const sid = handshake.sid;
 
+  console.log("[preview-jobs] Socket.IO session established", {
+    previewRunId,
+    sessionId: sid.slice(0, 8) + "...",
+  });
+
   // Step 2: Connect to /management namespace
-  await fetch(`${pollingBase}&sid=${sid}&t=${Date.now()}`, {
+  const connectResponse = await fetch(`${pollingBase}&sid=${sid}&t=${Date.now()}`, {
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=UTF-8" },
     body: "40/management",
     signal: AbortSignal.timeout(10_000),
   });
 
+  if (!connectResponse.ok) {
+    throw new Error(`Socket.IO namespace connect failed: ${connectResponse.status} ${connectResponse.statusText}`);
+  }
+
+  console.log("[preview-jobs] Connected to /management namespace", {
+    previewRunId,
+    status: connectResponse.status,
+  });
+
   // Step 3: Send worker:start-screenshot-collection event
-  await fetch(`${pollingBase}&sid=${sid}&t=${Date.now()}`, {
+  const eventPayload = config && {
+    taskId: config.taskId,
+    taskRunId: config.taskRunId,
+    taskRunJwt: config.taskRunJwt,
+    convexUrl: config.convexUrl,
+    anthropicApiKey: config.anthropicApiKey,
+  };
+  const eventBody = `42/management,${JSON.stringify(["worker:start-screenshot-collection", eventPayload])}`;
+  const eventResponse = await fetch(`${pollingBase}&sid=${sid}&t=${Date.now()}`, {
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=UTF-8" },
-    body: `42/management,${JSON.stringify(["worker:start-screenshot-collection"])}`,
+    body: eventBody,
     signal: AbortSignal.timeout(10_000),
+  });
+
+  if (!eventResponse.ok) {
+    throw new Error(`Socket.IO event send failed: ${eventResponse.status} ${eventResponse.statusText}`);
+  }
+
+  console.log("[preview-jobs] Screenshot collection event sent", {
+    previewRunId,
+    status: eventResponse.status,
+    hasConfig: Boolean(config),
+    hasTaskId: Boolean(config?.taskId),
+    hasTaskRunId: Boolean(config?.taskRunId),
+    hasJwt: Boolean(config?.taskRunJwt),
   });
 }
 
@@ -332,13 +526,7 @@ export async function runPreviewJob(
       });
 
       if (accessToken) {
-        // Escape the token for shell (same as singleQuote in sandboxes/shell.ts)
-        const escapedToken = `'${accessToken.replace(/'/g, "'\\''")}'`;
-        const sensitiveValues = [accessToken, escapedToken, `'${accessToken}'`];
-        const maskLogValue = (value?: string | null) =>
-          maskSensitiveValue(value, sensitiveValues);
-        const maskAndSlice = (value?: string | null, length = 500) =>
-          maskLogValue(value)?.slice(0, length);
+        const escapedToken = singleQuote(accessToken);
 
         // Configure GitHub authentication using gh CLI with retry logic (same approach as cloud workspaces)
         let lastError: Error | undefined;
@@ -348,16 +536,6 @@ export async function runPreviewJob(
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
           try {
             const shellScript = `cd ${repoDir} && printf %s ${escapedToken} | gh auth login --with-token && gh auth setup-git 2>&1`;
-            const commandPreview = shellScript.includes(escapedToken)
-              ? shellScript.replace(escapedToken, "'[TOKEN_REDACTED]'")
-              : shellScript;
-            console.log("[preview-jobs] GitHub auth attempt", {
-              previewRunId,
-              attempt,
-              maxRetries,
-              commandLength: shellScript.length,
-              commandPreview: commandPreview.slice(0, 150),
-            });
 
             const ghAuthResponse = await execInstanceInstanceIdExecPost({
               client: morphClient,
@@ -372,8 +550,8 @@ export async function runPreviewJob(
               attempt,
               hasError: Boolean(ghAuthResponse.error),
               exitCode: ghAuthResponse.data?.exit_code,
-              stdout: maskAndSlice(ghAuthResponse.data?.stdout),
-              stderr: maskAndSlice(ghAuthResponse.data?.stderr),
+              stdout: sliceOutput(ghAuthResponse.data?.stdout, 500),
+              stderr: sliceOutput(ghAuthResponse.data?.stderr, 500),
             });
 
             if (ghAuthResponse.error) {
@@ -387,21 +565,20 @@ export async function runPreviewJob(
               console.log("[preview-jobs] GitHub authentication configured successfully", {
                 previewRunId,
                 attempt,
-                stdout: maskAndSlice(ghAuthResponse.data?.stdout),
-                stderr: maskAndSlice(ghAuthResponse.data?.stderr),
+                stdout: sliceOutput(ghAuthResponse.data?.stdout, 500),
+                stderr: sliceOutput(ghAuthResponse.data?.stderr, 500),
               });
               authSucceeded = true;
               break;
             } else {
-              const rawErrorMessage = ghAuthResponse.data?.stderr || ghAuthResponse.data?.stdout || "Unknown error";
-              const maskedErrorMessage = maskLogValue(rawErrorMessage) || "Unknown error";
-              lastError = new Error(`GitHub auth failed: ${maskedErrorMessage.slice(0, 500)}`);
+              const errorMessage = ghAuthResponse.data?.stderr || ghAuthResponse.data?.stdout || "Unknown error";
+              lastError = new Error(`GitHub auth failed: ${errorMessage.slice(0, 500)}`);
               console.warn("[preview-jobs] GitHub auth command failed", {
                 previewRunId,
                 attempt,
                 exitCode: ghAuthResponse.data?.exit_code,
-                stderr: maskAndSlice(ghAuthResponse.data?.stderr, 200),
-                stdout: maskAndSlice(ghAuthResponse.data?.stdout, 200),
+                stderr: sliceOutput(ghAuthResponse.data?.stderr, 200),
+                stdout: sliceOutput(ghAuthResponse.data?.stdout, 200),
               });
             }
 
@@ -416,12 +593,11 @@ export async function runPreviewJob(
             }
           } catch (error) {
             const normalizedError = error instanceof Error ? error : new Error(String(error));
-            const maskedMessage = maskLogValue(normalizedError.message) || normalizedError.message;
-            lastError = new Error(maskedMessage);
+            lastError = normalizedError;
             console.error("[preview-jobs] GitHub auth attempt threw error", {
               previewRunId,
               attempt,
-              error: maskedMessage,
+              error: normalizedError.message,
             });
 
             if (attempt < maxRetries) {
@@ -435,9 +611,9 @@ export async function runPreviewJob(
           console.error("[preview-jobs] GitHub authentication failed after all retries", {
             previewRunId,
             maxRetries,
-            lastError: maskLogValue(lastError?.message),
+            lastError: lastError?.message,
           });
-          const finalErrorMessage = maskLogValue(lastError?.message) || "Unknown error";
+          const finalErrorMessage = lastError?.message || "Unknown error";
           throw new Error(
             `GitHub authentication failed after ${maxRetries} attempts: ${finalErrorMessage}`
           );
@@ -483,6 +659,17 @@ export async function runPreviewJob(
     console.log("[preview-jobs] Fetched latest changes from origin", {
       previewRunId,
       headSha: run.headSha,
+    });
+
+    await ensureCommitAvailable({
+      morphClient,
+      instanceId: instance.id,
+      repoDir,
+      commitSha: run.headSha,
+      prNumber: run.prNumber,
+      previewRunId,
+      headRepoCloneUrl: run.headRepoCloneUrl,
+      headRef: run.headRef,
     });
 
     console.log("[preview-jobs] Starting git checkout", {
@@ -549,17 +736,66 @@ export async function runPreviewJob(
       screenshotLogUrl: `${workerService.url.replace(':39377', ':39376')}/file?path=/root/.cmux/screenshot-collector/screenshot-collector.log`,
     });
 
-    await triggerWorkerScreenshotCollection(workerService.url);
+    // Get taskRunId and taskId for screenshot upload workflow
+    let screenshotConfig:
+      | { taskId: Id<"tasks">; taskRunId: Id<"taskRuns">; taskRunJwt: string; convexUrl: string; anthropicApiKey?: string }
+      | undefined;
+
+    if (run.taskRunId) {
+      const taskRun = await ctx.runQuery(internal.taskRuns.getById, {
+        id: run.taskRunId,
+      });
+
+      if (taskRun) {
+        console.log("[preview-jobs] Preparing screenshot config", {
+          previewRunId,
+          taskId: taskRun.taskId,
+          taskRunId: run.taskRunId,
+        });
+
+        // Generate JWT for screenshot upload authentication
+        const jwt = await new SignJWT({
+          taskRunId: run.taskRunId,
+          teamId: run.teamId,
+          userId: taskRun.userId,
+        })
+          .setProtectedHeader({ alg: "HS256" })
+          .setIssuedAt()
+          .setExpirationTime("12h")
+          .sign(new TextEncoder().encode(env.CMUX_TASK_RUN_JWT_SECRET));
+
+        screenshotConfig = {
+          taskId: taskRun.taskId,
+          taskRunId: run.taskRunId,
+          taskRunJwt: jwt,
+          convexUrl: env.BASE_APP_URL,
+          anthropicApiKey: env.ANTHROPIC_API_KEY,
+        };
+      } else {
+        console.warn("[preview-jobs] TaskRun not found for preview run", {
+          previewRunId,
+          taskRunId: run.taskRunId,
+        });
+      }
+    } else {
+      console.warn("[preview-jobs] No taskRunId linked to preview run", {
+        previewRunId,
+      });
+    }
+
+    await triggerWorkerScreenshotCollection(workerService.url, previewRunId, screenshotConfig);
 
     console.log("[preview-jobs] Screenshot collection triggered", {
       previewRunId,
+      hasScreenshotConfig: Boolean(screenshotConfig),
     });
 
-    // Step 5: Wait for screenshots to complete (give Claude time to collect)
+    // Step 5: Wait for screenshots to complete
+    // The worker will now use runTaskScreenshots() which uploads directly to taskRunScreenshotSets
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "running",
-      stateReason: "Waiting for screenshots to complete",
+      stateReason: "Waiting for screenshot collection to complete",
     });
 
     console.log("[preview-jobs] Waiting for screenshots to complete...", {
@@ -567,146 +803,57 @@ export async function runPreviewJob(
       waitTimeSeconds: 120,
     });
 
-    // Wait 2 minutes for Claude to collect screenshots
+    // Wait 2 minutes for screenshot collection
+    // TODO: Replace with listening to worker:screenshot-collection-complete event
     await new Promise((resolve) => setTimeout(resolve, 120_000));
 
-    // Step 6: Fetch screenshot file list
-    const fileServiceUrl = workerService.url.replace(':39377', ':39376');
-    const screenshotDirPath = "/root/.cmux/screenshot-collector/screenshots";
-
-    console.log("[preview-jobs] Fetching screenshot list", {
+    console.log("[preview-jobs] Screenshot collection wait complete", {
       previewRunId,
-      fileServiceUrl,
-      screenshotDirPath,
     });
 
-    // List files via Morph exec
-    const listResponse = await execInstanceInstanceIdExecPost({
-      client: morphClient,
-      path: { instance_id: instance.id },
-      body: {
-        command: ["find", screenshotDirPath, "-type", "f", "-name", "*.png"],
-      },
-    });
-
-    if (listResponse.error) {
-      console.warn("[preview-jobs] Failed to list screenshots", {
-        previewRunId,
-        error: listResponse.error,
+    // Check if screenshots were uploaded to taskRunScreenshotSets
+    if (run.taskRunId) {
+      const taskRun = await ctx.runQuery(internal.taskRuns.getById, {
+        id: run.taskRunId,
       });
-    }
 
-    const listResult = listResponse.data;
-    const screenshotPaths = listResult?.stdout
-      ? listResult.stdout.split('\n').map((p: string) => p.trim()).filter((p: string) => p.length > 0)
-      : [];
+      if (taskRun?.latestScreenshotSetId) {
+        console.log("[preview-jobs] Screenshots uploaded to taskRunScreenshotSets", {
+          previewRunId,
+          screenshotSetId: taskRun.latestScreenshotSetId,
+        });
 
-    console.log("[preview-jobs] Found screenshots", {
-      previewRunId,
-      count: screenshotPaths.length,
-      paths: screenshotPaths,
-    });
+        await ctx.runMutation(internal.previewRuns.updateStatus, {
+          previewRunId,
+          status: "completed",
+          stateReason: "Screenshots collected and uploaded",
+        });
 
-    if (screenshotPaths.length === 0) {
+        // TODO: Trigger GitHub comment using screenshots from taskRunScreenshotSets
+        console.log("[preview-jobs] Preview job completed with screenshots", { previewRunId });
+      } else {
+        console.warn("[preview-jobs] No screenshots found in taskRunScreenshotSets", {
+          previewRunId,
+          taskRunId: run.taskRunId,
+        });
+
+        await ctx.runMutation(internal.previewRuns.updateStatus, {
+          previewRunId,
+          status: "completed",
+          stateReason: "No screenshots generated",
+        });
+      }
+    } else {
+      console.warn("[preview-jobs] No taskRunId to check for screenshots", {
+        previewRunId,
+      });
+
       await ctx.runMutation(internal.previewRuns.updateStatus, {
         previewRunId,
         status: "completed",
-        stateReason: "No screenshots generated",
+        stateReason: "Screenshot collection completed (no taskRun)",
       });
-      return;
     }
-
-    // Step 7: Download and upload screenshots
-    await ctx.runMutation(internal.previewRuns.updateStatus, {
-      previewRunId,
-      status: "running",
-      stateReason: "Uploading screenshots",
-    });
-
-    const uploadedImages: Array<{
-      storageId: string;
-      mimeType: string;
-      fileName: string;
-      commitSha: string;
-    }> = [];
-
-    for (const screenshotPath of screenshotPaths) {
-      try {
-        // Download screenshot from file service
-        const fileUrl = `${fileServiceUrl}/file?path=${encodeURIComponent(screenshotPath)}`;
-        const downloadResponse = await fetch(fileUrl, {
-          signal: AbortSignal.timeout(30_000),
-        });
-
-        if (!downloadResponse.ok) {
-          console.warn("[preview-jobs] Failed to download screenshot", {
-            previewRunId,
-            screenshotPath,
-            status: downloadResponse.status,
-          });
-          continue;
-        }
-
-        const imageBytes = await downloadResponse.arrayBuffer();
-
-        // Upload to Convex storage
-        const uploadUrl = await ctx.storage.generateUploadUrl();
-        const uploadResponse = await fetch(uploadUrl, {
-          method: "POST",
-          headers: { "Content-Type": "image/png" },
-          body: imageBytes,
-        });
-
-        const { storageId } = (await uploadResponse.json()) as { storageId: string };
-
-        uploadedImages.push({
-          storageId,
-          mimeType: "image/png",
-          fileName: screenshotPath.split('/').pop() ?? "screenshot.png",
-          commitSha: run.headSha,
-        });
-
-        console.log("[preview-jobs] Uploaded screenshot", {
-          previewRunId,
-          screenshotPath,
-          storageId,
-        });
-      } catch (error) {
-        console.warn("[preview-jobs] Failed to process screenshot", {
-          previewRunId,
-          screenshotPath,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-
-    // Step 8: Create screenshot set and trigger GitHub comment
-    const screenshotSetId = await ctx.runMutation(
-      internal.previewScreenshots.createScreenshotSet,
-      {
-        previewRunId,
-        status: "completed",
-        commitSha: run.headSha,
-        images: uploadedImages.map(img => ({
-          ...img,
-          storageId: img.storageId as Id<"_storage">,
-        })),
-      },
-    );
-
-    await ctx.runMutation(internal.previewRuns.updateStatus, {
-      previewRunId,
-      status: "completed",
-      stateReason: "Screenshots uploaded",
-      screenshotSetId,
-    });
-
-    // Trigger GitHub comment
-    await ctx.scheduler.runAfter(
-      0,
-      internal.previewScreenshots.triggerGithubComment,
-      { previewRunId },
-    );
 
     console.log("[preview-jobs] Preview job completed", { previewRunId });
   } catch (error) {
@@ -717,31 +864,11 @@ export async function runPreviewJob(
       error: message,
     });
 
-    let screenshotSetId: Id<"previewScreenshotSets"> | undefined;
-    try {
-      screenshotSetId = await ctx.runMutation(
-        internal.previewScreenshots.createScreenshotSet,
-        {
-          previewRunId,
-          status: "failed",
-          commitSha: run.headSha ?? "unknown",
-          error: message,
-          images: [],
-        },
-      );
-    } catch (screenshotError) {
-      console.error("[preview-jobs] Failed to record failure screenshot set", {
-        previewRunId,
-        error: screenshotError,
-      });
-    }
-
     try {
       await ctx.runMutation(internal.previewRuns.updateStatus, {
         previewRunId,
         status: "failed",
         stateReason: message,
-        screenshotSetId,
       });
     } catch (statusError) {
       console.error("[preview-jobs] Failed to update preview status", {

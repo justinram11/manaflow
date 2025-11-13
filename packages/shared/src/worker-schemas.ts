@@ -185,6 +185,10 @@ export const WorkerExecResultSchema = z.object({
 export const WorkerStartScreenshotCollectionSchema = z.object({
   anthropicApiKey: z.string().min(1).optional(),
   outputPath: z.string().optional(),
+  taskId: typedZid("tasks").optional(),
+  taskRunId: typedZid("taskRuns").optional(),
+  taskRunJwt: z.string().optional(),
+  convexUrl: z.string().optional(),
 });
 
 // Server to Worker Events
@@ -299,6 +303,17 @@ export interface WorkerToServerEvents {
   "worker:terminal-idle": (data: WorkerTerminalIdle) => void;
   "worker:task-complete": (data: WorkerTaskComplete) => void;
   "worker:terminal-failed": (data: WorkerTerminalFailed) => void;
+
+  // Screenshot collection completion
+  "worker:screenshot-collection-complete": (data: {
+    workerId: string;
+    status: "completed" | "skipped" | "failed";
+    screenshotCount?: number;
+    screenshotPaths?: string[];
+    commitSha?: string;
+    reason?: string;
+    error?: string;
+  }) => void;
 
   // File change events
   "worker:file-changes": (data: {
