@@ -158,6 +158,19 @@ export const getRunWithConfig = internalQuery({
   },
 });
 
+export const getByTaskRunId = internalQuery({
+  args: {
+    taskRunId: v.id("taskRuns"),
+  },
+  handler: async (ctx, args) => {
+    const run = await ctx.db
+      .query("previewRuns")
+      .filter((q) => q.eq(q.field("taskRunId"), args.taskRunId))
+      .first();
+    return run ?? null;
+  },
+});
+
 export const listRecentByConfig = internalQuery({
   args: {
     previewConfigId: v.id("previewConfigs"),

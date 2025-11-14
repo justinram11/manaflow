@@ -647,118 +647,21 @@ export async function runPreviewJob(
       stdout: checkoutResult.stdout?.slice(0, 200),
     });
 
-    // Step 4: Worker will automatically run screenshot workflow based on metadata
+    // Step 4: Worker will automatically run screenshot workflow and call completion endpoint
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "running",
-      stateReason: "Collecting screenshots",
+      stateReason: "Collecting screenshots (worker will post comment when done)",
     });
 
-    console.log("[preview-jobs] Morph instance started with preview data, worker will auto-run screenshots", {
+    console.log("[preview-jobs] Morph instance started with preview data, worker will auto-run screenshots and post to GitHub", {
       previewRunId,
       instanceId: instance.id,
       hasTaskRunId: Boolean(run.taskRunId),
       previewMetadataSet: Boolean(run.taskRunId && previewJwt),
     });
 
-    // Step 5: Check if screenshots were uploaded and post to GitHub
-    if (run.taskRunId) {
-      const taskRun = await ctx.runQuery(internal.taskRuns.getById, {
-        id: run.taskRunId,
-      });
-
-      if (taskRun?.latestScreenshotSetId) {
-        console.log("[preview-jobs] Screenshots uploaded to taskRunScreenshotSets", {
-          previewRunId,
-          screenshotSetId: taskRun.latestScreenshotSetId,
-        });
-
-        // Post screenshots to GitHub PR
-        if (run.repoInstallationId) {
-          console.log("[preview-jobs] Posting screenshots to GitHub PR", {
-            previewRunId,
-            repoFullName: run.repoFullName,
-            prNumber: run.prNumber,
-            installationId: run.repoInstallationId,
-          });
-
-          const commentResult = await ctx.runAction(
-            internal.github_pr_comments.addScreenshotCommentToPr,
-            {
-              installationId: run.repoInstallationId,
-              repoFullName: run.repoFullName,
-              prNumber: run.prNumber,
-              teamId: run.teamId,
-            },
-          );
-
-          if (commentResult.ok) {
-            console.log("[preview-jobs] Successfully posted screenshots to PR", {
-              previewRunId,
-              commentId: commentResult.commentId,
-              skipped: commentResult.skipped,
-            });
-
-            await ctx.runMutation(internal.previewRuns.updateStatus, {
-              previewRunId,
-              status: "completed",
-              stateReason: commentResult.skipped
-                ? "Screenshots collected but not posted (no screenshots found)"
-                : "Screenshots collected and posted to PR",
-              githubCommentUrl: commentResult.commentId
-                ? `https://github.com/${run.repoFullName}/pull/${run.prNumber}#issuecomment-${commentResult.commentId}`
-                : undefined,
-            });
-          } else {
-            console.error("[preview-jobs] Failed to post screenshots to PR", {
-              previewRunId,
-              error: commentResult.error,
-            });
-
-            await ctx.runMutation(internal.previewRuns.updateStatus, {
-              previewRunId,
-              status: "completed",
-              stateReason: `Screenshots collected but failed to post: ${commentResult.error}`,
-            });
-          }
-        } else {
-          console.warn("[preview-jobs] No installation ID, skipping GitHub comment", {
-            previewRunId,
-          });
-
-          await ctx.runMutation(internal.previewRuns.updateStatus, {
-            previewRunId,
-            status: "completed",
-            stateReason: "Screenshots collected (no GitHub installation)",
-          });
-        }
-
-        console.log("[preview-jobs] Preview job completed with screenshots", { previewRunId });
-      } else {
-        console.warn("[preview-jobs] No screenshots found in taskRunScreenshotSets", {
-          previewRunId,
-          taskRunId: run.taskRunId,
-        });
-
-        await ctx.runMutation(internal.previewRuns.updateStatus, {
-          previewRunId,
-          status: "completed",
-          stateReason: "No screenshots generated",
-        });
-      }
-    } else {
-      console.warn("[preview-jobs] No taskRunId to check for screenshots", {
-        previewRunId,
-      });
-
-      await ctx.runMutation(internal.previewRuns.updateStatus, {
-        previewRunId,
-        status: "completed",
-        stateReason: "Screenshot collection completed (no taskRun)",
-      });
-    }
-
-    console.log("[preview-jobs] Preview job completed", { previewRunId });
+    // Worker will call /api/preview/complete when screenshots are done
   } catch (error) {
     const message =
       error instanceof Error ? error.message : String(error ?? "Unknown error");

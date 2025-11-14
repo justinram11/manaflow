@@ -214,3 +214,157 @@ export const createScreenshotSet = httpAction(async (ctx, req) => {
     return jsonResponse({ error: "Failed to create screenshot set" }, 500);
   }
 });
+
+/**
+ * HTTP action called by worker when preview job screenshots are complete
+ * Copies screenshots from task run to preview run and posts GitHub comment
+ */
+export const completePreviewJob = httpAction(async (ctx, req) => {
+  if (!verifyAuth(req)) {
+    console.error("[preview-jobs-http] Unauthorized complete request");
+    return jsonResponse({ error: "Unauthorized" }, 401);
+  }
+
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return jsonResponse({ error: "Invalid JSON" }, 400);
+  }
+
+  if (
+    !body ||
+    typeof body !== "object" ||
+    !("taskRunId" in body)
+  ) {
+    return jsonResponse({ error: "Missing taskRunId" }, 400);
+  }
+
+  const { taskRunId } = body as { taskRunId: string };
+
+  console.log("[preview-jobs-http] Completing preview job", {
+    taskRunId,
+  });
+
+  try {
+    // Find preview run by taskRunId
+    const previewRun = await ctx.runQuery(internal.previewRuns.getByTaskRunId, {
+      taskRunId: taskRunId as Id<"taskRuns">,
+    });
+
+    if (!previewRun) {
+      console.error("[preview-jobs-http] Preview run not found for task run", {
+        taskRunId,
+      });
+      return jsonResponse({ error: "Preview run not found" }, 404);
+    }
+
+    // Get task run to check for screenshots
+    const taskRun = await ctx.runQuery(internal.taskRuns.getById, {
+      id: taskRunId as Id<"taskRuns">,
+    });
+
+    if (!taskRun) {
+      console.error("[preview-jobs-http] Task run not found", {
+        taskRunId,
+      });
+      return jsonResponse({ error: "Task run not found" }, 404);
+    }
+
+    if (!taskRun.latestScreenshotSetId) {
+      console.log("[preview-jobs-http] No screenshots found for task run", {
+        taskRunId,
+      });
+      return jsonResponse({
+        success: true,
+        skipped: true,
+        reason: "No screenshots available"
+      });
+    }
+
+    // Get the task run screenshot set
+    const taskScreenshotSet = await ctx.runQuery(
+      internal.github_pr_queries.getScreenshotSet,
+      {
+        screenshotSetId: taskRun.latestScreenshotSetId,
+      }
+    );
+
+    if (!taskScreenshotSet) {
+      console.error("[preview-jobs-http] Screenshot set not found", {
+        taskRunId,
+        screenshotSetId: taskRun.latestScreenshotSetId,
+      });
+      return jsonResponse({ error: "Screenshot set not found" }, 404);
+    }
+
+    console.log("[preview-jobs-http] Found screenshot set for task run", {
+      taskRunId,
+      previewRunId: previewRun._id,
+      screenshotSetId: taskRun.latestScreenshotSetId,
+      imageCount: taskScreenshotSet.images.length,
+    });
+
+    // Post GitHub comment if we have installation ID
+    if (previewRun.repoInstallationId) {
+      const commentResult = await ctx.runAction(
+        internal.github_pr_comments.postPreviewCommentWithTaskScreenshots,
+        {
+          installationId: previewRun.repoInstallationId,
+          repoFullName: previewRun.repoFullName,
+          prNumber: previewRun.prNumber,
+          taskRunId: taskRunId as Id<"taskRuns">,
+          previewRunId: previewRun._id,
+        }
+      );
+
+      if (commentResult.ok) {
+        console.log("[preview-jobs-http] Successfully posted GitHub comment", {
+          taskRunId,
+          previewRunId: previewRun._id,
+          commentUrl: commentResult.commentUrl,
+        });
+        return jsonResponse({
+          success: true,
+          commentUrl: commentResult.commentUrl,
+        });
+      } else {
+        console.error("[preview-jobs-http] Failed to post GitHub comment", {
+          taskRunId,
+          previewRunId: previewRun._id,
+          error: commentResult.error,
+        });
+        return jsonResponse({
+          success: false,
+          error: `Failed to post GitHub comment: ${commentResult.error}`,
+        }, 500);
+      }
+    } else {
+      console.log("[preview-jobs-http] No GitHub installation ID, skipping comment", {
+        taskRunId,
+        previewRunId: previewRun._id,
+      });
+
+      // Update preview run status to completed even without posting comment
+      await ctx.runMutation(internal.previewRuns.updateStatus, {
+        previewRunId: previewRun._id,
+        status: "completed",
+      });
+
+      return jsonResponse({
+        success: true,
+        skipped: true,
+        reason: "No GitHub installation ID",
+      });
+    }
+  } catch (error) {
+    console.error("[preview-jobs-http] Failed to complete preview job", {
+      taskRunId,
+      error,
+    });
+    return jsonResponse({
+      error: "Failed to complete preview job",
+      message: error instanceof Error ? error.message : String(error),
+    }, 500);
+  }
+});

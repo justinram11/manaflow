@@ -1508,9 +1508,49 @@ async function checkPreviewJob() {
       convexUrl,
     });
 
-    log("INFO", "Preview job screenshot workflow completed successfully", {
+    log("INFO", "Preview job screenshot workflow completed, calling completion endpoint", {
       taskRunId,
     });
+
+    // Call completion endpoint to post GitHub comment
+    try {
+      const completeResponse = await fetch(`${convexUrl}/api/preview/complete`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          taskRunId,
+        }),
+      });
+
+      if (!completeResponse.ok) {
+        const errorText = await completeResponse.text();
+        throw new Error(`Completion endpoint failed: ${completeResponse.status} ${errorText}`);
+      }
+
+      const result = await completeResponse.json();
+
+      if (result.success) {
+        log("INFO", "Preview job completed successfully", {
+          taskRunId,
+          commentUrl: result.commentUrl,
+          skipped: result.skipped,
+          reason: result.reason,
+        });
+      } else {
+        log("ERROR", "Preview job completion failed", {
+          taskRunId,
+          error: result.error,
+        });
+      }
+    } catch (completeError) {
+      log("ERROR", "Failed to call preview completion endpoint", {
+        taskRunId,
+        error: completeError instanceof Error ? completeError.message : String(completeError),
+      });
+    }
   } catch (error) {
     log("ERROR", "Preview job screenshot workflow failed", {
       taskRunId,

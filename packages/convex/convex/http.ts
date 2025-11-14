@@ -23,6 +23,7 @@ import {
   updatePreviewStatus,
   createScreenshotSet,
   dispatchPreviewJob,
+  completePreviewJob,
 } from "./preview_jobs_http";
 
 const http = httpRouter();
@@ -133,6 +134,12 @@ http.route({
   path: "/api/preview/create-screenshot-set",
   method: "POST",
   handler: createScreenshotSet,
+});
+
+http.route({
+  path: "/api/preview/complete",
+  method: "POST",
+  handler: completePreviewJob,
 });
 
 export default http;
