@@ -3,7 +3,7 @@ use std::{
     convert::Infallible,
     future::Future,
     io,
-    net::SocketAddr,
+    net::{SocketAddr, TcpListener as StdTcpListener},
     pin::Pin,
     str::FromStr,
     task::{Context, Poll},
@@ -123,10 +123,14 @@ where
         .build(connector);
 
     let listen = cfg.listen;
+    let std_listener = StdTcpListener::bind(listen).expect("bind");
+    std_listener
+        .set_nonblocking(true)
+        .expect("set nonblocking");
+    let listen_addr = std_listener.local_addr().expect("local addr");
+    let listener = TcpListener::from_std(std_listener).expect("to tokio listener");
+
     let handle = tokio::spawn(async move {
-        let listener = TcpListener::bind(listen).await.expect("bind");
-        let listen_addr = listener.local_addr().expect("local addr");
-        
         info!("proxy listening on {}", listen_addr);
 
         loop {
@@ -154,9 +158,8 @@ where
             }
         }
     });
-
-    // Return the listen address from the config since we can't easily get it back from spawn
-    (listen, handle)
+    // Return the actual bound address so callers can discover OS-assigned ports
+    (listen_addr, handle)
 }
 
 /// Start the proxy on multiple addresses. Returns the bound addresses actually used and a handle
@@ -192,19 +195,36 @@ where
         let upstream = upstream_host.clone();
         let notify = notify.clone();
         let allow_default = allow_default_upstream;
-        let listen_addr = addr;
 
-        bound_addrs.push(listen_addr);
+        let std_listener = match StdTcpListener::bind(addr) {
+            Ok(listener) => listener,
+            Err(e) => {
+                error!(%e, "failed to bind to {}", addr);
+                continue;
+            }
+        };
+        if let Err(e) = std_listener.set_nonblocking(true) {
+            error!(%e, "failed to set nonblocking on {}", addr);
+            continue;
+        }
+        let actual_addr = match std_listener.local_addr() {
+            Ok(addr) => addr,
+            Err(e) => {
+                error!(%e, "failed to get local addr for {}", addr);
+                continue;
+            }
+        };
+        let listener = match TcpListener::from_std(std_listener) {
+            Ok(listener) => listener,
+            Err(e) => {
+                error!(%e, "failed to create tokio listener for {}", actual_addr);
+                continue;
+            }
+        };
+
+        bound_addrs.push(actual_addr);
         
         join_set.spawn(async move {
-            let listener = match TcpListener::bind(listen_addr).await {
-                Ok(l) => l,
-                Err(e) => {
-                    error!(%e, "failed to bind to {}", listen_addr);
-                    return;
-                }
-            };
-            let actual_addr = listener.local_addr().expect("local addr");
             info!("proxy listening on {}", actual_addr);
 
             loop {
@@ -217,7 +237,7 @@ where
                                 
                                 tokio::spawn(async move {
                                     let cfg = ProxyConfig {
-                                        listen: listen_addr,
+                                        listen: actual_addr,
                                         upstream_host: upstream.clone(),
                                         allow_default_upstream: allow_default,
                                     };
@@ -234,7 +254,7 @@ where
                         }
                     }
                     _ = notify.notified() => {
-                        info!("shutting down proxy on {}", listen_addr);
+                        info!("shutting down proxy on {}", actual_addr);
                         break;
                     }
                 }
