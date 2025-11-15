@@ -53,70 +53,95 @@ const formatWorkerSocketError = (error: unknown): string => {
   return String(error);
 };
 
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function triggerWorkerScreenshotCollection({
   workerUrl,
   payload,
   previewRunId,
+  maxAttempts = 3,
 }: {
   workerUrl: string;
   payload: WorkerRunTaskScreenshots;
   previewRunId: Id<"previewRuns">;
+  maxAttempts?: number;
 }): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const socket = connectToWorkerManagement({
-      url: workerUrl,
-      timeoutMs: WORKER_SOCKET_TIMEOUT_MS,
-      reconnectionAttempts: 0,
-      forceNew: true,
-    });
+  let attempt = 0;
+  let lastError: Error | null = null;
+  while (attempt < maxAttempts) {
+    attempt += 1;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const socket = connectToWorkerManagement({
+          url: workerUrl,
+          timeoutMs: WORKER_SOCKET_TIMEOUT_MS,
+          reconnectionAttempts: 0,
+          forceNew: true,
+        });
 
-    let settled = false;
+        let settled = false;
 
-    const settle = (error?: Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeoutId);
-      socket.disconnect();
-      if (error) {
-        reject(error);
-      } else {
-        resolve();
-      }
-    };
+        const settle = (error?: Error) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeoutId);
+          socket.disconnect();
+          if (error) {
+            reject(error);
+          } else {
+            resolve();
+          }
+        };
 
-    const timeoutId = setTimeout(() => {
-      settle(new Error("Timed out connecting to worker for screenshot collection"));
-    }, WORKER_SOCKET_TIMEOUT_MS);
+        const timeoutId = setTimeout(() => {
+          settle(new Error("Timed out connecting to worker for screenshot collection"));
+        }, WORKER_SOCKET_TIMEOUT_MS);
 
-    socket.on("connect", () => {
-      console.log("[preview-jobs] Connected to worker socket", {
+        socket.on("connect", () => {
+          console.log("[preview-jobs] Connected to worker socket", {
+            previewRunId,
+            attempt,
+          });
+
+          socket.emit("worker:run-task-screenshots", payload, (response) => {
+            if (response.error) {
+              settle(new Error(formatWorkerSocketError(response.error)));
+              return;
+            }
+            settle();
+          });
+        });
+
+        socket.on("connect_error", (error: Error) => {
+          settle(new Error(formatWorkerSocketError(error)));
+        });
+
+        socket.on("disconnect", (reason) => {
+          if (settled) {
+            return;
+          }
+          settle(
+            new Error(
+              `Worker socket disconnected before acknowledging screenshot run: ${reason ?? "unknown"}`,
+            ),
+          );
+        });
+      });
+      return;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      console.warn("[preview-jobs] Screenshot trigger attempt failed", {
         previewRunId,
+        attempt,
+        maxAttempts,
+        error: lastError.message,
       });
-
-      socket.emit("worker:run-task-screenshots", payload, (response) => {
-        if (response.error) {
-          settle(new Error(formatWorkerSocketError(response.error)));
-          return;
-        }
-        settle();
-      });
-    });
-
-    socket.on("connect_error", (error: Error) => {
-      settle(new Error(formatWorkerSocketError(error)));
-    });
-
-    socket.on("disconnect", (reason) => {
-      if (settled) {
-        return;
+      if (attempt < maxAttempts) {
+        await delay(5_000);
       }
-      settle(
-        new Error(
-          `Worker socket disconnected before acknowledging screenshot run: ${reason ?? "unknown"}`,
-        ),
-      );
-    });
-  });
+    }
+  }
+  throw lastError ?? new Error("Unknown worker socket error");
 }
 
 async function repoHasCommit({
@@ -472,6 +497,19 @@ export async function runPreviewJob(
     });
   }
 
+  if (!taskId && taskRunId) {
+    const existingTaskRun = await ctx.runQuery(internal.taskRuns.getById, { id: taskRunId });
+    if (existingTaskRun?.taskId) {
+      taskId = existingTaskRun.taskId;
+    } else {
+      console.error("[preview-jobs] Task run missing taskId", {
+        previewRunId,
+        taskRunId,
+        hasTaskRun: Boolean(existingTaskRun),
+      });
+    }
+  }
+
   const keepInstanceForTaskRun = Boolean(taskRunId);
   console.log("[preview-jobs] Launching Morph instance", {
     previewRunId,
@@ -821,13 +859,11 @@ export async function runPreviewJob(
         payloadLength: envVarsContent.length,
       });
       // Call envctl with explicit base64 argument to avoid shell quoting issues
-      const envctlCommand = `envctl load --base64 ${singleQuote(envBase64)}`;
-
       const envctlResponse = await execInstanceInstanceIdExecPost({
         client: morphClient,
         path: { instance_id: instance.id },
         body: {
-          command: ["bash", "-c", envctlCommand],
+          command: ["envctl", "load", "--base64", envBase64],
         },
       });
 
@@ -836,6 +872,7 @@ export async function runPreviewJob(
           previewRunId,
           exitCode: envctlResponse.data?.exit_code,
           stderr: sliceOutput(envctlResponse.data?.stderr),
+          stdout: sliceOutput(envctlResponse.data?.stdout),
           error: envctlResponse.error,
         });
         throw new Error("Failed to apply environment variables via envctl");

@@ -557,54 +557,54 @@ managementIO.on("connection", (socket) => {
         taskRunId: data.taskRunId,
       });
 
-      await runTaskScreenshots({
-        taskId: data.taskId,
-        taskRunId: data.taskRunId,
-        token: data.token,
-        convexUrl: data.convexUrl,
-        anthropicApiKey: data.anthropicApiKey,
-        taskRunJwt: data.taskRunJwt,
+      callback({
+        error: null,
+        data: { success: true },
       });
 
-      log("INFO", "[worker:run-task-screenshots] Screenshots completed, calling /api/preview/complete", {
-        taskRunId: data.taskRunId,
-      });
-
-      // Call /api/preview/complete
-      const completeUrl = `${data.convexUrl}/api/preview/complete`;
-      const response = await fetch(completeUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${process.env.CMUX_TASK_RUN_JWT_SECRET ?? ""}`,
-        },
-        body: JSON.stringify({
+      try {
+        await runTaskScreenshots({
+          taskId: data.taskId,
           taskRunId: data.taskRunId,
-        }),
-      });
+          token: data.token,
+          convexUrl: data.convexUrl,
+          anthropicApiKey: data.anthropicApiKey,
+          taskRunJwt: data.taskRunJwt,
+        });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        log("ERROR", "[worker:run-task-screenshots] Failed to complete preview job", {
-          status: response.status,
-          error: errorText,
+        log("INFO", "[worker:run-task-screenshots] Screenshots completed, calling /api/preview/complete", {
+          taskRunId: data.taskRunId,
         });
-        callback({
-          error: new Error(`Failed to complete preview job: ${errorText}`),
-          data: null,
+
+        const completeUrl = `${data.convexUrl}/api/preview/complete`;
+        const response = await fetch(completeUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${process.env.CMUX_TASK_RUN_JWT_SECRET ?? ""}`,
+          },
+          body: JSON.stringify({
+            taskRunId: data.taskRunId,
+          }),
         });
-      } else {
-        const result = await response.json();
-        log("INFO", "[worker:run-task-screenshots] Preview job completed successfully", {
-          result,
-        });
-        callback({
-          error: null,
-          data: { success: true },
-        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          log("ERROR", "[worker:run-task-screenshots] Failed to complete preview job", {
+            status: response.status,
+            error: errorText,
+          });
+        } else {
+          const result = await response.json();
+          log("INFO", "[worker:run-task-screenshots] Preview job completed successfully", {
+            result,
+          });
+        }
+      } catch (error) {
+        log("ERROR", "[worker:run-task-screenshots] Failed", error);
       }
     } catch (error) {
-      log("ERROR", "[worker:run-task-screenshots] Failed", error);
+      log("ERROR", "[worker:run-task-screenshots] Validation failed", error);
       callback({
         error: error instanceof Error ? error : new Error(String(error)),
         data: null,
