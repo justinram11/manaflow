@@ -820,8 +820,8 @@ export async function runPreviewJob(
         taskRunId,
         payloadLength: envVarsContent.length,
       });
-      // Pipe base64 payload via stdin so envctl always receives the input it expects
-      const envctlCommand = `printf '%s' ${singleQuote(envBase64)} | envctl load --base64 -`;
+      // Call envctl with explicit base64 argument to avoid shell quoting issues
+      const envctlCommand = `envctl load --base64 ${singleQuote(envBase64)}`;
 
       const envctlResponse = await execInstanceInstanceIdExecPost({
         client: morphClient,
