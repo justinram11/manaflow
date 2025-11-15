@@ -6,8 +6,8 @@ import {
   stopInstanceInstanceInstanceIdDelete,
   type InstanceModel,
 } from "@cmux/morphcloud-openapi-client";
-import { connectToWorkerManagement } from "@cmux/shared/socket";
 import type { WorkerRunTaskScreenshots } from "@cmux/shared";
+import { connectToWorkerManagement } from "@cmux/shared/socket";
 import { SignJWT } from "jose";
 import { env } from "../_shared/convex-env";
 import { fetchInstallationAccessToken } from "../_shared/githubApp";
@@ -23,6 +23,8 @@ const singleQuote = (value: string): string =>
   `'${value.replace(/'/g, "'\\''")}'`;
 
 const WORKER_SOCKET_TIMEOUT_MS = 30_000;
+
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 const formatWorkerSocketError = (error: unknown): string => {
   if (!error) {
@@ -53,7 +55,44 @@ const formatWorkerSocketError = (error: unknown): string => {
   return String(error);
 };
 
-const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+async function waitForWorkerHealth({
+  workerUrl,
+  previewRunId,
+  timeoutMs = 60_000,
+}: {
+  workerUrl: string;
+  previewRunId: Id<"previewRuns">;
+  timeoutMs?: number;
+}): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const response = await fetch(`${workerUrl}/health`);
+      if (response.ok) {
+        const payload = await response.json().catch(() => null);
+        console.log("[preview-jobs] Worker health check ok", {
+          previewRunId,
+          mainServerConnected: payload?.mainServerConnected,
+        });
+        if (!payload || payload.status === "healthy") {
+          return;
+        }
+      } else {
+        console.warn("[preview-jobs] Worker health check failed", {
+          previewRunId,
+          status: response.status,
+        });
+      }
+    } catch (error) {
+      console.warn("[preview-jobs] Worker health fetch error", {
+        previewRunId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    await delay(2_000);
+  }
+  throw new Error("Worker did not become healthy before timeout");
+}
 
 async function triggerWorkerScreenshotCollection({
   workerUrl,
@@ -66,6 +105,7 @@ async function triggerWorkerScreenshotCollection({
   previewRunId: Id<"previewRuns">;
   maxAttempts?: number;
 }): Promise<void> {
+  await waitForWorkerHealth({ workerUrl, previewRunId });
   let attempt = 0;
   let lastError: Error | null = null;
   while (attempt < maxAttempts) {
