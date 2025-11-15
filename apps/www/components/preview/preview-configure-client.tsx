@@ -718,6 +718,7 @@ export function PreviewConfigureClient({
     }
     return "split";
   });
+  const persistentIframeManager = useMemo(() => iframeManager, []);
   const [splitRatio, setSplitRatio] = useState(() => {
     if (typeof window === "undefined") {
       return 0.5;
@@ -1311,46 +1312,49 @@ export function PreviewConfigureClient({
 
   // Mount iframes
   useLayoutEffect(() => {
-    if (!instance || !iframeManager) return;
+    if (!instance || !persistentIframeManager) return;
 
     const cleanupFunctions: Array<() => void> = [];
 
     if (instance.vscodeUrl) {
       const vscodeUrl = new URL(instance.vscodeUrl);
-      vscodeUrl.searchParams.set('folder', '/root/workspace');
-      iframeManager.getOrCreateIframe(vscodePersistKey, vscodeUrl.toString());
-      const target = document.querySelector(`[data-iframe-target="${vscodePersistKey}"]`) as HTMLElement;
+      vscodeUrl.searchParams.set("folder", "/root/workspace");
+      persistentIframeManager.getOrCreateIframe(vscodePersistKey, vscodeUrl.toString());
+      const target = document.querySelector(
+        `[data-iframe-target="${vscodePersistKey}"]`,
+      ) as HTMLElement | null;
       if (target) {
-        cleanupFunctions.push(iframeManager.mountIframe(vscodePersistKey, target));
+        cleanupFunctions.push(persistentIframeManager.mountIframe(vscodePersistKey, target));
       }
     }
 
     if (resolvedVncUrl) {
-      iframeManager.getOrCreateIframe(browserPersistKey, resolvedVncUrl);
-      const target = document.querySelector(`[data-iframe-target="${browserPersistKey}"]`) as HTMLElement;
+      persistentIframeManager.getOrCreateIframe(browserPersistKey, resolvedVncUrl);
+      const target = document.querySelector(
+        `[data-iframe-target="${browserPersistKey}"]`,
+      ) as HTMLElement | null;
       if (target) {
         cleanupFunctions.push(
-          iframeManager.mountIframe(browserPersistKey, target, { backgroundColor: "#000000" })
+          persistentIframeManager.mountIframe(browserPersistKey, target, {
+            backgroundColor: "#000000",
+          }),
         );
       }
     }
 
     return () => {
-      cleanupFunctions.forEach(fn => fn());
+      cleanupFunctions.forEach((fn) => fn());
     };
   }, [
-    instance,
-    vscodePersistKey,
-    resolvedVncUrl,
     browserPersistKey,
-    panelLayout,
-    previewMode,
-    expandedPanelInSplit,
-    expandedPanelPosition,
+    instance,
+    persistentIframeManager,
+    resolvedVncUrl,
+    vscodePersistKey,
   ]);
 
   useEffect(() => {
-    if (!iframeManager) {
+    if (!persistentIframeManager) {
       return;
     }
 
@@ -1380,13 +1384,13 @@ export function PreviewConfigureClient({
       return previewMode === "browser";
     })();
 
-    iframeManager.setVisibility(vscodePersistKey, workspaceVisible);
-    iframeManager.setVisibility(browserPersistKey, browserVisible);
+    persistentIframeManager.setVisibility(vscodePersistKey, workspaceVisible);
+    persistentIframeManager.setVisibility(browserPersistKey, browserVisible);
   }, [
     browserPersistKey,
     browserPosition,
     expandedPanelInSplit,
-    iframeManager,
+    persistentIframeManager,
     resolvedVncUrl,
     instance?.vscodeUrl,
     previewMode,

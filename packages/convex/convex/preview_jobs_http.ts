@@ -79,16 +79,26 @@ async function stopPreviewInstance(
 
   if (previewRun.taskRunId) {
     try {
-      await ctx.runMutation(internal.taskRuns.updateVSCodeMetadataInternal, {
-        taskRunId: previewRun.taskRunId,
-        vscode: {
-          provider: "morph",
-          status: "stopped",
+      const taskRun = await ctx.db.get(previewRun.taskRunId);
+      if (!taskRun) {
+        console.warn("[preview-jobs-http] Task run not found when stopping Morph instance", {
+          previewRunId: previewRun._id,
+          taskRunId: previewRun.taskRunId,
+        });
+      } else {
+        const nextVscode = {
+          ...(taskRun.vscode ?? {}),
+          provider: "morph" as const,
+          status: "stopped" as const,
           containerName: previewRun.morphInstanceId,
           stoppedAt,
-        },
-        networking: [],
-      });
+        };
+        await ctx.db.patch(previewRun.taskRunId, {
+          updatedAt: Date.now(),
+          vscode: nextVscode,
+          networking: [],
+        });
+      }
     } catch (error) {
       console.error("[preview-jobs-http] Failed to update task run VSCode metadata after stop", {
         previewRunId: previewRun._id,

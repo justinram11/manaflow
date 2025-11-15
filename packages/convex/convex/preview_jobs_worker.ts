@@ -807,9 +807,21 @@ export async function runPreviewJob(
     if (taskRunId && previewJwt) {
       // Apply CMUX environment variables via envctl (same as crown runs)
       const envVarsContent = `CMUX_TASK_RUN_ID="${taskRunId}"\nCMUX_TASK_RUN_JWT="${previewJwt}"`;
+      if (envVarsContent.length === 0) {
+        console.error("[preview-jobs] Empty environment payload before envctl", {
+          previewRunId,
+          taskRunId,
+        });
+        throw new Error("Cannot apply empty environment payload via envctl");
+      }
       const envBase64 = stringToBase64(envVarsContent);
+      console.log("[preview-jobs] Applying environment variables via envctl", {
+        previewRunId,
+        taskRunId,
+        payloadLength: envVarsContent.length,
+      });
       // Pipe base64 payload via stdin so envctl always receives the input it expects
-      const envctlCommand = `printf %s ${singleQuote(envBase64)} | envctl load --base64 -`;
+      const envctlCommand = `printf '%s' ${singleQuote(envBase64)} | envctl load --base64 -`;
 
       const envctlResponse = await execInstanceInstanceIdExecPost({
         client: morphClient,
