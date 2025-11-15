@@ -7,7 +7,6 @@ import {
   type InstanceModel,
 } from "@cmux/morphcloud-openapi-client";
 import type { WorkerRunTaskScreenshots } from "@cmux/shared";
-import { connectToWorkerManagement } from "@cmux/shared/socket";
 import { SignJWT } from "jose";
 import { env } from "../_shared/convex-env";
 import { fetchInstallationAccessToken } from "../_shared/githubApp";
@@ -111,61 +110,37 @@ async function triggerWorkerScreenshotCollection({
   while (attempt < maxAttempts) {
     attempt += 1;
     try {
-      await new Promise<void>((resolve, reject) => {
-        const socket = connectToWorkerManagement({
-          url: workerUrl,
-          timeoutMs: WORKER_SOCKET_TIMEOUT_MS,
-          reconnectionAttempts: 0,
-          forceNew: true,
-        });
+      console.log("[preview-jobs] Triggering screenshot collection via HTTP", {
+        previewRunId,
+        attempt,
+        url: `${workerUrl}/api/run-task-screenshots`,
+      });
 
-        let settled = false;
+      const response = await fetch(`${workerUrl}/api/run-task-screenshots`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(WORKER_SOCKET_TIMEOUT_MS),
+      });
 
-        const settle = (error?: Error) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timeoutId);
-          socket.disconnect();
-          if (error) {
-            reject(error);
-          } else {
-            resolve();
-          }
-        };
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "Unknown error");
+        throw new Error(
+          `Worker returned ${response.status}: ${errorText}`
+        );
+      }
 
-        const timeoutId = setTimeout(() => {
-          settle(new Error("Timed out connecting to worker for screenshot collection"));
-        }, WORKER_SOCKET_TIMEOUT_MS);
+      const result = await response.json().catch(() => ({}));
 
-        socket.on("connect", () => {
-          console.log("[preview-jobs] Connected to worker socket", {
-            previewRunId,
-            attempt,
-          });
+      if (result.error) {
+        throw new Error(formatWorkerSocketError(result.error));
+      }
 
-          socket.emit("worker:run-task-screenshots", payload, (response) => {
-            if (response.error) {
-              settle(new Error(formatWorkerSocketError(response.error)));
-              return;
-            }
-            settle();
-          });
-        });
-
-        socket.on("connect_error", (error: Error) => {
-          settle(new Error(formatWorkerSocketError(error)));
-        });
-
-        socket.on("disconnect", (reason) => {
-          if (settled) {
-            return;
-          }
-          settle(
-            new Error(
-              `Worker socket disconnected before acknowledging screenshot run: ${reason ?? "unknown"}`,
-            ),
-          );
-        });
+      console.log("[preview-jobs] Screenshot collection triggered successfully", {
+        previewRunId,
+        attempt,
       });
       return;
     } catch (error) {
@@ -181,7 +156,7 @@ async function triggerWorkerScreenshotCollection({
       }
     }
   }
-  throw lastError ?? new Error("Unknown worker socket error");
+  throw lastError ?? new Error("Unknown worker HTTP error");
 }
 
 async function repoHasCommit({
@@ -923,16 +898,47 @@ export async function runPreviewJob(
         taskRunId,
       });
 
-      // Trigger screenshot collection via worker socket
-      if (!taskId) {
-        throw new Error("taskId is required but not available");
-      }
-      const screenshotPayload: WorkerRunTaskScreenshots = {
-        taskId,
+      // Verify task run exists before triggering screenshots
+      console.log("[preview-jobs] Verifying task run is queryable", {
+        previewRunId,
         taskRunId,
+      });
+
+      let taskRunVerified = false;
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        const verifyTaskRun = await ctx.runQuery(internal.taskRuns.getById, {
+          id: taskRunId,
+        });
+
+        if (verifyTaskRun) {
+          console.log("[preview-jobs] Task run verified", {
+            previewRunId,
+            taskRunId,
+            attempt,
+          });
+          taskRunVerified = true;
+          break;
+        }
+
+        console.warn("[preview-jobs] Task run not yet queryable, retrying", {
+          previewRunId,
+          taskRunId,
+          attempt,
+        });
+
+        if (attempt < 5) {
+          await delay(1000); // Wait 1 second between attempts
+        }
+      }
+
+      if (!taskRunVerified) {
+        throw new Error(`Task run ${taskRunId} not queryable after verification attempts`);
+      }
+
+      // Trigger screenshot collection via worker HTTP endpoint
+      // The JWT contains taskRunId, and the worker will call /api/crown/check to get taskId
+      const screenshotPayload: WorkerRunTaskScreenshots = {
         token: previewJwt,
-        convexUrl: env.BASE_APP_URL,
-        taskRunJwt: previewJwt,
       };
 
       try {
@@ -949,7 +955,7 @@ export async function runPreviewJob(
         throw new Error("Failed to trigger screenshot collection");
       }
 
-      console.log("[preview-jobs] Triggered screenshot collection via socket", {
+      console.log("[preview-jobs] Triggered screenshot collection via HTTP", {
         previewRunId,
         taskRunId,
       });

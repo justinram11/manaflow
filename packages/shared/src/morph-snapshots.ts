@@ -9,7 +9,7 @@ export interface MorphSnapshotPreset {
 
 export const MORPH_SNAPSHOT_PRESETS = [
   {
-    id: "snapshot_ia7y6bg6",
+    id: "snapshot_ubx9hl5t",
     label: "Standard workspace",
     cpu: "4 vCPU",
     memory: "16 GB RAM",
@@ -18,7 +18,7 @@ export const MORPH_SNAPSHOT_PRESETS = [
       "Great default for day-to-day work. Balanced CPU, memory, and storage.",
   },
   { 
-    id: "snapshot_bu02w2g3",
+    id: "snapshot_ubx9hl5t",
     label: "Performance workspace",
     cpu: "8 vCPU",
     memory: "32 GB RAM",

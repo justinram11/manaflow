@@ -130,6 +130,119 @@ app.post("/upload-image", upload.single("image"), async (req, res) => {
   }
 });
 
+// HTTP endpoint for running task screenshots (replaces Socket.IO)
+app.use(express.json());
+app.post("/api/run-task-screenshots", async (req, res) => {
+  try {
+    const data = req.body;
+
+    log("INFO", "[/api/run-task-screenshots] Received request");
+
+    if (!data?.token) {
+      return res.status(400).json({
+        error: "Missing required field: token",
+      });
+    }
+
+    // Use environment variable for convexUrl
+    const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
+
+    // Extract taskRunId and taskId from JWT by calling /api/crown/check
+    // The JWT contains taskRunId, and the check endpoint returns both taskRunId and taskId
+    const info = await convexRequest<WorkerTaskRunResponse>(
+      "/api/crown/check",
+      data.token,
+      {
+        checkType: "info",
+      },
+      convexUrl,
+    );
+
+    if (!info?.ok || !info.taskRun) {
+      log("ERROR", "[/api/run-task-screenshots] Failed to load task run metadata", {
+        hasInfo: Boolean(info),
+      });
+      return res.status(400).json({
+        error: "Unable to load task run metadata for screenshot workflow",
+      });
+    }
+
+    const taskRunId = info.taskRun.id as Id<"taskRuns">;
+    const taskId = info.taskRun.taskId as Id<"tasks">;
+
+    if (!info.taskRun.isPreviewJob) {
+      log("ERROR", "[/api/run-task-screenshots] Task run is not a preview job", {
+        taskRunId,
+      });
+      return res.status(400).json({
+        error: "Task run is not marked as a preview job",
+      });
+    }
+
+    log("INFO", "[/api/run-task-screenshots] Verified preview job metadata", {
+      taskRunId,
+      taskId,
+    });
+
+    // Respond immediately to acknowledge receipt
+    res.json({
+      success: true,
+    });
+
+    // Run screenshot collection in background
+    (async () => {
+      try {
+        await runTaskScreenshots({
+          taskId,
+          taskRunId,
+          token: data.token,
+          convexUrl,
+          anthropicApiKey: data.anthropicApiKey,
+          taskRunJwt: data.token,
+        });
+
+        log("INFO", "[/api/run-task-screenshots] Screenshots completed, calling /api/preview/complete", {
+          taskRunId,
+        });
+
+        const completeUrl = `${convexUrl}/api/preview/complete`;
+        const response = await fetch(completeUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${process.env.CMUX_TASK_RUN_JWT_SECRET ?? ""}`,
+          },
+          body: JSON.stringify({
+            taskRunId,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          log("ERROR", "[/api/run-task-screenshots] Failed to complete preview job", {
+            status: response.status,
+            error: errorText,
+          });
+        } else {
+          const result = await response.json();
+          log("INFO", "[/api/run-task-screenshots] Preview job completed successfully", {
+            result,
+          });
+        }
+      } catch (error) {
+        log("ERROR", "[/api/run-task-screenshots] Failed", error);
+      }
+    })().catch((error) => {
+      log("ERROR", "[/api/run-task-screenshots] Background task failed", error);
+    });
+  } catch (error) {
+    log("ERROR", "[/api/run-task-screenshots] Request handling failed", error);
+    res.status(500).json({
+      error: error instanceof Error ? error.message : "Internal server error",
+    });
+  }
+});
+
 // Create HTTP server with Express app
 const httpServer = createServer(app);
 
@@ -522,39 +635,46 @@ managementIO.on("connection", (socket) => {
   );
 
   socket.on("worker:run-task-screenshots", async (data, callback) => {
-    log("INFO", "[worker:run-task-screenshots] Received request", {
-      taskRunId: data.taskRunId,
-      taskId: data.taskId,
-    });
+    log("INFO", "[worker:run-task-screenshots] Received request");
 
     try {
+      if (!data?.token) {
+        throw new Error("Missing required field: token");
+      }
+
+      // Use environment variable for convexUrl
+      const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
+
+      // Extract taskRunId and taskId from JWT by calling /api/crown/check
       const info = await convexRequest<WorkerTaskRunResponse>(
         "/api/crown/check",
         data.token,
         {
-          taskRunId: data.taskRunId,
           checkType: "info",
         },
-        data.convexUrl,
+        convexUrl,
       );
 
       if (!info?.ok || !info.taskRun) {
         log("ERROR", "[worker:run-task-screenshots] Failed to load task run metadata", {
-          taskRunId: data.taskRunId,
           hasInfo: Boolean(info),
         });
         throw new Error("Unable to load task run metadata for screenshot workflow");
       }
 
+      const taskRunId = info.taskRun.id as Id<"taskRuns">;
+      const taskId = info.taskRun.taskId as Id<"tasks">;
+
       if (!info.taskRun.isPreviewJob) {
         log("ERROR", "[worker:run-task-screenshots] Task run is not a preview job", {
-          taskRunId: data.taskRunId,
+          taskRunId,
         });
         throw new Error("Task run is not marked as a preview job");
       }
 
       log("INFO", "[worker:run-task-screenshots] Verified preview job metadata", {
-        taskRunId: data.taskRunId,
+        taskRunId,
+        taskId,
       });
 
       callback({
@@ -564,19 +684,19 @@ managementIO.on("connection", (socket) => {
 
       try {
         await runTaskScreenshots({
-          taskId: data.taskId,
-          taskRunId: data.taskRunId,
+          taskId,
+          taskRunId,
           token: data.token,
-          convexUrl: data.convexUrl,
+          convexUrl,
           anthropicApiKey: data.anthropicApiKey,
-          taskRunJwt: data.taskRunJwt,
+          taskRunJwt: data.token,
         });
 
         log("INFO", "[worker:run-task-screenshots] Screenshots completed, calling /api/preview/complete", {
-          taskRunId: data.taskRunId,
+          taskRunId,
         });
 
-        const completeUrl = `${data.convexUrl}/api/preview/complete`;
+        const completeUrl = `${convexUrl}/api/preview/complete`;
         const response = await fetch(completeUrl, {
           method: "POST",
           headers: {
@@ -584,7 +704,7 @@ managementIO.on("connection", (socket) => {
             "Authorization": `Bearer ${process.env.CMUX_TASK_RUN_JWT_SECRET ?? ""}`,
           },
           body: JSON.stringify({
-            taskRunId: data.taskRunId,
+            taskRunId,
           }),
         });
 
