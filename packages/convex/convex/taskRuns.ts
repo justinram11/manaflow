@@ -1663,6 +1663,7 @@ export const createForPreview = internalMutation({
       environmentId: args.environmentId,
       isLocalWorkspace: task.isLocalWorkspace,
       isCloudWorkspace: task.isCloudWorkspace,
+      isPreviewJob: true,
     });
 
     const jwt = await new SignJWT({

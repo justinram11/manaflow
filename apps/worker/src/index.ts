@@ -3,7 +3,6 @@ import {
   WorkerConfigureGitSchema,
   WorkerCreateTerminalSchema,
   WorkerExecSchema,
-  WorkerRunTaskScreenshotsSchema,
   WorkerStartScreenshotCollectionSchema,
   type ClientToServerEvents,
   type InterServerEvents,
@@ -12,7 +11,6 @@ import {
   type SocketData,
   type WorkerHeartbeat,
   type WorkerRegister,
-  type WorkerRunTaskScreenshots,
   type WorkerStartScreenshotCollection,
   type WorkerTaskRunContext,
   type WorkerToServerEventNames,
@@ -516,65 +514,6 @@ managementIO.on("connection", (socket) => {
           },
           WORKER_ID
         );
-      }
-    }
-  );
-
-  socket.on(
-    "worker:run-task-screenshots",
-    async (rawData: WorkerRunTaskScreenshots, callback) => {
-      log(
-        "INFO",
-        `Worker ${WORKER_ID} received request to run task screenshots`,
-        {
-          taskId: rawData.taskId,
-          taskRunId: rawData.taskRunId,
-        },
-        WORKER_ID
-      );
-
-      try {
-        const validated = WorkerRunTaskScreenshotsSchema.parse(rawData);
-
-        await runTaskScreenshots({
-          taskId: validated.taskId,
-          taskRunId: validated.taskRunId,
-          token: validated.token,
-          convexUrl: validated.convexUrl,
-          anthropicApiKey: validated.anthropicApiKey,
-          taskRunJwt: validated.taskRunJwt,
-        });
-
-        log(
-          "INFO",
-          "Task screenshot workflow completed successfully",
-          {
-            taskId: validated.taskId,
-            taskRunId: validated.taskRunId,
-          },
-          WORKER_ID
-        );
-
-        callback({
-          error: null,
-          data: { success: true },
-        });
-      } catch (error) {
-        log(
-          "ERROR",
-          "Failed to run task screenshots",
-          {
-            error: error instanceof Error ? error.message : String(error),
-            taskId: rawData.taskId,
-            taskRunId: rawData.taskRunId,
-          },
-          WORKER_ID
-        );
-
-        callback({
-          error: error instanceof Error ? error : new Error(String(error)),
-          data: null,
-        });
       }
     }
   );
@@ -1447,34 +1386,39 @@ if (ENABLE_HEARTBEAT) {
   }, 30000);
 }
 
-// Check for preview job data from environment variables and run immediately
-async function checkPreviewJob() {
-  const isPreviewJob = process.env.MORPH_METADATA_previewJob === "true";
+/**
+ * Check if this worker was started for a preview job that should auto-run screenshots.
+ * This function:
+ * 1. Reads taskRunId, token, and convexUrl from MORPH_METADATA_* env vars
+ * 2. Fetches the taskRun from Convex to check the isPreviewJob flag
+ * 3. If isPreviewJob is true, runs the screenshot workflow
+ * 4. Calls /api/preview/complete to post GitHub comment and stop the Morph instance
+ */
+async function checkAndRunPreviewScreenshots() {
+  const taskRunId = process.env.MORPH_METADATA_taskRunId;
+  const token = process.env.MORPH_METADATA_taskRunToken;
+  const convexUrl = process.env.MORPH_METADATA_convexUrl;
 
-  if (!isPreviewJob) {
-    return;
-  }
-
-  const taskRunId = process.env.MORPH_METADATA_previewTaskRunId;
-  const token = process.env.MORPH_METADATA_previewToken;
-  const convexUrl = process.env.MORPH_METADATA_previewConvexUrl;
+  log("INFO", "[preview-screenshots] Checking for preview job metadata", {
+    hasTaskRunId: Boolean(taskRunId),
+    hasToken: Boolean(token),
+    hasConvexUrl: Boolean(convexUrl),
+    allEnvKeys: Object.keys(process.env).filter(k => k.startsWith("MORPH_METADATA_")),
+  });
 
   if (!taskRunId || !token || !convexUrl) {
-    log("ERROR", "Preview job detected but missing required metadata", {
-      hasTaskRunId: Boolean(taskRunId),
-      hasToken: Boolean(token),
-      hasConvexUrl: Boolean(convexUrl),
-    });
+    log("INFO", "[preview-screenshots] No preview job metadata found - not a preview job, skipping");
     return;
   }
 
-  log("INFO", "Preview job detected, fetching task info and running screenshot workflow", {
+  log("INFO", "[preview-screenshots] Preview metadata found, fetching taskRun to check isPreviewJob flag", {
     taskRunId,
+    convexUrl,
   });
 
   try {
-    // Fetch task info from Convex (same as crown workflow does)
-    const info = await fetch(`${convexUrl}/api/crown/check`, {
+    // Fetch taskRun info from Convex to check if it's a preview job
+    const checkResponse = await fetch(`${convexUrl}/api/crown/check`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1486,33 +1430,68 @@ async function checkPreviewJob() {
       }),
     });
 
-    if (!info.ok) {
-      throw new Error(`Failed to fetch task info: ${info.status} ${info.statusText}`);
-    }
-
-    const data = await info.json();
-
-    if (!data.ok || !data.taskRun) {
-      throw new Error("Invalid task info response");
-    }
-
-    log("INFO", "Fetched task info, running screenshots", {
+    log("INFO", "[preview-screenshots] Received response from /api/crown/check", {
+      status: checkResponse.status,
+      ok: checkResponse.ok,
       taskRunId,
-      taskId: data.taskRun.taskId,
     });
 
+    if (!checkResponse.ok) {
+      throw new Error(`Failed to fetch task info: ${checkResponse.status} ${checkResponse.statusText}`);
+    }
+
+    const data = await checkResponse.json();
+
+    if (!data.ok || !data.taskRun) {
+      log("ERROR", "[preview-screenshots] Invalid task info response", {
+        hasOk: Boolean(data.ok),
+        hasTaskRun: Boolean(data.taskRun),
+        taskRunId,
+      });
+      throw new Error("Invalid task info response from /api/crown/check");
+    }
+
+    const taskRun = data.taskRun;
+
+    log("INFO", "[preview-screenshots] Fetched taskRun successfully", {
+      taskRunId,
+      taskId: taskRun.taskId,
+      isPreviewJob: taskRun.isPreviewJob,
+      status: taskRun.status,
+    });
+
+    // Check if this is a preview job
+    if (!taskRun.isPreviewJob) {
+      log("INFO", "[preview-screenshots] TaskRun.isPreviewJob is false - not a preview job, skipping screenshot workflow", {
+        taskRunId,
+        isPreviewJob: taskRun.isPreviewJob,
+      });
+      return;
+    }
+
+    log("INFO", "[preview-screenshots] ✓ TaskRun.isPreviewJob is TRUE - starting screenshot workflow", {
+      taskRunId,
+      taskId: taskRun.taskId,
+    });
+
+    // Run the screenshot workflow
     await runTaskScreenshots({
-      taskId: data.taskRun.taskId as Id<"tasks">,
+      taskId: taskRun.taskId as Id<"tasks">,
       taskRunId: taskRunId as Id<"taskRuns">,
       token,
       convexUrl,
     });
 
-    log("INFO", "Preview job screenshot workflow completed, calling completion endpoint", {
+    log("INFO", "[preview-screenshots] ✓ Screenshot workflow completed successfully", {
+      taskRunId,
+      taskId: taskRun.taskId,
+    });
+
+    log("INFO", "[preview-screenshots] Calling /api/preview/complete to post GitHub comment and stop instance", {
       taskRunId,
     });
 
-    // Call completion endpoint to post GitHub comment
+    // Call completion endpoint to post GitHub comment and stop the Morph instance
     try {
       const completeResponse = await fetch(`${convexUrl}/api/preview/complete`, {
         method: "POST",
@@ -1525,6 +1504,12 @@ async function checkPreviewJob() {
         }),
       });
 
+      log("INFO", "[preview-screenshots] Received response from /api/preview/complete", {
+        status: completeResponse.status,
+        ok: completeResponse.ok,
+        taskRunId,
+      });
+
       if (!completeResponse.ok) {
         const errorText = await completeResponse.text();
         throw new Error(`Completion endpoint failed: ${completeResponse.status} ${errorText}`);
@@ -1533,29 +1518,33 @@ async function checkPreviewJob() {
       const result = await completeResponse.json();
 
       if (result.success) {
-        log("INFO", "Preview job completed successfully", {
+        log("INFO", "[preview-screenshots] ✓ Preview job completed successfully", {
           taskRunId,
           commentUrl: result.commentUrl,
           skipped: result.skipped,
           reason: result.reason,
         });
       } else {
-        log("ERROR", "Preview job completion failed", {
+        log("ERROR", "[preview-screenshots] Preview job completion reported failure", {
           taskRunId,
           error: result.error,
         });
       }
     } catch (completeError) {
-      log("ERROR", "Failed to call preview completion endpoint", {
+      log("ERROR", "[preview-screenshots] Failed to call /api/preview/complete", {
         taskRunId,
         error: completeError instanceof Error ? completeError.message : String(completeError),
+        stack: completeError instanceof Error ? completeError.stack : undefined,
       });
+      throw completeError;
     }
   } catch (error) {
-    log("ERROR", "Preview job screenshot workflow failed", {
+    log("ERROR", "[preview-screenshots] Preview screenshot workflow failed", {
       taskRunId,
       error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
     });
+    throw error;
   }
 }
 
@@ -1583,9 +1572,12 @@ httpServer.listen(WORKER_PORT, () => {
     WORKER_ID
   );
 
-  // Check if this is a preview job and run screenshot workflow immediately
-  checkPreviewJob().catch((error) => {
-    log("ERROR", "Preview job check failed", error);
+  // Check if this is a preview job and auto-run screenshots if needed
+  checkAndRunPreviewScreenshots().catch((error) => {
+    log("ERROR", "[preview-screenshots] Fatal error in preview screenshot check", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
   });
 });
 
