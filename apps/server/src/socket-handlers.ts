@@ -211,6 +211,8 @@ export function setupSocketHandlers(
       : typeof qJson === "string"
         ? qJson
         : undefined;
+    let currentAuthToken = token;
+    let currentAuthHeaderJson = tokenJson;
 
     // authenticate the token
     if (!token) {
@@ -220,9 +222,23 @@ export function setupSocketHandlers(
     }
 
     socket.use((_, next) => {
-      runWithAuth(token, tokenJson, () => next());
+      runWithAuth(currentAuthToken, currentAuthHeaderJson, () => next());
     });
     serverLogger.info("Client connected:", socket.id);
+
+    socket.on("authenticate", (data, callback) => {
+      const nextToken = data?.authToken;
+      if (!nextToken) {
+        callback?.({ ok: false, error: "Missing auth token" });
+        return;
+      }
+      const nextAuthJson = data?.authJson;
+      currentAuthToken = nextToken;
+      currentAuthHeaderJson = nextAuthJson;
+      runWithAuth(currentAuthToken, currentAuthHeaderJson, () => {
+        callback?.({ ok: true });
+      });
+    });
 
     // Rust N-API test endpoint
     socket.on("rust-get-time", async (callback) => {

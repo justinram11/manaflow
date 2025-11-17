@@ -97,6 +97,11 @@ export const CreateCloudWorkspaceResponseSchema = z.object({
   error: z.string().optional(),
 });
 
+export const AuthenticateSchema = z.object({
+  authToken: z.string(),
+  authJson: z.string().optional(),
+});
+
 // Server to Client Events
 export const TerminalCreatedSchema = z.object({
   terminalId: z.string(),
@@ -437,6 +442,7 @@ export type CreateCloudWorkspace = z.infer<typeof CreateCloudWorkspaceSchema>;
 export type CreateCloudWorkspaceResponse = z.infer<
   typeof CreateCloudWorkspaceResponseSchema
 >;
+export type Authenticate = z.infer<typeof AuthenticateSchema>;
 export type TerminalCreated = z.infer<typeof TerminalCreatedSchema>;
 export type TerminalOutput = z.infer<typeof TerminalOutputSchema>;
 export type TerminalExit = z.infer<typeof TerminalExitSchema>;
@@ -488,6 +494,10 @@ export type DefaultRepo = z.infer<typeof DefaultRepoSchema>;
 
 // Socket.io event map types
 export interface ClientToServerEvents {
+  authenticate: (
+    data: Authenticate,
+    callback?: (response?: { ok: boolean; error?: string }) => void
+  ) => void;
   // Terminal operations
   "start-task": (
     data: StartTask,
