@@ -40,11 +40,11 @@ async function stopPreviewInstance(
   const stoppedAt = Date.now();
 
   try {
-    await stopInstanceInstanceInstanceIdDelete({
-      client: morphClient,
-      path: { instance_id: previewRun.morphInstanceId },
-    });
-    console.log("[preview-jobs-http] Stopped Morph instance for preview run", {
+    // await stopInstanceInstanceInstanceIdDelete({
+    //   client: morphClient,
+    //   path: { instance_id: previewRun.morphInstanceId },
+    // });
+    console.log("[preview-jobs-http] Leaving Morph instance on for preview run", {
       previewRunId: previewRun._id,
       morphInstanceId: previewRun.morphInstanceId,
     });
