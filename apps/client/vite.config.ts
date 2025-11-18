@@ -3,9 +3,20 @@ import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
+import { sentryVitePlugin } from "@sentry/vite-plugin";
 
 // Ensure all env is loaded
 await import("./src/client-env.ts");
+
+const SentryVitePlugin = process.env.SENTRY_AUTH_TOKEN ?  sentryVitePlugin({
+  org: "manaflow",
+  project: "cmux-client-web",
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+  sourcemaps: {
+    filesToDeleteAfterUpload: ["**/*.map"],
+  },
+  telemetry: false
+}) : undefined;
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -17,6 +28,7 @@ export default defineConfig({
     }),
     react(),
     tailwindcss(),
+    SentryVitePlugin,
   ],
   resolve: {
     // Dedupe so Monaco services (e.g. hoverService) are registered once

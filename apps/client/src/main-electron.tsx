@@ -1,12 +1,17 @@
-import { init } from "@sentry/react";
-import { SENTRY_WEB_DSN } from "./sentry-config";
-init({
-  dsn: SENTRY_WEB_DSN,
-  integrations: [
-    /* integrations */
-  ],
-  /* Other Electron and React SDK config */
-});
+import { init } from "@sentry/electron/renderer";
+import { init as reactInit } from "@sentry/react";
+import { SENTRY_ELECTRON_DSN } from "./sentry-config.ts";
+
+init(
+  {
+    dsn: SENTRY_ELECTRON_DSN,
+    integrations: [
+      /* integrations */
+    ],
+  },
+  reactInit
+);
+
 
 import { StrictMode } from "react";
 import ReactDOM from "react-dom/client";
