@@ -957,12 +957,6 @@ export function PullRequestDiffViewer({
     }
     hasFetchedReviewRef.current = true;
     fetchCodeReview();
-    return () => {
-      const controller = activeReviewControllerRef.current;
-      if (controller) {
-        controller.abort();
-      }
-    };
     // We intentionally only fetch once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
