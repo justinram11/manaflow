@@ -43,7 +43,7 @@ export const morphSnapshotPresetSchema = z
       }
       if (current.version <= previous.version) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: "custom",
           message: "Versions must be strictly increasing",
           path: ["versions", index, "version"],
         });

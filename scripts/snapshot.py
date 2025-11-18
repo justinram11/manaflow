@@ -118,6 +118,23 @@ class SnapshotRunResult:
     vnc_url: str
     instance_id: str
 
+    def __init__(
+        self,
+        *,
+        preset: SnapshotPresetPlan,
+        snapshot: Snapshot,
+        captured_at: str,
+        vscode_url: str,
+        vnc_url: str,
+        instance_id: str,
+    ) -> None:
+        self.preset = preset
+        self.snapshot = snapshot
+        self.captured_at = captured_at
+        self.vscode_url = vscode_url
+        self.vnc_url = vnc_url
+        self.instance_id = instance_id
+
 
 CURRENT_MANIFEST_SCHEMA_VERSION = 1
 
@@ -628,6 +645,23 @@ def send_macos_notification(console: Console, title: str, message: str) -> None:
         subprocess.run(["osascript", "-e", script], check=False)
     except Exception as exc:  # noqa: BLE001
         console.info(f"Failed to send macOS notification: {exc}")
+
+
+def send_scary_notification(message: str) -> None:
+    if sys.platform != "darwin":
+        return
+    if shutil.which("osascript") is None:
+        return
+    script = textwrap.dedent(
+        f"""
+        display notification {json.dumps(message)} with title "cmux snapshot failed"
+        """
+    ).strip()
+    try:
+        subprocess.run(["osascript", "-e", script], check=False)
+    except Exception:
+        # Intentionally ignore secondary failures to avoid masking the root error
+        pass
 
 
 def _exec_git(repo_root: Path, args: list[str]) -> str | None:
@@ -2750,9 +2784,10 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
     results: list[SnapshotRunResult] = []
 
     def _cleanup() -> None:
-        while started_instances:
-            inst = started_instances.pop()
-            _stop_instance(inst, console)
+        if args.require_verify:
+            while started_instances:
+                inst = started_instances.pop()
+                _stop_instance(inst, console)
 
     def _sync_cleanup() -> None:
         _cleanup()
@@ -2768,29 +2803,58 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
         f"from base snapshot {args.snapshot_id}"
     )
 
-    for index, preset_plan in enumerate(preset_plans):
-        result = await provision_and_snapshot_for_preset(
-            args,
-            preset=preset_plan,
-            console=console,
-            client=client,
-            repo_root=repo_root,
-            started_instances=started_instances,
-            require_verify=args.require_verify,
-            show_dependency_graph=index == 0,
+    preset_order: dict[str, int] = {
+        plan.preset_id: index for index, plan in enumerate(preset_plans)
+    }
+    tasks = [
+        asyncio.create_task(
+            provision_and_snapshot_for_preset(
+                args,
+                preset=preset_plan,
+                console=console,
+                client=client,
+                repo_root=repo_root,
+                started_instances=started_instances,
+                require_verify=args.require_verify,
+                show_dependency_graph=index == 0,
+            )
         )
-        results.append(result)
-        manifest = _update_manifest_with_snapshot(
-            manifest, preset_plan, result.snapshot.id, result.captured_at
-        )
-        _write_manifest(manifest)
+        for index, preset_plan in enumerate(preset_plans)
+    ]
 
-    _render_verification_table(results, console)
+    results = await asyncio.gather(*tasks)
+    ordered_results = sorted(
+        results,
+        key=lambda item: preset_order.get(item.preset.preset_id, 0),
+    )
+
+    if not args.require_verify:
+        for result in ordered_results:
+            try:
+                inst = client.instances.get(instance_id=result.instance_id)
+                inst.set_ttl(ttl_seconds=600, ttl_action="pause")
+                console.always(
+                    f"[{result.preset.preset_id}] Instance {result.instance_id} "
+                    "will pause in ~10 minutes (TTL set)."
+                )
+            except Exception as exc:  # noqa: BLE001
+                console.always(
+                    f"[{result.preset.preset_id}] Failed to set TTL on instance "
+                    f"{result.instance_id}: {exc}"
+                )
+
+    for result in ordered_results:
+        manifest = _update_manifest_with_snapshot(
+            manifest, result.preset, result.snapshot.id, result.captured_at
+        )
+    _write_manifest(manifest)
+
+    _render_verification_table(ordered_results, console)
 
     console.always(
         f"\nUpdated morph snapshot manifest at {MORPH_SNAPSHOT_MANIFEST_PATH}"
     )
-    for result in results:
+    for result in ordered_results:
         console.always(
             f"[{result.preset.preset_id}] Snapshot {result.snapshot.id} captured at {result.captured_at}"
         )
@@ -2945,7 +3009,11 @@ def main() -> None:
         if graph:
             print(graph)
         return
-    asyncio.run(provision_and_snapshot(args))
+    try:
+        asyncio.run(provision_and_snapshot(args))
+    except Exception as exc:  # noqa: BLE001
+        send_scary_notification(f"Snapshot run failed: {exc}")
+        raise
 
 
 if __name__ == "__main__":
