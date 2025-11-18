@@ -1,9 +1,10 @@
 import { init } from "@sentry/electron/renderer";
 import { init as reactInit } from "@sentry/react";
+import { SENTRY_ELECTRON_DSN } from "./sentry-config.ts";
 
 init(
   {
-    dsn: "https://6112bebb24a138e3efe0faee803521fe@o4507547940749312.ingest.us.sentry.io/4510383103344640",
+    dsn: SENTRY_ELECTRON_DSN,
     integrations: [
       /* integrations */
     ],

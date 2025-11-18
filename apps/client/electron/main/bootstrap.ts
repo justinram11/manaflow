@@ -13,6 +13,7 @@ import { app, session } from "electron";
 
 import { clearLogDirectory } from "./log-management/clear-log-directory";
 import { resolveLogFilePath } from "./log-management/log-paths";
+import { SENTRY_ELECTRON_DSN } from "../../src/sentry-config";
 
 // Provide CommonJS require in ESM main bundle so dependencies relying on require work.
 const require = createRequire(import.meta.url);
@@ -22,7 +23,7 @@ const PARTITION = "persist:cmux";
 
 // Sentry must initialize before the Electron app "ready" event fires.
 Sentry.init({
-  dsn: "https://6112bebb24a138e3efe0faee803521fe@o4507547940749312.ingest.us.sentry.io/4510383103344640",
+  dsn: SENTRY_ELECTRON_DSN,
   ipcMode: Sentry.IPCMode.Both,
   ipcNamespace: "sentry-ipc",
   getSessions: () => [
