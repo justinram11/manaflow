@@ -1,15 +1,11 @@
-import { init } from "@sentry/electron/renderer";
-import { init as reactInit } from "@sentry/react";
-
-init(
-  {
-    dsn: "https://30696b8d01b42a15ca11a60ed22a18ca@o4507547940749312.ingest.us.sentry.io/4510378034462720",
-    integrations: [
-      /* integrations */
-    ],
-  },
-  reactInit
-);
+import { init } from "@sentry/react";
+init({
+  dsn: "https://30696b8d01b42a15ca11a60ed22a18ca@o4507547940749312.ingest.us.sentry.io/4510378034462720",
+  integrations: [
+    /* integrations */
+  ],
+  /* Other Electron and React SDK config */
+});
 
 import { StrictMode } from "react";
 import ReactDOM from "react-dom/client";
