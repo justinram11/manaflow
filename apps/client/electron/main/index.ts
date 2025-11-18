@@ -148,8 +148,9 @@ function updateHistoryMenuState(target?: BrowserWindow | null): void {
     target && !target.isDestroyed() && target.isFocused() ? target : null;
   const window = focusableTarget ?? getActiveBrowserWindow();
   const contents = window && !window.isDestroyed() ? window.webContents : null;
-  const canGoBack = Boolean(contents?.canGoBack?.());
-  const canGoForward = Boolean(contents?.canGoForward?.());
+  const navigationHistory = contents?.navigationHistory;
+  const canGoBack = Boolean(navigationHistory?.canGoBack());
+  const canGoForward = Boolean(navigationHistory?.canGoForward());
   if (historyBackMenuItem) {
     historyBackMenuItem.enabled = canGoBack;
   }
@@ -162,11 +163,12 @@ function navigateHistory(direction: "back" | "forward"): void {
   const target = getActiveBrowserWindow();
   if (!target) return;
   const contents = target.webContents;
+  const navigationHistory = contents.navigationHistory;
   if (direction === "back") {
-    if (contents.canGoBack()) {
+    if (navigationHistory.canGoBack()) {
       contents.goBack();
     }
-  } else if (direction === "forward" && contents.canGoForward()) {
+  } else if (direction === "forward" && navigationHistory.canGoForward()) {
     contents.goForward();
   }
   updateHistoryMenuState(target);
