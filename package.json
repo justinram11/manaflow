@@ -30,7 +30,7 @@
   "scripts": {
     "clean": "bash scripts/clean.sh",
     "clean:node_modules": "bash scripts/clean.sh",
-    "precheck": "bun run generate-openapi-client && bun run generate-morphcloud-openapi-client",
+    "precheck": "bun run generate-openapi-client",
     "check": "bun run scripts/check.ts",
     "lint": "bun run scripts/lint.ts",
     "test": "bun run scripts/test.ts",
