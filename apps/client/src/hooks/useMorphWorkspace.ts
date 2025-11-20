@@ -64,13 +64,14 @@ export function useResumeMorphWorkspace({
   return useMutation<
     PostApiMorphTaskRunsByTaskRunIdResumeResponse,
     Error,
-    Options<PostApiMorphTaskRunsByTaskRunIdResumeData>
+    Options<PostApiMorphTaskRunsByTaskRunIdResumeData>,
+    { toastId: string | number }
   >({
     ...postApiMorphTaskRunsByTaskRunIdResumeMutation(),
     mutationKey: ["resume", "task-run", taskRunId],
     onMutate: async () => {
       const toastId = toast.loading("Resuming workspace…");
-      return { toastId } as const;
+      return { toastId };
     },
     onSuccess: (_data, __, context) => {
       toast.success("Workspace resumed", { id: context?.toastId });

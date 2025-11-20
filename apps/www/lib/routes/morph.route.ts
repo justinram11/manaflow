@@ -138,7 +138,7 @@ morphRouter.openapi(
 
     try {
       const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
-      const instance = await client.instances.get({ instance_id: instanceId });
+      const instance = await client.instances.get({ instanceId });
 
       const metadataTeamId = (
         instance as unknown as {
@@ -231,7 +231,7 @@ morphRouter.openapi(
 
     try {
       const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
-      const instance = await client.instances.get({ instance_id: instanceId });
+      const instance = await client.instances.get({ instanceId });
 
       const metadataTeamId = (
         instance as unknown as {
@@ -359,7 +359,7 @@ morphRouter.openapi(
       } else {
         // Get existing instance
         console.log(`Using existing Morph instance: ${instanceId}`);
-        instance = await client.instances.get({ instance_id: instanceId });
+        instance = await client.instances.get({ instanceId });
 
         // Security: ensure the instance belongs to the requested team
         const meta = instance.metadata;
