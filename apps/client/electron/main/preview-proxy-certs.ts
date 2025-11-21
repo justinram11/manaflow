@@ -206,6 +206,14 @@ export class CertificateManager {
     return forge.pki.certificateToPem(this.caCert);
   }
 
+  getCaSpkiFingerprint(): string {
+    const asn1 = forge.pki.publicKeyToAsn1(this.caCert.publicKey);
+    const der = forge.asn1.toDer(asn1).getBytes();
+    const md = forge.md.sha256.create();
+    md.update(der);
+    return forge.util.encode64(md.digest().getBytes());
+  }
+
   private generateSerialNumber(): string {
     return crypto.randomBytes(16).toString("hex");
   }

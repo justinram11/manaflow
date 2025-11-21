@@ -103,6 +103,8 @@ async function runTests() {
         stream.respond({
             ':status': 200,
             'content-type': 'text/plain',
+            'cache-control': 'max-age=3600',
+            'etag': '"test-etag"',
         });
         stream.end('Hello from dummy upstream!');
     });
@@ -174,6 +176,12 @@ async function runTests() {
 
             req.on('response', (headers) => {
                 console.log("HTTP/2 Response Headers:", headers);
+                if (headers['cache-control'] !== 'max-age=3600') {
+                    reject(new Error(`Missing or incorrect cache-control header. Got: ${headers['cache-control']}`));
+                }
+                if (headers['etag'] !== '"test-etag"') {
+                    reject(new Error(`Missing or incorrect etag header. Got: ${headers['etag']}`));
+                }
             });
 
             req.setEncoding('utf8');
