@@ -188,6 +188,25 @@ async function runTests() {
             req.end();
         });
 
+        console.log("\n--- Test 3: IP Address Connect (MITM) ---");
+        const { tlsSocket: tlsSocket3, socket: socket3 } = await connectToProxy("127.0.0.1", 8081, credentials, port);
+        
+        console.log("TLS Handshake successful for IP!");
+        const cert3 = tlsSocket3.getPeerCertificate();
+        console.log("Peer Certificate Subject:", cert3.subject);
+        console.log("Peer Certificate SANs:", cert3.subjectaltname);
+        
+        if (!cert3.subjectaltname || !cert3.subjectaltname.includes("IP Address:127.0.0.1")) {
+             // Node's subjectaltname format: "DNS:example.com, IP Address:1.2.3.4"
+             if (!cert3.subjectaltname?.includes("127.0.0.1")) {
+                 throw new Error(`Certificate missing IP SAN for 127.0.0.1. Got: ${cert3.subjectaltname}`);
+             }
+        }
+        console.log("Verified IP SAN present.");
+
+        tlsSocket3.end();
+        socket3.destroy();
+
         console.log("\nTests completed.");
     } catch (err) {
         console.error("\nTest failed:", err);

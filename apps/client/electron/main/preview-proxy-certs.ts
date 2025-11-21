@@ -4,6 +4,7 @@ import tls from "node:tls";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import net from "node:net";
 
 export class CertificateManager {
   private caKey!: forge.pki.rsa.PrivateKey;
@@ -117,6 +118,10 @@ export class CertificateManager {
             type: 2, // DNS
             value: hostname,
           },
+          ...(net.isIP(hostname) ? [{
+            type: 7, // IP
+            ip: hostname,
+          }] : []),
         ],
       },
     ]);
@@ -178,6 +183,10 @@ export class CertificateManager {
             type: 2, // DNS
             value: hostname,
           },
+          ...(net.isIP(hostname) ? [{
+            type: 7, // IP
+            ip: hostname,
+          }] : []),
         ],
       },
     ]);
