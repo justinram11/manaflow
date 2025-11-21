@@ -94,6 +94,7 @@ let historyBackMenuItem: MenuItem | null = null;
 let historyForwardMenuItem: MenuItem | null = null;
 const previewWebContentsIds = new Set<number>();
 const altGrActivePreviewContents = new Set<number>();
+let embeddedServerCleanup: (() => Promise<void>) | null = null;
 
 function getTimestamp(): string {
   return new Date().toISOString();
@@ -761,6 +762,13 @@ app.whenReady().then(async () => {
     } catch (error) {
       console.error("Failed to dispose context menu", error);
     }
+
+    if (embeddedServerCleanup) {
+      embeddedServerCleanup().catch((error) => {
+        console.error("Failed to clean up embedded server", error);
+      });
+      embeddedServerCleanup = null;
+    }
   });
   registerLogIpcHandlers();
   registerAutoUpdateIpcHandlers();
@@ -875,7 +883,8 @@ app.whenReady().then(async () => {
   // Start the embedded IPC server (registers cmux:register and cmux:rpc)
   try {
     mainLog("Starting embedded IPC server...");
-    await startEmbeddedServer();
+    const embeddedServer = await startEmbeddedServer();
+    embeddedServerCleanup = embeddedServer.cleanup;
     mainLog("Embedded IPC server started successfully");
   } catch (error) {
     mainError("Failed to start embedded IPC server:", error);

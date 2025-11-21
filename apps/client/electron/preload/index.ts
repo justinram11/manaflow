@@ -28,6 +28,34 @@ type LogListener = (entry: ElectronMainLogMessage) => void;
 const mainLogListeners = new Set<LogListener>();
 
 // Cmux IPC API for Electron server communication
+const describeIpcError = (event: string, error: unknown) => {
+  if (error instanceof Error) {
+    return new Error(`RPC '${event}' failed: ${error.message}`);
+  }
+
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof (error as { message?: unknown }).message === "string"
+  ) {
+    return new Error(`RPC '${event}' failed: ${(error as { message: string }).message}`);
+  }
+
+  const fallback =
+    typeof error === "string"
+      ? error
+      : (() => {
+          try {
+            return JSON.stringify(error);
+          } catch {
+            return String(error);
+          }
+        })();
+
+  return new Error(`RPC '${event}' failed: ${fallback}`);
+};
+
 const cmuxAPI = {
   // Get the current webContents ID
   getCurrentWebContentsId: () => {
@@ -41,7 +69,11 @@ const cmuxAPI = {
 
   // RPC call (like socket.emit with acknowledgment)
   rpc: (event: string, ...args: unknown[]) => {
-    return ipcRenderer.invoke("cmux:rpc", { event, args });
+    return ipcRenderer
+      .invoke("cmux:rpc", { event, args })
+      .catch((error: unknown) => {
+        throw describeIpcError(event, error);
+      });
   },
 
   // Subscribe to server events
