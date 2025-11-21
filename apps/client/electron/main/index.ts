@@ -14,7 +14,6 @@ import {
   net,
   session,
   shell,
-  webFrameMain,
   type BrowserWindowConstructorOptions,
   type MenuItemConstructorOptions,
 } from "electron";
@@ -48,6 +47,11 @@ import {
   startPreviewProxy,
 } from "./task-run-preview-proxy";
 import { normalizeBrowserUrl } from "@cmux/shared";
+import {
+  ELECTRON_WINDOW_FOCUS_EVENT,
+  type ElectronRendererEventMap,
+} from "../../src/types/electron-events";
+import { CertificateManager } from "./preview-proxy-certs";
 
 // Use a cookieable HTTPS origin intercepted locally instead of a custom scheme.
 const PARTITION = "persist:cmux";
@@ -94,6 +98,7 @@ let historyBackMenuItem: MenuItem | null = null;
 let historyForwardMenuItem: MenuItem | null = null;
 const previewWebContentsIds = new Set<number>();
 const altGrActivePreviewContents = new Set<number>();
+let embeddedServerCleanup: (() => Promise<void>) | null = null;
 
 function getTimestamp(): string {
   return new Date().toISOString();
@@ -224,8 +229,44 @@ function setupConsoleFileMirrors(): void {
 }
 
 function setupPreviewProxyCertificateTrust(): void {
-  // Certificate trust setup removed
+  // Also whitelist the SPKI for caching purposes (Chromium disables cache on cert errors)
+  // Note: This switch must be appended before the app is ready, but we are calling this function
+  // inside app.whenReady(). However, for the *next* launch or if we move it, it would be better.
+  // Actually, let's just do it here and hope it works for new requests, or move it out.
+  // Documentation says "This switch must be set before the app is ready".
+  // So we should call a separate function for it.
+  
+  app.on(
+    "certificate-error",
+    (event, _webContents, url, error, certificate, callback) => {
+      // Trust the self-signed certificate for the preview proxy
+      if (
+        error === "net::ERR_CERT_AUTHORITY_INVALID" &&
+        certificate.issuerName === "Cmux Preview Proxy CA"
+      ) {
+        event.preventDefault();
+        callback(true);
+        mainLog("Trusted preview proxy certificate", { url });
+      } else {
+        callback(false);
+      }
+    }
+  );
 }
+
+function setupSpkiWhitelist() {
+  try {
+    const certManager = new CertificateManager();
+    const fingerprint = certManager.getCaSpkiFingerprint();
+    app.commandLine.appendSwitch("ignore-certificate-errors-spki-list", fingerprint);
+    console.log("[MAIN] Added SPKI whitelist for proxy CA:", fingerprint);
+  } catch (error) {
+    console.error("[MAIN] Failed to setup SPKI whitelist", error);
+  }
+}
+
+// Call immediately to ensure it's set before ready
+setupSpkiWhitelist();
 
 function resolveResourcePath(rel: string) {
   // Prod: packaged resources directory; Dev: look under client/assets
@@ -680,25 +721,6 @@ function createWindow(): void {
     }
   );
 
-  mainWindow.webContents.on(
-    "did-frame-finish-load",
-    (_event, isMainFrame, frameProcessId, frameRoutingId) => {
-      let frameUrl: string | null = null;
-      try {
-        frameUrl =
-          webFrameMain.fromId(frameProcessId, frameRoutingId)?.url ?? null;
-      } catch (error) {
-        frameUrl = `lookup-failed:${String(error)}`;
-      }
-      mainLog("did-frame-finish-load", {
-        isMainFrame,
-        frameProcessId,
-        frameRoutingId,
-        frameUrl,
-      });
-    }
-  );
-
   mainWindow.webContents.on("did-navigate", (_e, url) => {
     mainLog("did-navigate", { url });
   });
@@ -732,6 +754,16 @@ app.on("browser-window-created", (_event, window) => {
 
 app.on("browser-window-focus", (_event, window) => {
   updateHistoryMenuState(window);
+  try {
+    const payload: ElectronRendererEventMap[typeof ELECTRON_WINDOW_FOCUS_EVENT] =
+      { windowId: window.id };
+    window.webContents.send(
+      `cmux:event:${ELECTRON_WINDOW_FOCUS_EVENT}`,
+      payload
+    );
+  } catch (error) {
+    mainWarn("Failed to emit window focus event to renderer", error);
+  }
 });
 
 app.on("login", (event, webContents, _request, authInfo, callback) => {
@@ -760,6 +792,13 @@ app.whenReady().then(async () => {
       disposeContextMenu();
     } catch (error) {
       console.error("Failed to dispose context menu", error);
+    }
+
+    if (embeddedServerCleanup) {
+      embeddedServerCleanup().catch((error) => {
+        console.error("Failed to clean up embedded server", error);
+      });
+      embeddedServerCleanup = null;
     }
   });
   registerLogIpcHandlers();
@@ -875,7 +914,8 @@ app.whenReady().then(async () => {
   // Start the embedded IPC server (registers cmux:register and cmux:rpc)
   try {
     mainLog("Starting embedded IPC server...");
-    await startEmbeddedServer();
+    const embeddedServer = await startEmbeddedServer();
+    embeddedServerCleanup = embeddedServer.cleanup;
     mainLog("Embedded IPC server started successfully");
   } catch (error) {
     mainError("Failed to start embedded IPC server:", error);

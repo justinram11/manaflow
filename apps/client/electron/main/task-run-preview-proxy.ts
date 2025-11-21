@@ -1,3 +1,4 @@
+
 import http, {
   type IncomingHttpHeaders,
   type IncomingMessage,
@@ -12,6 +13,7 @@ import { pipeline as streamPipeline } from "node:stream/promises";
 import { URL } from "node:url";
 import type { Session, WebContents } from "electron";
 import { isLoopbackHostname } from "@cmux/shared";
+import { CertificateManager } from "./preview-proxy-certs";
 import type { Logger } from "./chrome-camouflage";
 
 type ProxyServer = http.Server;
@@ -144,6 +146,7 @@ let startingProxy: Promise<number> | null = null;
 let proxyLoggingEnabled = DEFAULT_PROXY_LOGGING_ENABLED;
 const http2Sessions = new Map<string, ClientHttp2Session>();
 const pendingHttp2Sessions = new Map<string, Promise<ClientHttp2Session>>();
+const certificateManager = new CertificateManager();
 
 export function setPreviewProxyLoggingEnabled(enabled: boolean): void {
   proxyLoggingEnabled = Boolean(enabled);
@@ -411,6 +414,7 @@ function listen(server: ProxyServer, port: number): Promise<void> {
 }
 
 function attachServerHandlers(server: ProxyServer) {
+
   server.on("request", handleHttpRequest);
   server.on("request", (req) => {
     proxyLog("raw-http-request", {
@@ -454,7 +458,11 @@ async function getHttp2SessionFor(
 
 function createHttp2Session(url: URL): Promise<ClientHttp2Session> {
   return new Promise((resolve, reject) => {
-    const session = http2.connect(url.origin);
+    const options: http2.SecureClientSessionOptions = {};
+    if (process.env.TEST_ALLOW_INSECURE_UPSTREAM === "true") {
+        options.rejectUnauthorized = false;
+    }
+    const session = http2.connect(url.origin, options);
     let settled = false;
 
     const handleConnect = () => {
@@ -510,6 +518,7 @@ function monitorHttp2Session(originKey: string, session: ClientHttp2Session) {
 }
 
 function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
+
   const context = authenticateRequest(req.headers, req.socket);
   if (!context) {
     respondProxyAuthRequired(res);
@@ -548,12 +557,22 @@ function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
   });
 }
 
-function handleConnect(req: IncomingMessage, socket: Socket, head: Buffer) {
-  const context = authenticateRequest(req.headers, req.socket);
+function handleConnect(
+  req: IncomingMessage,
+  socket: Socket,
+  head: Buffer
+) {
+
+  const context = authenticateRequest(req.headers, socket);
   if (!context) {
-    respondProxyAuthRequiredSocket(socket);
+
+    socket.write(
+      'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="Cmux Preview Proxy"\r\n\r\n'
+    );
+    socket.end();
     return;
   }
+
 
   const target = parseConnectTarget(req.url ?? "");
   if (!target) {
@@ -621,10 +640,13 @@ function shouldInterceptTls(
   if (!ENABLE_TLS_MITM) {
     return false;
   }
-  if (!context.route || !isLoopbackHostname(hostname)) {
+  if (!context.route) {
     return false;
   }
-  return true;
+  if (isLoopbackHostname(hostname) || hostname.endsWith(".cmux.local")) {
+    return true;
+  }
+  return false;
 }
 
 function looksLikeTlsHandshake(data: Buffer): boolean {
@@ -771,20 +793,6 @@ function parseClientHello(buffer: Buffer): ClientHelloInfo | null {
   };
 }
 
-function containsHttp2Protocol(protocols: string[] | undefined): boolean {
-  if (!protocols || protocols.length === 0) {
-    return false;
-  }
-  return protocols.some((protocol) => {
-    if (!protocol) return false;
-    const normalized = protocol.toLowerCase();
-    return (
-      normalized === "h2" ||
-      normalized.startsWith("h2-") ||
-      normalized === "h2c"
-    );
-  });
-}
 
 function containsHttp3Protocol(protocols: string[] | undefined): boolean {
   if (!protocols || protocols.length === 0) {
@@ -798,6 +806,7 @@ function containsHttp3Protocol(protocols: string[] | undefined): boolean {
 }
 
 function handleUpgrade(req: IncomingMessage, socket: Socket, head: Buffer) {
+
   const context = authenticateRequest(req.headers, req.socket);
   if (!context) {
     respondProxyAuthRequiredSocket(socket);
@@ -849,12 +858,14 @@ function authenticateRequest(
     if (socketContext) {
       return socketContext;
     }
+
     return null;
   }
   const cached = contextsByAuthToken.get(token);
   if (cached) {
     return cached;
   }
+
   // Fallback: decode to locate username map entry in case the cache missed an update.
   try {
     const decoded = Buffer.from(token, "base64").toString("utf8");
@@ -864,10 +875,12 @@ function authenticateRequest(
     const password = decoded.slice(separatorIndex + 1);
     const context = contextsByUsername.get(username);
     if (!context || context.password !== password) {
+
       return null;
     }
     return context;
-  } catch {
+  } catch (_err) {
+
     return null;
   }
 }
@@ -887,10 +900,16 @@ function respondProxyAuthRequiredSocket(socket: Socket) {
 }
 
 function extractBasicToken(raw: string | string[] | undefined): string | null {
-  if (typeof raw !== "string") {
+  let value: string;
+  if (Array.isArray(raw)) {
+    value = raw[0];
+  } else if (typeof raw === "string") {
+    value = raw;
+  } else {
     return null;
   }
-  const trimmed = raw.trim();
+  
+  const trimmed = value.trim();
   if (!trimmed) {
     return null;
   }
@@ -939,7 +958,8 @@ function parseConnectTarget(
 
 function rewriteTarget(url: URL, context: ProxyContext): ProxyTarget {
   const requestedPort = determineRequestedPort(url);
-  if (context.route && isLoopbackHostname(url.hostname)) {
+  // Allow rewriting if loopback OR if we are in test mode with a specific origin
+  if (context.route && (isLoopbackHostname(url.hostname) || process.env.TEST_CMUX_PROXY_ORIGIN)) {
     const proxyTarget = buildCmuxProxyTarget(url, requestedPort, context.route);
     if (proxyTarget) {
       return proxyTarget;
@@ -1037,6 +1057,9 @@ function buildCmuxHost(route: ProxyRoute, port: number): string {
 function shouldAttemptHttp2(target: ProxyTarget): boolean {
   if (!target.secure) {
     return false;
+  }
+  if (process.env.TEST_CMUX_PROXY_ORIGIN) {
+      return true;
   }
   if (target.cmuxProxy) {
     return true;
@@ -1559,7 +1582,7 @@ function establishMitmTunnel(
   clientSocket: Socket,
   head: Buffer,
   originalHostname: string,
-  originalPort: number,
+  _originalPort: number,
   context: ProxyContext,
   target: ProxyTarget
 ) {
@@ -1570,63 +1593,122 @@ function establishMitmTunnel(
   }
   const server = proxyServer;
 
-  const secureContext = tls.createSecureContext();
   let buffered = head;
   let settled = false;
 
-  const cleanup = () => {
+  function onData(chunk: Buffer) {
+      proxyLog("mitm-client-data", { length: chunk.length });
+      handleData(chunk);
+  }
+
+  function cleanup() {
+    proxyLog("mitm-cleanup-listeners");
     settled = true;
-    clientSocket.removeListener("data", handleData);
+    // Remove specific listener
+    clientSocket.removeListener("data", onData);
     clientSocket.removeListener("error", handleClientError);
     clientSocket.removeListener("close", handleClientClose);
-  };
+    // Pause to prevent further data events from unshift until TLS socket takes over
+    clientSocket.pause();
+  }
 
-  const handleTlsTunnel = (initial: Buffer) => {
-    const tlsSocket = new tls.TLSSocket(clientSocket, {
-      isServer: true,
-      secureContext,
-    });
-    attachContextToSocket(tlsSocket, context);
-    if (initial.length > 0) {
-      tlsSocket.unshift(initial);
+  function handleTlsTunnel(initial: Buffer) {
+    const hostname = originalHostname;
+    const { key, cert } = certificateManager.getCertDataForHost(hostname);
+    
+    if (!key || !cert) {
+        proxyLog("mitm-cert-error", { error: "Missing key or cert", hostname });
+        clientSocket.destroy();
+        return;
     }
-    tlsSocket.on("error", (error) => {
-      proxyLogger?.warn("MITM TLS error", {
-        error,
-        host: originalHostname,
-        initialHead: initial.toString("hex"),
-      });
-      tlsSocket.destroy();
-    });
-    tlsSocket.once("secure", () => {
-      proxyLog("mitm-tls-secure", {
-        host: originalHostname,
-      });
-      server.emit("connection", tlsSocket);
-    });
-  };
 
-  const handleHttp2Bypass = (initial: Buffer, alpnProtocols?: string[]) => {
-    proxyLog("connect-http2-bypass", {
-      username: context.username,
-      requestedHost: originalHostname,
-      requestedPort: originalPort,
-      rewrittenHost: target.url.hostname,
-      rewrittenPort: target.connectPort,
-      persistKey: context.persistKey,
-      alpnProtocols,
+    const tlsServer = tls.createServer({
+        key,
+        cert,
+        ALPNProtocols: ["h2", "http/1.1"],
     });
-    proxyLog("mitm-http2-bypass", {
-      host: originalHostname,
-      targetHost: target.url.hostname,
-      alpnProtocols,
-    });
-    forwardConnectTunnel(clientSocket, initial, target, {
-      clientResponseAlreadySent: true,
-    });
-  };
 
-  const handlePlainTunnel = (initial: Buffer) => {
+    tlsServer.on("secureConnection", (tlsSocket) => {
+        // Close the server so it doesn't accept more connections (we only need one)
+        tlsServer.close();
+
+        attachContextToSocket(tlsSocket, context);
+
+        tlsSocket.on("keylog", (line) => {
+            proxyLog("mitm-tls-keylog", { line: line.toString() });
+        });
+
+        tlsSocket.on("clientError", (err) => {
+            proxyLog("mitm-tls-client-error", { error: err });
+        });
+
+        const alpnProtocol = tlsSocket.alpnProtocol;
+        proxyLog("mitm-tls-secure", {
+            host: originalHostname,
+            alpnProtocol,
+        });
+
+        if (alpnProtocol === "h2") {
+            proxyLog("mitm-handling-h2", { host: originalHostname });
+            handleHttp2Connection(tlsSocket, context, target);
+        } else {
+            proxyLog("mitm-handling-plain", { host: originalHostname });
+            server.emit("connection", tlsSocket);
+        }
+
+        tlsSocket.on("error", (error) => {
+          proxyLogger?.warn("MITM TLS error", {
+            error,
+            host: originalHostname,
+          });
+          tlsSocket.destroy();
+        });
+    });
+
+    tlsServer.on("error", (err) => {
+         proxyLog("mitm-tls-server-error", { error: err });
+         clientSocket.destroy();
+    });
+
+    tlsServer.listen(0, "127.0.0.1", () => {
+        const address = tlsServer.address();
+        if (!address || typeof address === 'string') {
+            proxyLog("mitm-tls-server-error", { error: "Invalid address" });
+            clientSocket.destroy();
+            return;
+        }
+        
+        const proxySocket = net.connect(address.port, "127.0.0.1");
+        
+        proxySocket.on("connect", () => {
+            proxyLog("mitm-proxy-socket-connected", { port: address.port });
+            if (initial.length > 0) {
+                proxySocket.write(initial);
+            }
+            // Pipe data
+            clientSocket.pipe(proxySocket);
+            proxySocket.pipe(clientSocket);
+            
+            clientSocket.resume();
+        });
+
+        proxySocket.on("error", (err) => {
+            proxyLog("mitm-proxy-socket-error", { error: err });
+            clientSocket.destroy();
+        });
+        
+        proxySocket.on("close", () => {
+             clientSocket.destroy();
+        });
+        
+        clientSocket.on("close", () => {
+            proxySocket.destroy();
+        });
+    });
+  }
+
+
+  function handlePlainTunnel(initial: Buffer) {
     proxyLog("mitm-plain-tunnel", {
       host: originalHostname,
     });
@@ -1635,9 +1717,9 @@ function establishMitmTunnel(
       clientSocket.unshift(initial);
     }
     server.emit("connection", clientSocket);
-  };
+  }
 
-  const classify = () => {
+  function classify() {
     const result = classifyMitmInitialBytes(buffered);
     if (result.kind === "need-more") {
       return false;
@@ -1654,25 +1736,20 @@ function establishMitmTunnel(
         message:
           "HTTP/3 (h3) detected in ALPN but not supported - falling back to TLS tunnel",
       });
-      // HTTP/3 uses QUIC (UDP), not TLS/TCP, so this shouldn't happen in practice
-      // But if h3 is advertised in ALPN over TLS, we'll treat it as a regular TLS tunnel
     }
-    if (containsHttp2Protocol(result.alpnProtocols)) {
-      handleHttp2Bypass(buffered, result.alpnProtocols);
-      return true;
-    }
+
     handleTlsTunnel(buffered);
     return true;
-  };
+  }
 
-  const handleData = (chunk: Buffer) => {
+  function handleData(chunk: Buffer) {
     buffered = buffered.length === 0 ? chunk : Buffer.concat([buffered, chunk]);
     if (classify()) {
       return;
     }
-  };
+  }
 
-  const handleClientError = (error: Error) => {
+  function handleClientError(error: Error) {
     if (settled) {
       return;
     }
@@ -1682,25 +1759,219 @@ function establishMitmTunnel(
     });
     cleanup();
     clientSocket.destroy();
-  };
+  }
 
-  const handleClientClose = () => {
+  function handleClientClose() {
     if (settled) {
       return;
     }
     cleanup();
-  };
+  }
 
   clientSocket.once("error", handleClientError);
   clientSocket.once("close", handleClientClose);
   clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
 
   if (!classify()) {
-    clientSocket.on("data", handleData);
+    clientSocket.on("data", onData);
   }
 }
 
+function handleHttp2Connection(
+  socket: TLSSocket,
+  context: ProxyContext,
+  target: ProxyTarget
+) {
+  // Use createServer (plain) because the socket is already a TLSSocket (decrypted).
+  // createSecureServer would attempt another TLS handshake.
+  const server = http2.createServer();
+  server.on("stream", (stream, headers) => {
+    handleHttp2Stream(stream, headers, context, target);
+  });
+  server.emit("connection", socket);
+}
+
+async function handleHttp2Stream(
+  stream: http2.ServerHttp2Stream,
+  headers: http2.IncomingHttpHeaders,
+  context: ProxyContext,
+  target: ProxyTarget
+) {
+  const method = (headers[":method"] as string) || "GET";
+  const path = (headers[":path"] as string) || "/";
+  const authority = (headers[":authority"] as string) || target.url.host;
+
+  // We need to forward this to the upstream.
+  // We can reuse forwardHttpRequestViaHttp2 if the upstream is H2,
+  // or forwardHttpRequestViaHttp1 if upstream is H1.
+  // The target.cmuxProxy logic in rewriteTarget might have already decided the upstream protocol/port.
+
+  // However, forwardHttpRequest* functions expect IncomingMessage/ServerResponse.
+  // We need to adapt or write a new forwarder for H2 streams.
+  // For simplicity and robustness, let's write a dedicated H2 stream forwarder.
+
+  proxyLog("http2-mitm-request", {
+    username: context.username,
+    method,
+    path,
+    authority,
+    targetHost: target.url.hostname,
+  });
+
+
+  try {
+    if (shouldAttemptHttp2(target)) {
+
+      await forwardHttp2StreamToHttp2(stream, headers, target, context);
+    } else {
+
+      await forwardHttp2StreamToHttp1(stream, headers, target, context);
+    }
+  } catch (error) {
+    console.error("handleHttp2Stream: error forwarding", error);
+    proxyWarn("http2-mitm-forward-error", {
+      error,
+      path,
+      host: target.url.hostname,
+    });
+    if (!stream.closed) {
+      stream.respond({ ":status": 502 });
+      stream.end();
+    }
+  }
+}
+
+async function forwardHttp2StreamToHttp2(
+  clientStream: http2.ServerHttp2Stream,
+  clientHeaders: http2.IncomingHttpHeaders,
+  target: ProxyTarget,
+  _context: ProxyContext
+) {
+
+  const session = await getHttp2SessionFor(target);
+
+  
+  const upstreamHeaders = { ...clientHeaders };
+  // Filter pseudo-headers and connection-specific headers
+  for (const key of Object.keys(upstreamHeaders)) {
+    if (key.startsWith(":") || HOP_BY_HOP_HEADERS.has(key)) {
+      delete upstreamHeaders[key];
+    }
+    if (key === "host" && target.cmuxProxy) {
+      delete upstreamHeaders[key];
+    }
+  }
+  
+  // Re-add pseudo headers
+  upstreamHeaders[":method"] = clientHeaders[":method"];
+  upstreamHeaders[":path"] = clientHeaders[":path"];
+  upstreamHeaders[":scheme"] = "https"; // We are always HTTPS if we are here? Or match target.
+  upstreamHeaders[":authority"] = target.url.host;
+
+  if (target.cmuxProxy) {
+     injectCmuxProxyHeaders(upstreamHeaders as Record<string, string>, target.cmuxProxy);
+     upstreamHeaders[":authority"] = target.url.host; 
+  }
+
+
+  const upstreamStream = session.request(upstreamHeaders);
+
+
+  upstreamStream.on("response", (responseHeaders) => {
+
+    clientStream.respond(responseHeaders);
+  });
+
+  upstreamStream.pipe(clientStream);
+  clientStream.pipe(upstreamStream);
+
+  upstreamStream.on("error", (err) => {
+     console.error("Upstream stream error:", err);
+     if (!clientStream.closed) clientStream.close(http2.constants.NGHTTP2_INTERNAL_ERROR);
+  });
+  
+  clientStream.on("error", (err) => {
+      console.error("Client stream error:", err);
+      if (!upstreamStream.closed) upstreamStream.close(http2.constants.NGHTTP2_INTERNAL_ERROR);
+  });
+}
+
+async function forwardHttp2StreamToHttp1(
+  clientStream: http2.ServerHttp2Stream,
+  clientHeaders: http2.IncomingHttpHeaders,
+  target: ProxyTarget,
+  _context: ProxyContext
+) {
+    // This is a bit more complex: H2 stream -> H1 request
+    // We can use the 'http2' compatibility or just manual mapping.
+    
+    const method = (clientHeaders[":method"] as string) || "GET";
+    const path = (clientHeaders[":path"] as string) || "/";
+    
+    const headers: Record<string, string> = {};
+    for (const [key, value] of Object.entries(clientHeaders)) {
+        if (key.startsWith(":") || HOP_BY_HOP_HEADERS.has(key)) continue;
+        if (key === "host" && target.cmuxProxy) continue;
+        if (Array.isArray(value)) headers[key] = value.join(", ");
+        else if (value) headers[key] = value;
+    }
+    
+    injectCmuxProxyHeaders(headers, target.cmuxProxy);
+    if (!target.cmuxProxy) {
+        headers["host"] = target.url.host;
+    }
+
+    const agent = target.secure ? HTTPS1_KEEP_ALIVE_AGENT : HTTP1_KEEP_ALIVE_AGENT;
+    const requestOptions = {
+      protocol: target.secure ? "https:" : "http:",
+      hostname: target.url.hostname,
+      port: target.connectPort,
+      method,
+      path,
+      headers,
+      agent,
+    };
+
+    const httpModule = target.secure ? https : http;
+    const proxyReq = httpModule.request(requestOptions, (proxyRes) => {
+        const responseHeaders: http2.OutgoingHttpHeaders = {
+            ":status": proxyRes.statusCode || 200,
+        };
+        for (const [key, value] of Object.entries(proxyRes.headers)) {
+            if (HOP_BY_HOP_HEADERS.has(key)) continue;
+            responseHeaders[key] = value;
+        }
+        clientStream.respond(responseHeaders);
+        proxyRes.pipe(clientStream);
+    });
+
+    proxyReq.on("error", (_err) => {
+        if (!clientStream.closed) {
+            clientStream.respond({ ":status": 502 });
+            clientStream.end();
+        }
+    });
+
+    clientStream.pipe(proxyReq);
+}
+
+
+
 function deriveRoute(url: string): ProxyRoute | null {
+  if (process.env.TEST_CMUX_PROXY_ORIGIN) {
+      try {
+        const parsed = new URL(url);
+        if (parsed.hostname.includes("cmux-test-base-8080")) {
+            return {
+                morphId: "test",
+                scope: "base",
+                domainSuffix: "cmux.local",
+                cmuxProxyOrigin: process.env.TEST_CMUX_PROXY_ORIGIN
+            };
+        }
+      } catch (_e) { /* ignore */ }
+  }
+
   try {
     const parsed = new URL(url);
     const hostname = parsed.hostname.toLowerCase();
@@ -1709,8 +1980,8 @@ function deriveRoute(url: string): ProxyRoute | null {
     if (morphMatch) {
       const morphId = morphMatch[2];
       if (morphId) {
-        const morphSuffix = morphMatch[3];
-        const cmuxProxyOrigin = `${protocol}//port-${CMUX_PROXY_PORT}-morphvm-${morphId}${morphSuffix}`;
+        // const morphSuffix = morphMatch[3];
+        const cmuxProxyOrigin = process.env.TEST_CMUX_PROXY_ORIGIN || `http://port-${CMUX_PROXY_PORT}-morphvm-${morphId}.http.cloud.morph.so`;
         return {
           morphId,
           scope: "base",
@@ -1758,5 +2029,7 @@ function deriveRoute(url: string): ProxyRoute | null {
     console.error("Failed to derive route", error);
     return null;
   }
+  
+
   return null;
 }

@@ -305,6 +305,7 @@ export function CommandBar({
   );
   const openRef = useRef<boolean>(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const commandContainerRef = useRef<HTMLDivElement | null>(null);
   const commandListRef = useRef<HTMLDivElement | null>(null);
   const previousSearchRef = useRef(search);
   const skipNextCloseRef = useRef(false);
@@ -431,11 +432,18 @@ export function CommandBar({
   }, [clearPendingStateReset, resetCommandState, stateResetDelayMs]);
 
   const closeCommand = useCallback(() => {
+    const activeElement = document.activeElement;
+    if (
+      activeElement instanceof HTMLElement &&
+      commandContainerRef.current?.contains(activeElement)
+    ) {
+      activeElement.blur();
+    }
     skipNextCloseRef.current = false;
     setOpen(false);
     setOpenedWithShift(false);
     scheduleCommandStateReset();
-  }, [scheduleCommandStateReset, setOpen, setOpenedWithShift]);
+  }, [commandContainerRef, scheduleCommandStateReset, setOpen, setOpenedWithShift]);
 
   const handleEscape = useCallback(() => {
     skipNextCloseRef.current = false;
@@ -2489,6 +2497,7 @@ export function CommandBar({
               ? "opacity-100 pointer-events-auto"
               : "opacity-0 pointer-events-none"
           }`}
+          ref={commandContainerRef}
           aria-hidden={!open}
         >
           <Command

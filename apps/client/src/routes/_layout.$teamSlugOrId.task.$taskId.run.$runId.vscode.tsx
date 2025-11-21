@@ -21,6 +21,9 @@ import {
   useLocalVSCodeServeWebQuery,
 } from "@/queries/local-vscode-serve-web";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { ResumeWorkspaceOverlay } from "@/components/resume-workspace-overlay";
+import { useElectronWindowFocus } from "@/hooks/useElectronWindowFocus";
+import { useWebviewActions } from "@/hooks/useWebviewActions";
 
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
@@ -93,6 +96,7 @@ function VSCodeComponent() {
   const persistKey = getTaskRunPersistKey(taskRunId);
   const hasWorkspace = workspaceUrl !== null;
   const isLocalWorkspace = taskRun?.vscode?.provider === "other";
+  const webviewActions = useWebviewActions({ persistKey });
 
   const [iframeStatus, setIframeStatus] =
     useState<PersistentIframeStatus>("loading");
@@ -102,7 +106,8 @@ function VSCodeComponent() {
 
   const onLoad = useCallback(() => {
     console.log(`Workspace view loaded for task run ${taskRunId}`);
-  }, [taskRunId]);
+    void webviewActions.focus();
+  }, [taskRunId, webviewActions]);
 
   const onError = useCallback(
     (error: Error) => {
@@ -127,6 +132,28 @@ function VSCodeComponent() {
   );
 
   const isEditorBusy = !hasWorkspace || iframeStatus !== "loaded";
+
+  const focusWebviewIfReady = useCallback(() => {
+    if (!workspaceUrl) return;
+    if (iframeStatus !== "loaded") return;
+    void webviewActions.focus();
+  }, [iframeStatus, webviewActions, workspaceUrl]);
+
+  useEffect(() => {
+    focusWebviewIfReady();
+  }, [focusWebviewIfReady]);
+
+  const handleElectronWindowFocus = useCallback(() => {
+    void (async () => {
+      const alreadyFocused = await webviewActions.isFocused();
+      if (alreadyFocused) {
+        return;
+      }
+      focusWebviewIfReady();
+    })();
+  }, [focusWebviewIfReady, webviewActions]);
+
+  useElectronWindowFocus(handleElectronWindowFocus);
 
   return (
     <div className="flex flex-col grow bg-neutral-50 dark:bg-black">
@@ -162,6 +189,12 @@ function VSCodeComponent() {
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <WorkspaceLoadingIndicator variant="vscode" status="loading" />
             </div>
+          ) : null}
+          {taskRun ? (
+            <ResumeWorkspaceOverlay
+              taskRun={taskRun}
+              teamSlugOrId={teamSlugOrId}
+            />
           ) : null}
         </div>
       </div>
