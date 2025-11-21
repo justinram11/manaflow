@@ -94,7 +94,7 @@ function VSCodeComponent() {
   const persistKey = getTaskRunPersistKey(taskRunId);
   const hasWorkspace = workspaceUrl !== null;
   const isLocalWorkspace = taskRun?.vscode?.provider === "other";
-  const { focus: focusWebview } = useWebviewActions({ persistKey });
+  const webviewActions = useWebviewActions({ persistKey });
 
   const [iframeStatus, setIframeStatus] =
     useState<PersistentIframeStatus>("loading");
@@ -104,7 +104,9 @@ function VSCodeComponent() {
 
   const onLoad = useCallback(() => {
     console.log(`Workspace view loaded for task run ${taskRunId}`);
-  }, [taskRunId]);
+    console.log("focusing webview");
+    webviewActions.focus();
+  }, [taskRunId, webviewActions]);
 
   const onError = useCallback(
     (error: Error) => {
@@ -133,8 +135,9 @@ function VSCodeComponent() {
   useEffect(() => {
     if (!workspaceUrl) return;
     if (iframeStatus !== "loaded") return;
-    void focusWebview();
-  }, [focusWebview, iframeStatus, workspaceUrl]);
+    console.log("focusing webview");
+    void webviewActions.focus();
+  }, [webviewActions, iframeStatus, workspaceUrl]);
 
   return (
     <div className="flex flex-col grow bg-neutral-50 dark:bg-black">

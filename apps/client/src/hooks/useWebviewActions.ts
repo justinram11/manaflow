@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useMemo } from "react";
 
 import { focusWebview } from "@/lib/webview-actions";
 
@@ -13,15 +13,11 @@ interface UseWebviewActionsResult {
 export function useWebviewActions({
   persistKey,
 }: UseWebviewActionsOptions): UseWebviewActionsResult {
-  const persistKeyRef = useRef(persistKey);
-
-  useEffect(() => {
-    persistKeyRef.current = persistKey;
+  const focus = useCallback(() => {
+    return focusWebview(persistKey);
   }, [persistKey]);
 
-  const focus = useCallback(() => {
-    return focusWebview(persistKeyRef.current);
-  }, []);
-
-  return { focus };
+  return useMemo(() => {
+    return { focus };
+  }, [focus]);
 }
