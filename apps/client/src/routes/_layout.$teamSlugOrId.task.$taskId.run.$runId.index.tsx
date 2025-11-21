@@ -21,6 +21,7 @@ import {
   useLocalVSCodeServeWebQuery,
 } from "@/queries/local-vscode-serve-web";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { ResumeWorkspaceOverlay } from "@/components/resume-workspace-overlay";
 
 export const Route = createFileRoute(
   "/_layout/$teamSlugOrId/task/$taskId/run/$runId/"
@@ -161,6 +162,12 @@ function TaskRunComponent() {
             >
               <WorkspaceLoadingIndicator variant="vscode" status="loading" />
             </div>
+          ) : null}
+          {taskRun ? (
+            <ResumeWorkspaceOverlay
+              taskRun={taskRun}
+              teamSlugOrId={teamSlugOrId}
+            />
           ) : null}
         </div>
       </div>

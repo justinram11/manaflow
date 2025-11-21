@@ -350,6 +350,22 @@ export type GithubInstallStateRequest = {
     returnUrl?: string;
 };
 
+export type ResumeTaskRunResponse = {
+    resumed: true;
+};
+
+export type ResumeTaskRunBody = {
+    teamSlugOrId: string;
+};
+
+export type CheckTaskRunPausedResponse = {
+    paused: boolean;
+};
+
+export type CheckTaskRunPausedBody = {
+    teamSlugOrId: string;
+};
+
 export type SetupInstanceResponse = {
     instanceId: string;
     vscodeUrl: string;
@@ -1561,6 +1577,88 @@ export type PostApiIntegrationsGithubInstallStateResponses = {
 };
 
 export type PostApiIntegrationsGithubInstallStateResponse = PostApiIntegrationsGithubInstallStateResponses[keyof PostApiIntegrationsGithubInstallStateResponses];
+
+export type PostApiMorphTaskRunsByTaskRunIdResumeData = {
+    body: ResumeTaskRunBody;
+    path: {
+        taskRunId: string;
+    };
+    query?: never;
+    url: '/api/morph/task-runs/{taskRunId}/resume';
+};
+
+export type PostApiMorphTaskRunsByTaskRunIdResumeErrors = {
+    /**
+     * Task run is not backed by a Morph instance
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Forbidden
+     */
+    403: unknown;
+    /**
+     * Task run or instance not found
+     */
+    404: unknown;
+    /**
+     * Failed to resume instance
+     */
+    500: unknown;
+};
+
+export type PostApiMorphTaskRunsByTaskRunIdResumeResponses = {
+    /**
+     * Morph instance resumed
+     */
+    200: ResumeTaskRunResponse;
+};
+
+export type PostApiMorphTaskRunsByTaskRunIdResumeResponse = PostApiMorphTaskRunsByTaskRunIdResumeResponses[keyof PostApiMorphTaskRunsByTaskRunIdResumeResponses];
+
+export type PostApiMorphTaskRunsByTaskRunIdIsPausedData = {
+    body: CheckTaskRunPausedBody;
+    path: {
+        taskRunId: string;
+    };
+    query?: never;
+    url: '/api/morph/task-runs/{taskRunId}/is-paused';
+};
+
+export type PostApiMorphTaskRunsByTaskRunIdIsPausedErrors = {
+    /**
+     * Task run is not backed by a Morph instance
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Forbidden
+     */
+    403: unknown;
+    /**
+     * Task run or instance not found
+     */
+    404: unknown;
+    /**
+     * Failed to check instance status
+     */
+    500: unknown;
+};
+
+export type PostApiMorphTaskRunsByTaskRunIdIsPausedResponses = {
+    /**
+     * Morph instance status returned
+     */
+    200: CheckTaskRunPausedResponse;
+};
+
+export type PostApiMorphTaskRunsByTaskRunIdIsPausedResponse = PostApiMorphTaskRunsByTaskRunIdIsPausedResponses[keyof PostApiMorphTaskRunsByTaskRunIdIsPausedResponses];
 
 export type PostApiMorphSetupInstanceData = {
     body: SetupInstanceBody;
