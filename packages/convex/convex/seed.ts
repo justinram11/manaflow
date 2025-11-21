@@ -1,12 +1,14 @@
+"use node";
+
 import {
   StackAdminApp,
   type ServerTeam,
   type ServerTeamUser,
   type ServerUser,
 } from "@stackframe/js";
-import { internalMutation } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { internalAction } from "./_generated/server";
 import { env } from "../_shared/convex-env";
-import { ensureMembershipCore, upsertTeamCore, upsertUserCore } from "./stack";
 
 function requireEnv(name: keyof typeof env): string {
   const value = env[name];
@@ -14,7 +16,7 @@ function requireEnv(name: keyof typeof env): string {
   return String(value);
 }
 
-export const init = internalMutation({
+export const init = internalAction({
   args: {},
   handler: async (ctx) => {
     const projectId = requireEnv("NEXT_PUBLIC_STACK_PROJECT_ID");
@@ -46,7 +48,7 @@ export const init = internalMutation({
 
       await Promise.all(
         page.map((user) =>
-          upsertUserCore(ctx, {
+          ctx.runMutation(internal.stack.upsertUser, {
             id: user.id,
             primaryEmail: user.primaryEmail ?? undefined,
             primaryEmailVerified: user.primaryEmailVerified,
@@ -79,7 +81,7 @@ export const init = internalMutation({
     const teams = (await admin.listTeams()) as ServerTeam[];
     await Promise.all(
       teams.map((team) =>
-        upsertTeamCore(ctx, {
+        ctx.runMutation(internal.stack.upsertTeam, {
           id: team.id,
           displayName: team.displayName ?? undefined,
           profileImageUrl: team.profileImageUrl ?? undefined,
@@ -95,7 +97,12 @@ export const init = internalMutation({
     for (const team of teams) {
       const members = (await team.listUsers()) as ServerTeamUser[];
       await Promise.all(
-        members.map((member) => ensureMembershipCore(ctx, team.id, member.id))
+        members.map((member) =>
+          ctx.runMutation(internal.stack.ensureMembership, {
+            teamId: team.id,
+            userId: member.id,
+          })
+        )
       );
       summary.membershipsProcessed += members.length;
     }
