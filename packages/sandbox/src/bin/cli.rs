@@ -130,7 +130,15 @@ fn save_last_sandbox(id: &str) {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() {
+    if let Err(e) = run().await {
+        eprintln!("Error: {e:?}");
+        std::process::exit(1);
+    }
+    std::process::exit(0);
+}
+
+async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     if std::env::var("CMUX_DEBUG").is_ok() {
         eprintln!("cmux base url: {}", cli.base_url);
@@ -284,7 +292,7 @@ async fn handle_ssh(base_url: &str, id: &str) -> anyhow::Result<()> {
     let url = format!("{}/sandboxes/{}/attach", ws_url, id);
 
     let (ws_stream, _) = connect_async(url).await?;
-    eprintln!("Connected to sandbox shell. Press Ctrl+D to exit, or ~. to disconnect.");
+    eprintln!("Connected to sandbox shell. Press Ctrl+D to exit.");
 
     let _guard = RawModeGuard::new()?;
 
@@ -292,10 +300,6 @@ async fn handle_ssh(base_url: &str, id: &str) -> anyhow::Result<()> {
     let mut stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
     let mut buf = [0u8; 1024];
-
-    // State for escape sequence detection
-    let mut newline = true;
-    let mut tilde_seen = false;
 
     loop {
         tokio::select! {
@@ -307,16 +311,10 @@ async fn handle_ssh(base_url: &str, id: &str) -> anyhow::Result<()> {
                     Some(Ok(Message::Binary(data))) => {
                         stdout.write_all(&data).await?;
                         stdout.flush().await?;
-                        // Simple heuristic: if we received a newline at the end, next input is start of line.
-                        // This is imperfect because of local echo vs remote echo, but useful for ~ detection.
-                        if let Some(&last) = data.last() {
-                             newline = last == b'\r' || last == b'\n';
-                        }
                     }
                     Some(Ok(Message::Text(text))) => {
                         stdout.write_all(text.as_bytes()).await?;
                         stdout.flush().await?;
-                        newline = text.ends_with('\r') || text.ends_with('\n');
                     }
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {
                         break;
@@ -328,28 +326,7 @@ async fn handle_ssh(base_url: &str, id: &str) -> anyhow::Result<()> {
                 match res {
                     Ok(0) => break,
                     Ok(n) => {
-                        let data = &buf[..n];
-                        for &b in data {
-                            if tilde_seen {
-                                if b == b'.' {
-                                    // ~. -> Disconnect
-                                    // Restore terminal first (by dropping guard, which happens on return)
-                                    // But we are in loop. simple break works.
-                                    return Ok(());
-                                } else {
-                                    // Not a dot, so send the tilde and the current char
-                                    write.send(Message::Binary(vec![b'~'])).await?;
-                                    write.send(Message::Binary(vec![b])).await?;
-                                    tilde_seen = false;
-                                    newline = b == b'\r' || b == b'\n';
-                                }
-                            } else if newline && b == b'~' {
-                                tilde_seen = true;
-                            } else {
-                                write.send(Message::Binary(vec![b])).await?;
-                                newline = b == b'\r' || b == b'\n';
-                            }
-                        }
+                        write.send(Message::Binary(buf[..n].to_vec())).await?;
                     }
                     Err(_) => break,
                 }
@@ -387,7 +364,6 @@ fn print_json<T: Serialize>(value: &T) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
 
     #[test]
     fn parses_env_value() {

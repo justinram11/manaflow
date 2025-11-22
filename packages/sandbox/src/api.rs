@@ -223,6 +223,7 @@ mod tests {
 
     fn fake_summary(name: String) -> SandboxSummary {
         SandboxSummary {
+            index: 0,
             id: Uuid::new_v4(),
             name,
             created_at: Utc::now(),
