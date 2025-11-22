@@ -1,10 +1,5 @@
 import { isElectron } from "@/lib/electron";
-import { useStackApp } from "@stackframe/react";
-import {
-  createHashHistory,
-  createRouter as createTanStackRouter,
-  RouterProvider,
-} from "@tanstack/react-router";
+import { createHashHistory, createRouter as createTanStackRouter } from "@tanstack/react-router";
 import { routerWithQueryClient } from "@tanstack/react-router-with-query";
 import { queryClient } from "./query-client";
 import { routeTree } from "./routeTree.gen";
@@ -29,12 +24,7 @@ function createRouter() {
   return router;
 }
 
-const router = createRouter();
-
-export function RouterProviderWithAuth() {
-  const auth = useStackApp();
-  return <RouterProvider router={router} context={{ queryClient, auth }} />;
-}
+export const router = createRouter();
 
 declare module "@tanstack/react-router" {
   interface Register {
