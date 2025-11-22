@@ -310,21 +310,13 @@ async fn handle_ssh(base_url: &str, id: &str) -> anyhow::Result<()> {
                         // Simple heuristic: if we received a newline at the end, next input is start of line.
                         // This is imperfect because of local echo vs remote echo, but useful for ~ detection.
                         if let Some(&last) = data.last() {
-                             if last == b'\r' || last == b'\n' {
-                                 newline = true;
-                             } else {
-                                 newline = false;
-                             }
+                             newline = last == b'\r' || last == b'\n';
                         }
                     }
                     Some(Ok(Message::Text(text))) => {
                         stdout.write_all(text.as_bytes()).await?;
                         stdout.flush().await?;
-                        if text.ends_with('\r') || text.ends_with('\n') {
-                            newline = true;
-                        } else {
-                            newline = false;
-                        }
+                        newline = text.ends_with('\r') || text.ends_with('\n');
                     }
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {
                         break;
@@ -351,13 +343,11 @@ async fn handle_ssh(base_url: &str, id: &str) -> anyhow::Result<()> {
                                     tilde_seen = false;
                                     newline = b == b'\r' || b == b'\n';
                                 }
+                            } else if newline && b == b'~' {
+                                tilde_seen = true;
                             } else {
-                                if newline && b == b'~' {
-                                    tilde_seen = true;
-                                } else {
-                                    write.send(Message::Binary(vec![b])).await?;
-                                    newline = b == b'\r' || b == b'\n';
-                                }
+                                write.send(Message::Binary(vec![b])).await?;
+                                newline = b == b'\r' || b == b'\n';
                             }
                         }
                     }

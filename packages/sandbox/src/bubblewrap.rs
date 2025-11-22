@@ -58,6 +58,7 @@ pub struct BubblewrapService {
     ip_pool: Mutex<IpPool>,
     bubblewrap_path: String,
     ip_path: String,
+    iptables_path: String,
     nsenter_path: String,
     port: u16,
     next_index: AtomicUsize,
@@ -94,18 +95,48 @@ impl BubblewrapService {
 
         let bubblewrap_path = find_binary("bwrap")?;
         let ip_path = find_binary("ip")?;
+        let iptables_path = find_binary("iptables")?;
         let nsenter_path = find_binary("nsenter")?;
 
-        Ok(Self {
+        let service = Self {
             sandboxes: Mutex::new(HashMap::new()),
             workspace_root,
             ip_pool: Mutex::new(IpPool::new(NETWORK_BASE)),
             bubblewrap_path,
             ip_path,
+            iptables_path,
             nsenter_path,
             port,
             next_index: AtomicUsize::new(0),
-        })
+        };
+
+        service.setup_host_network().await?;
+        Ok(service)
+    }
+
+    async fn setup_host_network(&self) -> SandboxResult<()> {
+        // Enable IP forwarding
+        if let Err(e) = run_command("sysctl", &["-w", "net.ipv4.ip_forward=1"]).await {
+            warn!("failed to enable ip forwarding (might be already enabled or permission denied): {}", e);
+        }
+
+        // Add MASQUERADE rule for sandbox subnet if it doesn't exist
+        let subnet = format!("{}/16", NETWORK_BASE);
+        
+        // Check existence
+        let check = run_command(
+            &self.iptables_path,
+            &["-t", "nat", "-C", "POSTROUTING", "-s", &subnet, "!", "-d", &subnet, "-j", "MASQUERADE"],
+        ).await;
+
+        if check.is_err() {
+            run_command(
+                &self.iptables_path,
+                &["-t", "nat", "-A", "POSTROUTING", "-s", &subnet, "!", "-d", &subnet, "-j", "MASQUERADE"],
+            ).await?;
+        }
+
+        Ok(())
     }
 
     fn default_name(id: &Uuid) -> String {
@@ -162,14 +193,72 @@ impl BubblewrapService {
         matched.ok_or_else(|| SandboxError::InvalidRequest(format!("sandbox not found: {id_str}")))
     }
 
+    async fn setup_dns(&self, etc_merged: &Path) -> SandboxResult<()> {
+        let resolv_conf_path = etc_merged.join("resolv.conf");
+
+        // Read host's resolv.conf (following symlinks/mounts)
+        let content = match fs::read_to_string("/etc/resolv.conf").await {
+            Ok(c) => c,
+            Err(_) => "nameserver 8.8.8.8\nnameserver 1.1.1.1".to_string(),
+        };
+
+        // Filter out local resolvers that won't work in sandbox
+        let filtered_lines: Vec<&str> = content
+            .lines()
+            .filter(|l| !l.contains("127.0.0.53") && !l.contains("127.0.0.1"))
+            .collect();
+
+        let final_content = if filtered_lines.is_empty() {
+            "nameserver 8.8.8.8\nnameserver 1.1.1.1".to_string()
+        } else {
+            filtered_lines.join("\n")
+        };
+
+        fs::write(&resolv_conf_path, final_content).await?;
+        Ok(())
+    }
+
+    async fn setup_hosts(&self, etc_merged: &Path, hostname: &str) -> SandboxResult<()> {
+        let hosts_path = etc_merged.join("hosts");
+        let content = format!("127.0.0.1\tlocalhost\n127.0.0.1\t{}\n", hostname);
+        fs::write(&hosts_path, content).await?;
+        Ok(())
+    }
+
+    async fn setup_apt(&self, etc_merged: &Path) -> SandboxResult<()> {
+        let apt_conf_dir = etc_merged.join("apt/apt.conf.d");
+        // Ensure directory exists (it might be a new directory in the upper layer if copy-up happens, 
+        // or we might need to create it if it doesn't exist in lower, though it should)
+        fs::create_dir_all(&apt_conf_dir).await?;
+        
+        let conf_path = apt_conf_dir.join("99sandbox");
+        let content = "Acquire::PrivilegeDrop::User \"root\";\n";
+        fs::write(&conf_path, content).await?;
+        Ok(())
+    }
+
     async fn spawn_bubblewrap(
         &self,
         request: &CreateSandboxRequest,
         workspace: &Path,
-        id: &Uuid,
+        _id: &Uuid,
         lease: &IpLease,
         index: usize,
     ) -> SandboxResult<(Child, u32)> {
+        // Prepare system directories for the sandbox
+        let system_dir = workspace.join(".system");
+        fs::create_dir_all(&system_dir).await?;
+
+        // Setup overlays
+        let usr_merged = mount_overlay(&system_dir, "usr", "/usr").await?;
+        let etc_merged = mount_overlay(&system_dir, "etc", "/etc").await?;
+        let var_merged = mount_overlay(&system_dir, "var", "/var").await?;
+
+        // Ensure we have valid DNS and hosts file in the overlay
+        self.setup_dns(&etc_merged).await?;
+        self.setup_hosts(&etc_merged, &format!("sandbox-{}", index)).await?;
+        self.setup_apt(&etc_merged).await?;
+
         let workspace_str = workspace
             .to_str()
             .ok_or_else(|| {
@@ -190,10 +279,14 @@ impl BubblewrapService {
             "/dev",
             "--proc",
             "/proc",
+            "--perms",
+            "1777",
             "--tmpfs",
             "/tmp",
+            "--perms",
+            "1777",
             "--tmpfs",
-            "/var",
+            "/var/tmp",
             "--tmpfs",
             "/run",
             "--bind",
@@ -207,7 +300,16 @@ impl BubblewrapService {
             "1",
         ]);
 
-        for path_str in ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"] {
+        // Bind overlays
+        command.args(["--bind", usr_merged.to_str().unwrap(), "/usr"]);
+        command.args(["--bind", etc_merged.to_str().unwrap(), "/etc"]);
+        command.args(["--bind", var_merged.to_str().unwrap(), "/var"]);
+
+        // Hide sensitive host paths exposed via /var overlay
+        command.args(["--tmpfs", "/var/lib/docker"]);
+        command.args(["--tmpfs", "/var/lib/cmux"]);
+
+        for path_str in ["/bin", "/sbin", "/lib", "/lib64"] {
             let path = Path::new(path_str);
             if !path.exists() {
                 continue;
@@ -432,6 +534,7 @@ impl SandboxService for BubblewrapService {
         {
             Ok(res) => res,
             Err(error) => {
+                cleanup_overlays(&workspace).await;
                 let mut pool = self.ip_pool.lock().await;
                 pool.release(&lease);
                 return Err(error);
@@ -442,6 +545,7 @@ impl SandboxService for BubblewrapService {
             Ok(net) => net,
             Err(error) => {
                 let _ = child.kill().await;
+                cleanup_overlays(&workspace).await;
                 {
                     let mut pool = self.ip_pool.lock().await;
                     pool.release(&lease);
@@ -703,6 +807,8 @@ impl SandboxService for BubblewrapService {
             };
 
             let summary = entry.handle.to_summary(observed_status);
+            
+            cleanup_overlays(&entry.handle.workspace).await;
 
             if entry.handle.workspace.starts_with(&self.workspace_root) {
                 if let Err(error) = fs::remove_dir_all(&entry.handle.workspace).await {
@@ -746,6 +852,49 @@ async fn run_command(binary: &str, args: &[&str]) -> SandboxResult<()> {
         command: format!("{binary} {}", args.join(" ")),
         message: stderr,
     })
+}
+
+async fn mount_overlay(
+    system_dir: &Path,
+    name: &str,
+    lower: &str,
+) -> SandboxResult<PathBuf> {
+    let upper = system_dir.join(format!("{}-upper", name));
+    let work = system_dir.join(format!("{}-work", name));
+    let merged = system_dir.join(format!("{}-merged", name));
+
+    fs::create_dir_all(&upper).await?;
+    fs::create_dir_all(&work).await?;
+    fs::create_dir_all(&merged).await?;
+
+    let opts = format!(
+        "lowerdir={},upperdir={},workdir={}",
+        lower,
+        upper.to_string_lossy(),
+        work.to_string_lossy()
+    );
+
+    run_command(
+        "mount",
+        &[
+            "-t",
+            "overlay",
+            "overlay",
+            "-o",
+            &opts,
+            merged.to_str().unwrap(),
+        ],
+    )
+    .await?;
+
+    Ok(merged)
+}
+
+async fn cleanup_overlays(workspace: &Path) {
+    let system_dir = workspace.join(".system");
+    let _ = run_command("umount", &[system_dir.join("var-merged").to_string_lossy().as_ref()]).await;
+    let _ = run_command("umount", &[system_dir.join("etc-merged").to_string_lossy().as_ref()]).await;
+    let _ = run_command("umount", &[system_dir.join("usr-merged").to_string_lossy().as_ref()]).await;
 }
 
 #[cfg(test)]

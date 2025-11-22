@@ -91,6 +91,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   htop \
   btop \
   unzip \
+  sudo \
   && rm -rf /var/lib/apt/lists/*
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
