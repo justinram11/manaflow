@@ -1,11 +1,5 @@
 import { useTheme } from "@/components/theme/use-theme";
-import {
-  capturePosthogPageview,
-  identifyPosthogUser,
-  initPosthog,
-  resetPosthog,
-} from "@/lib/analytics/posthog";
-import { useUser, type StackClientApp } from "@stackframe/react";
+import type { StackClientApp } from "@stackframe/react";
 import type { QueryClient } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import {
@@ -14,9 +8,8 @@ import {
   useRouterState,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { toast, Toaster } from "sonner";
-import { useTeamIdFromPathname } from "../hooks/useTeamIdFromPathname";
 
 const AUTO_UPDATE_TOAST_ID = "auto-update-toast";
 
@@ -125,39 +118,6 @@ function useAutoUpdateNotifications() {
   }, []);
 }
 
-function PosthogTracking({ locationKey }: { locationKey: string }) {
-  const user = useUser({ or: "return-null" });
-  const previousUserId = useRef<string | null>(null);
-  const { teamId } = useTeamIdFromPathname({ enabled: Boolean(user) });
-
-  useEffect(() => {
-    initPosthog();
-  }, []);
-
-  useEffect(() => {
-    capturePosthogPageview(locationKey);
-  }, [locationKey]);
-
-  useEffect(() => {
-    if (!user) {
-      if (previousUserId.current) {
-        resetPosthog();
-        previousUserId.current = null;
-      }
-      return;
-    }
-
-    identifyPosthogUser(user.id, {
-      email: user.primaryEmail ?? undefined,
-      name: user.displayName ?? undefined,
-      team_id: teamId ?? undefined,
-    });
-    previousUserId.current = user.id;
-  }, [teamId, user]);
-
-  return null;
-}
-
 function RootComponent() {
   const location = useRouterState({
     select: (state) => state.location,
@@ -177,7 +137,6 @@ function RootComponent() {
 
   return (
     <>
-      <PosthogTracking locationKey={locationKey} />
       <Outlet />
       <DevTools />
       <ToasterWithTheme />

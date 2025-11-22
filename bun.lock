@@ -28,7 +28,7 @@
     },
     "apps/client": {
       "name": "@cmux/client",
-      "version": "1.0.177",
+      "version": "1.0.178",
       "dependencies": {
         "@base-ui-components/react": "1.0.0-beta.2",
         "@cmux/convex": "workspace:*",
@@ -70,6 +70,7 @@
         "@lezer/highlight": "^1.2.1",
         "@mantine/hooks": "^8.1.3",
         "@monaco-editor/react": "^4.7.0",
+        "@posthog/react": "^1.4.0",
         "@radix-ui/react-dialog": "^1.1.6",
         "@radix-ui/react-dropdown-menu": "^2.1.15",
         "@radix-ui/react-popover": "^1.1.15",
@@ -129,7 +130,7 @@
         "monaco-editor": "^0.53.0",
         "ms": "^2.1.3",
         "node-forge": "^1.3.1",
-        "posthog-js": "^1.285.1",
+        "posthog-js": "^1.297.2",
         "prismjs": "^1.30.0",
         "react": "^19.1.0",
         "react-aria-components": "^1.12.1",
@@ -333,7 +334,7 @@
         "morphcloud": "^0.0.18",
         "next": "15.5.2",
         "octokit": "^3.2.2",
-        "posthog-js": "^1.285.1",
+        "posthog-js": "^1.297.2",
         "posthog-node": "^5.11.0",
         "react": "^19.1.0",
         "react-diff-view": "^3.3.2",
@@ -1572,7 +1573,9 @@
 
     "@playwright/mcp": ["@playwright/mcp@0.0.44", "", { "dependencies": { "playwright": "1.57.0-alpha-2025-10-24", "playwright-core": "1.57.0-alpha-2025-10-24" }, "bin": { "mcp-server-playwright": "cli.js" } }, "sha512-QkJd/qUxbw9MY5Vy5TMC6EmK2VSTBJ0+NOx/wTat5W7ycj8s19tweYRJI+33Ix8SMdf6aaG9pIaY0AZGfnK0oA=="],
 
-    "@posthog/core": ["@posthog/core@1.5.0", "", {}, "sha512-oxfV20QMNwH30jKybUyqi3yGuMghULQz1zkJgQG3rjpHDxhD2vDN6E7UpmaqgphMIvGG3Q+DgfU10zfSPA7w7w=="],
+    "@posthog/core": ["@posthog/core@1.5.5", "", { "dependencies": { "cross-spawn": "^7.0.6" } }, "sha512-m7G1EQTgo9xrr3lZxCp9C2egP99MSRpIDD95wYzwUPxMesKxI0xEQ+TC5LS/XOXIdmsNvsx4UcxwmzhSwD2GWA=="],
+
+    "@posthog/react": ["@posthog/react@1.4.0", "", { "peerDependencies": { "@types/react": ">=16.8.0", "posthog-js": ">=1.257.2", "react": ">=16.8.0" }, "optionalPeers": ["@types/react"] }, "sha512-xzPeZ753fQ0deZzdgY/0YavZvNpmdaxUzLYJYu5XjONNcZ8PwJnNLEK+7D/Cj8UM4Q8nWI7QC5mjum0uLWa4FA=="],
 
     "@prisma/instrumentation": ["@prisma/instrumentation@6.15.0", "", { "dependencies": { "@opentelemetry/instrumentation": "^0.52.0 || ^0.53.0 || ^0.54.0 || ^0.55.0 || ^0.56.0 || ^0.57.0" }, "peerDependencies": { "@opentelemetry/api": "^1.8" } }, "sha512-6TXaH6OmDkMOQvOxwLZ8XS51hU2v4A3vmE2pSijCIiGRJYyNeMcL6nMHQMyYdZRD8wl7LF3Wzc+AMPMV/9Oo7A=="],
 
@@ -4206,7 +4209,7 @@
 
     "postgres-interval": ["postgres-interval@1.2.0", "", { "dependencies": { "xtend": "^4.0.0" } }, "sha512-9ZhXKM/rw350N1ovuWHbGxnGh/SNJ4cnxHiM0rxE4VN41wsg8P8zWn9hv/buK00RP4WvlOyr/RBDiptyxVbkZQ=="],
 
-    "posthog-js": ["posthog-js@1.285.1", "", { "dependencies": { "@posthog/core": "1.5.0", "core-js": "^3.38.1", "fflate": "^0.4.8", "preact": "^10.19.3", "web-vitals": "^4.2.4" } }, "sha512-+Cn3igI6LoOJuGtsiVsD15a0jGIaR1zE5tEG3Ovd4MLgti3RFHdS1eOisZTJUuQa2bR8X/Bx7HdoXsGNmW9h4Q=="],
+    "posthog-js": ["posthog-js@1.297.2", "", { "dependencies": { "@posthog/core": "1.5.5", "core-js": "^3.38.1", "fflate": "^0.4.8", "preact": "^10.19.3", "web-vitals": "^4.2.4" } }, "sha512-pDtCKHpKegV1D5Yk9PBmkFwI9FMnLJm0TsBO5c5/PhPq5Om4y/t+1qqbNcLCdLajkuYl2px9UlRTzycQ6W7Vmw=="],
 
     "posthog-node": ["posthog-node@5.11.0", "", { "dependencies": { "@posthog/core": "1.5.0" } }, "sha512-9+gmWp/7AEryJMi0+/ywJjKQhpkmcjxf+eT030fTIIPvFTF84zeeagdZBGNC/Nh2Jc0grIAW6O1n5lxXiX3daA=="],
 
@@ -5819,6 +5822,8 @@
     "playwright/fsevents": ["fsevents@2.3.2", "", { "os": "darwin" }, "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA=="],
 
     "plist/xmlbuilder": ["xmlbuilder@15.1.1", "", {}, "sha512-yMqGBqtXyeN1e3TGYvgNgDVZ3j84W4cwkOXQswghol6APgZWaff9lnbvN7MHYJOiXsvGPXtjTYJEiC9J2wv9Eg=="],
+
+    "posthog-node/@posthog/core": ["@posthog/core@1.5.0", "", {}, "sha512-oxfV20QMNwH30jKybUyqi3yGuMghULQz1zkJgQG3rjpHDxhD2vDN6E7UpmaqgphMIvGG3Q+DgfU10zfSPA7w7w=="],
 
     "postject/commander": ["commander@9.5.0", "", {}, "sha512-KRs7WVDKg86PWiuAqhDrAQnTXZKraVcCc6vFdL14qrZ/DcWwuRo7VoiYXalXO7S5GKpqYiVEwCbgFDfxNHKJBQ=="],
 

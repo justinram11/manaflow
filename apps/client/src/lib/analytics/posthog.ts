@@ -1,5 +1,6 @@
 import posthog from "posthog-js";
 import { env } from "@/client-env";
+import { isElectron } from "../electron";
 
 const DEFAULT_API_HOST = "https://us.i.posthog.com";
 const DEFAULT_UI_HOST = "https://us.posthog.com";
@@ -24,10 +25,14 @@ export function initPosthog() {
   posthog.init(env.NEXT_PUBLIC_POSTHOG_KEY, {
     api_host: env.NEXT_PUBLIC_POSTHOG_HOST ?? DEFAULT_API_HOST,
     ui_host: DEFAULT_UI_HOST,
-    capture_pageview: false,
+    capture_pageview: "history_change",
     capture_pageleave: true,
     autocapture: true,
     debug: import.meta.env.DEV,
+    defaults: "2025-05-24",
+  });
+  posthog.register({
+    platform: isElectron ? "cmux-client-electron" : "cmux-client-web",
   });
 
   initialized = true;
@@ -40,15 +45,6 @@ export function getPosthogClient() {
   }
 
   return initPosthog();
-}
-
-export function capturePosthogPageview(url: string) {
-  const client = getPosthogClient();
-  if (!client) {
-    return;
-  }
-
-  client.capture("$pageview", { $current_url: url });
 }
 
 export function identifyPosthogUser(
