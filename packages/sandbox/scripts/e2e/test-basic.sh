@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 IMAGE_NAME="${IMAGE_NAME:-cmux-sandbox-dev}"
 PORT="${CMUX_SANDBOX_PORT:-46831}"
 CONTAINER_NAME="${CONTAINER_NAME:-cmux-sandbox-e2e-$$}"
