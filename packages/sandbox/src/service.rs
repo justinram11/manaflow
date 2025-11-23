@@ -12,6 +12,7 @@ pub trait SandboxService: Send + Sync + 'static {
     async fn exec(&self, id: String, exec: ExecRequest) -> SandboxResult<ExecResponse>;
     async fn attach(&self, id: String, socket: WebSocket, initial_size: Option<(u16, u16)>) -> SandboxResult<()>;
     async fn proxy(&self, id: String, port: u16, socket: WebSocket) -> SandboxResult<()>;
+    async fn upload_archive(&self, id: String, archive: Vec<u8>) -> SandboxResult<()>;
     async fn delete(&self, id: String) -> SandboxResult<Option<SandboxSummary>>;
 }
 

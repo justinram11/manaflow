@@ -277,6 +277,8 @@ fi
 alias ll='ls -alF'
 alias la='ls -A'
 alias l='ls -CF'
+
+alias g=git
 "#;
         fs::write(&bashrc, content).await?;
         Ok(())
@@ -298,18 +300,6 @@ alias l='ls -CF'
         let usr_merged = mount_overlay(&system_dir, "usr", "/usr").await?;
         let etc_merged = mount_overlay(&system_dir, "etc", "/etc").await?;
         let var_merged = mount_overlay(&system_dir, "var", "/var").await?;
-        
-        // We need a root overlay to persist /root changes if we want .bashrc to work
-        // Since /root is in / (rootfs), and we don't have a / overlay, we can't easily persist /root unless we make an overlay for it 
-        // OR we bind it. 
-        // But bwrap starts empty. We only bind /usr, /etc, /var.
-        // Where is /root? It doesn't exist.
-        // We need to create it.
-        // If we use a tmpfs for /, we can create /root there?
-        // But we can't easily populate a tmpfs before bwrap starts unless we mount an overlay as /.
-        //
-        // Alternative: Create a `root` dir in workspace/.system/root-merged and bind it to /root?
-        // This effectively gives persistent /root.
         
         let root_merged = system_dir.join("root-merged");
         fs::create_dir_all(&root_merged).await?;
@@ -366,18 +356,6 @@ alias l='ls -CF'
         command.args(["--bind", etc_merged.to_str().unwrap(), "/etc"]);
         command.args(["--bind", var_merged.to_str().unwrap(), "/var"]);
         
-        // Bind /root (we assume it is in /root in the container)
-        // But wait, /root is inside /, and / is implied? 
-        // If we don't bind /, we only have what we bound.
-        // So /root directory itself won't exist unless we create it.
-        // But since / is not bound, we can't create it "in /".
-        // We must bind a directory TO /root.
-        // But for bind to work, the mount point must exist?
-        // Bwrap creates mount points if they don't exist in the destination?
-        // "If dest starts with / then it is an absolute path ... If the destination path does not exist, it is created."
-        // Yes, bwrap creates mount points.
-        
-        // We bind our prepared root-merged/root to /root.
         // Note: setup_bashrc wrote to root-merged/root/.bashrc
         command.args(["--bind", root_merged.join("root").to_str().unwrap(), "/root"]);
 
@@ -927,6 +905,24 @@ impl SandboxService for BubblewrapService {
         
         let _ = child.kill().await;
         Ok(())
+    }
+
+    async fn upload_archive(&self, id_str: String, archive: Vec<u8>) -> SandboxResult<()> {
+        let id = self.resolve_id(&id_str).await?;
+        let entry = {
+            let sandboxes = self.sandboxes.lock().await;
+            sandboxes.get(&id).cloned()
+        }
+        .ok_or(SandboxError::NotFound(id))?;
+
+        let workspace = entry.handle.workspace;
+        
+        tokio::task::spawn_blocking(move || {
+            let mut ar = tar::Archive::new(&archive[..]);
+            ar.unpack(&workspace).map_err(|e| SandboxError::Internal(format!("failed to unpack archive: {e}")))
+        })
+        .await
+        .map_err(|e| SandboxError::Internal(format!("join error: {e}")))?
     }
 
     async fn delete(&self, id_str: String) -> SandboxResult<Option<SandboxSummary>> {

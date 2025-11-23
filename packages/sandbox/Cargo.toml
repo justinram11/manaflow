@@ -25,6 +25,7 @@ chrono = { version = "0.4", features = ["serde", "clock"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 crossterm = "0.27"
 futures = "0.3"
+ignore = "0.4.25"
 portable-pty = "0.8"
 rcgen = "0.11"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip", "http2"] }
@@ -32,6 +33,7 @@ rustls = { version = "0.23.35", features = ["ring"] }
 rustls-pki-types = "1.13.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+tar = "0.4.44"
 thiserror = "1.0"
 tokio = { version = "1.41", features = ["macros", "rt-multi-thread", "signal", "process", "fs", "net", "time", "io-std"] }
 tokio-rustls = "0.26.4"

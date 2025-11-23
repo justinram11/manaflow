@@ -13,6 +13,8 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use ignore::WalkBuilder;
+use tar::Builder;
 
 #[cfg(unix)]
 use tokio::signal::unix::{signal, SignalKind};
@@ -204,6 +206,18 @@ async fn run() -> anyhow::Result<()> {
             let response = client.post(url).json(&body).send().await?;
             let summary: SandboxSummary = parse_response(response).await?;
             eprintln!("Created sandbox {}", summary.id);
+
+            // Upload current directory
+            eprintln!("Uploading current directory...");
+            let tarball = pack_current_dir()?;
+            let url = format!("{}/sandboxes/{}/files", cli.base_url.trim_end_matches('/'), summary.id);
+            let response = client.post(url).body(tarball).send().await?;
+            if !response.status().is_success() {
+                 eprintln!("Failed to upload files: {}", response.status());
+            } else {
+                 eprintln!("Files uploaded.");
+            }
+
             save_last_sandbox(&summary.id.to_string());
             handle_ssh(&cli.base_url, &summary.id.to_string()).await?;
         }
@@ -279,6 +293,18 @@ async fn run() -> anyhow::Result<()> {
                 let response = client.post(url).json(&body).send().await?;
                 let summary: SandboxSummary = parse_response(response).await?;
                 eprintln!("Created sandbox {}", summary.id);
+
+                // Upload current directory
+                eprintln!("Uploading current directory...");
+                let tarball = pack_current_dir()?;
+                let url = format!("{}/sandboxes/{}/files", cli.base_url.trim_end_matches('/'), summary.id);
+                let response = client.post(url).body(tarball).send().await?;
+                if !response.status().is_success() {
+                     eprintln!("Failed to upload files: {}", response.status());
+                } else {
+                     eprintln!("Files uploaded.");
+                }
+
                 save_last_sandbox(&summary.id.to_string());
                 handle_ssh(&cli.base_url, &summary.id.to_string()).await?;
             }
@@ -407,6 +433,32 @@ where
     }
 
     Ok(response.json::<T>().await?)
+}
+
+fn pack_current_dir() -> anyhow::Result<Vec<u8>> {
+    let mut tar = Builder::new(Vec::new());
+    let cwd = std::env::current_dir()?;
+    
+    let walker = WalkBuilder::new(&cwd).hidden(false).git_ignore(true).build();
+
+    for result in walker {
+        let entry = result?;
+        let path = entry.path();
+        
+        if path == cwd {
+            continue;
+        }
+
+        let relative_path = path.strip_prefix(&cwd)?;
+        
+        if path.is_dir() {
+            tar.append_dir(relative_path, path)?;
+        } else {
+             tar.append_path_with_name(path, relative_path)?;
+        }
+    }
+    
+    tar.into_inner().map_err(|e| anyhow::anyhow!(e))
 }
 
 fn print_json<T: Serialize>(value: &T) -> anyhow::Result<()> {

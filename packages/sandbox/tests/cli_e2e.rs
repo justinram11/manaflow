@@ -19,6 +19,7 @@ use uuid::Uuid;
 struct MockService {
     sandboxes: Mutex<Vec<SandboxSummary>>,
     calls: Mutex<Vec<&'static str>>,
+    archives: Mutex<Vec<Vec<u8>>>,
 }
 
 impl MockService {
@@ -26,6 +27,7 @@ impl MockService {
         Self {
             sandboxes: Mutex::new(Vec::new()),
             calls: Mutex::new(Vec::new()),
+            archives: Mutex::new(Vec::new()),
         }
     }
 
@@ -105,6 +107,17 @@ impl SandboxService for MockService {
         Ok(())
     }
 
+    async fn upload_archive(
+        &self,
+        _id: String,
+        archive: Vec<u8>,
+    ) -> cmux_sandbox::errors::SandboxResult<()> {
+        self.record("upload_archive").await;
+        let mut guard = self.archives.lock().await;
+        guard.push(archive);
+        Ok(())
+    }
+
     async fn delete(
         &self,
         id: String,
@@ -155,7 +168,7 @@ impl SandboxService for MockService {
     let mut transcript: Vec<(String, String)> = Vec::new();
 
     let list_before = client
-        .get(format!("{base}/sandboxes"))
+        .get(format!("{}/sandboxes", base))
         .send()
         .await
         .unwrap()
@@ -174,7 +187,7 @@ impl SandboxService for MockService {
     })
     .unwrap();
     let created = client
-        .post(format!("{base}/sandboxes"))
+        .post(format!("{}/sandboxes", base))
         .json(&payload)
         .send()
         .await
@@ -189,7 +202,7 @@ impl SandboxService for MockService {
     assert!(created.contains("demo"));
 
     let list_after = client
-        .get(format!("{base}/sandboxes"))
+        .get(format!("{}/sandboxes", base))
         .send()
         .await
         .unwrap()
@@ -231,7 +244,6 @@ fn cli_help_exits_quickly() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-
 async fn cli_exec_shorthand() {
 
 
@@ -263,6 +275,98 @@ async fn cli_exec_shorthand() {
 
     assert!(service.calls.lock().await.contains(&"exec"));
     
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cli_uploads_cwd_respecting_gitignore() {
+    let service = Arc::new(MockService::new());
+    let app = build_router(service.clone());
+    let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async {
+                tokio::signal::ctrl_c().await.ok();
+            })
+            .await
+            .ok();
+    });
+
+    let base_url = format!("http://{}", addr);
+    
+    // Setup temp dir
+    let temp_dir = tempfile::tempdir().unwrap();
+    let dir_path = temp_dir.path();
+    
+    // included.txt
+    std::fs::write(dir_path.join("included.txt"), "keep me").unwrap();
+    
+    // ignored.txt
+    std::fs::write(dir_path.join("ignored.txt"), "ignore me").unwrap();
+    
+    // .gitignore
+    std::fs::write(dir_path.join(".gitignore"), "ignored.txt\n").unwrap();
+    std::fs::create_dir(dir_path.join(".git")).unwrap();
+    
+    // Run cmux new in that dir
+    // We need to run with --detach or similar if possible, or just wait for it to finish 
+    // but `cmux new` attaches to SSH.
+    // The CLI attaches via WebSocket. In our MockService, `attach` does nothing (returns Ok).
+    // So `cmux new` should finish connecting and then wait for input?
+    // Or does it exit if socket closes?
+    // The CLI `handle_ssh` loop exits if socket closes.
+    // In `MockService`, `attach` returns `Ok(())` immediately, effectively closing the connection?
+    // Wait, `attach` in `MockService` is:
+    // async fn attach(...) -> Result<()> { Ok(()) }
+    //
+    // In real service, `attach` keeps running.
+    // In `api.rs`, `attach_sandbox` upgrades the connection:
+    // ws.on_upgrade(move |socket| async move { state.service.attach(...) })
+    //
+    // If `state.service.attach` returns immediately, the socket is dropped/closed.
+    //
+    // CLI `handle_ssh`:
+    // let (ws_stream, _) = connect_async(url).await?;
+    // loop { msg = read.next() ... }
+    //
+    // If server closes socket, `read.next()` returns None or Close. CLI exits.
+    // So `cmux new` should return successfully after upload and a brief connect attempt. 
+    
+    Command::new(assert_cmd::cargo::cargo_bin!("cmux"))
+        .env("CMUX_SANDBOX_URL", &base_url)
+        .current_dir(dir_path)
+        .arg("new")
+        .assert()
+        .success();
+
+    // Check calls
+    {
+        let calls = service.calls.lock().await;
+        assert!(calls.contains(&"create"), "Should have created sandbox");
+        assert!(calls.contains(&"upload_archive"), "Should have uploaded archive");
+    }
+
+    // Check uploaded archive
+    {
+        let archives = service.archives.lock().await;
+        assert_eq!(archives.len(), 1, "Should have uploaded one archive");
+        
+        let data = &archives[0];
+        let mut archive = tar::Archive::new(&data[..]);
+        let entries: Vec<_> = archive.entries().unwrap() 
+            .map(|e| e.unwrap().path().unwrap().to_string_lossy().into_owned())
+            .collect();
+            
+        assert!(entries.iter().any(|e| e.contains("included.txt")), "included.txt missing");
+        assert!(entries.iter().any(|e| e.contains(".gitignore")), ".gitignore missing");
+        assert!(!entries.iter().any(|e| e.contains("ignored.txt")), "ignored.txt should be ignored");
+    }
+
     server.abort();
     let _ = server.await;
 }
