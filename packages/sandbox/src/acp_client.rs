@@ -139,7 +139,11 @@ struct App<'a> {
 impl<'a> App<'a> {
     fn new() -> Self {
         let mut textarea = TextArea::default();
-        textarea.set_block(Block::default().borders(Borders::ALL).title("Input"));
+        textarea.set_block(
+            Block::default()
+                .borders(Borders::TOP | Borders::BOTTOM)
+                .border_style(ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray))
+        );
         textarea.set_placeholder_text("Type a message and press Enter to send. Ctrl+J for new line.");
         Self {
             history: vec![],
@@ -182,36 +186,47 @@ impl<'a> App<'a> {
     }
 
     async fn send_message(&mut self) {
-        if let (Some(conn), Some(session_id)) = (&self.client_connection, &self.session_id) {
-            let lines = self.textarea.lines();
-            let text = lines.join("\n");
-            if text.trim().is_empty() {
-                return;
-            }
+        // Clone connection and session_id early to drop the borrow of self
+        let (conn, session_id) = if let (Some(conn), Some(session_id)) = (&self.client_connection, &self.session_id) {
+            (conn.clone(), session_id.clone())
+        } else {
+            return;
+        };
 
-            let request = PromptRequest {
-                session_id: session_id.clone(),
-                prompt: vec![ContentBlock::Text(TextContent { 
-                    text, 
-                    annotations: None, 
-                    meta: None 
-                })],
-                meta: None,
-            };
-            
-            self.textarea = TextArea::default();
-            self.textarea.set_block(Block::default().borders(Borders::ALL).title("Input"));
-            self.textarea.set_placeholder_text("Type a message and press Enter to send. Ctrl+J for new line.");
-
-            let conn = conn.clone();
-            tokio::task::spawn_local(async move {
-                // Manually deref if needed, but method syntax should work if trait is in scope.
-                // We are using `Agent` trait method `prompt`.
-                if let Err(_) = Agent::prompt(&*conn, request).await {
-                    // Log error
-                }
-            });
+        let lines = self.textarea.lines();
+        let text = lines.join("\n");
+        if text.trim().is_empty() {
+            return;
         }
+
+        self.append_message("User", &text);
+        
+        // Clear input immediately
+        self.textarea = TextArea::default();
+        self.textarea.set_block(
+            Block::default()
+                .borders(Borders::TOP | Borders::BOTTOM)
+                .border_style(ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray))
+        );
+        self.textarea.set_placeholder_text("Type a message and press Enter to send. Ctrl+J for new line.");
+
+        let request = PromptRequest {
+            session_id,
+            prompt: vec![ContentBlock::Text(TextContent { 
+                text, 
+                annotations: None, 
+                meta: None 
+            })],
+            meta: None,
+        };
+
+        tokio::task::spawn_local(async move {
+            // Manually deref if needed, but method syntax should work if trait is in scope.
+            // We are using `Agent` trait method `prompt`.
+            if let Err(_) = Agent::prompt(&*conn, request).await {
+                // Log error
+            }
+        });
     }
 }
 
@@ -469,7 +484,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                 if let Event::Key(key) = event {
                      if key.modifiers.contains(KeyModifiers::CONTROL) {
                          match key.code {
-                            KeyCode::Char('q') => return Ok(()),
+                            KeyCode::Char('q') | KeyCode::Char('c') | KeyCode::Char('d') => return Ok(()),
                             KeyCode::Char('j') => { app.textarea.insert_newline(); },
                             _ => { app.textarea.input(key); }
                         }
@@ -485,12 +500,18 @@ async fn run_app<B: ratatui::backend::Backend>(
 }
 
 fn ui(f: &mut ratatui::Frame, app: &App) {
+    // Calculate dynamic height based on line count
+    // +2 accounts for top and bottom borders
+    // Clamp between 3 (1 line) and 12 (10 lines)
+    let line_count = app.textarea.lines().len() as u16;
+    let input_height = (line_count + 2).clamp(3, 12);
+
     let chunks = Layout::default() 
         .direction(Direction::Vertical)
         .constraints(
             [
                 Constraint::Min(1),
-                Constraint::Length(5),
+                Constraint::Length(input_height),
             ]
             .as_ref(),
         )
@@ -498,7 +519,6 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
 
     let history_text = app.history.join("\n");
     let history_paragraph = Paragraph::new(history_text)
-        .block(Block::default().borders(Borders::ALL).title("Chat History"))
         .wrap(Wrap { trim: true });
     f.render_widget(history_paragraph, chunks[0]);
 
