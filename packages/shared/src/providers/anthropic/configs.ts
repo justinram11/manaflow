@@ -65,6 +65,24 @@ export const CLAUDE_OPUS_4_1_CONFIG: AgentConfig = {
   completionDetector: startClaudeCompletionDetector,
 };
 
+export const CLAUDE_OPUS_4_5_CONFIG: AgentConfig = {
+  name: "claude/opus-4.5",
+  command: "bunx",
+  args: [
+    "@anthropic-ai/claude-code@latest",
+    "--model",
+    "claude-opus-4-5",
+    "--dangerously-skip-permissions",
+    "--ide",
+    "$PROMPT",
+  ],
+  environment: getClaudeEnvironment,
+  checkRequirements: checkClaudeRequirements,
+  apiKeys: [ANTHROPIC_API_KEY],
+  applyApiKeys: applyClaudeApiKeys,
+  completionDetector: startClaudeCompletionDetector,
+};
+
 export const CLAUDE_SONNET_4_5_CONFIG: AgentConfig = {
   name: "claude/sonnet-4.5",
   command: "bunx",
