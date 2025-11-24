@@ -9,7 +9,7 @@ cd "${PKG_ROOT}"
 cargo build --release --bin cmux
 
 SOURCE_BINARY="${PKG_ROOT}/target/release/cmux"
-TARGET_NAME="cmux-debug"
+TARGET_NAME="cmux"
 
 if [ ! -f "$SOURCE_BINARY" ]; then
   echo "❌ Build failed: Binary not found at $SOURCE_BINARY"

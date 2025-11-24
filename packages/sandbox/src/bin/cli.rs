@@ -653,7 +653,7 @@ fn append_walked_paths(root: &Path, tar: &mut Builder<ChunkedWriter>) -> std::io
 
         let relative_path = entry_path
             .strip_prefix(root)
-            .map_err(|e| std::io::Error::other(e))?;
+            .map_err(std::io::Error::other)?;
 
         append_path(root, relative_path, tar)?;
     }
@@ -733,7 +733,7 @@ fn append_git_dir(root: &Path, tar: &mut Builder<ChunkedWriter>) -> std::io::Res
 
         let relative_path = entry_path
             .strip_prefix(root)
-            .map_err(|e| std::io::Error::other(e))?;
+            .map_err(std::io::Error::other)?;
 
         append_path(root, relative_path, tar)?;
     }
