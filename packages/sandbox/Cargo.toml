@@ -55,6 +55,7 @@ agent-client-protocol = { version = "0.7.0", features = ["unstable"] }
 tokio-util = { version = "0.7", features = ["compat"] }
 url = "2.5"
 terminal-light = "1.4"
+vte = "0.15"
 
 [dev-dependencies]
 assert_cmd = "2.0"

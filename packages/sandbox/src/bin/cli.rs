@@ -36,7 +36,7 @@ struct Cli {
     base_url: String,
 
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -375,7 +375,21 @@ async fn run() -> anyhow::Result<()> {
         .http2_keep_alive_interval(Duration::from_secs(30))
         .build()?;
 
-    match cli.command {
+    // If no command provided, launch the multiplexer TUI
+    let command = match cli.command {
+        Some(cmd) => cmd,
+        None => {
+            check_server_reachable(&client, &cli.base_url).await?;
+            // Pass current working directory so the mux can upload it to the new sandbox
+            let workspace_path = std::env::current_dir().ok();
+            cmux_sandbox::run_mux_tui(cli.base_url, workspace_path)
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            return Ok(());
+        }
+    };
+
+    match command {
         Command::Openapi => {
             check_server_reachable(&client, &cli.base_url).await?;
             let url = format!("{}/openapi.json", cli.base_url.trim_end_matches('/'));

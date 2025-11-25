@@ -925,6 +925,8 @@ impl SandboxService for BubblewrapService {
 
         cmd.args(nsenter_args(entry.inner_pid, None, &target_command));
         cmd.env("TERM", "xterm-256color");
+        cmd.env("LANG", "C.UTF-8");
+        cmd.env("LC_ALL", "C.UTF-8");
 
         let mut child = pair
             .slave
