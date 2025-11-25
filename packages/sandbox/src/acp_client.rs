@@ -168,6 +168,24 @@ use tui_textarea::TextArea;
 static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(two_face::syntax::extra_newlines);
 static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
 
+/// Detect if terminal is in dark mode (cached at startup)
+static IS_DARK_MODE: LazyLock<bool> = LazyLock::new(|| {
+    match terminal_light::luma() {
+        Ok(luma) if luma > 0.5 => false, // Light background
+        Ok(_) => true,                   // Dark background
+        Err(_) => true,                  // Default to dark mode if detection fails
+    }
+});
+
+/// Get background color for user messages based on terminal mode
+fn user_message_bg_color() -> ratatui::style::Color {
+    if *IS_DARK_MODE {
+        ratatui::style::Color::Rgb(60, 60, 60) // Lighter gray for dark mode
+    } else {
+        ratatui::style::Color::Rgb(230, 230, 230) // Darker gray for light mode
+    }
+}
+
 fn log_debug(msg: &str) {
     if let Ok(mut file) = OpenOptions::new()
         .create(true)
@@ -2190,20 +2208,30 @@ fn render_message<'a>(
 ) {
     match role {
         "User" => {
-            let style = ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray);
-            let border = "─".repeat(area_width);
-            lines.push(Line::styled(border.clone(), style));
+            // User messages have a contrasting background with padding lines above and below
+            let bg_style = ratatui::style::Style::default().bg(user_message_bg_color());
+            // Empty padding line with background
+            lines.push(Line::styled(" ".repeat(area_width), bg_style));
             for line in text.lines() {
-                lines.push(Line::styled(line.to_owned(), style));
+                // Pad the line to fill the full width with background
+                let padded = format!("{:width$}", line, width = area_width);
+                lines.push(Line::styled(padded, bg_style));
             }
-            lines.push(Line::styled(border, style));
+            // Empty padding line with background
+            lines.push(Line::styled(" ".repeat(area_width), bg_style));
         }
         "Agent" | "Thought" => {
+            // Add padding line above
+            lines.push(Line::raw(""));
             let prefix_style =
                 ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::BOLD);
             render_markdown_message(lines, role, text, normalized_markdown, prefix_style);
+            // Add padding line below
+            lines.push(Line::raw(""));
         }
         "Error" => {
+            // Add padding line above
+            lines.push(Line::raw(""));
             // Red styling for errors
             let prefix_style = ratatui::style::Style::default()
                 .fg(ratatui::style::Color::Red)
@@ -2228,8 +2256,12 @@ fn render_message<'a>(
                     prefix_style,
                 )]));
             }
+            // Add padding line below
+            lines.push(Line::raw(""));
         }
         "System" => {
+            // Add padding line above
+            lines.push(Line::raw(""));
             // Yellow/warning styling for system messages
             let prefix_style = ratatui::style::Style::default()
                 .fg(ratatui::style::Color::Yellow)
@@ -2254,8 +2286,12 @@ fn render_message<'a>(
                     prefix_style,
                 )]));
             }
+            // Add padding line below
+            lines.push(Line::raw(""));
         }
         _ => {
+            // Add padding line above
+            lines.push(Line::raw(""));
             let prefix = format!("{}: ", role);
             let prefix_style =
                 ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::BOLD);
@@ -2274,6 +2310,8 @@ fn render_message<'a>(
             if first {
                 lines.push(Line::from(vec![Span::styled(prefix, prefix_style)]));
             }
+            // Add padding line below
+            lines.push(Line::raw(""));
         }
     }
 }
