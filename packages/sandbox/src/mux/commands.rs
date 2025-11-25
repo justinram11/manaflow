@@ -237,7 +237,7 @@ impl MuxCommand {
             MuxCommand::RenameTab => "Rename the current tab",
             MuxCommand::MoveTabLeft => "Move current tab to the left",
             MuxCommand::MoveTabRight => "Move current tab to the right",
-            MuxCommand::ToggleSidebar => "Show or hide the sidebar",
+            MuxCommand::ToggleSidebar => "Toggle focus between sidebar and main workspace",
             MuxCommand::SelectSandbox => "Select a sandbox from the list",
             MuxCommand::NewSandbox => "Create a new sandbox",
             MuxCommand::DeleteSandbox => "Delete the selected sandbox",
@@ -343,9 +343,9 @@ impl MuxCommand {
             MuxCommand::FocusRight => Some((KeyModifiers::ALT, KeyCode::Right)),
             MuxCommand::FocusUp => Some((KeyModifiers::ALT, KeyCode::Up)),
             MuxCommand::FocusDown => Some((KeyModifiers::ALT, KeyCode::Down)),
-            // Ctrl+S toggles between sidebar and main area
-            MuxCommand::FocusSidebar => Some((KeyModifiers::CONTROL, KeyCode::Char('s'))),
-            MuxCommand::FocusMainArea => Some((KeyModifiers::CONTROL, KeyCode::Char('s'))),
+            // Focus commands are available via the palette; Ctrl+S handled by ToggleSidebar
+            MuxCommand::FocusSidebar => None,
+            MuxCommand::FocusMainArea => None,
             MuxCommand::NextPane => Some((KeyModifiers::ALT, KeyCode::Char('o'))), // like tmux
             MuxCommand::PrevPane => {
                 Some((KeyModifiers::ALT | KeyModifiers::SHIFT, KeyCode::Char('o')))
@@ -405,7 +405,7 @@ impl MuxCommand {
                 Some((KeyModifiers::ALT | KeyModifiers::SHIFT, KeyCode::Char(']')))
             }
 
-            // Sidebar - Ctrl+S to toggle (same as FocusSidebar/FocusMainArea)
+            // Sidebar - Ctrl+S toggles focus between sidebar and main area
             MuxCommand::ToggleSidebar => Some((KeyModifiers::CONTROL, KeyCode::Char('s'))),
             // SelectSandbox has no global keybinding - Enter is handled contextually in sidebar focus
             MuxCommand::SelectSandbox => None,
@@ -551,5 +551,9 @@ mod tests {
         // Alt+P opens command palette (changed from Ctrl+P to avoid terminal conflicts)
         let cmd = MuxCommand::from_key(KeyModifiers::ALT, KeyCode::Char('p'));
         assert_eq!(cmd, Some(MuxCommand::OpenCommandPalette));
+
+        // Ctrl+S toggles focus between sidebar and main area
+        let sidebar_toggle = MuxCommand::from_key(KeyModifiers::CONTROL, KeyCode::Char('s'));
+        assert_eq!(sidebar_toggle, Some(MuxCommand::ToggleSidebar));
     }
 }

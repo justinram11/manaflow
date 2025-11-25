@@ -400,7 +400,7 @@ fn render_status_bar(f: &mut Frame, app: &mut MuxApp, area: Rect) {
     }
 
     // Right side: keybinding hints
-    let hints = " Ctrl+P: Commands │ Ctrl+\\: Sidebar │ Ctrl+Q: Quit ";
+    let hints = " Alt+P: Commands │ Ctrl+S: Sidebar │ Ctrl+Q: Quit ";
     let hints_width = hints.len() as u16;
     let left_width: u16 = spans.iter().map(|s| s.content.len() as u16).sum();
     let padding = area.width.saturating_sub(left_width + hints_width);

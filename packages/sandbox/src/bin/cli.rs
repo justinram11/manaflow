@@ -353,8 +353,8 @@ async fn check_server_reachable(client: &Client, base_url: &str) -> anyhow::Resu
                     "\n\x1b[31mError: Cannot connect to sandbox server at {}\x1b[0m",
                     base_url
                 );
-                eprintln!("\nThe sandbox server is not running. To start it, run:");
-                eprintln!("\n  \x1b[36mcd packages/sandbox && ./scripts/start-dev.sh\x1b[0m\n");
+                eprintln!("\nThe sandbox server is not running. Start it with:");
+                eprintln!("\n  \x1b[36mcmux start\x1b[0m\n");
                 eprintln!("Or check the server status with:");
                 eprintln!("\n  \x1b[36mcmux status\x1b[0m\n");
                 std::process::exit(1);
