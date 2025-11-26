@@ -165,12 +165,18 @@ async fn run_app<B: ratatui::backend::Backend>(
     terminal_manager: crate::mux::terminal::SharedTerminalManager,
 ) -> Result<()> {
     let mut reader = EventStream::new();
+    let mut redraw_needed = true;
+    let mut status_tick = tokio::time::interval(Duration::from_millis(33));
 
     loop {
-        terminal.draw(|f| ui(f, &mut app))?;
-        sync_terminal_sizes(&app, &terminal_manager);
-
         tokio::select! {
+            _ = status_tick.tick() => {
+                let had_status = app.status_message.is_some();
+                app.clear_expired_status();
+                if had_status && app.status_message.is_none() {
+                    redraw_needed = true;
+                }
+            }
             Some(event) = event_rx.recv() => {
                 match &event {
                     MuxEvent::ConnectToSandbox { sandbox_id } => {
@@ -227,12 +233,20 @@ async fn run_app<B: ratatui::backend::Backend>(
                 }
                 app.handle_event(event);
                 try_consume_pending_connection(&mut app, &terminal_manager);
+                redraw_needed = true;
             }
             Some(Ok(event)) = reader.next() => {
                 if handle_input(&mut app, event, &terminal_manager).await {
                     break;
                 }
+                redraw_needed = true;
             }
+        }
+
+        if redraw_needed {
+            terminal.draw(|f| ui(f, &mut app))?;
+            sync_terminal_sizes(&app, &terminal_manager);
+            redraw_needed = false;
         }
     }
 
