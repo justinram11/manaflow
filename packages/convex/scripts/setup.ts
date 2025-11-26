@@ -202,125 +202,131 @@ async function main() {
     process.exit(1);
   });
 
-  await withSpinner("Starting local Convex server", async () => {
-    const maxWait = 60000;
-    const startTime = Date.now();
+  const killDevServer = async () => {
+    logVerbose("Stopping dev server...");
+    devProcess.kill("SIGTERM");
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    devProcess.kill("SIGKILL");
+  };
 
-    while (Date.now() - startTime < maxWait) {
-      if (fs.existsSync(CONVEX_ENV_LOCAL)) {
-        const content = fs.readFileSync(CONVEX_ENV_LOCAL, "utf-8");
-        if (
-          content.includes("CONVEX_DEPLOYMENT=") &&
-          content.includes("CONVEX_URL=")
-        ) {
-          logVerbose(`.env.local created after ${Date.now() - startTime}ms`);
-          break;
+  try {
+    await withSpinner("Starting local Convex server", async () => {
+      const maxWait = 60000;
+      const startTime = Date.now();
+
+      while (Date.now() - startTime < maxWait) {
+        if (fs.existsSync(CONVEX_ENV_LOCAL)) {
+          const content = fs.readFileSync(CONVEX_ENV_LOCAL, "utf-8");
+          if (
+            content.includes("CONVEX_DEPLOYMENT=") &&
+            content.includes("CONVEX_URL=")
+          ) {
+            logVerbose(`.env.local created after ${Date.now() - startTime}ms`);
+            break;
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+
+      if (!fs.existsSync(CONVEX_ENV_LOCAL)) {
+        console.error("\n\nServer output:\n" + devOutput);
+        throw new Error("Timed out waiting for Convex server to start");
+      }
+
+      // Wait for server to stabilize
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    });
+
+    await withSpinner(
+      `Setting ${envVarsToSync.length} environment variables`,
+      async () => {
+        const failures: string[] = [];
+        for (const [key, value] of envVarsToSync) {
+          try {
+            await setEnvVar(key, value);
+            logVerbose(`Set ${key}`);
+          } catch (error) {
+            failures.push(`${key}: ${error}`);
+          }
+        }
+        if (failures.length > 0) {
+          throw new Error(`Failed to set: ${failures.join(", ")}`);
         }
       }
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
+    );
 
-    if (!fs.existsSync(CONVEX_ENV_LOCAL)) {
-      console.error("\n\nServer output:\n" + devOutput);
-      throw new Error("Timed out waiting for Convex server to start");
-    }
+    await withSpinner("Waiting for functions to deploy", async () => {
+      let functionsReady = false;
+      const maxWaitTime = 60000;
+      const functionsStartTime = Date.now();
 
-    // Wait for server to stabilize
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-  });
+      while (!functionsReady && Date.now() - functionsStartTime < maxWaitTime) {
+        logCmd("bunx", ["convex", "function-spec"]);
+        const checkProcess = spawn("bunx", ["convex", "function-spec"], {
+          cwd: CONVEX_DIR,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
 
-  await withSpinner(
-    `Setting ${envVarsToSync.length} environment variables`,
-    async () => {
-      const failures: string[] = [];
-      for (const [key, value] of envVarsToSync) {
-        try {
-          await setEnvVar(key, value);
-          logVerbose(`Set ${key}`);
-        } catch (error) {
-          failures.push(`${key}: ${error}`);
-        }
-      }
-      if (failures.length > 0) {
-        throw new Error(`Failed to set: ${failures.join(", ")}`);
-      }
-    }
-  );
+        let stdout = "";
+        checkProcess.stdout.on("data", (data) => {
+          stdout += data.toString();
+        });
 
-  await withSpinner("Waiting for functions to deploy", async () => {
-    let functionsReady = false;
-    const maxWaitTime = 60000;
-    const functionsStartTime = Date.now();
+        const exitCode = await new Promise<number>((resolve) => {
+          checkProcess.on("close", (code) => resolve(code ?? 1));
+        });
 
-    while (!functionsReady && Date.now() - functionsStartTime < maxWaitTime) {
-      logCmd("bunx", ["convex", "function-spec"]);
-      const checkProcess = spawn("bunx", ["convex", "function-spec"], {
-        cwd: CONVEX_DIR,
-        stdio: ["pipe", "pipe", "pipe"],
-      });
+        logVerbose(`function-spec exit: ${exitCode}, has seed: ${stdout.includes("seed")}`);
 
-      let stdout = "";
-      checkProcess.stdout.on("data", (data) => {
-        stdout += data.toString();
-      });
-
-      const exitCode = await new Promise<number>((resolve) => {
-        checkProcess.on("close", (code) => resolve(code ?? 1));
-      });
-
-      logVerbose(`function-spec exit: ${exitCode}, has seed: ${stdout.includes("seed")}`);
-
-      if (exitCode === 0 && stdout.includes("seed")) {
-        functionsReady = true;
-      } else {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-      }
-    }
-
-    if (!functionsReady) {
-      console.error("\n\nServer output:\n" + devOutput);
-      throw new Error("Timed out waiting for functions to deploy");
-    }
-  });
-
-  await withSpinner("Running seed", async () => {
-    logCmd("bunx", ["convex", "run", "seed"]);
-
-    const seedProcess = spawn("bunx", ["convex", "run", "seed"], {
-      cwd: CONVEX_DIR,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    let seedOutput = "";
-    seedProcess.stdout.on("data", (data) => {
-      seedOutput += data.toString();
-      logVerbose(data.toString().trim());
-    });
-    seedProcess.stderr.on("data", (data) => {
-      seedOutput += data.toString();
-      logVerbose(data.toString().trim());
-    });
-
-    await new Promise<void>((resolve, reject) => {
-      seedProcess.on("close", (code) => {
-        if (code === 0) {
-          resolve();
+        if (exitCode === 0 && stdout.includes("seed")) {
+          functionsReady = true;
         } else {
-          console.error("\n\nSeed output:\n" + seedOutput);
-          reject(new Error(`Seed command failed with code ${code}`));
+          await new Promise((resolve) => setTimeout(resolve, 2000));
         }
+      }
+
+      if (!functionsReady) {
+        console.error("\n\nServer output:\n" + devOutput);
+        throw new Error("Timed out waiting for functions to deploy");
+      }
+    });
+
+    await withSpinner("Running seed", async () => {
+      logCmd("bunx", ["convex", "run", "seed"]);
+
+      const seedProcess = spawn("bunx", ["convex", "run", "seed"], {
+        cwd: CONVEX_DIR,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+
+      let seedOutput = "";
+      seedProcess.stdout.on("data", (data) => {
+        seedOutput += data.toString();
+        logVerbose(data.toString().trim());
+      });
+      seedProcess.stderr.on("data", (data) => {
+        seedOutput += data.toString();
+        logVerbose(data.toString().trim());
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        seedProcess.on("close", (code) => {
+          if (code === 0) {
+            resolve();
+          } else {
+            console.error("\n\nSeed output:\n" + seedOutput);
+            reject(new Error(`Seed command failed with code ${code}`));
+          }
+        });
       });
     });
-  });
 
-  logVerbose("Stopping dev server...");
-  devProcess.kill("SIGTERM");
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-  devProcess.kill("SIGKILL");
-
-  log("\n✓ Setup complete!\n");
-  log("Run the dev environment with:");
-  log("  ./scripts/dev.sh --convex-agent --skip-docker\n");
+    log("\n✓ Setup complete!\n");
+    log("Run the dev environment with:");
+    log("  ./scripts/dev.sh --convex-agent --skip-docker\n");
+  } finally {
+    await killDevServer();
+  }
 }
 
 main().catch((error) => {
