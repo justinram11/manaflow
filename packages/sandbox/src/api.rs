@@ -1,11 +1,12 @@
 use crate::errors::{ErrorBody, SandboxError, SandboxResult};
 use crate::models::{
-    CreateSandboxRequest, ExecRequest, ExecResponse, HealthResponse, SandboxSummary,
+    CreateSandboxRequest, ExecRequest, ExecResponse, HealthResponse, HostEvent, NotificationLevel,
+    NotificationRequest, OpenUrlRequest, SandboxSummary,
 };
-use crate::service::{AppState, SandboxService};
+use crate::service::{AppState, HostEventSender, SandboxService};
 use axum::body::Body;
 use axum::extract::ws::WebSocketUpgrade;
-use axum::extract::{DefaultBodyLimit, Path, Query};
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use axum::routing::{any, get, post};
@@ -19,11 +20,6 @@ use uuid::Uuid;
 #[derive(Deserialize)]
 struct ProxyParams {
     port: u16,
-}
-
-#[derive(Deserialize)]
-struct OpenUrlParams {
-    url: String,
 }
 
 #[derive(Deserialize)]
@@ -49,6 +45,8 @@ fn default_tty() -> bool {
         delete_sandbox,
         health,
         upload_files,
+        open_url_post,
+        send_notification,
     ),
     components(schemas(
         CreateSandboxRequest,
@@ -58,18 +56,18 @@ fn default_tty() -> bool {
         crate::models::SandboxNetwork,
         crate::models::SandboxStatus,
         HealthResponse,
-        ErrorBody
+        ErrorBody,
+        NotificationRequest,
+        NotificationLevel,
+        OpenUrlRequest
     )),
     tags((name = "sandboxes", description = "Manage bubblewrap-based sandboxes"))
 )]
 pub struct ApiDoc;
 
-pub fn build_router(
-    service: Arc<dyn SandboxService>,
-    url_broadcast: crate::service::UrlBroadcastSender,
-) -> Router {
+pub fn build_router(service: Arc<dyn SandboxService>, host_events: HostEventSender) -> Router {
     let openapi = ApiDoc::openapi();
-    let state = AppState::new(service, url_broadcast);
+    let state = AppState::new(service, host_events);
     let swagger_routes: Router<AppState> =
         SwaggerUi::new("/docs").url("/openapi.json", openapi).into();
 
@@ -87,7 +85,9 @@ pub fn build_router(
         // Multiplexed WebSocket endpoint - single connection for all PTY sessions
         .route("/mux/attach", any(mux_attach))
         // Open URL on host - used by sandboxed processes to open links
-        .route("/open-url", get(open_url))
+        .route("/open-url", get(open_url).post(open_url_post))
+        // Push a notification to connected clients
+        .route("/notifications", post(send_notification))
         .merge(swagger_routes)
         .with_state(state)
 }
@@ -236,26 +236,91 @@ async fn proxy_sandbox(
 
 /// Multiplexed WebSocket endpoint - handles multiple PTY sessions over a single connection.
 async fn mux_attach(state: axum::extract::State<AppState>, ws: WebSocketUpgrade) -> Response {
-    let url_rx = state.url_broadcast.subscribe();
+    let host_event_rx = state.host_events.subscribe();
     ws.on_upgrade(move |socket| async move {
-        if let Err(e) = state.service.mux_attach(socket, url_rx).await {
+        if let Err(e) = state.service.mux_attach(socket, host_event_rx).await {
             tracing::error!("mux_attach failed: {e}");
         }
     })
 }
 
 /// Open a URL on the host machine. Used by sandboxed processes to open links.
-async fn open_url(Query(params): Query<OpenUrlParams>) -> StatusCode {
+async fn open_url(
+    State(state): State<AppState>,
+    Query(params): Query<OpenUrlRequest>,
+) -> StatusCode {
+    handle_open_url(state, params).await
+}
+
+#[utoipa::path(
+    post,
+    path = "/open-url",
+    request_body = OpenUrlRequest,
+    responses(
+        (status = 200, description = "URL forwarded to host"),
+        (status = 400, description = "Invalid URL", body = ErrorBody),
+        (status = 500, description = "Failed to dispatch open-url request", body = ErrorBody)
+    )
+)]
+async fn open_url_post(
+    State(state): State<AppState>,
+    Json(body): Json<OpenUrlRequest>,
+) -> StatusCode {
+    handle_open_url(state, body).await
+}
+
+async fn handle_open_url(state: AppState, params: OpenUrlRequest) -> StatusCode {
     // Validate URL to prevent command injection
     if !params.url.starts_with("http://") && !params.url.starts_with("https://") {
         return StatusCode::BAD_REQUEST;
     }
 
-    match open::that(&params.url) {
-        Ok(()) => StatusCode::OK,
-        Err(e) => {
-            tracing::error!("Failed to open URL {}: {}", params.url, e);
-            StatusCode::INTERNAL_SERVER_ERROR
+    match state.host_events.send(HostEvent::OpenUrl(OpenUrlRequest {
+        url: params.url.clone(),
+        sandbox_id: params.sandbox_id.clone(),
+        tab_id: params.tab_id.clone(),
+    })) {
+        Ok(_) => StatusCode::OK,
+        Err(error) => {
+            tracing::warn!(
+                "open-url broadcast had no listeners, falling back to local open: {error}"
+            );
+            match open::that(&params.url) {
+                Ok(()) => StatusCode::OK,
+                Err(e) => {
+                    tracing::error!("Failed to open URL {}: {}", params.url, e);
+                    StatusCode::INTERNAL_SERVER_ERROR
+                }
+            }
+        }
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/notifications",
+    request_body = NotificationRequest,
+    responses(
+        (status = 200, description = "Notification dispatched"),
+        (status = 202, description = "No listeners available; notification accepted")
+    )
+)]
+async fn send_notification(
+    State(state): State<AppState>,
+    Json(body): Json<NotificationRequest>,
+) -> StatusCode {
+    match state
+        .host_events
+        .send(HostEvent::Notification(NotificationRequest {
+            message: body.message.clone(),
+            level: body.level,
+            sandbox_id: body.sandbox_id.clone(),
+            tab_id: body.tab_id.clone(),
+        })) {
+        Ok(_) => StatusCode::OK,
+        Err(error) => {
+            tracing::warn!("no listeners for notification: {error}");
+            StatusCode::ACCEPTED
         }
     }
 }
@@ -338,7 +403,7 @@ mod tests {
         async fn mux_attach(
             &self,
             _socket: WebSocket,
-            _url_rx: crate::service::UrlBroadcastReceiver,
+            _host_event_rx: crate::service::HostEventReceiver,
         ) -> SandboxResult<()> {
             Ok(())
         }
@@ -401,6 +466,7 @@ mod tests {
         let request = CreateSandboxRequest {
             name: Some("demo".into()),
             workspace: None,
+            tab_id: None,
             read_only_paths: Vec::new(),
             tmpfs: Vec::new(),
             env: Vec::new(),

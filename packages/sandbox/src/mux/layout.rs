@@ -73,6 +73,12 @@ impl Default for TabId {
     }
 }
 
+impl std::fmt::Display for TabId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// Direction for splitting panes or navigation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
@@ -987,6 +993,11 @@ impl WorkspaceManager {
     pub fn active_tab_mut(&mut self) -> Option<&mut Tab> {
         self.active_workspace_mut()
             .and_then(|ws| ws.active_tab_mut())
+    }
+
+    /// Get the active tab ID from the active workspace.
+    pub fn active_tab_id(&self) -> Option<TabId> {
+        self.active_tab().map(|tab| tab.id)
     }
 
     /// Create a new tab in the active workspace.

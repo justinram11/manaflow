@@ -20,6 +20,7 @@ async fn test_global_binaries_in_sandbox() {
     let create_req = CreateSandboxRequest {
         name: Some("binary-check".into()),
         workspace: None,
+        tab_id: None,
         read_only_paths: vec![],
         tmpfs: vec![],
         env: vec![],

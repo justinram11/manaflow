@@ -2136,7 +2136,9 @@ pub async fn establish_mux_connection(manager: SharedTerminalManager) -> anyhow:
                                     // in connect_to_sandbox
                                     let _ = event_tx_clone.send(MuxEvent::Notification {
                                         message: format!("Session {} attached", session_id),
-                                        level: crate::mux::events::NotificationLevel::Info,
+                                        level: crate::models::NotificationLevel::Info,
+                                        sandbox_id: None,
+                                        tab_id: None,
                                     });
                                 }
                                 MuxServerMessage::Output { session_id, data } => {
@@ -2170,13 +2172,26 @@ pub async fn establish_mux_connection(manager: SharedTerminalManager) -> anyhow:
                                 MuxServerMessage::Pong { .. } => {
                                     // Keepalive response, ignore
                                 }
-                                MuxServerMessage::OpenUrl { url } => {
+                                MuxServerMessage::OpenUrl { url, .. } => {
                                     // Open URL on the host machine (TUI runs on host)
                                     if let Err(e) = open::that(&url) {
                                         let _ = event_tx_clone.send(MuxEvent::Error(format!(
                                             "Failed to open URL {}: {}", url, e
                                         )));
                                     }
+                                }
+                                MuxServerMessage::Notification {
+                                    message,
+                                    level,
+                                    sandbox_id,
+                                    tab_id,
+                                } => {
+                                    let _ = event_tx_clone.send(MuxEvent::Notification {
+                                        message,
+                                        level,
+                                        sandbox_id,
+                                        tab_id,
+                                    });
                                 }
                             }
                         }

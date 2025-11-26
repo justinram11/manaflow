@@ -1,13 +1,16 @@
 use std::path::PathBuf;
 
-use crate::models::SandboxSummary;
+use crate::models::{NotificationLevel, SandboxSummary};
 use crate::mux::layout::PaneId;
 
 /// Events that can occur in the multiplexer.
 #[derive(Debug, Clone)]
 pub enum MuxEvent {
     /// Request to create a sandbox from the launch workspace.
-    CreateSandboxWithWorkspace { workspace_path: PathBuf },
+    CreateSandboxWithWorkspace {
+        workspace_path: PathBuf,
+        tab_id: Option<String>,
+    },
     /// Sandbox list was refreshed.
     SandboxesRefreshed(Vec<SandboxSummary>),
     /// Failed to refresh sandboxes.
@@ -26,6 +29,8 @@ pub enum MuxEvent {
     Notification {
         message: String,
         level: NotificationLevel,
+        sandbox_id: Option<String>,
+        tab_id: Option<String>,
     },
     /// Request to connect to a sandbox (used for auto-connect on startup)
     ConnectToSandbox { sandbox_id: String },
@@ -33,11 +38,4 @@ pub enum MuxEvent {
     ConnectActivePaneToSandbox,
     /// Terminal connection closed for a pane
     TerminalExited { pane_id: PaneId, sandbox_id: String },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NotificationLevel {
-    Info,
-    Warning,
-    Error,
 }

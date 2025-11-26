@@ -14,8 +14,8 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 fn make_test_router(service: Arc<MockService>) -> Router {
-    let (url_tx, _) = tokio::sync::broadcast::channel(16);
-    build_router(service, url_tx)
+    let (host_event_tx, _) = tokio::sync::broadcast::channel(16);
+    build_router(service, host_event_tx)
 }
 
 struct MockService {
@@ -106,7 +106,7 @@ impl SandboxService for MockService {
     async fn mux_attach(
         &self,
         _socket: axum::extract::ws::WebSocket,
-        _url_rx: cmux_sandbox::service::UrlBroadcastReceiver,
+        _host_event_rx: cmux_sandbox::service::HostEventReceiver,
     ) -> cmux_sandbox::errors::SandboxResult<()> {
         Ok(())
     }
@@ -199,6 +199,7 @@ async fn cli_can_list_and_create_via_http() {
     let payload = serde_json::to_value(&CreateSandboxRequest {
         name: Some("demo".into()),
         workspace: Some("/tmp/demo".into()),
+        tab_id: None,
         read_only_paths: Vec::new(),
         tmpfs: Vec::new(),
         env: Vec::new(),

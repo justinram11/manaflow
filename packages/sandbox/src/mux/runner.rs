@@ -15,8 +15,9 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::MissedTickBehavior;
 
+use crate::models::NotificationLevel;
 use crate::mux::commands::MuxCommand;
-use crate::mux::events::{MuxEvent, NotificationLevel};
+use crate::mux::events::MuxEvent;
 use crate::mux::layout::{ClosedTabInfo, PaneContent, PaneExitOutcome, SandboxId};
 use crate::mux::state::{FocusArea, MuxApp};
 use crate::mux::terminal::{connect_to_sandbox, create_terminal_manager, request_list_sandboxes};
@@ -97,6 +98,7 @@ async fn run_main_loop<B: ratatui::backend::Backend>(
 
         let _ = init_tx.send(MuxEvent::CreateSandboxWithWorkspace {
             workspace_path: initial_workspace,
+            tab_id: None,
         });
     });
 
@@ -135,14 +137,19 @@ async fn run_app<B: ratatui::backend::Backend>(
                         app.pending_connect = Some(sandbox_id.clone());
                         try_consume_pending_connection(&mut app, &terminal_manager);
                     }
-                    MuxEvent::CreateSandboxWithWorkspace { workspace_path } => {
+                    MuxEvent::CreateSandboxWithWorkspace {
+                        workspace_path,
+                        tab_id,
+                    } => {
                         let event_tx = app.event_tx.clone();
                         let base_url = app.base_url.clone();
                         let workspace_path = workspace_path.clone();
+                        let tab_id = tab_id.clone();
                         tokio::spawn(async move {
                             if let Err(error) = create_sandbox_with_workspace(
                                 base_url,
                                 workspace_path,
+                                tab_id,
                                 event_tx.clone(),
                             )
                             .await
@@ -885,6 +892,7 @@ fn key_to_terminal_input(modifiers: KeyModifiers, code: KeyCode) -> Vec<u8> {
 async fn create_sandbox_with_workspace(
     base_url: String,
     workspace_path: PathBuf,
+    tab_id: Option<String>,
     event_tx: mpsc::UnboundedSender<MuxEvent>,
 ) -> Result<(), anyhow::Error> {
     let client = reqwest::Client::new();
@@ -898,11 +906,15 @@ async fn create_sandbox_with_workspace(
     let _ = event_tx.send(MuxEvent::Notification {
         message: format!("Creating sandbox: {}", dir_name),
         level: NotificationLevel::Info,
+        sandbox_id: None,
+        tab_id: tab_id.clone(),
     });
 
+    let request_tab_id = tab_id.clone();
     let body = crate::models::CreateSandboxRequest {
         name: Some(dir_name.clone()),
         workspace: None,
+        tab_id: request_tab_id,
         read_only_paths: vec![],
         tmpfs: vec![],
         env: crate::keyring::build_default_env_vars(),
@@ -932,6 +944,8 @@ async fn create_sandbox_with_workspace(
     let _ = event_tx.send(MuxEvent::Notification {
         message: format!("Uploading {}...", dir_name),
         level: NotificationLevel::Info,
+        sandbox_id: Some(sandbox_id.clone()),
+        tab_id: tab_id.clone(),
     });
 
     if let Err(error) = upload_workspace(&client, &trimmed_base, &sandbox_id, &workspace_path).await
@@ -947,6 +961,8 @@ async fn create_sandbox_with_workspace(
         let _ = event_tx.send(MuxEvent::Notification {
             message: format!("Syncing {} file(s)...", sync_files.len()),
             level: NotificationLevel::Info,
+            sandbox_id: Some(sandbox_id.clone()),
+            tab_id: tab_id.clone(),
         });
 
         if let Err(error) =
@@ -961,6 +977,8 @@ async fn create_sandbox_with_workspace(
     let _ = event_tx.send(MuxEvent::Notification {
         message: format!("Created sandbox: {}", sandbox_id),
         level: NotificationLevel::Info,
+        sandbox_id: Some(sandbox_id.clone()),
+        tab_id,
     });
     let _ = event_tx.send(MuxEvent::ConnectToSandbox { sandbox_id });
 

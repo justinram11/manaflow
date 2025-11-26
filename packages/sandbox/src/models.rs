@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -15,6 +16,8 @@ pub struct CreateSandboxRequest {
     /// Host path mounted into /workspace inside the sandbox
     #[schema(example = "/var/lib/cmux/sandboxes/workspaces/<id>")]
     pub workspace: Option<String>,
+    #[serde(default)]
+    pub tab_id: Option<String>,
     #[serde(default)]
     pub read_only_paths: Vec<String>,
     #[serde(default)]
@@ -72,6 +75,43 @@ pub struct ExecResponse {
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 pub struct HealthResponse {
     pub status: String,
+}
+
+#[derive(
+    Clone, Debug, Deserialize, Serialize, ToSchema, PartialEq, Eq, Copy, ValueEnum, Default,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum NotificationLevel {
+    #[default]
+    Info,
+    Warning,
+    Error,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct NotificationRequest {
+    pub message: String,
+    #[serde(default)]
+    pub level: NotificationLevel,
+    #[serde(default)]
+    pub sandbox_id: Option<String>,
+    #[serde(default)]
+    pub tab_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct OpenUrlRequest {
+    pub url: String,
+    #[serde(default)]
+    pub sandbox_id: Option<String>,
+    #[serde(default)]
+    pub tab_id: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub enum HostEvent {
+    OpenUrl(OpenUrlRequest),
+    Notification(NotificationRequest),
 }
 
 // ============================================================================
@@ -157,7 +197,23 @@ pub enum MuxServerMessage {
     Pong { timestamp: u64 },
     /// Request to open a URL on the client (host) machine.
     /// This is sent when a sandbox process calls xdg-open/open-url.
-    OpenUrl { url: String },
+    OpenUrl {
+        url: String,
+        #[serde(default)]
+        sandbox_id: Option<String>,
+        #[serde(default)]
+        tab_id: Option<String>,
+    },
+    /// Request to show a notification to the user.
+    Notification {
+        message: String,
+        #[serde(default)]
+        level: NotificationLevel,
+        #[serde(default)]
+        sandbox_id: Option<String>,
+        #[serde(default)]
+        tab_id: Option<String>,
+    },
 }
 
 fn default_tty() -> bool {

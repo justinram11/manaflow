@@ -32,6 +32,7 @@ async fn test_filesystem_isolation() {
     let req_a = CreateSandboxRequest {
         name: Some("sandbox-a".into()),
         workspace: None,
+        tab_id: None,
         read_only_paths: vec![],
         tmpfs: vec![],
         env: vec![],
@@ -61,6 +62,7 @@ async fn test_filesystem_isolation() {
     let req_b = CreateSandboxRequest {
         name: Some("sandbox-b".into()),
         workspace: None,
+        tab_id: None,
         read_only_paths: vec![],
         tmpfs: vec![],
         env: vec![],

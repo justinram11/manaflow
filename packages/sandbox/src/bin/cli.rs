@@ -320,6 +320,7 @@ async fn run() -> anyhow::Result<()> {
             let body = CreateSandboxRequest {
                 name: Some("interactive".into()),
                 workspace: None,
+                tab_id: None,
                 read_only_paths: vec![],
                 tmpfs: vec![],
                 env: build_default_env_vars(),
@@ -428,6 +429,7 @@ async fn run() -> anyhow::Result<()> {
                 let body = CreateSandboxRequest {
                     name: Some("interactive".into()),
                     workspace: None,
+                    tab_id: None,
                     read_only_paths: vec![],
                     tmpfs: vec![],
                     env: build_default_env_vars(),
@@ -528,6 +530,7 @@ async fn run() -> anyhow::Result<()> {
                     let body = CreateSandboxRequest {
                         name: resolved_name,
                         workspace: args.workspace.map(|p| p.to_string_lossy().to_string()),
+                        tab_id: None,
                         read_only_paths: args
                             .read_only_paths
                             .iter()
@@ -546,6 +549,7 @@ async fn run() -> anyhow::Result<()> {
                     let body = CreateSandboxRequest {
                         name: Some("interactive".into()),
                         workspace: None,
+                        tab_id: None,
                         read_only_paths: vec![],
                         tmpfs: vec![],
                         env: build_default_env_vars(),

@@ -4,8 +4,10 @@ use clap::Parser;
 use cmux_sandbox::bubblewrap::BubblewrapService;
 use cmux_sandbox::build_router;
 use cmux_sandbox::errors::{SandboxError, SandboxResult};
-use cmux_sandbox::models::{CreateSandboxRequest, ExecRequest, ExecResponse, SandboxSummary};
-use cmux_sandbox::service::SandboxService;
+use cmux_sandbox::models::{
+    CreateSandboxRequest, ExecRequest, ExecResponse, HostEvent, OpenUrlRequest, SandboxSummary,
+};
+use cmux_sandbox::service::{HostEventSender, SandboxService};
 use cmux_sandbox::DEFAULT_HTTP_PORT;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
@@ -93,17 +95,16 @@ async fn shutdown_signal() {
 
 async fn run_server(options: Options) {
     let bind_ip = parse_bind_ip(&options.bind);
-    // Create broadcast channel for URL open requests
-    // URLs from sandboxes are broadcast to all connected mux clients
-    let (url_tx, _) = tokio::sync::broadcast::channel::<String>(64);
+    // Broadcast channel for host-directed events (open-url, notifications)
+    let (host_event_tx, _) = tokio::sync::broadcast::channel::<HostEvent>(64);
 
     let service = build_service(&options).await;
-    let app = build_router(service, url_tx.clone());
+    let app = build_router(service, host_event_tx.clone());
 
     // Start the Unix socket listener for open-url requests from sandboxes
     let socket_path = options.open_url_socket.clone();
     tokio::spawn(async move {
-        if let Err(e) = run_open_url_socket(&socket_path, url_tx).await {
+        if let Err(e) = run_open_url_socket(&socket_path, host_event_tx).await {
             tracing::error!("open-url socket failed: {e}");
         }
     });
@@ -174,7 +175,7 @@ async fn build_service(options: &Options) -> Arc<dyn SandboxService> {
 /// Protocol: Each request is a single line containing the URL, response is "OK\n" or "ERROR: message\n".
 async fn run_open_url_socket(
     socket_path: &PathBuf,
-    url_tx: tokio::sync::broadcast::Sender<String>,
+    host_events: HostEventSender,
 ) -> anyhow::Result<()> {
     // Ensure parent directory exists
     if let Some(parent) = socket_path.parent() {
@@ -199,9 +200,9 @@ async fn run_open_url_socket(
     loop {
         match listener.accept().await {
             Ok((stream, _addr)) => {
-                let url_tx = url_tx.clone();
+                let host_events = host_events.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_open_url_connection(stream, url_tx).await {
+                    if let Err(e) = handle_open_url_connection(stream, host_events).await {
                         tracing::warn!("open-url connection error: {e}");
                     }
                 });
@@ -216,7 +217,7 @@ async fn run_open_url_socket(
 /// Handle a single open-url connection.
 async fn handle_open_url_connection(
     stream: tokio::net::UnixStream,
-    url_tx: tokio::sync::broadcast::Sender<String>,
+    host_events: HostEventSender,
 ) -> anyhow::Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
@@ -224,10 +225,39 @@ async fn handle_open_url_connection(
 
     // Read a single line containing the URL
     reader.read_line(&mut line).await?;
-    let url = line.trim();
+    let trimmed = line.trim();
+
+    if trimmed.is_empty() {
+        writer.write_all(b"ERROR: URL must not be empty\n").await?;
+        return Ok(());
+    }
+
+    let mut request = match serde_json::from_str::<OpenUrlRequest>(trimmed) {
+        Ok(req) => req,
+        Err(_) => OpenUrlRequest {
+            url: trimmed.to_string(),
+            sandbox_id: None,
+            tab_id: None,
+        },
+    };
+
+    if request
+        .sandbox_id
+        .as_ref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        request.sandbox_id = None;
+    }
+    if request
+        .tab_id
+        .as_ref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        request.tab_id = None;
+    }
 
     // Validate URL
-    if !url.starts_with("http://") && !url.starts_with("https://") {
+    if !request.url.starts_with("http://") && !request.url.starts_with("https://") {
         writer
             .write_all(b"ERROR: URL must start with http:// or https://\n")
             .await?;
@@ -235,14 +265,18 @@ async fn handle_open_url_connection(
     }
 
     // Broadcast URL to connected clients (they will open it on the host)
-    match url_tx.send(url.to_string()) {
+    match host_events.send(HostEvent::OpenUrl(OpenUrlRequest {
+        url: request.url.clone(),
+        sandbox_id: request.sandbox_id.clone(),
+        tab_id: request.tab_id.clone(),
+    })) {
         Ok(receivers) => {
-            tracing::info!("broadcast URL to {} clients: {}", receivers, url);
+            tracing::info!("broadcast URL to {} clients: {}", receivers, request.url);
             writer.write_all(b"OK\n").await?;
         }
         Err(_) => {
             // No receivers - no mux clients connected
-            tracing::warn!("no clients connected to receive URL: {}", url);
+            tracing::warn!("no clients connected to receive URL: {}", request.url);
             writer.write_all(b"ERROR: no clients connected\n").await?;
         }
     }
@@ -300,7 +334,7 @@ impl SandboxService for UnavailableSandboxService {
     async fn mux_attach(
         &self,
         _socket: axum::extract::ws::WebSocket,
-        _url_rx: tokio::sync::broadcast::Receiver<String>,
+        _host_event_rx: cmux_sandbox::service::HostEventReceiver,
     ) -> SandboxResult<()> {
         Err(self.error("mux attach"))
     }

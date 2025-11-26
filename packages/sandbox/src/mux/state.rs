@@ -372,8 +372,13 @@ impl<'a> MuxApp<'a> {
             // Sandbox management
             MuxCommand::NewSandbox => {
                 self.set_status("Creating new sandbox...");
+                let active_tab = self
+                    .workspace_manager
+                    .active_tab_id()
+                    .map(|id| id.to_string());
                 let _ = self.event_tx.send(MuxEvent::CreateSandboxWithWorkspace {
                     workspace_path: self.workspace_path.clone(),
+                    tab_id: active_tab,
                 });
                 self.add_placeholder_sandbox("Creating sandbox");
             }

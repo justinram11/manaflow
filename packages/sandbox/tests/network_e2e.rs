@@ -35,6 +35,7 @@ async fn test_network_connectivity_apt_update() {
     let req = CreateSandboxRequest {
         name: Some("net-test".into()),
         workspace: None,
+        tab_id: None,
         read_only_paths: vec![],
         tmpfs: vec![],
         env: vec![],

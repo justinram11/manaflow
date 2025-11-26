@@ -1,8 +1,8 @@
 use crate::errors::{SandboxError, SandboxResult};
 use crate::ip_pool::{IpLease, IpPool};
 use crate::models::{
-    CreateSandboxRequest, EnvVar, ExecRequest, ExecResponse, MuxClientMessage, MuxServerMessage,
-    PtySessionId, SandboxNetwork, SandboxStatus, SandboxSummary,
+    CreateSandboxRequest, EnvVar, ExecRequest, ExecResponse, HostEvent, MuxClientMessage,
+    MuxServerMessage, PtySessionId, SandboxNetwork, SandboxStatus, SandboxSummary,
 };
 use crate::service::SandboxService;
 use async_trait::async_trait;
@@ -12,7 +12,7 @@ use chrono::{DateTime, Utc};
 use futures::{SinkExt, StreamExt};
 use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySystem};
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
@@ -432,13 +432,15 @@ fi
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn spawn_bubblewrap(
         &self,
         request: &CreateSandboxRequest,
+        env: &[EnvVar],
         workspace: &Path,
         system_dir: &Path,
         _id: &Uuid,
-        lease: &IpLease,
+        _lease: &IpLease,
         index: usize,
     ) -> SandboxResult<(Child, u32)> {
         // Prepare system directories for the sandbox
@@ -555,14 +557,10 @@ fi
             command.args(["--tmpfs", mount]);
         }
 
-        for env in &request.env {
+        for env in env {
             command.env(&env.key, &env.value);
         }
 
-        command.env(
-            "CMUX_SANDBOX_URL",
-            format!("http://{}:{}", lease.host, self.port),
-        );
         command.env("IS_SANDBOX", "1");
         // Docker socket is bind-mounted to /run/docker.sock
         command.env("DOCKER_HOST", "unix:///run/docker.sock");
@@ -862,6 +860,42 @@ fn make_interface_names(id: &Uuid) -> (String, String) {
     )
 }
 
+fn normalize_optional_field(value: &Option<String>) -> Option<String> {
+    value
+        .as_ref()
+        .map(|item| item.trim())
+        .filter(|item| !item.is_empty())
+        .map(|item| item.to_string())
+}
+
+fn build_effective_env(
+    request_env: &[EnvVar],
+    lease: &IpLease,
+    port: u16,
+    sandbox_id: &Uuid,
+    tab_id: &Option<String>,
+) -> Vec<EnvVar> {
+    let mut merged = BTreeMap::new();
+    for env in request_env {
+        merged.insert(env.key.clone(), env.value.clone());
+    }
+
+    merged.insert("CMUX_SANDBOX_ID".to_string(), sandbox_id.to_string());
+    merged.insert(
+        "CMUX_TAB_ID".to_string(),
+        normalize_optional_field(tab_id).unwrap_or_else(|| "unknown".to_string()),
+    );
+    merged.insert(
+        "CMUX_SANDBOX_URL".to_string(),
+        format!("http://{}:{}", lease.host, port),
+    );
+
+    merged
+        .into_iter()
+        .map(|(key, value)| EnvVar { key, value })
+        .collect()
+}
+
 #[async_trait]
 impl SandboxService for BubblewrapService {
     async fn create(&self, request: CreateSandboxRequest) -> SandboxResult<SandboxSummary> {
@@ -881,8 +915,19 @@ impl SandboxService for BubblewrapService {
             pool.allocate()?
         };
 
+        let effective_env =
+            build_effective_env(&request.env, &lease, self.port, &id, &request.tab_id);
+
         let (mut child, inner_pid) = match self
-            .spawn_bubblewrap(&request, &workspace, &system_dir, &id, &lease, index)
+            .spawn_bubblewrap(
+                &request,
+                &effective_env,
+                &workspace,
+                &system_dir,
+                &id,
+                &lease,
+                index,
+            )
             .await
         {
             Ok(res) => res,
@@ -921,7 +966,7 @@ impl SandboxService for BubblewrapService {
             handle,
             child: Arc::new(Mutex::new(child)),
             inner_pid,
-            env: request.env.clone(),
+            env: effective_env,
         };
 
         let summary = {
@@ -989,9 +1034,13 @@ impl SandboxService for BubblewrapService {
         .ok_or(SandboxError::NotFound(id))?;
 
         let mut command = Command::new(&self.nsenter_path);
+        for env in &entry.env {
+            command.env(&env.key, &env.value);
+        }
         for env in &exec.env {
             command.env(&env.key, &env.value);
         }
+        command.env("IS_SANDBOX", "1");
 
         command.args(nsenter_args(
             entry.inner_pid,
@@ -1038,6 +1087,11 @@ impl SandboxService for BubblewrapService {
             // Non-PTY path: Use standard pipes
             let mut cmd = Command::new(&self.nsenter_path);
             cmd.args(nsenter_args(entry.inner_pid, None, &target_command));
+
+            for env in &entry.env {
+                cmd.env(&env.key, &env.value);
+            }
+            cmd.env("IS_SANDBOX", "1");
 
             cmd.stdin(Stdio::piped());
             cmd.stdout(Stdio::piped());
@@ -1367,7 +1421,7 @@ impl SandboxService for BubblewrapService {
     async fn mux_attach(
         &self,
         socket: WebSocket,
-        mut url_rx: crate::service::UrlBroadcastReceiver,
+        mut host_event_rx: crate::service::HostEventReceiver,
     ) -> SandboxResult<()> {
         info!("mux_attach: new multiplexed connection");
 
@@ -1400,10 +1454,25 @@ impl SandboxService for BubblewrapService {
         loop {
             let msg = tokio::select! {
                 msg = ws_read.next() => msg,
-                url = url_rx.recv() => {
-                    // Forward URL open request to client
-                    if let Ok(url) = url {
-                        let _ = output_tx.send(MuxServerMessage::OpenUrl { url });
+                event = host_event_rx.recv() => {
+                    if let Ok(event) = event {
+                        match event {
+                            HostEvent::OpenUrl(request) => {
+                                let _ = output_tx.send(MuxServerMessage::OpenUrl {
+                                    url: request.url,
+                                    sandbox_id: request.sandbox_id,
+                                    tab_id: request.tab_id,
+                                });
+                            }
+                            HostEvent::Notification(notification) => {
+                                let _ = output_tx.send(MuxServerMessage::Notification {
+                                    message: notification.message,
+                                    level: notification.level,
+                                    sandbox_id: notification.sandbox_id,
+                                    tab_id: notification.tab_id,
+                                });
+                            }
+                        }
                     }
                     continue;
                 }
@@ -1428,6 +1497,7 @@ impl SandboxService for BubblewrapService {
                                 .create(CreateSandboxRequest {
                                     name,
                                     workspace: None,
+                                    tab_id: None,
                                     read_only_paths: vec![],
                                     tmpfs: vec![],
                                     env,

@@ -21,6 +21,10 @@ path = "src/bin/cli.rs"
 name = "dmux"
 path = "src/bin/cli.rs"
 
+[[bin]]
+name = "cmux-bridge"
+path = "src/bin/cmux-bridge.rs"
+
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"

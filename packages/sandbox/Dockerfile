@@ -57,7 +57,7 @@ COPY packages/sandbox/src ./src
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
   --mount=type=cache,target=/usr/local/cargo/git \
-  cargo build --locked --release --bin cmux --bin cmux-sandboxd
+  cargo build --locked --release --bin cmux --bin cmux-sandboxd --bin cmux-bridge
 
 FROM ubuntu:24.04 AS dind-installer
 
@@ -214,12 +214,13 @@ COPY --from=dind-installer --link /usr/local/lib/docker/cli-plugins/ /usr/local/
 
 COPY --from=builder --link /workspace/target/release/cmux-sandboxd /usr/local/bin/cmux-sandboxd
 COPY --from=builder --link /workspace/target/release/cmux /usr/local/bin/cmux
+COPY --from=builder --link /workspace/target/release/cmux-bridge /usr/local/bin/cmux-bridge
 COPY --from=acp-builder --link /workspace/target/release/codex-acp /usr/local/bin/codex-acp
 
 COPY --link packages/sandbox/scripts/bootstrap-dind.sh /usr/local/bin/bootstrap-dind.sh
-COPY --link packages/sandbox/scripts/open-url.sh /usr/local/bin/open-url
-RUN chmod +x /usr/local/bin/bootstrap-dind.sh /usr/local/bin/open-url && \
-    ln -sf /usr/local/bin/open-url /usr/local/bin/xdg-open
+RUN chmod +x /usr/local/bin/bootstrap-dind.sh && \
+    ln -sf /usr/local/bin/cmux-bridge /usr/local/bin/open-url && \
+    ln -sf /usr/local/bin/cmux-bridge /usr/local/bin/xdg-open
 
 # systemd service units
 COPY --link packages/sandbox/systemd/dockerd.service /etc/systemd/system/dockerd.service
