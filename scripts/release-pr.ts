@@ -41,6 +41,14 @@ type PullRequest = {
   number: number;
 };
 
+function writeGithubOutput(key: string, value: string): void {
+  const outputPath = process.env.GITHUB_OUTPUT;
+  if (!outputPath) {
+    return;
+  }
+  writeFileSync(outputPath, `${key}=${value}\n`, { flag: "a" });
+}
+
 function usage(): never {
   console.error(
     `Usage: ./scripts/${scriptName} [major|minor|patch|<semver>]\nExamples:\n  ./scripts/${scriptName}\n  ./scripts/${scriptName} minor\n  ./scripts/${scriptName} 1.2.3`
@@ -349,6 +357,12 @@ async function main(): Promise<void> {
     const existing = await findExistingPullRequest(branchName, repo, token);
     if (existing) {
       console.log(`Release branch ${branchName} already has open PR #${existing.number}: ${existing.html_url}`);
+      writeGithubOutput("release_branch", branchName);
+      writeGithubOutput("release_version", newVersion);
+      writeGithubOutput("release_pr_state", "existing");
+      writeGithubOutput("release_pr_number", existing.number.toString());
+      writeGithubOutput("release_pr_url", existing.html_url);
+      writeGithubOutput("release_branch_created", "false");
       return;
     }
     // Branch exists but no open PR - delete the stale branch and continue
@@ -366,11 +380,19 @@ async function main(): Promise<void> {
 
   run("git", ["push", "-u", firstRemote, branchName], { stdio: "inherit" });
 
+  writeGithubOutput("release_branch", branchName);
+  writeGithubOutput("release_version", newVersion);
+  writeGithubOutput("release_branch_created", "true");
+
   const repo = resolveRepository();
   const token = ensureToken();
   const baseBranch = getBaseBranch();
 
   const pullRequest = await createPullRequest(repo, token, branchName, newVersion, baseBranch);
+
+  writeGithubOutput("release_pr_state", "created");
+  writeGithubOutput("release_pr_number", pullRequest.number.toString());
+  writeGithubOutput("release_pr_url", pullRequest.html_url);
 
   console.log(`Created draft release PR #${pullRequest.number}: ${pullRequest.html_url}`);
 }

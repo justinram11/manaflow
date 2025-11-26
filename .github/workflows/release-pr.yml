@@ -13,6 +13,7 @@ concurrency:
 permissions:
   contents: write
   pull-requests: write
+  actions: write
 
 env:
   NODE_VERSION: "24"
@@ -71,11 +72,32 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Create draft release PR
+        id: create_release_pr
         if: steps.release_changes.outputs.proceed == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_BASE_BRANCH: ${{ github.event.repository.default_branch }}
         run: bun ./scripts/release-pr.ts
+
+      - name: Trigger electron build workflow
+        if: steps.release_changes.outputs.proceed == 'true' && steps.create_release_pr.outputs.release_pr_state == 'created'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const branch = '${{ steps.create_release_pr.outputs.release_branch }}';
+            if (!branch) {
+              core.setFailed('Release branch output missing; cannot dispatch electron build workflow.');
+              return;
+            }
+            const workflowId = 'release-updates.yml';
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: workflowId,
+              ref: branch,
+            });
+            core.info(`Triggered ${workflowId} on ${branch}`);
 
       - name: Skip release (no changes)
         if: steps.release_changes.outputs.proceed == 'false'
