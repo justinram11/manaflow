@@ -351,7 +351,9 @@ async function main(): Promise<void> {
       console.log(`Release branch ${branchName} already has open PR #${existing.number}: ${existing.html_url}`);
       return;
     }
-    throw new Error(`Branch ${branchName} already exists on ${firstRemote} without an open PR.`);
+    // Branch exists but no open PR - delete the stale branch and continue
+    console.log(`Deleting stale branch ${branchName} (no open PR found)`);
+    run("git", ["push", firstRemote, "--delete", branchName], { stdio: "inherit" });
   }
 
   updateVersionFile(newVersion);
