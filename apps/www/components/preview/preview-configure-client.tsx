@@ -1349,6 +1349,7 @@ export function PreviewConfigureClient({
     browserPersistKey,
     instance,
     persistentIframeManager,
+    previewMode,
     resolvedVncUrl,
     vscodePersistKey,
   ]);

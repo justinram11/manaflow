@@ -3,13 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   ArrowLeft,
-  Eye,
+  Camera,
   Github,
+  GitCompare,
   Loader2,
   Search,
+  Server,
   Shield,
   User,
-  Zap,
 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -204,11 +205,11 @@ export function PreviewDashboard({
 
         <div className="space-y-3">
           <h1 className="text-4xl font-bold tracking-tight text-white sm:text-5xl">
-            preview.new for every pull request
+            Screenshot previews for your PRs
           </h1>
           <p className="max-w-3xl text-lg text-neutral-300">
-            preview.new sets up a GitHub bot that takes screenshot previews of your dev server so you
-            can visually verify every pull request.
+            preview.new sets up a GitHub agent that takes screenshot previews of your dev server so you
+            can visually verify your pull requests.
           </p>
         </div>
       </div>
@@ -221,7 +222,7 @@ export function PreviewDashboard({
             <div className="space-y-2">
               <p className="text-sm font-semibold text-white">Setup a preview</p>
               <p className="text-sm text-neutral-300">
-                Paste a public GitHub URL to launch preview.new.
+                Paste a public GitHub URL to setup screenshot previews.
               </p>
               {!isAuthenticated && (
                 <p className="text-xs text-neutral-400">
@@ -397,7 +398,7 @@ export function PreviewDashboard({
             <div className="flex-1 rounded-xl border border-white/10 bg-neutral-900/30 p-4">
               <div className="mb-2 flex items-center gap-3">
                 <div className="rounded-lg bg-sky-500/20 p-2 text-sky-400">
-                  <Zap className="h-5 w-5" />
+                  <Camera className="h-5 w-5" />
                 </div>
                 <h4 className="font-medium text-white">Automated captures</h4>
               </div>
@@ -409,7 +410,7 @@ export function PreviewDashboard({
             <div className="flex-1 rounded-xl border border-white/10 bg-neutral-900/30 p-4">
               <div className="mb-2 flex items-center gap-3">
                 <div className="rounded-lg bg-emerald-500/20 p-2 text-emerald-400">
-                  <Eye className="h-5 w-5" />
+                  <GitCompare className="h-5 w-5" />
                 </div>
                 <h4 className="font-medium text-white">Visual verification</h4>
               </div>
@@ -421,7 +422,7 @@ export function PreviewDashboard({
             <div className="flex-1 rounded-xl border border-white/10 bg-neutral-900/30 p-4">
               <div className="mb-2 flex items-center gap-3">
                 <div className="rounded-lg bg-purple-500/20 p-2 text-purple-400">
-                  <Zap className="h-5 w-5" />
+                  <Server className="h-5 w-5" />
                 </div>
                 <h4 className="font-medium text-white">Isolated VMs</h4>
               </div>
