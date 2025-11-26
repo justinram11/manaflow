@@ -7,26 +7,21 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactNode,
-  type DragEvent as ReactDragEvent,
-  type MouseEvent as ReactMouseEvent,
   type ChangeEvent,
 } from "react";
 import {
   Loader2,
   ArrowLeft,
+  ArrowRight,
   Eye,
   EyeOff,
   Minus,
   Plus,
-  Code2,
-  Monitor,
-  GripVertical,
-  Maximize2,
-  Minimize2,
+  Check,
+  Copy,
+  Github,
 } from "lucide-react";
 import Link from "next/link";
-import { Accordion, AccordionItem } from "@heroui/react";
 import { formatEnvVarsContent } from "@cmux/shared/utils/format-env-vars-content";
 import clsx from "clsx";
 
@@ -48,9 +43,7 @@ type PreviewConfigureClientProps = {
 
 type EnvVar = { name: string; value: string; isSecret: boolean };
 
-type PanelPosition = "topLeft" | "bottomLeft";
-type PanelType = "workspace" | "browser";
-type PreviewMode = "split" | "vscode" | "browser";
+type WizardStep = 1 | 2;
 
 function normalizeVncUrl(url: string): string | null {
   try {
@@ -112,31 +105,6 @@ function deriveVncUrl(
   return normalizeVncUrl(baseUrl);
 }
 
-const PANEL_DRAG_START_EVENT = "cmux:panel-drag-start";
-const PANEL_DRAG_END_EVENT = "cmux:panel-drag-end";
-const PANEL_DRAGGING_CLASS = "cmux-panel-dragging";
-const PANEL_DRAGGING_STYLE_ID = "cmux-panel-dragging-style";
-const PANEL_DRAGGING_STYLE_CONTENT = `
-  body.${PANEL_DRAGGING_CLASS} iframe,
-  body.${PANEL_DRAGGING_CLASS} [data-iframe-key],
-  body.${PANEL_DRAGGING_CLASS} [data-persistent-iframe-overlay] {
-    pointer-events: none !important;
-  }
-`;
-
-declare global {
-  interface Window {
-    __previewPanelDragPointerHandlers?: {
-      start: EventListener;
-      end: EventListener;
-      nativeEnd: EventListener;
-      visibilityChange: EventListener;
-      windowBlur: EventListener;
-    };
-    __previewActivePanelDragCount?: number;
-  }
-}
-
 const ensureInitialEnvVars = (initial?: EnvVar[]): EnvVar[] => {
   const base = (initial ?? []).map((item) => ({
     name: item.name,
@@ -183,29 +151,6 @@ function parseEnvBlock(text: string): Array<{ name: string; value: string }> {
   return results;
 }
 
-const SCRIPT_COPY = {
-  maintenance: {
-    description: "Script that runs after git pull in case new dependencies were added.",
-    subtitle: "We execute this from /root/workspace, where your repositories are cloned. For example, cd my-repo && npm install installs dependencies inside /root/workspace/my-repo.",
-    placeholder: `# e.g.
-bun install
-npm install
-uv sync
-pip install -r requirements.txt
-etc.`,
-  },
-  dev: {
-    description: "Script that starts the development server.",
-    subtitle: "Runs from /root/workspace as well, so reference repos with relative paths—e.g. cd web && npm run dev.",
-    placeholder: `# e.g.
-npm run dev
-bun dev
-python manage.py runserver
-rails server
-cargo run
-etc.`,
-  },
-};
 
 // Persistent iframe manager for Next.js
 type PersistentIframeOptions = {
@@ -365,306 +310,69 @@ class SimplePersistentIframeManager {
 
 const iframeManager = typeof window !== "undefined" ? new SimplePersistentIframeManager() : null;
 
-const ensurePanelDragPointerEventHandling = () => {
-  if (typeof window === "undefined" || typeof document === "undefined") {
-    return;
-  }
+const STEPS = [
+  {
+    id: 1 as const,
+    numeral: "I",
+    title: "Environment & Scripts",
+    description: "Configure environment and run your dev server",
+  },
+  {
+    id: 2 as const,
+    numeral: "II",
+    title: "Browser Setup",
+    description: "Prepare browser for automation",
+  },
+];
 
-  const existingHandlers = window.__previewPanelDragPointerHandlers;
-  if (existingHandlers) {
-    window.removeEventListener(PANEL_DRAG_START_EVENT, existingHandlers.start);
-    window.removeEventListener(PANEL_DRAG_END_EVENT, existingHandlers.end);
-    window.removeEventListener("dragend", existingHandlers.nativeEnd);
-    document.removeEventListener("visibilitychange", existingHandlers.visibilityChange);
-    window.removeEventListener("blur", existingHandlers.windowBlur);
-  }
-
-  const ensureStyleElement = () => {
-    let styleElement = document.getElementById(PANEL_DRAGGING_STYLE_ID) as HTMLStyleElement | null;
-    if (!styleElement) {
-      styleElement = document.createElement("style");
-      styleElement.id = PANEL_DRAGGING_STYLE_ID;
-      document.head.appendChild(styleElement);
-    }
-    if (styleElement.textContent !== PANEL_DRAGGING_STYLE_CONTENT) {
-      styleElement.textContent = PANEL_DRAGGING_STYLE_CONTENT;
-    }
-  };
-
-  const handleDragStart: EventListener = () => {
-    if (!document.body) return;
-    ensureStyleElement();
-    const current = window.__previewActivePanelDragCount ?? 0;
-    if (current === 0) {
-      document.body.classList.add(PANEL_DRAGGING_CLASS);
-    }
-    window.__previewActivePanelDragCount = current + 1;
-  };
-
-  const handleDragEnd: EventListener = () => {
-    if (!document.body) return;
-    const current = window.__previewActivePanelDragCount ?? 0;
-    if (current <= 1) {
-      document.body.classList.remove(PANEL_DRAGGING_CLASS);
-      window.__previewActivePanelDragCount = 0;
-      return;
-    }
-    window.__previewActivePanelDragCount = current - 1;
-  };
-
-  const handleVisibilityChange: EventListener = () => {
-    if (document.visibilityState === "visible") {
-      return;
-    }
-    handleDragEnd(new Event("visibilitychange"));
-  };
-
-  const handleWindowBlur: EventListener = () => {
-    handleDragEnd(new Event("blur"));
-  };
-
-  ensureStyleElement();
-
-  window.addEventListener(PANEL_DRAG_START_EVENT, handleDragStart);
-  window.addEventListener(PANEL_DRAG_END_EVENT, handleDragEnd);
-  window.addEventListener("dragend", handleDragEnd);
-  document.addEventListener("visibilitychange", handleVisibilityChange);
-  window.addEventListener("blur", handleWindowBlur);
-
-  window.__previewPanelDragPointerHandlers = {
-    start: handleDragStart,
-    end: handleDragEnd,
-    nativeEnd: handleDragEnd,
-    visibilityChange: handleVisibilityChange,
-    windowBlur: handleWindowBlur,
-  };
-};
-
-const dispatchPanelDragEvent = (event: string) => {
-  if (typeof window === "undefined") {
-    return;
-  }
-  window.dispatchEvent(new Event(event));
-};
-
-type PreviewPanelProps = {
-  position: PanelPosition;
-  iframeKey: string;
-  icon: ReactNode;
-  title: string;
-  placeholder?: {
-    title: string;
-    description?: string;
-  } | null;
-  onSwap: (from: PanelPosition, to: PanelPosition) => void;
-  onToggleExpand: (position: PanelPosition) => void;
-  isExpanded: boolean;
-  isAnyExpanded: boolean;
-};
-
-function PreviewPanel({
-  position,
-  iframeKey,
-  icon,
-  title,
-  placeholder,
-  onSwap,
-  onToggleExpand,
-  isExpanded,
-  isAnyExpanded,
-}: PreviewPanelProps) {
-  const [isDragOver, setIsDragOver] = useState(false);
-  const [isDraggingSelf, setIsDraggingSelf] = useState(false);
-  const [isPanelDragActive, setIsPanelDragActive] = useState(false);
-
-  useEffect(() => {
-    ensurePanelDragPointerEventHandling();
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    const handleStart = () => {
-      setIsPanelDragActive(true);
-    };
-    const handleEnd = () => {
-      setIsPanelDragActive(false);
-      setIsDragOver(false);
-    };
-
-    window.addEventListener(PANEL_DRAG_START_EVENT, handleStart);
-    window.addEventListener(PANEL_DRAG_END_EVENT, handleEnd);
-
-    return () => {
-      window.removeEventListener(PANEL_DRAG_START_EVENT, handleStart);
-      window.removeEventListener(PANEL_DRAG_END_EVENT, handleEnd);
-    };
-  }, []);
-
-  const handleDragStart = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", position);
-    setIsDraggingSelf(true);
-    dispatchPanelDragEvent(PANEL_DRAG_START_EVENT);
-  }, [position]);
-
-  const handleDragEnd = useCallback(() => {
-    setIsDraggingSelf(false);
-    setIsDragOver(false);
-    dispatchPanelDragEvent(PANEL_DRAG_END_EVENT);
-  }, []);
-
-  const handleDragEnter = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    setIsDragOver(true);
-  }, []);
-
-  const handleDragOver = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
-  }, []);
-
-  const handleDragLeave = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
-    const nextTarget = event.relatedTarget as Node | null;
-    if (nextTarget && event.currentTarget.contains(nextTarget)) {
-      return;
-    }
-    setIsDragOver(false);
-  }, []);
-
-  const handleDrop = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    setIsDragOver(false);
-    const fromPosition = event.dataTransfer.getData("text/plain") as PanelPosition;
-    if (fromPosition && fromPosition !== position) {
-      onSwap(fromPosition, position);
-    }
-    dispatchPanelDragEvent(PANEL_DRAG_END_EVENT);
-  }, [onSwap, position]);
-
-  const isInactive = isAnyExpanded && !isExpanded;
-
-  const panelClassName = clsx(
-    "flex h-full flex-col rounded-lg border bg-white shadow-sm transition-all duration-150 dark:bg-neutral-950",
-    isDragOver
-      ? "border-blue-500 dark:border-blue-400 ring-2 ring-blue-500/30 dark:ring-blue-400/30"
-      : "border-neutral-200 dark:border-neutral-800",
-    isExpanded
-      ? "absolute inset-0 z-[var(--z-maximized)] pointer-events-auto shadow-2xl overflow-visible dark:ring-blue-400/20"
-      : "relative pointer-events-auto overflow-hidden",
-    isInactive ? "pointer-events-none opacity-40" : undefined,
-  );
-
-  const panelStyle = isInactive ? ({ visibility: "hidden" } as const) : undefined;
-
-  const showDropOverlay = isPanelDragActive && !isDraggingSelf && !isExpanded;
-
-  const ExpandIcon = isExpanded ? Minimize2 : Maximize2;
-  const expandLabel = isExpanded ? "Exit expanded view" : "Expand panel";
-
+function StepIndicator({ currentStep }: { currentStep: WizardStep }) {
   return (
-    <div
-      className={panelClassName}
-      style={panelStyle}
-      data-panel-position={position}
-      aria-hidden={isInactive ? true : undefined}
-      onDragEnter={handleDragEnter}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-    >
-      {showDropOverlay ? (
-        <div
-          aria-hidden
-          className={clsx(
-            "pointer-events-auto absolute inset-0 z-10 rounded-lg",
-            isDragOver ? "bg-blue-500/10 dark:bg-blue-400/15" : "bg-transparent"
-          )}
-          onDragEnter={(event) => {
-            handleDragEnter(event);
-            event.stopPropagation();
-          }}
-          onDragOver={(event) => {
-            handleDragOver(event);
-            event.stopPropagation();
-          }}
-          onDragLeave={(event) => {
-            handleDragLeave(event);
-            event.stopPropagation();
-          }}
-          onDrop={(event) => {
-            handleDrop(event);
-            event.stopPropagation();
-          }}
-        />
-      ) : null}
-      <div
-        className={clsx(
-          "flex items-center gap-1.5 border-b border-neutral-200 px-2 py-1 dark:border-neutral-800",
-          isExpanded && "relative z-[100000000] pointer-events-auto"
-        )}
-        onDoubleClick={(event) => {
-          event.stopPropagation();
-          onToggleExpand(position);
-        }}
-      >
-        <div
-          draggable
-          onDragStart={handleDragStart}
-          onDragEnd={handleDragEnd}
-          className={clsx(
-            "flex flex-1 items-center gap-1.5 cursor-move group transition-opacity",
-            isDraggingSelf && "opacity-60"
-          )}
-        >
-          <GripVertical className="size-3.5 text-neutral-400 transition-colors group-hover:text-neutral-600 dark:text-neutral-500 dark:group-hover:text-neutral-300" />
-          <span className="sr-only">Drag to reorder panels</span>
-          <div className="flex size-5 items-center justify-center rounded-full text-neutral-700 dark:text-neutral-200">
-            {icon}
-          </div>
-          <h2 className="text-xs font-medium text-neutral-800 dark:text-neutral-100">
-            {title}
-          </h2>
-        </div>
-        <button
-          type="button"
-          onClick={() => onToggleExpand(position)}
-          className="flex size-5 items-center justify-center rounded text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
-          title={expandLabel}
-          aria-pressed={isExpanded}
-          onDoubleClick={(event) => {
-            event.stopPropagation();
-          }}
-        >
-          <ExpandIcon className="size-3.5" />
-        </button>
-      </div>
-      <div className="relative flex-1">
-        {placeholder ? (
-          <div
-            className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center text-neutral-500 dark:text-neutral-400"
-            aria-hidden={false}
-          >
-            <div className="text-sm font-medium text-neutral-600 dark:text-neutral-200">
-              {placeholder.title}
+    <div className="flex items-center gap-3 mb-6">
+      {STEPS.map((step, index) => {
+        const isActive = step.id === currentStep;
+        const isCompleted = step.id < currentStep;
+
+        return (
+          <div key={step.id} className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <div
+                className={clsx(
+                  "flex h-7 w-7 items-center justify-center rounded-full text-xs font-medium transition-colors",
+                  isActive
+                    ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
+                    : isCompleted
+                      ? "bg-green-500 text-white dark:bg-green-500"
+                      : "bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400"
+                )}
+              >
+                {isCompleted ? <Check className="h-3.5 w-3.5" /> : step.numeral}
+              </div>
+              <div className="hidden sm:block">
+                <div
+                  className={clsx(
+                    "text-sm font-medium",
+                    isActive
+                      ? "text-neutral-900 dark:text-neutral-100"
+                      : "text-neutral-500 dark:text-neutral-400"
+                  )}
+                >
+                  {step.title}
+                </div>
+              </div>
             </div>
-            {placeholder.description ? (
-              <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                {placeholder.description}
-              </p>
-            ) : null}
+            {index < STEPS.length - 1 && (
+              <div
+                className={clsx(
+                  "h-px w-8 transition-colors",
+                  isCompleted
+                    ? "bg-green-500"
+                    : "bg-neutral-200 dark:bg-neutral-800"
+                )}
+              />
+            )}
           </div>
-        ) : null}
-        <div
-          className={clsx(
-            "absolute inset-0",
-            placeholder ? "opacity-0" : "opacity-100"
-          )}
-          data-iframe-target={iframeKey}
-        />
-      </div>
+        );
+      })}
     </div>
   );
 }
@@ -677,6 +385,8 @@ export function PreviewConfigureClient({
   const [instance, setInstance] = useState<SandboxInstance | null>(null);
   const [isProvisioning, setIsProvisioning] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const [currentStep, setCurrentStep] = useState<WizardStep>(1);
 
   const [envVars, setEnvVars] = useState<EnvVar[]>(() => ensureInitialEnvVars());
   const [maintenanceScript, setMaintenanceScript] = useState("");
@@ -702,65 +412,13 @@ export function PreviewConfigureClient({
     };
   }, []);
 
-  // Panel state - vertical split
-  const [panelLayout, setPanelLayout] = useState<Record<PanelPosition, PanelType>>({
-    topLeft: "workspace",
-    bottomLeft: "browser",
-  });
-  const [expandedPanelInSplit, setExpandedPanelInSplit] = useState<PanelPosition | null>(null);
-  const [previewMode, setPreviewMode] = useState<PreviewMode>(() => {
-    if (typeof window === "undefined") {
-      return "split";
-    }
-    const stored = window.localStorage.getItem("env-preview-mode");
-    if (stored === "split" || stored === "vscode" || stored === "browser") {
-      return stored;
-    }
-    return "split";
-  });
   const persistentIframeManager = useMemo(() => iframeManager, []);
-  const [splitRatio, setSplitRatio] = useState(() => {
-    if (typeof window === "undefined") {
-      return 0.5;
-    }
-    const stored = window.localStorage.getItem("env-preview-split");
-    const parsed = stored ? Number.parseFloat(stored) : 0.5;
-    if (Number.isNaN(parsed)) {
-      return 0.5;
-    }
-    return Math.min(Math.max(parsed, 0.2), 0.8);
-  });
-  const splitDragRafRef = useRef<number | null>(null);
 
-  const splitContainerRef = useRef<HTMLDivElement>(null);
   const keyInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const lastSubmittedEnvContent = useRef<string | null>(null);
 
   const vscodePersistKey = instance?.instanceId ? `preview-${instance.instanceId}:vscode` : "vscode";
   const browserPersistKey = instance?.instanceId ? `preview-${instance.instanceId}:browser` : "browser";
-
-  const workspacePosition = useMemo<PanelPosition | null>(() => {
-    const entry = Object.entries(panelLayout).find(([, value]) => value === "workspace");
-    return (entry?.[0] as PanelPosition | undefined) ?? null;
-  }, [panelLayout]);
-
-  const browserPosition = useMemo<PanelPosition | null>(() => {
-    const entry = Object.entries(panelLayout).find(([, value]) => value === "browser");
-    return (entry?.[0] as PanelPosition | undefined) ?? null;
-  }, [panelLayout]);
-
-  const expandedPanelPosition = useMemo<PanelPosition | null>(() => {
-    if (previewMode === "split") {
-      return null;
-    }
-    if (previewMode === "vscode") {
-      return workspacePosition;
-    }
-    if (previewMode === "browser") {
-      return browserPosition;
-    }
-    return null;
-  }, [browserPosition, previewMode, workspacePosition]);
 
   const resolvedVncUrl = useMemo(() => {
     if (instance?.vncUrl) {
@@ -768,8 +426,6 @@ export function PreviewConfigureClient({
     }
     return deriveVncUrl(instance?.instanceId, instance?.vscodeUrl);
   }, [instance?.instanceId, instance?.vncUrl, instance?.vscodeUrl]);
-
-  const isBrowserAvailable = Boolean(resolvedVncUrl);
 
   const workspacePlaceholder = useMemo(
     () =>
@@ -835,6 +491,7 @@ export function PreviewConfigureClient({
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to provision workspace";
       setErrorMessage(message);
+      console.error("Failed to provision workspace:", error);
     } finally {
       setIsProvisioning(false);
     }
@@ -904,169 +561,6 @@ export function PreviewConfigureClient({
   const updateEnvVars = useCallback((updater: (prev: EnvVar[]) => EnvVar[]) => {
     setEnvVars((prev) => updater(prev));
   }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.localStorage.setItem("env-preview-mode", previewMode);
-  }, [previewMode]);
-
-  useEffect(() => {
-    if (previewMode === "browser" && !resolvedVncUrl) {
-      setPreviewMode("vscode");
-    }
-  }, [previewMode, resolvedVncUrl]);
-
-
-  // Persist split ratio to localStorage
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.localStorage.setItem("env-preview-split", String(splitRatio));
-  }, [splitRatio]);
-
-  const clampSplitRatio = useCallback(
-    (value: number) => Math.min(Math.max(value, 0.2), 0.8),
-    []
-  );
-
-  const handlePanelSwap = useCallback((fromPosition: PanelPosition, toPosition: PanelPosition) => {
-    if (fromPosition === toPosition) {
-      return;
-    }
-    setPanelLayout((prev) => {
-      if (prev[fromPosition] === prev[toPosition]) {
-        return prev;
-      }
-      return {
-        ...prev,
-        [fromPosition]: prev[toPosition],
-        [toPosition]: prev[fromPosition],
-      };
-    });
-  }, []);
-
-  const handlePanelToggleExpand = useCallback((position: PanelPosition) => {
-    setExpandedPanelInSplit((prev) => (prev === position ? null : position));
-  }, []);
-
-  const disableIframePointerEvents = useCallback(() => {
-    if (typeof document === "undefined") {
-      return;
-    }
-    const iframes = document.querySelectorAll("iframe");
-    for (const node of Array.from(iframes)) {
-      if (!(node instanceof HTMLIFrameElement)) {
-        continue;
-      }
-      const current = node.style.pointerEvents;
-      node.dataset.prevPointerEvents = current ? current : "__unset__";
-      node.style.pointerEvents = "none";
-    }
-  }, []);
-
-  const restoreIframePointerEvents = useCallback(() => {
-    if (typeof document === "undefined") {
-      return;
-    }
-    const iframes = document.querySelectorAll("iframe");
-    for (const node of Array.from(iframes)) {
-      if (!(node instanceof HTMLIFrameElement)) {
-        continue;
-      }
-      const prev = node.dataset.prevPointerEvents;
-      if (prev !== undefined) {
-        if (prev === "__unset__") {
-          node.style.removeProperty("pointer-events");
-        } else {
-          node.style.pointerEvents = prev;
-        }
-        delete node.dataset.prevPointerEvents;
-      } else {
-        node.style.removeProperty("pointer-events");
-      }
-    }
-  }, []);
-
-  const updateSplitFromEvent = useCallback(
-    (event: MouseEvent) => {
-      const container = splitContainerRef.current;
-      if (!container) return;
-      const rect = container.getBoundingClientRect();
-      if (rect.height <= 0) return;
-      const offset = (event.clientY - rect.top) / rect.height;
-      setSplitRatio(clampSplitRatio(offset));
-    },
-    [clampSplitRatio]
-  );
-
-  const handleSplitDragMove = useCallback(
-    (event: MouseEvent) => {
-      if (typeof window === "undefined") {
-        return;
-      }
-      if (splitDragRafRef.current != null) {
-        return;
-      }
-      splitDragRafRef.current = window.requestAnimationFrame(() => {
-        splitDragRafRef.current = null;
-        updateSplitFromEvent(event);
-      });
-    },
-    [updateSplitFromEvent]
-  );
-
-  const stopSplitDragging = useCallback(() => {
-    if (typeof window === "undefined" || typeof document === "undefined") {
-      return;
-    }
-    if (splitDragRafRef.current != null) {
-      cancelAnimationFrame(splitDragRafRef.current);
-      splitDragRafRef.current = null;
-    }
-    document.body.style.cursor = "";
-    document.body.classList.remove("select-none");
-    restoreIframePointerEvents();
-    window.removeEventListener("mousemove", handleSplitDragMove);
-    window.removeEventListener("mouseup", stopSplitDragging);
-  }, [handleSplitDragMove, restoreIframePointerEvents]);
-
-  const handleSplitDragStart = useCallback(
-    (e: ReactMouseEvent) => {
-      if (previewMode !== "split") {
-        return;
-      }
-      if (typeof window === "undefined" || typeof document === "undefined") {
-        return;
-      }
-      e.preventDefault();
-      document.body.style.cursor = "row-resize";
-      document.body.classList.add("select-none");
-      disableIframePointerEvents();
-      window.addEventListener("mousemove", handleSplitDragMove);
-      window.addEventListener("mouseup", stopSplitDragging);
-    },
-    [disableIframePointerEvents, handleSplitDragMove, previewMode, stopSplitDragging]
-  );
-
-  // Cleanup split dragging on unmount
-  useEffect(() => {
-    return () => {
-      if (typeof window !== "undefined" && splitDragRafRef.current != null) {
-        cancelAnimationFrame(splitDragRafRef.current);
-        splitDragRafRef.current = null;
-        window.removeEventListener("mousemove", handleSplitDragMove);
-        window.removeEventListener("mouseup", stopSplitDragging);
-      }
-      if (typeof document !== "undefined") {
-        document.body.style.cursor = "";
-        document.body.classList.remove("select-none");
-      }
-      restoreIframePointerEvents();
-    };
-  }, [handleSplitDragMove, restoreIframePointerEvents, stopSplitDragging]);
 
   const handleSaveConfiguration = async () => {
     if (!instance?.instanceId) {
@@ -1146,169 +640,17 @@ export function PreviewConfigureClient({
     }
   };
 
-  const renderPanel = (position: PanelPosition) => {
-    const panelType = panelLayout[position];
-    const isPanelExpanded =
-      previewMode === "split"
-        ? expandedPanelInSplit === position
-        : expandedPanelPosition === position;
-    const isAnyExpanded =
-      previewMode === "split"
-        ? expandedPanelInSplit !== null
-        : expandedPanelPosition !== null;
-
-    if (panelType === "workspace") {
-      return (
-        <PreviewPanel
-          key={`preview-panel-${position}-workspace`}
-          position={position}
-          iframeKey={vscodePersistKey}
-          icon={<Code2 className="size-3" />}
-          title="Workspace"
-          placeholder={workspacePlaceholder}
-          onSwap={handlePanelSwap}
-          onToggleExpand={handlePanelToggleExpand}
-          isExpanded={Boolean(isPanelExpanded)}
-          isAnyExpanded={Boolean(isAnyExpanded)}
-        />
-      );
+  const handleNextStep = () => {
+    if (currentStep < 2) {
+      setCurrentStep((currentStep + 1) as WizardStep);
     }
-
-    return (
-      <PreviewPanel
-        key={`preview-panel-${position}-browser`}
-        position={position}
-        iframeKey={browserPersistKey}
-        icon={<Monitor className="size-3" />}
-        title="Browser"
-        placeholder={browserPlaceholder}
-        onSwap={handlePanelSwap}
-        onToggleExpand={handlePanelToggleExpand}
-        isExpanded={Boolean(isPanelExpanded)}
-        isAnyExpanded={Boolean(isAnyExpanded)}
-      />
-    );
   };
 
-  const renderSingleContent = () => {
-    if (previewMode === "vscode") {
-      return (
-        <div className="relative h-full min-h-0">
-          {workspacePlaceholder ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center text-neutral-500 dark:text-neutral-400">
-              <div className="text-sm font-medium text-neutral-600 dark:text-neutral-200">
-                {workspacePlaceholder.title}
-              </div>
-              {workspacePlaceholder.description ? (
-                <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                  {workspacePlaceholder.description}
-                </p>
-              ) : null}
-            </div>
-          ) : null}
-          <div
-            className={clsx(
-              "absolute inset-0",
-              workspacePlaceholder ? "opacity-0" : "opacity-100"
-            )}
-            data-iframe-target={vscodePersistKey}
-          />
-        </div>
-      );
+  const handlePrevStep = () => {
+    if (currentStep > 1) {
+      setCurrentStep((currentStep - 1) as WizardStep);
     }
-
-    if (previewMode === "browser") {
-      return (
-        <div className="relative h-full min-h-0">
-          {browserPlaceholder ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center text-neutral-500 dark:text-neutral-400">
-              <div className="text-sm font-medium text-neutral-600 dark:text-neutral-200">
-                {browserPlaceholder.title}
-              </div>
-              {browserPlaceholder.description ? (
-                <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                  {browserPlaceholder.description}
-                </p>
-              ) : null}
-            </div>
-          ) : null}
-          <div
-            className={clsx(
-              "absolute inset-0",
-              browserPlaceholder ? "opacity-0" : "opacity-100"
-            )}
-            data-iframe-target={browserPersistKey}
-          />
-        </div>
-      );
-    }
-
-    return null;
   };
-
-  const previewContent =
-    previewMode === "split" ? (
-      <div
-        ref={splitContainerRef}
-        className="grid h-full min-h-0"
-        style={{
-          gridTemplateRows:
-            expandedPanelInSplit === "topLeft"
-              ? "1fr 8px 0fr"
-              : expandedPanelInSplit === "bottomLeft"
-                ? "0fr 8px 1fr"
-                : `minmax(160px, ${splitRatio}fr) 8px minmax(160px, ${1 - splitRatio}fr)`,
-          gap: "0",
-        }}
-      >
-        <div className="min-h-0 h-full">{renderPanel("topLeft")}</div>
-        {!expandedPanelInSplit && (
-          <div
-            role="separator"
-            aria-label="Resize preview panels"
-            aria-orientation="horizontal"
-            onMouseDown={handleSplitDragStart}
-            className="group relative cursor-row-resize select-none bg-transparent transition-colors z-10"
-            style={{
-              height: "8px",
-            }}
-            title="Resize panels"
-          >
-            <div
-              className="absolute left-0 right-0 h-px bg-transparent group-hover:bg-neutral-400 dark:group-hover:bg-neutral-600 group-active:bg-neutral-500 dark:group-active:bg-neutral-500 transition-colors"
-              style={{ top: "50%", transform: "translateY(-50%)" }}
-            />
-          </div>
-        )}
-        {expandedPanelInSplit && <div className="h-0" />}
-        <div className="min-h-0 h-full">{renderPanel("bottomLeft")}</div>
-      </div>
-    ) : (
-      <div className="h-full min-h-0">{renderSingleContent()}</div>
-    );
-
-  const previewButtonClass = useCallback(
-    (view: PreviewMode, disabled: boolean) =>
-      clsx(
-        "inline-flex h-7 w-7 items-center justify-center rounded focus:outline-none transition-colors",
-        disabled
-          ? "opacity-40 cursor-not-allowed text-neutral-500 dark:text-neutral-400"
-          : previewMode === view
-            ? "text-neutral-900 dark:text-white bg-neutral-100 dark:bg-neutral-800"
-            : "text-neutral-500 dark:text-neutral-400 cursor-pointer hover:text-neutral-900 dark:hover:text-neutral-100 hover:bg-neutral-50 dark:hover:bg-neutral-900"
-      ),
-    [previewMode]
-  );
-
-  const handlePreviewModeChange = useCallback(
-    (mode: PreviewMode) => {
-      if (mode === "browser" && !isBrowserAvailable) {
-        return;
-      }
-      setPreviewMode(mode);
-    },
-    [isBrowserAvailable]
-  );
 
   // Mount iframes
   useLayoutEffect(() => {
@@ -1320,15 +662,17 @@ export function PreviewConfigureClient({
       const vscodeUrl = new URL(instance.vscodeUrl);
       vscodeUrl.searchParams.set("folder", "/root/workspace");
       persistentIframeManager.getOrCreateIframe(vscodePersistKey, vscodeUrl.toString());
-      const target = document.querySelector(
+      const targets = document.querySelectorAll(
         `[data-iframe-target="${vscodePersistKey}"]`,
-      ) as HTMLElement | null;
+      );
+      // Mount to the first visible target
+      const target = targets[0] as HTMLElement | null;
       if (target) {
         cleanupFunctions.push(persistentIframeManager.mountIframe(vscodePersistKey, target));
       }
     }
 
-    if (resolvedVncUrl) {
+    if (resolvedVncUrl && currentStep === 2) {
       persistentIframeManager.getOrCreateIframe(browserPersistKey, resolvedVncUrl);
       const target = document.querySelector(
         `[data-iframe-target="${browserPersistKey}"]`,
@@ -1349,54 +693,31 @@ export function PreviewConfigureClient({
     browserPersistKey,
     instance,
     persistentIframeManager,
-    previewMode,
+    currentStep,
     resolvedVncUrl,
     vscodePersistKey,
   ]);
 
+  // Control iframe visibility based on current step
   useEffect(() => {
     if (!persistentIframeManager) {
       return;
     }
 
-    const workspaceVisible = (() => {
-      if (!instance?.vscodeUrl) {
-        return false;
-      }
-      if (previewMode === "split") {
-        if (expandedPanelInSplit === null) {
-          return true;
-        }
-        return workspacePosition !== null && expandedPanelInSplit === workspacePosition;
-      }
-      return previewMode === "vscode";
-    })();
-
-    const browserVisible = (() => {
-      if (!resolvedVncUrl) {
-        return false;
-      }
-      if (previewMode === "split") {
-        if (expandedPanelInSplit === null) {
-          return true;
-        }
-        return browserPosition !== null && expandedPanelInSplit === browserPosition;
-      }
-      return previewMode === "browser";
-    })();
+    // Step 1: VS Code only
+    // Step 2: Browser only
+    const workspaceVisible = currentStep === 1 && Boolean(instance?.vscodeUrl);
+    const browserVisible = currentStep === 2 && Boolean(resolvedVncUrl);
 
     persistentIframeManager.setVisibility(vscodePersistKey, workspaceVisible);
     persistentIframeManager.setVisibility(browserPersistKey, browserVisible);
   }, [
     browserPersistKey,
-    browserPosition,
-    expandedPanelInSplit,
+    currentStep,
     persistentIframeManager,
     resolvedVncUrl,
     instance?.vscodeUrl,
-    previewMode,
     vscodePersistKey,
-    workspacePosition,
   ]);
 
   if (errorMessage && !instance) {
@@ -1435,345 +756,434 @@ export function PreviewConfigureClient({
     );
   }
 
-  return (
-    <div className="flex h-screen overflow-hidden bg-neutral-50 dark:bg-neutral-950">
-      {/* Left: Configuration Form */}
-      <div className="w-96 overflow-y-auto border-r border-neutral-200 dark:border-neutral-800 bg-white dark:bg-black p-6">
-        <Link
-          href="/preview"
-          className="inline-flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 mb-4"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to repository selection
-        </Link>
-
-        <h1 className="text-xl font-semibold text-neutral-900 dark:text-neutral-100">
-          Configure Environment
-        </h1>
-        <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-          Set up environment variables and scripts for your preview environment.
+  const renderStep1Content = () => (
+    <div className="space-y-5">
+      {/* Workspace Info */}
+      <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900/50 p-3">
+        <p className="text-xs text-neutral-600 dark:text-neutral-400">
+          The workspace root <code className="px-1 py-0.5 rounded bg-neutral-200 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300">/root/workspace</code> maps to your repository root. All scripts run from this directory.
         </p>
+      </div>
 
-        <div className="mt-6 space-y-4">
-          <div>
-            <div className="text-xs text-neutral-500 dark:text-neutral-500 mb-1">
-              Repository
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <span className="inline-flex items-center gap-1 rounded-full border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-neutral-800 dark:text-neutral-200 px-2 py-1 text-xs font-mono">
-                {repo}
-              </span>
-            </div>
+      {/* Environment Variables */}
+      <div>
+        <div className="flex items-center gap-3 mb-2">
+          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-neutral-100 dark:bg-neutral-800 text-xs font-medium text-neutral-600 dark:text-neutral-300">
+            1
           </div>
-
-          <Accordion
-            selectionMode="multiple"
-            className="px-0"
-            defaultExpandedKeys={["env-vars", "install-dependencies", "maintenance-script", "dev-script"]}
-            itemClasses={{
-              trigger: "text-sm cursor-pointer py-3",
-              content: "pt-0",
-              title: "text-sm font-medium",
+          <h3 className="text-sm font-medium text-neutral-900 dark:text-neutral-100 flex-1">
+            Add environment variables
+          </h3>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveEnvValueIndex(null);
+              setAreEnvValuesHidden((previous) => !previous);
             }}
+            className="text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 transition p-1"
+            aria-label={areEnvValuesHidden ? "Reveal values" : "Hide values"}
           >
-            <AccordionItem key="env-vars" aria-label="Environment variables" title="Environment variables">
-              <div
-                className="pb-2"
-                onPasteCapture={(e) => {
-                  const text = e.clipboardData?.getData("text") ?? "";
-                  if (text && (/\n/.test(text) || /(=|:)\s*\S/.test(text))) {
-                    e.preventDefault();
-                    const items = parseEnvBlock(text);
-                    if (items.length > 0) {
-                      updateEnvVars((prev) => {
-                        const map = new Map(
-                          prev
-                            .filter((r) => r.name.trim().length > 0 || r.value.trim().length > 0)
-                            .map((r) => [r.name, r] as const)
-                        );
-                        for (const it of items) {
-                          if (!it.name) continue;
-                          const existing = map.get(it.name);
-                          if (existing) {
-                            map.set(it.name, { ...existing, value: it.value });
-                          } else {
-                            map.set(it.name, { name: it.name, value: it.value, isSecret: true });
-                          }
-                        }
-                        const next = Array.from(map.values());
-                        next.push({ name: "", value: "", isSecret: true });
-                        setPendingFocusIndex(next.length - 1);
-                        return next;
-                      });
+            {areEnvValuesHidden ? (
+              <EyeOff className="h-4 w-4" />
+            ) : (
+              <Eye className="h-4 w-4" />
+            )}
+          </button>
+        </div>
+        <p className="ml-9 text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+          Stored encrypted and injected securely at runtime. Never exposed in logs or code.
+        </p>
+        <div
+          className="ml-9"
+          onPasteCapture={(e) => {
+            const text = e.clipboardData?.getData("text") ?? "";
+            if (text && (/\n/.test(text) || /(=|:)\s*\S/.test(text))) {
+              e.preventDefault();
+              const items = parseEnvBlock(text);
+              if (items.length > 0) {
+                updateEnvVars((prev) => {
+                  const map = new Map(
+                    prev
+                      .filter((r) => r.name.trim().length > 0 || r.value.trim().length > 0)
+                      .map((r) => [r.name, r] as const)
+                  );
+                  for (const it of items) {
+                    if (!it.name) continue;
+                    const existing = map.get(it.name);
+                    if (existing) {
+                      map.set(it.name, { ...existing, value: it.value });
+                    } else {
+                      map.set(it.name, { name: it.name, value: it.value, isSecret: true });
                     }
                   }
-                }}
-              >
-                <div className="flex items-center justify-between pb-1">
-                  <div
-                    className="grid gap-3 text-xs text-neutral-500 dark:text-neutral-500 items-center"
-                    style={{ gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.4fr) 44px" }}
-                  >
-                    <span>Key</span>
-                    <span>Value</span>
-                    <span className="w-[44px]" />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveEnvValueIndex(null);
-                      setAreEnvValuesHidden((previous) => !previous);
-                    }}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 px-2 py-1 text-xs text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-900"
-                  >
-                    {areEnvValuesHidden ? (
-                      <>
-                        <EyeOff className="h-3 w-3" />
-                        Reveal
-                      </>
-                    ) : (
-                      <>
-                        <Eye className="h-3 w-3" />
-                        Hide
-                      </>
-                    )}
-                  </button>
-                </div>
+                  const next = Array.from(map.values());
+                  next.push({ name: "", value: "", isSecret: true });
+                  setPendingFocusIndex(next.length - 1);
+                  return next;
+                });
+              }
+            }
+          }}
+        >
+          <div
+            className="grid gap-3 text-xs text-neutral-500 dark:text-neutral-500 items-center pb-2"
+            style={{ gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.4fr) 44px" }}
+          >
+            <span>Key</span>
+            <span>Value</span>
+            <span />
+          </div>
 
-                <div className="space-y-2">
-                  {envVars.map((row, idx) => {
-                    const rowKey = idx;
-                    const isEditingValue = activeEnvValueIndex === idx;
-                    const shouldMaskValue = areEnvValuesHidden && row.value.trim().length > 0 && !isEditingValue;
-                    return (
-                      <div
-                        key={rowKey}
-                        className="grid gap-3 items-center"
-                        style={{ gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.4fr) 44px" }}
-                      >
-                        <input
-                          type="text"
-                          value={row.name}
-                          ref={(el) => {
-                            keyInputRefs.current[idx] = el;
-                          }}
-                          onChange={(e) => {
+          <div className="space-y-2">
+            {envVars.map((row, idx) => {
+              const rowKey = idx;
+              const isEditingValue = activeEnvValueIndex === idx;
+              const shouldMaskValue = areEnvValuesHidden && row.value.trim().length > 0 && !isEditingValue;
+              return (
+                <div
+                  key={rowKey}
+                  className="grid gap-3 items-center"
+                  style={{ gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.4fr) 44px" }}
+                >
+                  <input
+                    type="text"
+                    value={row.name}
+                    ref={(el) => {
+                      keyInputRefs.current[idx] = el;
+                    }}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      updateEnvVars((prev) => {
+                        const next = [...prev];
+                        const current = next[idx];
+                        if (current) {
+                          next[idx] = { ...current, name: v };
+                        }
+                        return next;
+                      });
+                    }}
+                    placeholder="EXAMPLE_NAME"
+                    className="w-full min-w-0 self-start rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
+                  />
+                  <textarea
+                    value={shouldMaskValue ? MASKED_ENV_VALUE : row.value}
+                    onChange={
+                      shouldMaskValue
+                        ? undefined
+                        : (e: ChangeEvent<HTMLTextAreaElement>) => {
                             const v = e.target.value;
                             updateEnvVars((prev) => {
                               const next = [...prev];
                               const current = next[idx];
                               if (current) {
-                                next[idx] = { ...current, name: v };
+                                next[idx] = { ...current, value: v };
                               }
                               return next;
                             });
-                          }}
-                          placeholder="EXAMPLE_NAME"
-                          className="w-full min-w-0 self-start rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
-                        />
-                        <textarea
-                          value={shouldMaskValue ? MASKED_ENV_VALUE : row.value}
-                          onChange={
-                            shouldMaskValue
-                              ? undefined
-                  : (e: ChangeEvent<HTMLTextAreaElement>) => {
-                                  const v = e.target.value;
-                                  updateEnvVars((prev) => {
-                                    const next = [...prev];
-                                    const current = next[idx];
-                                    if (current) {
-                                      next[idx] = { ...current, value: v };
-                                    }
-                                    return next;
-                                  });
-                                }
                           }
-                          onFocus={() => setActiveEnvValueIndex(idx)}
-                          onBlur={() => setActiveEnvValueIndex((current) => (current === idx ? null : current))}
-                          readOnly={shouldMaskValue}
-                          placeholder="I9JU23NF394R6HH"
-                          rows={1}
-                          className="w-full min-w-0 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-y"
-                        />
-                        <div className="self-start flex items-center justify-end w-[44px]">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              updateEnvVars((prev) => {
-                                const next = prev.filter((_, i) => i !== idx);
-                                return next.length > 0 ? next : [{ name: "", value: "", isSecret: true }];
-                              });
-                            }}
-                            className="h-10 w-[44px] rounded-md border border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 grid place-items-center hover:bg-neutral-50 dark:hover:bg-neutral-900"
-                            aria-label="Remove variable"
-                          >
-                            <Minus className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div className="pt-2">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      updateEnvVars((prev) => [...prev, { name: "", value: "", isSecret: true }])
                     }
-                    className="inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-900"
-                  >
-                    <Plus className="w-4 h-4" /> Add More
-                  </button>
+                    onFocus={() => setActiveEnvValueIndex(idx)}
+                    onBlur={() => setActiveEnvValueIndex((current) => (current === idx ? null : current))}
+                    readOnly={shouldMaskValue}
+                    placeholder="value"
+                    rows={1}
+                    className="w-full min-w-0 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-y"
+                  />
+                  <div className="self-start flex items-center justify-end w-[44px]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        updateEnvVars((prev) => {
+                          const next = prev.filter((_, i) => i !== idx);
+                          return next.length > 0 ? next : [{ name: "", value: "", isSecret: true }];
+                        });
+                      }}
+                      className="h-10 w-[44px] rounded-md border border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 grid place-items-center hover:bg-neutral-50 dark:hover:bg-neutral-900"
+                      aria-label="Remove variable"
+                    >
+                      <Minus className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
+              );
+            })}
+          </div>
 
-                <p className="text-xs text-neutral-500 dark:text-neutral-500 pt-2">
-                  Tip: Paste an .env above to populate the form. Values are encrypted at rest.
-                </p>
+          <div className="pt-3">
+            <button
+              type="button"
+              onClick={() =>
+                updateEnvVars((prev) => [...prev, { name: "", value: "", isSecret: true }])
+              }
+              className="inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-900"
+            >
+              <Plus className="w-4 h-4" /> Add More
+            </button>
+          </div>
+
+          <p className="text-xs text-neutral-400 dark:text-neutral-500 pt-3">
+            Tip: Paste a .env file to auto-fill
+          </p>
+        </div>
+      </div>
+
+      {/* Maintenance Script */}
+      <div>
+        <div className="flex items-center gap-3 mb-4">
+          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-neutral-100 dark:bg-neutral-800 text-xs font-medium text-neutral-600 dark:text-neutral-300">
+            2
+          </div>
+          <h3 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+            Maintenance script
+          </h3>
+        </div>
+        <div className="ml-9">
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+            Runs after git pull to install dependencies
+          </p>
+          <textarea
+            value={maintenanceScript}
+            onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setMaintenanceScript(e.target.value)}
+            placeholder="npm install"
+            rows={2}
+            className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-xs font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-y"
+          />
+        </div>
+      </div>
+
+      {/* Dev Script */}
+      <div>
+        <div className="flex items-center gap-3 mb-4">
+          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-neutral-100 dark:bg-neutral-800 text-xs font-medium text-neutral-600 dark:text-neutral-300">
+            3
+          </div>
+          <h3 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+            Dev script
+          </h3>
+        </div>
+        <div className="ml-9">
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+            Starts the development server
+          </p>
+          <textarea
+            value={devScript}
+            onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setDevScript(e.target.value)}
+            placeholder="npm run dev"
+            rows={2}
+            className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-xs font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-y"
+          />
+        </div>
+      </div>
+
+      {/* Run Scripts */}
+      <div>
+        <div className="flex items-center gap-3 mb-4">
+          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-neutral-100 dark:bg-neutral-800 text-xs font-medium text-neutral-600 dark:text-neutral-300">
+            4
+          </div>
+          <h3 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+            Run scripts in VS Code terminal
+          </h3>
+        </div>
+        <div className="ml-9 space-y-4">
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            Open the terminal in VS Code (<kbd className="px-1.5 py-0.5 rounded bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 text-xs">Cmd+J</kbd> or <kbd className="px-1.5 py-0.5 rounded bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 text-xs">Ctrl+`</kbd>) and paste:
+          </p>
+          {(maintenanceScript.trim() || devScript.trim()) ? (
+            <div className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-900 dark:bg-neutral-950 overflow-hidden">
+              <div className="flex items-center justify-between px-3 py-1.5 border-b border-neutral-700 dark:border-neutral-800 bg-neutral-800 dark:bg-neutral-900">
+                <span className="text-xs text-neutral-400">Commands</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const combined = [maintenanceScript.trim(), devScript.trim()].filter(Boolean).join(' && ');
+                    navigator.clipboard.writeText(combined);
+                  }}
+                  className="text-neutral-400 hover:text-neutral-200 transition p-1"
+                  aria-label="Copy commands"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </button>
               </div>
-            </AccordionItem>
+              <pre className="px-3 py-2 text-xs font-mono text-neutral-100 overflow-x-auto whitespace-pre-wrap break-all select-all">
+                {[maintenanceScript.trim(), devScript.trim()].filter(Boolean).join(' && ')}
+              </pre>
+            </div>
+          ) : (
+            <p className="text-sm text-neutral-400 dark:text-neutral-500 italic">
+              Enter scripts above to see commands to run
+            </p>
+          )}
+          <p className="text-xs text-neutral-500 dark:text-neutral-400">
+            Proceed once your dev server is running.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
 
-            <AccordionItem key="install-dependencies" aria-label="Install dependencies" title="Install dependencies">
-              <div className="space-y-2 pb-4">
-                <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-3">
-                  Use the VS Code terminal to install any dependencies your codebase needs.
-                </p>
-                <p className="text-xs text-neutral-500 dark:text-neutral-500">
-                  Examples: docker pull postgres, docker run redis, install system packages, etc.
-                </p>
+  const renderStep2Content = () => (
+    <div className="space-y-8">
+      {/* Browser Setup Info */}
+      <div>
+        <div className="flex items-center gap-3 mb-4">
+          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-neutral-100 dark:bg-neutral-800 text-xs font-medium text-neutral-600 dark:text-neutral-300">
+            1
+          </div>
+          <h3 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+            Prepare browser for automation
+          </h3>
+        </div>
+        <div className="ml-9 space-y-4">
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            Use the browser on the right to set up any authentication or configuration needed:
+          </p>
+          <ul className="space-y-3 text-sm text-neutral-600 dark:text-neutral-400">
+            <li className="flex items-start gap-3">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-neutral-100 dark:bg-neutral-800 text-xs text-neutral-500 dark:text-neutral-400 flex-shrink-0 mt-0.5">1</span>
+              <span>Sign in to any dashboards or SaaS tools</span>
+            </li>
+            <li className="flex items-start gap-3">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-neutral-100 dark:bg-neutral-800 text-xs text-neutral-500 dark:text-neutral-400 flex-shrink-0 mt-0.5">2</span>
+              <span>Dismiss cookie banners, popups, or MFA prompts</span>
+            </li>
+            <li className="flex items-start gap-3">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-neutral-100 dark:bg-neutral-800 text-xs text-neutral-500 dark:text-neutral-400 flex-shrink-0 mt-0.5">3</span>
+              <span>Navigate to your dev server URL (e.g., localhost:3000)</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      {/* Note about terminal */}
+      <div className="ml-9 rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/20 p-4">
+        <p className="text-sm text-amber-800 dark:text-amber-200">
+          <strong>Note:</strong> Any running terminals will be stopped when you save. The dev script you configured will run automatically on each preview.
+        </p>
+      </div>
+    </div>
+  );
+
+  const renderPreviewPanel = () => {
+    const isVscodeStep = currentStep === 1;
+    const title = isVscodeStep ? "VS Code" : "Browser";
+    const placeholder = isVscodeStep ? workspacePlaceholder : browserPlaceholder;
+    const iframeKey = isVscodeStep ? vscodePersistKey : browserPersistKey;
+
+    return (
+      <div className="h-full flex flex-col rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-sm overflow-hidden">
+        <div className="flex items-center border-b border-neutral-200 dark:border-neutral-800 px-3 py-2">
+          <h2 className="text-xs font-medium text-neutral-800 dark:text-neutral-100">
+            {title}
+          </h2>
+        </div>
+        <div className="relative flex-1">
+          {placeholder ? (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center text-neutral-500 dark:text-neutral-400">
+              <div className="text-sm font-medium text-neutral-600 dark:text-neutral-200">
+                {placeholder.title}
               </div>
-            </AccordionItem>
+              {placeholder.description ? (
+                <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                  {placeholder.description}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+          <div
+            className={clsx(
+              "absolute inset-0",
+              placeholder ? "opacity-0" : "opacity-100"
+            )}
+            data-iframe-target={iframeKey}
+          />
+        </div>
+      </div>
+    );
+  };
 
-            <AccordionItem key="maintenance-script" aria-label="Maintenance script" title="Maintenance script">
-              <div className="pb-4 space-y-2">
-                <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-3">
-                  {SCRIPT_COPY.maintenance.description}
-                </p>
-                <p className="text-xs text-neutral-500 dark:text-neutral-500 mb-3">
-                  {SCRIPT_COPY.maintenance.subtitle}
-                </p>
-                <textarea
-                  value={maintenanceScript}
-                  onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setMaintenanceScript(e.target.value)}
-                  placeholder={SCRIPT_COPY.maintenance.placeholder}
-                  rows={5}
-                  className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-xs font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-y"
-                />
-              </div>
-            </AccordionItem>
+  return (
+    <div className="flex h-screen overflow-hidden bg-neutral-50 dark:bg-neutral-950">
+      {/* Left: Configuration Form */}
+      <div className="w-[420px] flex flex-col overflow-hidden border-r border-neutral-200 dark:border-neutral-800 bg-white dark:bg-black">
+        <div className="flex-shrink-0 p-6 pb-4">
+          <Link
+            href="/preview"
+            className="inline-flex items-center gap-1.5 text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 mb-4"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            Back to Home
+          </Link>
 
-            <AccordionItem key="dev-script" aria-label="Dev script" title="Dev script">
-              <div className="space-y-2 pb-4">
-                <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-3">
-                  {SCRIPT_COPY.dev.description}
-                </p>
-                <p className="text-xs text-neutral-500 dark:text-neutral-500 mb-3">
-                  {SCRIPT_COPY.dev.subtitle}
-                </p>
-                <textarea
-                  value={devScript}
-                  onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setDevScript(e.target.value)}
-                  placeholder={SCRIPT_COPY.dev.placeholder}
-                  rows={5}
-                  className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-xs font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-y"
-                />
-              </div>
-            </AccordionItem>
+          <div className="flex items-center gap-2 mb-4">
+            <span className="inline-flex items-center gap-2 rounded border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 px-2 py-1 text-xs font-mono">
+              {/* eslint-disable-next-line @typescript-eslint/no-deprecated */}
+              <Github className="h-3.5 w-3.5" />
+              {repo}
+            </span>
+          </div>
 
-            <AccordionItem key="browser-vnc" aria-label="Browser setup" title="Browser setup">
-              <div className="space-y-2 pb-4 text-xs text-neutral-600 dark:text-neutral-400">
-                <p>
-                  Prepare the embedded browser so the browser agent can capture screenshots, finish authentication flows, and verify previews before you save this environment.
-                </p>
-                <ul className="list-disc space-y-1 pl-5">
-                  <li>Sign in to SaaS tools or dashboards that require persistent sessions.</li>
-                  <li>Clear cookie banners, popups, or MFA prompts that could block automation.</li>
-                  <li>Load staging URLs and confirm pages render without certificate or CSP warnings.</li>
-                </ul>
-              </div>
-            </AccordionItem>
-          </Accordion>
+          <StepIndicator currentStep={currentStep} />
+        </div>
 
+        <div className="flex-1 overflow-y-auto px-6 pb-6">
+          {currentStep === 1 ? renderStep1Content() : renderStep2Content()}
+        </div>
+
+        <div className="flex-shrink-0 border-t border-neutral-200 dark:border-neutral-800 p-6 bg-white dark:bg-black">
           {errorMessage && (
-            <div className="rounded-md bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/50 p-3">
+            <div className="rounded-md bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/50 p-3 mb-4">
               <p className="text-sm text-red-600 dark:text-red-400">{errorMessage}</p>
             </div>
           )}
 
-          <div className="pt-2">
-            <button
-              type="button"
-              onClick={handleSaveConfiguration}
-              disabled={isSaving}
-              className="inline-flex w-full items-center justify-center rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 px-4 py-2 text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isSaving ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Saving Configuration...
-                </>
-              ) : (
-                "Save Configuration"
-              )}
-            </button>
+          <div className="flex items-center justify-between gap-3">
+            {currentStep > 1 ? (
+              <button
+                type="button"
+                onClick={handlePrevStep}
+                className="inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                Back
+              </button>
+            ) : (
+              <div />
+            )}
+
+            {currentStep < 2 ? (
+              <button
+                type="button"
+                onClick={handleNextStep}
+                className="inline-flex items-center gap-2 rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 px-4 py-2 text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition"
+              >
+                Next
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleSaveConfiguration}
+                disabled={isSaving}
+                className="inline-flex items-center justify-center rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 px-4 py-2 text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSaving ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  "Save Configuration"
+                )}
+              </button>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Right: Preview Panels */}
-      <div className="flex-1 flex flex-col bg-neutral-50 dark:bg-neutral-950 overflow-hidden">
-        <div className="flex items-center justify-between border-b border-neutral-200 dark:border-neutral-800 px-4 py-2">
-          <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-500">
-            Preview
-          </div>
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => handlePreviewModeChange("split")}
-              className={previewButtonClass("split", false)}
-              aria-pressed={previewMode === "split"}
-              aria-label="Split VS Code and browser"
-              title="Split VS Code and browser"
-            >
-              <svg
-                className="h-3.5 w-3.5"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <rect x="3" y="3" width="18" height="7" rx="1" />
-                <rect x="3" y="14" width="18" height="7" rx="1" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              onClick={() => handlePreviewModeChange("vscode")}
-              className={previewButtonClass("vscode", false)}
-              aria-pressed={previewMode === "vscode"}
-              aria-label="Focus VS Code workspace"
-              title="Show VS Code workspace"
-            >
-              <Code2 className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => handlePreviewModeChange("browser")}
-              className={previewButtonClass("browser", !isBrowserAvailable)}
-              aria-pressed={previewMode === "browser"}
-              aria-label="Show browser preview"
-              title="Show browser preview"
-              disabled={!isBrowserAvailable}
-            >
-              <Monitor className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        </div>
-        <div className="flex-1 min-h-0 p-2 overflow-hidden">
-          {previewContent}
-        </div>
+      {/* Right: Preview Panel */}
+      <div className="flex-1 flex flex-col bg-neutral-50 dark:bg-neutral-950 overflow-hidden p-4">
+        {renderPreviewPanel()}
       </div>
     </div>
   );
