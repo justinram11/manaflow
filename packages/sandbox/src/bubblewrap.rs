@@ -491,6 +491,10 @@ fi
             "/var/tmp",
             "--tmpfs",
             "/run",
+            // Bind-mount the cmux socket directory so sandboxes can open URLs
+            "--bind",
+            "/var/run/cmux",
+            "/run/cmux",
             "--bind",
             &workspace_str,
             "/workspace",
@@ -554,6 +558,8 @@ fi
             format!("http://{}:{}", lease.host, self.port),
         );
         command.env("IS_SANDBOX", "1");
+        // Socket path for open-url (mapped from /var/run/cmux to /run/cmux inside sandbox)
+        command.env("CMUX_OPEN_URL_SOCKET", "/run/cmux/open-url.sock");
 
         command.args(["--", "/bin/sh", "-c", "ip link set lo up && sleep infinity"]);
 
@@ -1322,7 +1328,11 @@ impl SandboxService for BubblewrapService {
         Ok(())
     }
 
-    async fn mux_attach(&self, socket: WebSocket) -> SandboxResult<()> {
+    async fn mux_attach(
+        &self,
+        socket: WebSocket,
+        mut url_rx: crate::service::UrlBroadcastReceiver,
+    ) -> SandboxResult<()> {
         info!("mux_attach: new multiplexed connection");
 
         // Channel for PTY output from all sessions -> WebSocket
@@ -1350,9 +1360,18 @@ impl SandboxService for BubblewrapService {
             }
         });
 
-        // Main loop: handle incoming messages
+        // Main loop: handle incoming messages and URL broadcasts
         loop {
-            let msg = ws_read.next().await;
+            let msg = tokio::select! {
+                msg = ws_read.next() => msg,
+                url = url_rx.recv() => {
+                    // Forward URL open request to client
+                    if let Ok(url) = url {
+                        let _ = output_tx.send(MuxServerMessage::OpenUrl { url });
+                    }
+                    continue;
+                }
+            };
             match msg {
                 Some(Ok(Message::Text(text))) => {
                     let client_msg: MuxClientMessage = match serde_json::from_str(&text) {

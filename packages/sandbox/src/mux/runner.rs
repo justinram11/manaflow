@@ -578,7 +578,120 @@ fn handle_input(
         }
         Event::Mouse(mouse_event) => {
             // Handle mouse events (scrolling, clicking)
-            use crossterm::event::MouseEventKind;
+            use crossterm::event::{MouseButton, MouseEventKind};
+
+            // First check if terminal has mouse mode enabled and we should forward
+            if let Some(pane_id) = app.active_pane_id() {
+                if app.focus == FocusArea::MainArea {
+                    // Get the pane's area to check if mouse is inside and compute relative coords
+                    let pane_area = app
+                        .active_tab()
+                        .and_then(|tab| tab.layout.find_pane(pane_id).and_then(|p| p.area));
+
+                    if let Some(area) = pane_area {
+                        // Account for border (1 cell)
+                        let inner_x = area.x.saturating_add(1);
+                        let inner_y = area.y.saturating_add(1);
+                        let inner_w = area.width.saturating_sub(2);
+                        let inner_h = area.height.saturating_sub(2);
+
+                        // Check if mouse is inside pane content area
+                        if mouse_event.column >= inner_x
+                            && mouse_event.column < inner_x + inner_w
+                            && mouse_event.row >= inner_y
+                            && mouse_event.row < inner_y + inner_h
+                        {
+                            // Compute relative coordinates (0-indexed for URL detection, 1-indexed for protocol)
+                            let rel_col_0 = mouse_event.column.saturating_sub(inner_x) as usize;
+                            let rel_row_0 = mouse_event.row.saturating_sub(inner_y) as usize;
+                            let rel_col = (rel_col_0 + 1) as u16;
+                            let rel_row = (rel_row_0 + 1) as u16;
+
+                            // Handle Cmd+Click (macOS) or Ctrl+Click (other platforms) to open URLs
+                            #[cfg(target_os = "macos")]
+                            let open_url_modifier = KeyModifiers::SUPER;
+                            #[cfg(not(target_os = "macos"))]
+                            let open_url_modifier = KeyModifiers::CONTROL;
+
+                            if matches!(mouse_event.kind, MouseEventKind::Down(MouseButton::Left))
+                                && mouse_event.modifiers.contains(open_url_modifier)
+                            {
+                                tracing::debug!(
+                                    "URL click: row={}, col={}, pane={:?}",
+                                    rel_row_0,
+                                    rel_col_0,
+                                    pane_id
+                                );
+
+                                // Use catch_unwind to prevent panics from crashing the TUI
+                                let url_result =
+                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                        if let Ok(guard) = terminal_manager.try_lock() {
+                                            if let Some(buffer) = guard.get_buffer(pane_id) {
+                                                tracing::debug!(
+                                                    "Buffer found, grid size: {}",
+                                                    buffer.rows()
+                                                );
+                                                return buffer
+                                                    .url_at_position(rel_row_0, rel_col_0);
+                                            } else {
+                                                tracing::debug!("No buffer for pane {:?}", pane_id);
+                                            }
+                                        } else {
+                                            tracing::debug!("Failed to lock terminal_manager");
+                                        }
+                                        None
+                                    }));
+
+                                match url_result {
+                                    Ok(Some(url)) => {
+                                        tracing::info!("Opening URL: {}", url);
+                                        let _ = open::that(&url);
+                                        app.set_status(format!("Opening: {}", url));
+                                        return false;
+                                    }
+                                    Ok(None) => {
+                                        tracing::debug!("No URL found at position");
+                                        // No URL found at position, continue
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("URL detection panicked: {:?}", e);
+                                        app.set_status(
+                                            "Error: URL detection failed (internal error)"
+                                                .to_string(),
+                                        );
+                                        return false;
+                                    }
+                                }
+                            }
+
+                            if let Ok(guard) = terminal_manager.try_lock() {
+                                let (mouse_mode, sgr_mode) = guard
+                                    .get_buffer(pane_id)
+                                    .map(|b| (b.mouse_tracking(), b.sgr_mouse_mode()))
+                                    .unwrap_or((None, false));
+
+                                if let Some(mode) = mouse_mode {
+                                    // Forward mouse event to terminal
+                                    if let Some(seq) = encode_mouse_event(
+                                        mouse_event.kind,
+                                        mouse_event.modifiers,
+                                        rel_col,
+                                        rel_row,
+                                        mode,
+                                        sgr_mode,
+                                    ) {
+                                        guard.send_input(pane_id, seq);
+                                        return false; // Event handled, don't process locally
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Handle locally if not forwarded to terminal
             match mouse_event.kind {
                 MouseEventKind::ScrollUp => {
                     if let Some(pane_id) = app.active_pane_id() {
@@ -1018,4 +1131,88 @@ async fn upload_workspace(
     }
 
     Ok(())
+}
+
+/// Encode a mouse event as terminal escape sequence.
+/// Returns None if the event type shouldn't be reported for the given mode.
+fn encode_mouse_event(
+    kind: crossterm::event::MouseEventKind,
+    modifiers: KeyModifiers,
+    col: u16,
+    row: u16,
+    mode: u16,
+    sgr_mode: bool,
+) -> Option<Vec<u8>> {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    // Compute button code based on event type
+    let (button_code, is_release) = match kind {
+        MouseEventKind::Down(button) => {
+            let code = match button {
+                MouseButton::Left => 0,
+                MouseButton::Middle => 1,
+                MouseButton::Right => 2,
+            };
+            (code, false)
+        }
+        MouseEventKind::Up(button) => {
+            let code = match button {
+                MouseButton::Left => 0,
+                MouseButton::Middle => 1,
+                MouseButton::Right => 2,
+            };
+            (code, true)
+        }
+        MouseEventKind::Drag(button) => {
+            // Drag events are only reported in mode 1002 (button-event) or 1003 (any-event)
+            if mode < 1002 {
+                return None;
+            }
+            let code = match button {
+                MouseButton::Left => 32, // 0 + 32 (motion flag)
+                MouseButton::Middle => 33,
+                MouseButton::Right => 34,
+            };
+            (code, false)
+        }
+        MouseEventKind::Moved => {
+            // Motion events without button are only reported in mode 1003 (any-event)
+            if mode != 1003 {
+                return None;
+            }
+            (35, false) // 3 + 32 (motion flag, no button)
+        }
+        MouseEventKind::ScrollUp => (64, false), // Button 4
+        MouseEventKind::ScrollDown => (65, false), // Button 5
+        MouseEventKind::ScrollLeft => (66, false), // Button 6
+        MouseEventKind::ScrollRight => (67, false), // Button 7
+    };
+
+    // Add modifier flags
+    let mut cb = button_code;
+    if modifiers.contains(KeyModifiers::SHIFT) {
+        cb |= 4;
+    }
+    if modifiers.contains(KeyModifiers::ALT) {
+        cb |= 8;
+    }
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        cb |= 16;
+    }
+
+    if sgr_mode {
+        // SGR extended mode: CSI < Cb ; Cx ; Cy M/m
+        // M for press, m for release
+        let terminator = if is_release { 'm' } else { 'M' };
+        Some(format!("\x1b[<{};{};{}{}", cb, col, row, terminator).into_bytes())
+    } else {
+        // X10/normal mode: CSI M Cb Cx Cy (all +32, max 223)
+        // Release events send button 3 (no button)
+        let cb = if is_release { 3 } else { cb };
+        // X10 encoding adds 32 to all values and caps at 255
+        let cb = (cb + 32).min(255) as u8;
+        let cx = ((col as u32) + 32).min(255) as u8;
+        let cy = ((row as u32) + 32).min(255) as u8;
+        Some(vec![0x1b, b'[', b'M', cb, cx, cy])
+    }
 }

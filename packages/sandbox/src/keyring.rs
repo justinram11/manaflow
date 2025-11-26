@@ -1,7 +1,11 @@
 use crate::models::EnvVar;
+
+#[cfg(target_os = "macos")]
 use std::process::Command;
 
+#[cfg(target_os = "macos")]
 const KEYCHAIN_SERVICE: &str = "cmux";
+#[cfg(target_os = "macos")]
 const KEYCHAIN_ACCOUNT: &str = "CLAUDE_CODE_OAUTH_TOKEN";
 
 /// Store the Claude OAuth token in macOS Keychain using `security` CLI.

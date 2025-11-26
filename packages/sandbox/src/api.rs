@@ -22,6 +22,11 @@ struct ProxyParams {
 }
 
 #[derive(Deserialize)]
+struct OpenUrlParams {
+    url: String,
+}
+
+#[derive(Deserialize)]
 struct AttachParams {
     cols: Option<u16>,
     rows: Option<u16>,
@@ -59,9 +64,12 @@ fn default_tty() -> bool {
 )]
 pub struct ApiDoc;
 
-pub fn build_router(service: Arc<dyn SandboxService>) -> Router {
+pub fn build_router(
+    service: Arc<dyn SandboxService>,
+    url_broadcast: crate::service::UrlBroadcastSender,
+) -> Router {
     let openapi = ApiDoc::openapi();
-    let state = AppState::new(service);
+    let state = AppState::new(service, url_broadcast);
     let swagger_routes: Router<AppState> =
         SwaggerUi::new("/docs").url("/openapi.json", openapi).into();
 
@@ -78,6 +86,8 @@ pub fn build_router(service: Arc<dyn SandboxService>) -> Router {
         .route("/sandboxes/{id}/proxy", any(proxy_sandbox))
         // Multiplexed WebSocket endpoint - single connection for all PTY sessions
         .route("/mux/attach", any(mux_attach))
+        // Open URL on host - used by sandboxed processes to open links
+        .route("/open-url", get(open_url))
         .merge(swagger_routes)
         .with_state(state)
 }
@@ -226,11 +236,28 @@ async fn proxy_sandbox(
 
 /// Multiplexed WebSocket endpoint - handles multiple PTY sessions over a single connection.
 async fn mux_attach(state: axum::extract::State<AppState>, ws: WebSocketUpgrade) -> Response {
+    let url_rx = state.url_broadcast.subscribe();
     ws.on_upgrade(move |socket| async move {
-        if let Err(e) = state.service.mux_attach(socket).await {
+        if let Err(e) = state.service.mux_attach(socket, url_rx).await {
             tracing::error!("mux_attach failed: {e}");
         }
     })
+}
+
+/// Open a URL on the host machine. Used by sandboxed processes to open links.
+async fn open_url(Query(params): Query<OpenUrlParams>) -> StatusCode {
+    // Validate URL to prevent command injection
+    if !params.url.starts_with("http://") && !params.url.starts_with("https://") {
+        return StatusCode::BAD_REQUEST;
+    }
+
+    match open::that(&params.url) {
+        Ok(()) => StatusCode::OK,
+        Err(e) => {
+            tracing::error!("Failed to open URL {}: {}", params.url, e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
 }
 
 #[utoipa::path(
@@ -308,7 +335,11 @@ mod tests {
             Ok(())
         }
 
-        async fn mux_attach(&self, _socket: WebSocket) -> SandboxResult<()> {
+        async fn mux_attach(
+            &self,
+            _socket: WebSocket,
+            _url_rx: crate::service::UrlBroadcastReceiver,
+        ) -> SandboxResult<()> {
             Ok(())
         }
 
@@ -343,9 +374,14 @@ mod tests {
         }
     }
 
+    fn make_test_router() -> Router {
+        let (url_tx, _) = tokio::sync::broadcast::channel(16);
+        build_router(Arc::new(MockService::default()), url_tx)
+    }
+
     #[tokio::test]
     async fn serves_openapi_document() {
-        let app = build_router(Arc::new(MockService::default()));
+        let app = make_test_router();
         let response = app
             .oneshot(
                 Request::builder()
@@ -361,7 +397,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_endpoint_returns_summary() {
-        let app = build_router(Arc::new(MockService::default()));
+        let app = make_test_router();
         let request = CreateSandboxRequest {
             name: Some("demo".into()),
             workspace: None,

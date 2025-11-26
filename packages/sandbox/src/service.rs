@@ -4,6 +4,12 @@ use async_trait::async_trait;
 use axum::body::Body;
 use axum::extract::ws::WebSocket;
 use std::sync::Arc;
+use tokio::sync::broadcast;
+
+/// Broadcast channel for URL open requests from sandboxes.
+/// Sent to connected mux clients to open URLs on the host machine.
+pub type UrlBroadcastSender = broadcast::Sender<String>;
+pub type UrlBroadcastReceiver = broadcast::Receiver<String>;
 
 #[async_trait]
 pub trait SandboxService: Send + Sync + 'static {
@@ -20,7 +26,11 @@ pub trait SandboxService: Send + Sync + 'static {
         tty: bool,
     ) -> SandboxResult<()>;
     /// Multiplexed attach - handles multiple PTY sessions over a single WebSocket.
-    async fn mux_attach(&self, socket: WebSocket) -> SandboxResult<()>;
+    async fn mux_attach(
+        &self,
+        socket: WebSocket,
+        url_rx: UrlBroadcastReceiver,
+    ) -> SandboxResult<()>;
     async fn proxy(&self, id: String, port: u16, socket: WebSocket) -> SandboxResult<()>;
     async fn upload_archive(&self, id: String, archive: Body) -> SandboxResult<()>;
     async fn delete(&self, id: String) -> SandboxResult<Option<SandboxSummary>>;
@@ -29,11 +39,15 @@ pub trait SandboxService: Send + Sync + 'static {
 #[derive(Clone)]
 pub struct AppState {
     pub service: Arc<dyn SandboxService>,
+    pub url_broadcast: UrlBroadcastSender,
 }
 
 impl AppState {
-    pub fn new(service: Arc<dyn SandboxService>) -> Self {
-        Self { service }
+    pub fn new(service: Arc<dyn SandboxService>, url_broadcast: UrlBroadcastSender) -> Self {
+        Self {
+            service,
+            url_broadcast,
+        }
     }
 }
 

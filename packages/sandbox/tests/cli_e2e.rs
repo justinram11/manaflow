@@ -1,5 +1,6 @@
 use assert_cmd::Command;
 use axum::body::Body;
+use axum::Router;
 use cmux_sandbox::build_router;
 use cmux_sandbox::models::{
     CreateSandboxRequest, ExecRequest, ExecResponse, SandboxNetwork, SandboxStatus, SandboxSummary,
@@ -11,6 +12,11 @@ use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use uuid::Uuid;
+
+fn make_test_router(service: Arc<MockService>) -> Router {
+    let (url_tx, _) = tokio::sync::broadcast::channel(16);
+    build_router(service, url_tx)
+}
 
 struct MockService {
     sandboxes: Mutex<Vec<SandboxSummary>>,
@@ -100,6 +106,7 @@ impl SandboxService for MockService {
     async fn mux_attach(
         &self,
         _socket: axum::extract::ws::WebSocket,
+        _url_rx: cmux_sandbox::service::UrlBroadcastReceiver,
     ) -> cmux_sandbox::errors::SandboxResult<()> {
         Ok(())
     }
@@ -145,7 +152,7 @@ impl SandboxService for MockService {
 #[tokio::test]
 async fn cli_can_list_and_create_via_http() {
     let service = Arc::new(MockService::new());
-    let app = build_router(service.clone());
+    let app = make_test_router(service.clone());
     let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
         .await
         .unwrap();
@@ -257,7 +264,7 @@ fn cli_help_exits_quickly() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cli_exec_shorthand() {
     let service = Arc::new(MockService::new());
-    let app = build_router(service.clone());
+    let app = make_test_router(service.clone());
     let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
         .await
         .unwrap();
@@ -291,7 +298,7 @@ async fn cli_exec_shorthand() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cli_uploads_cwd_respecting_gitignore() {
     let service = Arc::new(MockService::new());
-    let app = build_router(service.clone());
+    let app = make_test_router(service.clone());
     let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
         .await
         .unwrap();
@@ -396,7 +403,7 @@ async fn cli_uploads_cwd_respecting_gitignore() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cli_uploads_large_file() {
     let service = Arc::new(MockService::new());
-    let app = build_router(service.clone());
+    let app = make_test_router(service.clone());
     let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
         .await
         .unwrap();

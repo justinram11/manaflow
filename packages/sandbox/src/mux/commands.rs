@@ -425,8 +425,8 @@ impl MuxCommand {
                 Some((KeyModifiers::ALT | KeyModifiers::SHIFT, KeyCode::Char(']')))
             }
 
-            // Sidebar - Ctrl+S toggles focus between sidebar and main area
-            MuxCommand::ToggleSidebar => Some((KeyModifiers::CONTROL, KeyCode::Char('s'))),
+            // Sidebar - Alt+S toggles focus between sidebar and main area
+            MuxCommand::ToggleSidebar => Some((KeyModifiers::ALT, KeyCode::Char('s'))),
             // SelectSandbox has no global keybinding - Enter is handled contextually in sidebar focus
             MuxCommand::SelectSandbox => None,
             // Alt+Shift+{ and Alt+Shift+} for sandbox switching (accepts Alt+{ / Alt+} too)
@@ -828,8 +828,8 @@ mod tests {
         let cmd = MuxCommand::from_key(KeyModifiers::ALT, KeyCode::Char('p'));
         assert_eq!(cmd, Some(MuxCommand::OpenCommandPalette));
 
-        // Ctrl+S toggles focus between sidebar and main area
-        let sidebar_toggle = MuxCommand::from_key(KeyModifiers::CONTROL, KeyCode::Char('s'));
+        // Alt+S toggles focus between sidebar and main area
+        let sidebar_toggle = MuxCommand::from_key(KeyModifiers::ALT, KeyCode::Char('s'));
         assert_eq!(sidebar_toggle, Some(MuxCommand::ToggleSidebar));
     }
 }

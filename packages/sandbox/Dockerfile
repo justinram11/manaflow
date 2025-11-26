@@ -165,7 +165,8 @@ RUN arch="$(uname -m)"; \
   rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL https://bun.sh/install | bash && \
-  mv /root/.bun/bin/bun /usr/local/bin/bun && \
+  install -m 0755 /root/.bun/bin/bun /usr/local/bin/bun && \
+  install -m 0755 /root/.bun/bin/bunx /usr/local/bin/bunx && \
   rm -rf /root/.bun /root/.cache/bun
 
 ENV BUN_INSTALL_GLOBAL_DIR=/usr/local/lib/bun
@@ -215,7 +216,9 @@ COPY --from=builder --link /workspace/target/release/cmux /usr/local/bin/cmux
 COPY --from=acp-builder --link /workspace/target/release/codex-acp /usr/local/bin/codex-acp
 
 COPY --link packages/sandbox/scripts/bootstrap-dind.sh /usr/local/bin/bootstrap-dind.sh
-RUN chmod +x /usr/local/bin/bootstrap-dind.sh
+COPY --link packages/sandbox/scripts/open-url.sh /usr/local/bin/open-url
+RUN chmod +x /usr/local/bin/bootstrap-dind.sh /usr/local/bin/open-url && \
+    ln -sf /usr/local/bin/open-url /usr/local/bin/xdg-open
 
 # systemd service units
 COPY --link packages/sandbox/systemd/dockerd.service /etc/systemd/system/dockerd.service
@@ -228,7 +231,8 @@ RUN mkdir -p /etc/systemd/system/multi-user.target.wants && \
   ln -s /etc/systemd/system/cmux-sandboxd.service /etc/systemd/system/multi-user.target.wants/cmux-sandboxd.service
 
 ENV CMUX_SANDBOX_PORT=46831 \
-  DOCKER_HOST=unix:///var/run/docker.sock
+  DOCKER_HOST=unix:///var/run/docker.sock \
+  BROWSER=/usr/local/bin/open-url
 
 EXPOSE 46831
 VOLUME ["/var/lib/docker", "/var/lib/cmux/sandboxes"]

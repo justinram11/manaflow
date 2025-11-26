@@ -155,6 +155,9 @@ pub enum MuxServerMessage {
     },
     /// Pong response to ping.
     Pong { timestamp: u64 },
+    /// Request to open a URL on the client (host) machine.
+    /// This is sent when a sandbox process calls xdg-open/open-url.
+    OpenUrl { url: String },
 }
 
 fn default_tty() -> bool {

@@ -82,6 +82,10 @@ pub struct VirtualTerminal {
     pub application_keypad: bool,
     /// Bracketed paste mode
     pub bracketed_paste: bool,
+    /// Mouse tracking mode (1000=X10, 1002=button-event, 1003=any-event)
+    pub mouse_tracking: Option<u16>,
+    /// SGR extended mouse mode (1006) - affects encoding of mouse events
+    pub sgr_mouse_mode: bool,
     /// Bell triggered flag (for UI notification)
     pub bell_pending: bool,
     /// Window title (set via OSC)
@@ -141,6 +145,92 @@ fn line_drawing_char(c: char) -> char {
     }
 }
 
+/// Characters that are valid in URLs (simplified)
+fn is_url_char(c: char) -> bool {
+    c.is_ascii_alphanumeric()
+        || matches!(
+            c,
+            '-' | '_'
+                | '.'
+                | '~'
+                | ':'
+                | '/'
+                | '?'
+                | '#'
+                | '['
+                | ']'
+                | '@'
+                | '!'
+                | '$'
+                | '&'
+                | '\''
+                | '('
+                | ')'
+                | '*'
+                | '+'
+                | ','
+                | ';'
+                | '='
+                | '%'
+        )
+}
+
+/// Find a URL at the given column position in a line of text.
+/// Returns the URL if the column falls within a detected URL.
+/// Note: `col` is a character index (0-based column position).
+fn find_url_at_column(line: &str, col: usize) -> Option<String> {
+    // Common URL schemes to detect
+    const SCHEMES: &[&str] = &[
+        "https://", "http://", "file://", "ssh://", "git://", "ftp://",
+    ];
+
+    // Convert line to chars for proper character-based indexing
+    let chars: Vec<char> = line.chars().collect();
+
+    // Find all URLs in the line using character positions
+    for scheme in SCHEMES {
+        let scheme_chars: Vec<char> = scheme.chars().collect();
+        let scheme_len = scheme_chars.len();
+
+        // Search for scheme in the character array
+        let mut pos = 0;
+        while pos + scheme_len <= chars.len() {
+            // Check if scheme matches at this position
+            if chars[pos..pos + scheme_len] == scheme_chars[..] {
+                let start = pos;
+
+                // Find the end of the URL (characters after the scheme that are valid URL chars)
+                let url_end = chars[start..]
+                    .iter()
+                    .take_while(|&&c| is_url_char(c))
+                    .count();
+                let end = start + url_end;
+
+                // Build the URL string
+                let url_str: String = chars[start..end].iter().collect();
+
+                // Strip trailing punctuation
+                let url = url_str.trim_end_matches(['.', ',', ')', ']', ';']);
+
+                if !url.is_empty() {
+                    let actual_end = start + url.chars().count();
+
+                    // Check if the column falls within this URL
+                    if col >= start && col < actual_end {
+                        return Some(url.to_string());
+                    }
+                }
+
+                pos = start + scheme_len;
+            } else {
+                pos += 1;
+            }
+        }
+    }
+
+    None
+}
+
 impl VirtualTerminal {
     pub fn new(rows: usize, cols: usize) -> Self {
         let grid = vec![vec![Cell::default(); cols]; rows];
@@ -171,6 +261,8 @@ impl VirtualTerminal {
             application_cursor_keys: false,
             application_keypad: false,
             bracketed_paste: false,
+            mouse_tracking: None,
+            sgr_mouse_mode: false,
             bell_pending: false,
             title: None,
             last_printed_char: None,
@@ -1162,6 +1254,19 @@ impl Perform for VirtualTerminal {
                                 // Bracketed paste mode
                                 self.bracketed_paste = enable;
                             }
+                            // Mouse tracking modes
+                            1000 | 1002 | 1003 => {
+                                // X10 (1000), button-event (1002), any-event (1003) mouse tracking
+                                if enable {
+                                    self.mouse_tracking = Some(param);
+                                } else {
+                                    self.mouse_tracking = None;
+                                }
+                            }
+                            1006 => {
+                                // SGR extended mouse mode
+                                self.sgr_mouse_mode = enable;
+                            }
                             _ => {}
                         }
                     }
@@ -1448,6 +1553,161 @@ impl TerminalBuffer {
     /// Check if cursor is visible
     pub fn cursor_visible(&self) -> bool {
         self.terminal.cursor_visible && self.terminal.scroll_offset == 0
+    }
+
+    /// Check if mouse tracking is enabled
+    pub fn mouse_tracking(&self) -> Option<u16> {
+        self.terminal.mouse_tracking
+    }
+
+    /// Check if SGR extended mouse mode is enabled
+    pub fn sgr_mouse_mode(&self) -> bool {
+        self.terminal.sgr_mouse_mode
+    }
+
+    /// Get the number of rows in the terminal grid
+    pub fn rows(&self) -> usize {
+        self.terminal.rows
+    }
+
+    /// Try to extract a URL at the given row and column (0-indexed).
+    /// Returns the URL string if one is found at or near the given position.
+    /// Handles URLs that wrap across multiple lines.
+    pub fn url_at_position(&self, row: usize, col: usize) -> Option<String> {
+        tracing::debug!(
+            "url_at_position: row={}, col={}, scroll_offset={}, grid_len={}",
+            row,
+            col,
+            self.terminal.scroll_offset,
+            self.terminal.grid.len()
+        );
+
+        // Only support URL detection when not scrolled (simplifies the logic)
+        if self.terminal.scroll_offset != 0 {
+            tracing::debug!("Skipping URL detection: scrolled");
+            return None;
+        }
+
+        // Bounds check
+        if row >= self.terminal.grid.len() {
+            tracing::debug!(
+                "Row {} out of bounds (grid len: {})",
+                row,
+                self.terminal.grid.len()
+            );
+            return None;
+        }
+
+        let line = &self.terminal.grid[row];
+
+        // Bounds check for column
+        if col >= line.len() {
+            tracing::debug!("Col {} out of bounds (line len: {})", col, line.len());
+            return None;
+        }
+
+        // Convert current line to string (trimmed of trailing spaces)
+        let line_text: String = line.iter().map(|cell| cell.c).collect();
+        let line_text = line_text.trim_end();
+
+        // Try to find URL on the current line first
+        if let Some(url) = find_url_at_column(line_text, col) {
+            // Check if URL might continue on the next line(s)
+            // (line is full and ends with URL characters)
+            let cols = self.terminal.cols;
+            if line_text.len() >= cols.saturating_sub(1) && !url.is_empty() {
+                let mut full_url = url.clone();
+                let mut next_row = row + 1;
+
+                // Look for continuation lines
+                while next_row < self.terminal.grid.len() {
+                    let next_line: String =
+                        self.terminal.grid[next_row].iter().map(|c| c.c).collect();
+                    let next_line = next_line.trim_end();
+
+                    // Check if this line continues the URL (starts with URL chars, no space)
+                    let continuation: String =
+                        next_line.chars().take_while(|&c| is_url_char(c)).collect();
+
+                    if continuation.is_empty() {
+                        break;
+                    }
+
+                    full_url.push_str(&continuation);
+
+                    // If this line doesn't fill the terminal width, stop
+                    if next_line.len() < cols.saturating_sub(1) {
+                        break;
+                    }
+                    next_row += 1;
+                }
+
+                return Some(full_url);
+            }
+            return Some(url);
+        }
+
+        // Check if this might be a continuation line - look for URL start on previous lines
+        if row > 0 {
+            // Check if previous line ends without a space (potential wrap)
+            let prev_line: String = self.terminal.grid[row - 1].iter().map(|c| c.c).collect();
+            let prev_line = prev_line.trim_end();
+            let cols = self.terminal.cols;
+
+            if prev_line.len() >= cols.saturating_sub(1) {
+                // Look backwards for the URL start
+                let mut start_row = row - 1;
+                while start_row > 0 {
+                    let check_line: String = self.terminal.grid[start_row - 1]
+                        .iter()
+                        .map(|c| c.c)
+                        .collect();
+                    let check_line = check_line.trim_end();
+                    if check_line.len() < cols.saturating_sub(1) {
+                        break;
+                    }
+                    start_row -= 1;
+                }
+
+                // Build the combined text from start_row to current row
+                let mut combined = String::new();
+                for r in start_row..=row {
+                    let l: String = self.terminal.grid[r].iter().map(|c| c.c).collect();
+                    combined.push_str(l.trim_end());
+                }
+
+                // Also include any continuation after current row
+                let mut next_row = row + 1;
+                while next_row < self.terminal.grid.len() {
+                    let next_line: String =
+                        self.terminal.grid[next_row].iter().map(|c| c.c).collect();
+                    let next_line = next_line.trim_end();
+
+                    let continuation: String =
+                        next_line.chars().take_while(|&c| is_url_char(c)).collect();
+
+                    if continuation.is_empty() {
+                        break;
+                    }
+
+                    combined.push_str(&continuation);
+
+                    if next_line.len() < cols.saturating_sub(1) {
+                        break;
+                    }
+                    next_row += 1;
+                }
+
+                // Calculate the column position in the combined string
+                let offset_in_combined = (row - start_row) * cols + col;
+
+                if let Some(url) = find_url_at_column(&combined, offset_in_combined) {
+                    return Some(url);
+                }
+            }
+        }
+
+        None
     }
 
     /// Build a cached render view for the given height.
@@ -1909,6 +2169,14 @@ pub async fn establish_mux_connection(manager: SharedTerminalManager) -> anyhow:
                                 }
                                 MuxServerMessage::Pong { .. } => {
                                     // Keepalive response, ignore
+                                }
+                                MuxServerMessage::OpenUrl { url } => {
+                                    // Open URL on the host machine (TUI runs on host)
+                                    if let Err(e) = open::that(&url) {
+                                        let _ = event_tx_clone.send(MuxEvent::Error(format!(
+                                            "Failed to open URL {}: {}", url, e
+                                        )));
+                                    }
                                 }
                             }
                         }
