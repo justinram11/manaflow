@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "deploy:prod": "convex deploy --env-file ../../.env.production",
-    "setup": "CONVEX_AGENT_MODE=anonymous bunx convex dev --configure new --dev-deployment local --project cmux_local --once --run seed"
+    "setup": "bun run scripts/setup.ts",
+    "setup0": "CONVEX_DEPLOYMENT= CONVEX_AGENT_MODE=anonymous bunx convex dev --configure new --dev-deployment local --project cmux_local --once --run seed"
   },
   "exports": {
     ".": {
