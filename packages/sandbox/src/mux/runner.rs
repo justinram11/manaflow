@@ -896,7 +896,17 @@ fn key_to_terminal_input(modifiers: KeyModifiers, code: KeyCode) -> Vec<u8> {
             s.as_bytes().to_vec()
         }
         KeyCode::Enter => vec![b'\r'],
-        KeyCode::Backspace => vec![0x7f],
+        KeyCode::Backspace => {
+            // Command+Backspace (macOS) / Super+Backspace: delete to beginning of line (Ctrl+U)
+            if modifiers.contains(KeyModifiers::SUPER) {
+                return vec![0x15]; // Ctrl+U
+            }
+            // Option+Backspace (macOS) / Alt+Backspace: delete previous word (Ctrl+W)
+            if modifiers.contains(KeyModifiers::ALT) {
+                return vec![0x17]; // Ctrl+W
+            }
+            vec![0x7f]
+        }
         KeyCode::Tab => vec![b'\t'],
         KeyCode::Esc => vec![0x1b],
         KeyCode::Up => vec![0x1b, b'[', b'A'],
