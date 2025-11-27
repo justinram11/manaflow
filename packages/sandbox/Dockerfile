@@ -185,6 +185,14 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
   mv /root/.local/bin/uv /usr/local/bin/uv && \
   rm -rf /root/.local
 
+ARG RUST_VERSION
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain ${RUST_VERSION} --profile minimal && \
+    chmod -R a+w $RUSTUP_HOME $CARGO_HOME
+
 RUN update-alternatives --set iptables /usr/sbin/iptables-legacy || true
 RUN mkdir -p /var/lib/cmux/sandboxes
 
