@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Camera,
@@ -24,9 +24,11 @@ type ProviderConnection = {
 };
 
 type RepoSearchResult = {
+  name: string;
   full_name: string;
   private: boolean;
   updated_at?: string | null;
+  pushed_at?: string | null;
 };
 
 type PreviewConfigStatus = "active" | "paused" | "disabled";
@@ -56,6 +58,8 @@ type PreviewDashboardProps = {
   previewConfigs: PreviewConfigListItem[];
 };
 
+const ADD_INSTALLATION_VALUE = "__add_github_account__";
+
 export function PreviewDashboard({
   selectedTeamSlugOrId,
   teamOptions,
@@ -78,13 +82,20 @@ export function PreviewDashboard({
   const [isNavigating, setIsNavigating] = useState(false);
   const [configs, setConfigs] = useState<PreviewConfigListItem[]>(previewConfigs);
   const [updatingConfigId, setUpdatingConfigId] = useState<string | null>(null);
+  const [openingConfigId, setOpeningConfigId] = useState<string | null>(null);
 
   // Public URL input state
   const [repoUrlInput, setRepoUrlInput] = useState("");
 
-  const currentProviderConnections =
-    providerConnectionsByTeam[selectedTeamSlugOrIdState] ?? [];
-  const activeConnections = currentProviderConnections.filter((c) => c.isActive);
+  const currentProviderConnections = useMemo(
+    () => providerConnectionsByTeam[selectedTeamSlugOrIdState] ?? [],
+    [providerConnectionsByTeam, selectedTeamSlugOrIdState]
+  );
+  const activeConnections = useMemo(
+    () => currentProviderConnections.filter((connection) => connection.isActive),
+    [currentProviderConnections]
+  );
+  const previousTeamRef = useRef(selectedTeamSlugOrIdState);
   const hasGithubAppInstallation = activeConnections.length > 0;
   const canSearchRepos =
     isAuthenticated &&
@@ -138,12 +149,16 @@ export function PreviewDashboard({
   }, []);
 
   const handleOpenConfig = useCallback((config: PreviewConfigListItem) => {
+    setOpeningConfigId(config.id);
     const params = new URLSearchParams({
       repo: config.repoFullName,
       team: config.teamSlugOrId,
     });
     if (config.repoInstallationId !== null) {
       params.set("installationId", String(config.repoInstallationId));
+    }
+    if (config.environmentId) {
+      params.set("environmentId", config.environmentId);
     }
     window.location.href = `/preview/configure?${params.toString()}`;
   }, []);
@@ -153,15 +168,10 @@ export function PreviewDashboard({
       setUpdatingConfigId(config.id);
       setConfigError(null);
       try {
-        const response = await fetch("/api/preview/configs", {
-          method: "POST",
+        const params = new URLSearchParams({ teamSlugOrId: config.teamSlugOrId });
+        const response = await fetch(`/api/preview/configs/${config.id}?${params.toString()}`, {
+          method: "DELETE",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            previewConfigId: config.id,
-            teamSlugOrId: config.teamSlugOrId,
-            repoFullName: config.repoFullName,
-            status: "disabled",
-          }),
         });
         if (!response.ok) {
           throw new Error(await response.text());
@@ -182,7 +192,6 @@ export function PreviewDashboard({
     (nextTeam: string) => {
       setSelectedTeamSlugOrIdState(nextTeam);
       setSelectedInstallationId(null);
-      setRepos([]);
       setRepoSearch("");
       setErrorMessage(null);
     },
@@ -267,14 +276,26 @@ export function PreviewDashboard({
     isAuthenticated,
   ]);
 
-  // Auto-select first connection
+  // Auto-select first connection for the team, but keep user choice if still valid
   useEffect(() => {
-    if (activeConnections.length > 0) {
-      setSelectedInstallationId(activeConnections[0]?.installationId ?? null);
-    } else {
-      setSelectedInstallationId(null);
+    const fallbackInstallationId = activeConnections[0]?.installationId ?? null;
+    const teamChanged = previousTeamRef.current !== selectedTeamSlugOrIdState;
+    const hasSelectedConnection = activeConnections.some(
+      (connection) => connection.installationId === selectedInstallationId
+    );
+
+    if (activeConnections.length === 0) {
+      if (selectedInstallationId !== null) {
+        setSelectedInstallationId(null);
+      }
+    } else if (teamChanged || !hasSelectedConnection) {
+      if (selectedInstallationId !== fallbackInstallationId) {
+        setSelectedInstallationId(fallbackInstallationId);
+      }
     }
-  }, [activeConnections]);
+
+    previousTeamRef.current = selectedTeamSlugOrIdState;
+  }, [activeConnections, selectedInstallationId, selectedTeamSlugOrIdState]);
 
   const handleInstallGithubApp = async () => {
     if (!selectedTeamSlugOrIdState) {
@@ -302,14 +323,8 @@ export function PreviewDashboard({
       if (!response.ok) {
         throw new Error(await response.text());
       }
-      const payload = (await response.json()) as { state: string };
-      const githubAppSlug = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG;
-      if (!githubAppSlug) {
-        throw new Error("GitHub App slug is not configured");
-      }
-      const url = new URL(`https://github.com/apps/${githubAppSlug}/installations/new`);
-      url.searchParams.set("state", payload.state);
-      window.location.href = url.toString();
+      const payload = (await response.json()) as { installUrl: string };
+      window.location.href = payload.installUrl;
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to start GitHub App install";
@@ -318,41 +333,42 @@ export function PreviewDashboard({
     }
   };
 
-  const handleSearchRepos = useCallback(async () => {
-    if (!selectedTeamSlugOrIdState || selectedInstallationId === null) {
-      setRepos([]);
-      return;
-    }
-    setIsLoadingRepos(true);
-    setErrorMessage(null);
-    try {
-      const params = new URLSearchParams({
-        team: selectedTeamSlugOrIdState,
-        installationId: String(selectedInstallationId),
-      });
-      if (repoSearch.trim()) {
-        params.set("search", repoSearch.trim());
+  const fetchRepos = useCallback(
+    async (searchTerm: string) => {
+      if (!canSearchRepos || selectedInstallationId === null) {
+        setRepos([]);
+        return;
       }
-      const response = await fetch(`/api/integrations/github/repos?${params}`);
-      if (!response.ok) {
-        throw new Error(await response.text());
+      setIsLoadingRepos(true);
+      setErrorMessage(null);
+      try {
+        const params = new URLSearchParams({
+          team: selectedTeamSlugOrIdState,
+          installationId: String(selectedInstallationId),
+        });
+        const trimmed = searchTerm.trim();
+        if (trimmed) {
+          params.set("search", trimmed);
+        }
+        const response = await fetch(`/api/integrations/github/repos?${params.toString()}`);
+        if (!response.ok) {
+          throw new Error(await response.text());
+        }
+        const payload = (await response.json()) as { repos: RepoSearchResult[] };
+        setRepos(payload.repos);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to load repositories";
+        setErrorMessage(message);
+      } finally {
+        setIsLoadingRepos(false);
       }
-      const payload = (await response.json()) as { repos: RepoSearchResult[] };
-      setRepos(payload.repos);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to load repositories";
-      setErrorMessage(message);
-    } finally {
-      setIsLoadingRepos(false);
-    }
-  }, [repoSearch, selectedTeamSlugOrIdState, selectedInstallationId]);
+    },
+    [canSearchRepos, selectedInstallationId, selectedTeamSlugOrIdState]
+  );
 
-  // Auto-load repos when installation changes
-  useEffect(() => {
-    if (selectedInstallationId !== null) {
-      void handleSearchRepos();
-    }
-  }, [selectedInstallationId, handleSearchRepos]);
+  const handleSearchRepos = useCallback(() => {
+    void fetchRepos(repoSearch);
+  }, [fetchRepos, repoSearch]);
 
   const handleContinue = useCallback((repoName: string) => {
     if (!repoName.trim()) return;
@@ -364,6 +380,14 @@ export function PreviewDashboard({
     });
     window.location.href = `/preview/configure?${params.toString()}`;
   }, [selectedInstallationId, selectedTeamSlugOrIdState]);
+
+  useEffect(() => {
+    if (selectedInstallationId !== null) {
+      void fetchRepos("");
+    } else {
+      setRepos([]);
+    }
+  }, [selectedInstallationId, fetchRepos]);
 
   useEffect(() => {
     if (!selectedTeamSlugOrIdState && teamOptions[0]) {
@@ -513,18 +537,27 @@ export function PreviewDashboard({
             ) : (
               <div className="space-y-4">
                 <div className="flex gap-3">
-                   {/* Team/Org Selector */}
-                   <div className="relative min-w-[160px]">
+                  {/* Team/Org Selector */}
+                  <div className="relative min-w-[160px]">
+                      <Github className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-neutral-500" />
                       <select
                         value={selectedInstallationId ?? ""}
-                        onChange={(e) => setSelectedInstallationId(Number(e.target.value))}
-                        className="w-full appearance-none rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white focus:border-white/20 focus:outline-none focus:ring-1 focus:ring-sky-500/50"
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          if (value === ADD_INSTALLATION_VALUE) {
+                            void handleInstallGithubApp();
+                            return;
+                          }
+                          setSelectedInstallationId(Number(value));
+                        }}
+                        className="w-full appearance-none rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 pl-10 text-sm text-white focus:border-white/20 focus:outline-none focus:ring-1 focus:ring-sky-500/50"
                       >
                         {activeConnections.map((conn) => (
                           <option key={conn.installationId} value={conn.installationId}>
                             {conn.accountLogin || `ID: ${conn.installationId}`}
                           </option>
                         ))}
+                        <option value={ADD_INSTALLATION_VALUE}>Add GitHub account</option>
                       </select>
                       <div className="pointer-events-none absolute right-3 top-3">
                          <svg className="h-4 w-4 text-neutral-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -535,21 +568,21 @@ export function PreviewDashboard({
 
                    {/* Repo Search */}
                    <div className="relative flex-1">
-                      <Search className="absolute left-3 top-2.5 h-4 w-4 text-neutral-500" />
-                      <input
-                        type="text"
-                        value={repoSearch}
-                        onChange={(e) => setRepoSearch(e.target.value)}
-                        onKeyDown={(e) => e.key === "Enter" && void handleSearchRepos()}
-                        placeholder={searchPlaceholder}
-                        disabled={!canSearchRepos}
-                        className="w-full rounded-lg border border-white/10 bg-white/5 pl-9 pr-3 py-2.5 text-sm text-white focus:border-white/20 focus:outline-none focus:ring-1 focus:ring-sky-500/50 disabled:cursor-not-allowed disabled:opacity-50"
-                      />
-                   </div>
-                </div>
+                     <Search className="absolute left-3 top-2.5 h-4 w-4 text-neutral-500" />
+                     <input
+                       type="text"
+                       value={repoSearch}
+                       onChange={(e) => setRepoSearch(e.target.value)}
+                       onKeyDown={(e) => e.key === "Enter" && void handleSearchRepos()}
+                       placeholder={searchPlaceholder}
+                       disabled={!canSearchRepos}
+                       className="w-full rounded-lg border border-white/10 bg-white/5 pl-9 pr-3 py-2.5 text-sm text-white focus:border-white/20 focus:outline-none focus:ring-1 focus:ring-sky-500/50 disabled:cursor-not-allowed disabled:opacity-50"
+                     />
+                  </div>
+               </div>
 
                 {/* Repo List */}
-                <div className="min-h-[300px]">
+                <div className="repo-scroll-area min-h-[300px] max-h-[520px] overflow-y-auto -mr-6 pr-6">
                   {!canSearchRepos ? (
                     <div className="flex h-full min-h-[200px] items-center justify-center text-sm text-neutral-400">
                       Select a team and install the GitHub App to search repositories.
@@ -560,34 +593,37 @@ export function PreviewDashboard({
                     </div>
                   ) : repos.length > 0 ? (
                     <div className="space-y-2">
-                      {repos.map((repo) => (
-                        <div
-                          key={repo.full_name}
-                          className="flex items-center justify-between rounded-lg border border-white/5 bg-white/5 px-4 py-3 transition hover:border-white/10 hover:bg-white/10"
-                        >
-                          <div className="flex items-center gap-3">
-                             <div className="flex h-8 w-8 items-center justify-center rounded-md bg-black/40">
-                               <Github className="h-4 w-4 text-white" />
-                             </div>
-                             <div>
-                               <div className="text-sm font-medium text-white">{repo.full_name}</div>
-                               {repo.updated_at && (
-                                 <div className="text-xs text-neutral-500">
-                                   {Math.floor((Date.now() - new Date(repo.updated_at).getTime()) / (1000 * 60 * 60 * 24))}d ago
-                                 </div>
-                               )}
-                             </div>
-                          </div>
-                          <Button
-                            onClick={() => handleContinue(repo.full_name)}
-                            disabled={isNavigating || !selectedInstallationId}
-                            size="sm"
-                            className="bg-white text-black hover:bg-neutral-200"
+                      {repos.map((repo) => {
+                        const daysAgo = repo.updated_at
+                          ? Math.floor((Date.now() - new Date(repo.updated_at).getTime()) / (1000 * 60 * 60 * 24))
+                          : null;
+                        return (
+                          <div
+                            key={repo.full_name}
+                            className="flex items-center justify-between rounded-lg border border-white/5 bg-white/5 px-4 py-3 transition hover:border-white/10 hover:bg-white/10"
                           >
-                            Import
-                          </Button>
-                        </div>
-                      ))}
+                            <div className="flex items-center gap-3">
+                               <div className="flex h-8 w-8 items-center justify-center rounded-md bg-black/40">
+                                 <Github className="h-4 w-4 text-white" />
+                               </div>
+                               <div>
+                                 <div className="text-sm font-medium text-white">{repo.full_name}</div>
+                                 {daysAgo !== null && (
+                                   <div className="text-xs text-neutral-500">{daysAgo}d ago</div>
+                                 )}
+                               </div>
+                            </div>
+                            <Button
+                              onClick={() => handleContinue(repo.full_name)}
+                              disabled={isNavigating || !selectedInstallationId}
+                              size="sm"
+                              className="bg-white text-black hover:bg-neutral-200"
+                            >
+                              Import
+                            </Button>
+                          </div>
+                        );
+                      })}
                     </div>
                   ) : (
                     <div className="flex flex-col items-center justify-center py-12 text-sm text-neutral-500">
@@ -651,7 +687,7 @@ export function PreviewDashboard({
         <div className="mt-10 rounded-2xl border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur">
           <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-sm font-semibold text-white">Preview configs</p>
+              <p className="text-sm font-semibold text-white">Preview agent configurations</p>
               <p className="text-sm text-neutral-300">
                 Update or delete existing preview setups across your teams.
               </p>
@@ -694,20 +730,23 @@ export function PreviewDashboard({
                       >
                         {config.status}
                       </span>
-                      {config.environmentId ? (
-                        <span className="rounded-md bg-white/10 px-2 py-0.5 text-[11px] text-neutral-200">
-                          Env {config.environmentId.slice(0, 6)}…
-                        </span>
-                      ) : null}
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Button
                       variant="outline"
                       onClick={() => handleOpenConfig(config)}
+                      disabled={openingConfigId === config.id}
                       className="border-white/30 bg-white/10 text-white hover:border-white/60 hover:bg-white/20"
                     >
-                      Update
+                      {openingConfigId === config.id ? (
+                        <div className="flex items-center gap-2">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <span>Opening…</span>
+                        </div>
+                      ) : (
+                        "Update"
+                      )}
                     </Button>
                     <Button
                       onClick={() => void handleDeleteConfig(config)}

@@ -142,7 +142,7 @@ previewRouter.openapi(
 
 previewRouter.openapi(
   createRoute({
-    method: "post" as const,
+    method: "post",
     path: "/preview/configs",
     tags: ["Preview"],
     summary: "Create or update a preview configuration",
@@ -197,6 +197,53 @@ previewRouter.openapi(
       throw new HTTPException(500, { message: "Failed to load saved configuration" });
     }
     return c.json(formatPreviewConfig(saved));
+  },
+);
+
+previewRouter.openapi(
+  createRoute({
+    method: "delete",
+    path: "/preview/configs/{previewConfigId}",
+    tags: ["Preview"],
+    summary: "Delete a preview configuration",
+    request: {
+      params: z.object({ previewConfigId: z.string() }),
+      query: z.object({
+        teamSlugOrId: z.string(),
+      }),
+    },
+    responses: {
+      200: {
+        description: "Deleted",
+        content: {
+          "application/json": {
+            schema: z.object({ id: z.string() }),
+          },
+        },
+      },
+      401: { description: "Unauthorized" },
+      404: { description: "Not found" },
+    },
+  }),
+  async (c) => {
+    const accessToken = await getAccessTokenFromRequest(c.req.raw);
+    if (!accessToken) {
+      return c.text("Unauthorized", 401);
+    }
+    const params = c.req.valid("param");
+    const query = c.req.valid("query");
+    await verifyTeamAccess({ req: c.req.raw, teamSlugOrId: query.teamSlugOrId });
+    const convex = getConvex({ accessToken });
+    try {
+      const result = await convex.mutation(api.previewConfigs.remove, {
+        teamSlugOrId: query.teamSlugOrId,
+        previewConfigId: typedZid("previewConfigs").parse(params.previewConfigId),
+      });
+      return c.json(result);
+    } catch (error) {
+      console.error("Failed to delete preview config", error);
+      return c.text("Not found", 404);
+    }
   },
 );
 

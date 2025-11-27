@@ -30,7 +30,7 @@ import clsx from "clsx";
 
 const MASKED_ENV_VALUE = "••••••••••••••••";
 
-type FrameworkPreset =
+export type FrameworkPreset =
   | "other"
   | "next"
   | "vite"
@@ -119,6 +119,11 @@ type PreviewConfigureClientProps = {
   teams: PreviewTeamOption[];
   repo: string;
   installationId: string | null;
+  initialFrameworkPreset?: FrameworkPreset;
+  initialEnvVarsContent?: string | null;
+  initialMaintenanceScript?: string | null;
+  initialDevScript?: string | null;
+  startAtConfigureEnvironment?: boolean;
 };
 
 function normalizeVncUrl(url: string): string | null {
@@ -314,28 +319,6 @@ function FrameworkIconBubble({ preset }: { preset: FrameworkPreset }) {
       {meta.icon}
     </span>
   );
-}
-
-function generateProjectName(repo: string): string {
-  const repoName = repo.split("/").pop() || "repo";
-  const hash = Array.from(repo).reduce((acc, char) => {
-    return (acc * 31 + char.charCodeAt(0)) >>> 0;
-  }, 0);
-  const suffix = hash.toString(36).slice(0, 6) || "env";
-  return `${repoName}-${suffix}`;
-}
-
-function generateRandomProjectName(repo: string): string {
-  const repoName = repo.split("/").pop() || "repo";
-  let randomChunk: string;
-  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
-    const bytes = new Uint32Array(1);
-    crypto.getRandomValues(bytes);
-    randomChunk = bytes[0].toString(36).slice(0, 6);
-  } else {
-    randomChunk = Math.random().toString(36).slice(2, 8);
-  }
-  return `${repoName}-${randomChunk}`;
 }
 
 const ensureInitialEnvVars = (initial?: EnvVar[]): EnvVar[] => {
@@ -548,16 +531,36 @@ export function PreviewConfigureClient({
   teams,
   repo,
   installationId: _installationId,
+  initialFrameworkPreset = "other",
+  initialEnvVarsContent,
+  initialMaintenanceScript,
+  initialDevScript,
+  startAtConfigureEnvironment = false,
 }: PreviewConfigureClientProps) {
-  const initialEnvVars = useMemo(() => ensureInitialEnvVars(), []);
+  const initialEnvVars = useMemo(() => {
+    const parsed = initialEnvVarsContent
+      ? parseEnvBlock(initialEnvVarsContent).map((entry) => ({
+          name: entry.name,
+          value: entry.value,
+          isSecret: true,
+        }))
+      : undefined;
+    return ensureInitialEnvVars(parsed);
+  }, [initialEnvVarsContent]);
   const initialHasEnvValues = useMemo(
     () => initialEnvVars.some((r) => r.name.trim().length > 0 || r.value.trim().length > 0),
     [initialEnvVars]
   );
-  const initialMaintenanceScriptValue = "";
-  const initialDevScriptValue = "";
-  const initialMaintenanceDone = initialMaintenanceScriptValue.trim().length === 0;
-  const initialDevDone = initialDevScriptValue.trim().length === 0;
+  const initialFrameworkConfig =
+    FRAMEWORK_PRESETS[initialFrameworkPreset] ?? FRAMEWORK_PRESETS.other;
+  const initialMaintenanceScriptValue =
+    initialMaintenanceScript ?? initialFrameworkConfig.maintenanceScript;
+  const initialDevScriptValue = initialDevScript ?? initialFrameworkConfig.devScript;
+  const initialMaintenanceNone = initialMaintenanceScriptValue.trim().length === 0;
+  const initialDevNone = initialDevScriptValue.trim().length === 0;
+  const initialEnvComplete = initialHasEnvValues;
+  const initialMaintenanceComplete = initialMaintenanceNone || initialMaintenanceScriptValue.trim().length > 0;
+  const initialDevComplete = initialDevNone || initialDevScriptValue.trim().length > 0;
 
   const [instance, setInstance] = useState<SandboxInstance | null>(null);
   const [isProvisioning, setIsProvisioning] = useState(false);
@@ -571,24 +574,27 @@ export function PreviewConfigureClient({
   const [currentStep, setCurrentStep] = useState<WizardStep>(1);
 
   const [envVars, setEnvVars] = useState<EnvVar[]>(initialEnvVars);
-  const stableProjectName = useMemo(() => generateProjectName(repo), [repo]);
-  const [projectName, setProjectName] = useState(() => stableProjectName);
-  const [frameworkPreset, setFrameworkPreset] = useState<FrameworkPreset>("other");
+  const [frameworkPreset, setFrameworkPreset] = useState<FrameworkPreset>(initialFrameworkPreset);
   const [maintenanceScript, setMaintenanceScript] = useState(initialMaintenanceScriptValue);
   const [devScript, setDevScript] = useState(initialDevScriptValue);
   const [hasUserEditedScripts, setHasUserEditedScripts] = useState(false);
   const [isFrameworkMenuOpen, setIsFrameworkMenuOpen] = useState(false);
   const [hasCompletedSetup, setHasCompletedSetup] = useState(false);
-  const [isEnvOpen, setIsEnvOpen] = useState(true);
+  const [isEnvOpen, setIsEnvOpen] = useState(() => !initialHasEnvValues);
   const [isBuildOpen, setIsBuildOpen] = useState(true);
-  const [envNone, setEnvNone] = useState(() => !initialHasEnvValues);
-  const [maintenanceNone, setMaintenanceNone] = useState(() => initialMaintenanceDone);
-  const [devNone, setDevNone] = useState(() => initialDevDone);
+  const [envNone, setEnvNone] = useState(false);
+  const [maintenanceNone, setMaintenanceNone] = useState(() => initialMaintenanceNone);
+  const [devNone, setDevNone] = useState(() => initialDevNone);
   const [runConfirmed, setRunConfirmed] = useState(false);
-  const [isEnvSectionOpen, setIsEnvSectionOpen] = useState(() => false);
-  const [isMaintenanceSectionOpen, setIsMaintenanceSectionOpen] = useState(() => !initialMaintenanceDone);
-  const [isDevSectionOpen, setIsDevSectionOpen] = useState(() => !initialDevDone);
+  const [browserConfirmed, setBrowserConfirmed] = useState(false);
+  const [commandsCopied, setCommandsCopied] = useState(false);
+  const [isEnvSectionOpen, setIsEnvSectionOpen] = useState(() => !initialEnvComplete);
+  const [isMaintenanceSectionOpen, setIsMaintenanceSectionOpen] = useState(
+    () => !initialMaintenanceComplete
+  );
+  const [isDevSectionOpen, setIsDevSectionOpen] = useState(() => !initialDevComplete);
   const [isRunSectionOpen, setIsRunSectionOpen] = useState(true);
+  const [isBrowserSetupSectionOpen, setIsBrowserSetupSectionOpen] = useState(true);
 
   const [areEnvValuesHidden, setAreEnvValuesHidden] = useState(true);
   const [activeEnvValueIndex, setActiveEnvValueIndex] = useState<number | null>(null);
@@ -597,18 +603,10 @@ export function PreviewConfigureClient({
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    if (typeof document === "undefined") {
-      return;
+    if (initialHasEnvValues) {
+      setIsEnvSectionOpen(false);
     }
-    const previousOverflow = document.body.style.overflow;
-    const previousOverscroll = document.body.style.overscrollBehavior;
-    document.body.style.overflow = "hidden";
-    document.body.style.overscrollBehavior = "none";
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      document.body.style.overscrollBehavior = previousOverscroll;
-    };
-  }, []);
+  }, [initialHasEnvValues]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -638,6 +636,16 @@ export function PreviewConfigureClient({
   const keyInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const lastSubmittedEnvContent = useRef<string | null>(null);
   const frameworkSelectRef = useRef<HTMLDivElement | null>(null);
+  const copyResetTimeoutRef = useRef<number | null>(null);
+  const envSectionAutoCollapsedRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      if (copyResetTimeoutRef.current !== null) {
+        window.clearTimeout(copyResetTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const vscodePersistKey = instance?.instanceId ? `preview-${instance.instanceId}:vscode` : "vscode";
   const browserPersistKey = instance?.instanceId ? `preview-${instance.instanceId}:browser` : "browser";
@@ -655,9 +663,6 @@ export function PreviewConfigureClient({
     []
   );
   const selectedFrameworkConfig = FRAMEWORK_PRESETS[frameworkPreset];
-  useEffect(() => {
-    setProjectName((current) => (current.trim().length === 0 ? stableProjectName : current));
-  }, [repo, stableProjectName]);
 
   useEffect(() => {
     selectedTeamSlugOrIdRef.current = resolvedTeamSlugOrId;
@@ -697,12 +702,18 @@ export function PreviewConfigureClient({
   const maintenanceAck = maintenanceDone;
   const devAck = devDone;
   const runAck = runConfirmed;
+  const browserAck = browserConfirmed;
 
+  // Auto-enter configuration once VS Code is available when resuming an existing environment
   useEffect(() => {
-    if (envDone) {
-      setIsEnvOpen(false);
+    if (startAtConfigureEnvironment && instance?.vscodeUrl && !hasCompletedSetup) {
+      setHasCompletedSetup(true);
     }
-  }, [envDone]);
+  }, [hasCompletedSetup, instance?.vscodeUrl, startAtConfigureEnvironment]);
+
+  const handleEnterConfigureEnvironment = useCallback(() => {
+    setHasCompletedSetup(true);
+  }, []);
 
   const browserPlaceholder = useMemo(
     () =>
@@ -861,11 +872,6 @@ export function PreviewConfigureClient({
     setHasUserEditedScripts(true);
   }, []);
 
-  const handleRegenerateProjectName = useCallback(() => {
-    const nextName = generateRandomProjectName(repo);
-    setProjectName(nextName);
-  }, [repo]);
-
   const handleToggleEnvNone = useCallback(
     (value: boolean) => {
       setEnvNone(value);
@@ -897,15 +903,36 @@ export function PreviewConfigureClient({
     }
   }, []);
 
+  const handleCopyCommands = useCallback(async () => {
+    const combined = [maintenanceScript.trim(), devScript.trim()].filter(Boolean).join(" && ");
+    if (!combined) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(combined);
+      setCommandsCopied(true);
+      if (copyResetTimeoutRef.current !== null) {
+        window.clearTimeout(copyResetTimeoutRef.current);
+      }
+      copyResetTimeoutRef.current = window.setTimeout(() => {
+        setCommandsCopied(false);
+      }, 2000);
+    } catch (error) {
+      console.error("Failed to copy commands:", error);
+    }
+  }, [devScript, maintenanceScript]);
+
   useEffect(() => {
     setRunConfirmed(false);
   }, [maintenanceScriptValue, devScriptValue, maintenanceNone, devNone]);
 
   useEffect(() => {
-    if (runConfirmed) {
-      setIsRunSectionOpen(false);
+    if (!envSectionAutoCollapsedRef.current && hasEnvValues) {
+      setIsEnvSectionOpen(false);
+      envSectionAutoCollapsedRef.current = true;
     }
-  }, [runConfirmed]);
+  }, [hasEnvValues]);
 
   const handleSaveConfiguration = async () => {
     if (!resolvedTeamSlugOrId) {
@@ -920,7 +947,8 @@ export function PreviewConfigureClient({
 
     const now = new Date();
     const dateTime = now.toISOString().replace(/[:.]/g, "-").slice(0, -5);
-    const envName = `${projectName || repo.split("/").pop() || "preview"}-${dateTime}`;
+    const repoName = repo.split("/").pop() || "preview";
+    const envName = `${repoName}-${dateTime}`;
 
     const envVarsContent = formatEnvVarsContent(
       envVars
@@ -1108,25 +1136,22 @@ export function PreviewConfigureClient({
 
   // Show setup screen while provisioning OR until user clicks Next
   if (!hasCompletedSetup) {
-    const isWorkspaceReady = Boolean(instance);
+    const isWorkspaceReady = Boolean(instance?.vscodeUrl);
 
     return (
-      <div className="min-h-dvh bg-white dark:bg-black">
-        {/* Header */}
-        <div className="border-b border-neutral-200 dark:border-neutral-800">
-          <div className="max-w-2xl mx-auto px-6 py-4">
+      <div className="min-h-dvh bg-white dark:bg-black font-mono">
+        {/* Main Content */}
+        <div className="max-w-2xl mx-auto px-6 py-10">
+          <div className="mb-3">
             <Link
               href="/preview"
               className="inline-flex items-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
             >
               <ArrowLeft className="h-3 w-3" />
-              Back to Home
+              Back to preview.new
             </Link>
           </div>
-        </div>
 
-        {/* Main Content */}
-        <div className="max-w-2xl mx-auto px-6 py-10">
           {/* Importing Header */}
           <div className="mb-8">
             <h1 className="text-2xl font-semibold text-neutral-900 dark:text-neutral-100 mb-1">
@@ -1138,31 +1163,7 @@ export function PreviewConfigureClient({
             </div>
           </div>
 
-          {/* Project Name */}
           <div className="space-y-6">
-            <div>
-              <label className="block text-sm font-medium text-neutral-900 dark:text-neutral-100 mb-2">
-                Project name
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={projectName}
-                  onChange={(e) => setProjectName(e.target.value)}
-                  placeholder="repo-abc123"
-                  className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2.5 text-sm text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
-                />
-                <button
-                  type="button"
-                  onClick={handleRegenerateProjectName}
-                  className="h-10 w-10 shrink-0 rounded-md border border-neutral-200 dark:border-neutral-800 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-900 grid place-items-center"
-                  aria-label="Regenerate project name"
-                >
-                  <Sparkles className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-
             {/* Framework Preset */}
             <div>
               <label className="block text-sm font-medium text-neutral-900 dark:text-neutral-100 mb-2">
@@ -1453,7 +1454,7 @@ export function PreviewConfigureClient({
               <button
                 type="button"
                 disabled={!isWorkspaceReady}
-                onClick={() => setHasCompletedSetup(true)}
+                onClick={handleEnterConfigureEnvironment}
                 className={clsx(
                   "inline-flex items-center gap-2 rounded-md px-5 py-2.5 text-sm font-semibold transition",
                   isWorkspaceReady
@@ -1484,28 +1485,118 @@ export function PreviewConfigureClient({
     </span>
   );
 
+  const getPanelClasses = (isOpen: boolean) =>
+    clsx(
+      "group relative rounded-xl border border-neutral-800/80 bg-neutral-950/80 shadow-[0_12px_40px_rgba(0,0,0,0.45)] transition-all duration-200",
+      isOpen ? "ring-1 ring-sky-500/35" : "hover:border-neutral-700 hover:bg-neutral-900/80"
+    );
+
+  const fieldInputClass =
+    "w-full min-w-0 rounded-lg border border-neutral-800/80 bg-neutral-900/70 px-3 py-2.5 text-sm font-mono text-neutral-100 placeholder:text-neutral-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] focus:border-sky-500/50 focus:outline-none focus:ring-2 focus:ring-sky-500/30 disabled:opacity-60 disabled:cursor-not-allowed";
+
+  const checkboxClass =
+    "h-4 w-4 rounded border-neutral-700 bg-neutral-950/80 text-sky-400 focus:ring-2 focus:ring-sky-500/40";
+
   const renderStep1Content = () => (
     <div className="space-y-6">
       {/* Workspace Info */}
-      <p className="text-xs text-neutral-500 dark:text-neutral-400">
-        Your workspace root at <code className="px-1 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300">/root/workspace</code> maps directly to your repo root. Environment variables are encrypted and securely injected at runtime.
+      <p className="text-sm text-neutral-400 leading-6">
+        Your workspace root at <code className="px-1 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300">/root/workspace</code> maps directly to your repo root. Setup your VSCode workspace on the right.
       </p>
+
+      {/* Maintenance Script */}
+      <details
+        className={getPanelClasses(isMaintenanceSectionOpen)}
+        open={isMaintenanceSectionOpen}
+        onToggle={(e) => setIsMaintenanceSectionOpen(e.currentTarget.open)}
+      >
+        <summary className="flex items-center gap-3 cursor-pointer px-5 py-4 list-none text-neutral-100">
+          <ChevronDown className="h-4 w-4 text-neutral-400 transition-transform group-open:rotate-180" />
+          <StepBadge step={1} done={maintenanceAck} />
+          <h3 className="text-[15px] font-semibold text-neutral-50 flex-1 tracking-tight">
+            Maintenance script
+          </h3>
+        </summary>
+        <div className="border-t border-neutral-800/80 px-6 py-5 bg-neutral-950/60">
+          <p className="text-sm text-neutral-400 mb-3 leading-6">
+            Runs after git pull to install dependencies
+          </p>
+          <textarea
+            value={maintenanceScript ?? ""}
+            onChange={(e: ChangeEvent<HTMLTextAreaElement>) => handleMaintenanceScriptChange(e.target.value)}
+            placeholder="npm install"
+            rows={2}
+            disabled={maintenanceNone}
+            className={clsx(fieldInputClass, "resize-y")}
+          />
+          <div className="flex items-center justify-end pt-2">
+            <label className="flex items-center gap-2 text-sm text-neutral-400">
+              <input
+                type="checkbox"
+                checked={maintenanceNone}
+                onChange={(e) => handleToggleMaintenanceNone(e.target.checked)}
+                className={checkboxClass}
+              />
+              No maintenance script
+            </label>
+          </div>
+        </div>
+      </details>
+
+      {/* Dev Script */}
+      <details
+        className={getPanelClasses(isDevSectionOpen)}
+        open={isDevSectionOpen}
+        onToggle={(e) => setIsDevSectionOpen(e.currentTarget.open)}
+      >
+        <summary className="flex items-center gap-3 cursor-pointer px-5 py-4 list-none text-neutral-100">
+          <ChevronDown className="h-4 w-4 text-neutral-400 transition-transform group-open:rotate-180" />
+          <StepBadge step={2} done={devAck} />
+          <h3 className="text-[15px] font-semibold text-neutral-50 flex-1 tracking-tight">
+            Dev script
+          </h3>
+        </summary>
+        <div className="border-t border-neutral-800/80 px-6 py-5 bg-neutral-950/60">
+          <p className="text-sm text-neutral-400 mb-3 leading-6">
+            Starts the development server
+          </p>
+          <textarea
+            value={devScript ?? ""}
+            onChange={(e: ChangeEvent<HTMLTextAreaElement>) => handleDevScriptChange(e.target.value)}
+            placeholder="npm run dev"
+            rows={2}
+            disabled={devNone}
+            className={clsx(fieldInputClass, "resize-y")}
+          />
+          <div className="flex items-center justify-end pt-2">
+            <label className="flex items-center gap-2 text-sm text-neutral-400">
+              <input
+                type="checkbox"
+                checked={devNone}
+                onChange={(e) => handleToggleDevNone(e.target.checked)}
+                className={checkboxClass}
+              />
+              No dev script
+            </label>
+          </div>
+        </div>
+      </details>
 
       {/* Environment Variables */}
       <details
-        className="group rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950"
+        className={getPanelClasses(isEnvSectionOpen)}
         open={isEnvSectionOpen}
         onToggle={(e) => setIsEnvSectionOpen(e.currentTarget.open)}
       >
-        <summary className="flex items-center gap-3 cursor-pointer px-4 py-3 list-none">
+        <summary className="flex items-center gap-3 cursor-pointer px-5 py-4 list-none text-neutral-100">
           <ChevronDown className="h-4 w-4 text-neutral-400 transition-transform group-open:rotate-180" />
-          <StepBadge step={1} done={envDone} />
-          <h3 className="text-sm font-medium text-neutral-900 dark:text-neutral-100 flex-1">
+          <StepBadge step={3} done={envDone} />
+          <h3 className="text-[15px] font-semibold text-neutral-50 flex-1 tracking-tight">
             Environment variables
           </h3>
         </summary>
         <div
-          className="border-t border-neutral-200 dark:border-neutral-800 px-6 py-4"
+          className="border-t border-neutral-800/80 px-6 py-5 bg-neutral-950/60"
           onPasteCapture={(e) => {
             const text = e.clipboardData?.getData("text") ?? "";
             if (text && (/\n/.test(text) || /(=|:)\s*\S/.test(text))) {
@@ -1537,8 +1628,8 @@ export function PreviewConfigureClient({
             }
           }}
         >
-          <div className="flex items-center justify-between pb-3">
-            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+          <div className="flex items-center justify-between pb-4">
+            <p className="text-sm text-neutral-400">
               Environment variables are encrypted and securely injected at runtime.
             </p>
             <button
@@ -1547,7 +1638,7 @@ export function PreviewConfigureClient({
                 setActiveEnvValueIndex(null);
                 setAreEnvValuesHidden((previous) => !previous);
               }}
-              className="text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 transition p-1"
+              className="inline-flex items-center rounded-md border border-neutral-800/80 bg-neutral-900/70 p-2 text-neutral-400 transition hover:border-neutral-700 hover:text-neutral-200"
               aria-label={areEnvValuesHidden ? "Reveal values" : "Hide values"}
             >
               {areEnvValuesHidden ? (
@@ -1559,7 +1650,7 @@ export function PreviewConfigureClient({
           </div>
 
           <div
-            className="grid gap-3 text-xs text-neutral-500 dark:text-neutral-500 items-center pb-2"
+            className="grid gap-3 text-[13px] text-neutral-500 items-center pb-2"
             style={{ gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.4fr) 44px" }}
           >
             <span>Key</span>
@@ -1598,7 +1689,7 @@ export function PreviewConfigureClient({
                       });
                     }}
                     placeholder="EXAMPLE_NAME"
-                    className="w-full min-w-0 self-start rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                    className={fieldInputClass}
                   />
                   <textarea
                     value={shouldMaskValue ? MASKED_ENV_VALUE : row.value}
@@ -1617,14 +1708,14 @@ export function PreviewConfigureClient({
                               }
                               return next;
                             });
-                          }
+                        }
                     }
                     onFocus={() => setActiveEnvValueIndex(idx)}
                     onBlur={() => setActiveEnvValueIndex((current) => (current === idx ? null : current))}
                     readOnly={shouldMaskValue}
                     placeholder="value"
                     rows={1}
-                    className="w-full min-w-0 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-y disabled:opacity-60 disabled:cursor-not-allowed"
+                    className={clsx(fieldInputClass, "resize-y")}
                   />
                   <div className="self-start flex items-center justify-end w-[44px]">
                     <button
@@ -1636,7 +1727,7 @@ export function PreviewConfigureClient({
                           return next.length > 0 ? next : [{ name: "", value: "", isSecret: true }];
                         });
                       }}
-                      className="h-10 w-[44px] rounded-md border border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 grid place-items-center hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:opacity-60 disabled:cursor-not-allowed"
+                      className="h-10 w-[44px] rounded-lg border border-neutral-800/80 text-neutral-200 grid place-items-center bg-neutral-900/70 hover:border-neutral-700 hover:bg-neutral-800 disabled:opacity-60 disabled:cursor-not-allowed"
                       aria-label="Remove variable"
                     >
                       <Minus className="w-4 h-4" />
@@ -1654,154 +1745,88 @@ export function PreviewConfigureClient({
               onClick={() =>
                 updateEnvVars((prev) => [...prev, { name: "", value: "", isSecret: true }])
               }
-              className="inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:opacity-60 disabled:cursor-not-allowed"
+              className="inline-flex items-center gap-2 rounded-lg border border-neutral-800/80 bg-neutral-900/70 px-3 py-2 text-sm font-medium text-neutral-50 hover:border-neutral-700 hover:bg-neutral-800 transition disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <Plus className="w-4 h-4" /> Add More
             </button>
-            <label className="flex items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
+            <label className="flex items-center gap-2 text-sm text-neutral-400">
               <input
                 type="checkbox"
                 checked={envNone}
                 onChange={(e) => handleToggleEnvNone(e.target.checked)}
-                className="h-4 w-4 rounded border-neutral-300 text-neutral-900 focus:ring-2 focus:ring-neutral-500 dark:border-neutral-700 dark:bg-neutral-900"
+                className={checkboxClass}
               />
               No env vars
             </label>
           </div>
 
-          <p className="text-xs text-neutral-400 dark:text-neutral-500 pt-3">
+          <p className="text-xs text-neutral-500 pt-3">
             Tip: Paste a .env file to auto-fill
           </p>
         </div>
       </details>
 
-      {/* Maintenance Script */}
-      <details
-        className="group rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950"
-        open={isMaintenanceSectionOpen}
-        onToggle={(e) => setIsMaintenanceSectionOpen(e.currentTarget.open)}
-      >
-        <summary className="flex items-center gap-3 cursor-pointer px-4 py-3 list-none">
-          <ChevronDown className="h-4 w-4 text-neutral-400 transition-transform group-open:rotate-180" />
-          <StepBadge step={2} done={maintenanceAck} />
-          <h3 className="text-sm font-medium text-neutral-900 dark:text-neutral-100 flex-1">
-            Maintenance script
-          </h3>
-        </summary>
-        <div className="border-t border-neutral-200 dark:border-neutral-800 px-6 py-4">
-          <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
-            Runs after git pull to install dependencies
-          </p>
-          <textarea
-            value={maintenanceScript ?? ""}
-            onChange={(e: ChangeEvent<HTMLTextAreaElement>) => handleMaintenanceScriptChange(e.target.value)}
-            placeholder="npm install"
-            rows={2}
-            disabled={maintenanceNone}
-            className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-xs font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-y disabled:opacity-60 disabled:cursor-not-allowed"
-          />
-          <div className="flex items-center justify-end pt-2">
-            <label className="flex items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
-              <input
-                type="checkbox"
-                checked={maintenanceNone}
-                onChange={(e) => handleToggleMaintenanceNone(e.target.checked)}
-                className="h-4 w-4 rounded border-neutral-300 text-neutral-900 focus:ring-2 focus:ring-neutral-500 dark:border-neutral-700 dark:bg-neutral-900"
-              />
-              No maintenance script
-            </label>
-          </div>
-        </div>
-      </details>
-
-      {/* Dev Script */}
-      <details
-        className="group rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950"
-        open={isDevSectionOpen}
-        onToggle={(e) => setIsDevSectionOpen(e.currentTarget.open)}
-      >
-        <summary className="flex items-center gap-3 cursor-pointer px-4 py-3 list-none">
-          <ChevronDown className="h-4 w-4 text-neutral-400 transition-transform group-open:rotate-180" />
-          <StepBadge step={3} done={devAck} />
-          <h3 className="text-sm font-medium text-neutral-900 dark:text-neutral-100 flex-1">
-            Dev script
-          </h3>
-        </summary>
-        <div className="border-t border-neutral-200 dark:border-neutral-800 px-6 py-4">
-          <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
-            Starts the development server
-          </p>
-          <textarea
-            value={devScript ?? ""}
-            onChange={(e: ChangeEvent<HTMLTextAreaElement>) => handleDevScriptChange(e.target.value)}
-            placeholder="npm run dev"
-            rows={2}
-            disabled={devNone}
-            className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-xs font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-y disabled:opacity-60 disabled:cursor-not-allowed"
-          />
-          <div className="flex items-center justify-end pt-2">
-            <label className="flex items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
-              <input
-                type="checkbox"
-                checked={devNone}
-                onChange={(e) => handleToggleDevNone(e.target.checked)}
-                className="h-4 w-4 rounded border-neutral-300 text-neutral-900 focus:ring-2 focus:ring-neutral-500 dark:border-neutral-700 dark:bg-neutral-900"
-              />
-              No dev script
-            </label>
-          </div>
-        </div>
-      </details>
-
       {/* Run Scripts */}
       <details
-        className="group rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950"
+        className={getPanelClasses(isRunSectionOpen)}
         open={isRunSectionOpen}
         onToggle={(e) => setIsRunSectionOpen(e.currentTarget.open)}
       >
-        <summary className="flex items-center gap-3 cursor-pointer px-4 py-3 list-none">
+        <summary className="flex items-center gap-3 cursor-pointer px-5 py-4 list-none text-neutral-100">
           <ChevronDown className="h-4 w-4 text-neutral-400 transition-transform group-open:rotate-180" />
           <StepBadge step={4} done={runAck} />
-          <h3 className="text-sm font-medium text-neutral-900 dark:text-neutral-100 flex-1">
+          <h3 className="text-[15px] font-semibold text-neutral-50 flex-1 tracking-tight">
             Run scripts in VS Code terminal
           </h3>
         </summary>
-        <div className="border-t border-neutral-200 dark:border-neutral-800 px-6 py-4 space-y-4">
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            Open the terminal in VS Code (<kbd className="px-1.5 py-0.5 rounded bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 text-xs">Cmd+J</kbd> or <kbd className="px-1.5 py-0.5 rounded bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 text-xs">Ctrl+`</kbd>) and paste:
+        <div className="border-t border-neutral-800/80 px-6 py-5 space-y-4 bg-neutral-950/60">
+          <p className="text-sm text-neutral-400 leading-6">
+            Open the terminal in VS Code (<kbd className="px-1.5 py-0.5 rounded bg-neutral-900 text-neutral-200 text-xs border border-neutral-800">Cmd+J</kbd> or <kbd className="px-1.5 py-0.5 rounded bg-neutral-900 text-neutral-200 text-xs border border-neutral-800">Ctrl+`</kbd>) and paste:
           </p>
           {(maintenanceScriptValue || devScriptValue) ? (
-            <div className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-900 dark:bg-neutral-950 overflow-hidden">
-              <div className="flex items-center justify-between px-3 py-1.5 border-b border-neutral-700 dark:border-neutral-800 bg-neutral-800 dark:bg-neutral-900">
-                <span className="text-xs text-neutral-400">Commands</span>
+            <div className="rounded-xl border border-neutral-800/80 bg-neutral-950/70 overflow-hidden shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+              <div className="flex items-center justify-between px-4 py-2 border-b border-neutral-800 bg-neutral-900/80">
+                <span className="text-xs uppercase tracking-wide text-neutral-500">
+                  Commands
+                </span>
                 <button
                   type="button"
-                  onClick={() => {
-                    const combined = [maintenanceScript.trim(), devScript.trim()].filter(Boolean).join(" && ");
-                    navigator.clipboard.writeText(combined);
-                  }}
-                  className="text-neutral-400 hover:text-neutral-200 transition p-1"
-                  aria-label="Copy commands"
+                  onClick={handleCopyCommands}
+                  className={clsx(
+                    "transition p-1 rounded-md border border-transparent",
+                    commandsCopied
+                      ? "text-emerald-400 hover:text-emerald-300"
+                      : "text-neutral-400 hover:text-neutral-200 hover:border-neutral-700"
+                  )}
+                  aria-label={commandsCopied ? "Commands copied" : "Copy commands"}
                 >
-                  <Copy className="h-3.5 w-3.5" />
+                  {commandsCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
                 </button>
               </div>
-              <pre className="px-3 py-2 text-xs font-mono text-neutral-100 overflow-x-auto whitespace-pre-wrap break-all select-all">
+              <pre className="px-4 py-3 text-sm font-mono text-neutral-100 overflow-x-auto whitespace-pre-wrap break-all select-all">
                 {[maintenanceScript.trim(), devScript.trim()].filter(Boolean).join(" && ")}
               </pre>
             </div>
           ) : maintenanceNone && devNone ? (
-            <p className="text-sm text-neutral-400 dark:text-neutral-500 italic">
+            <p className="text-sm text-neutral-500 italic">
               No maintenance or dev scripts configured.
             </p>
           ) : (
-            <p className="text-sm text-neutral-400 dark:text-neutral-500 italic">
+            <p className="text-sm text-neutral-500 italic">
               Enter scripts above to see commands to run
             </p>
           )}
-          <p className="text-xs text-neutral-500 dark:text-neutral-400">
-            Proceed once your dev server is running.
-          </p>
+           <div className="flex items-center justify-end pt-2">
+            <label className="flex items-center gap-2 text-sm text-neutral-400">
+              <input
+              type="checkbox"
+              checked={runConfirmed}
+              onChange={(e) => setRunConfirmed(e.target.checked)}
+              className={checkboxClass}
+            />
+              Proceed once dev script is running
+            </label>
+          </div>
         </div>
       </details>
     </div>
@@ -1810,14 +1835,19 @@ export function PreviewConfigureClient({
   const renderStep2Content = () => (
     <div className="space-y-8">
       {/* Browser Setup Info */}
-      <div>
-        <div className="flex items-center gap-3 mb-4">
-          <StepBadge step={5} done={false} />
-          <h3 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+      <details
+        className="group rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950"
+        open={isBrowserSetupSectionOpen}
+        onToggle={(event) => setIsBrowserSetupSectionOpen(event.currentTarget.open)}
+      >
+        <summary className="flex items-center gap-3 cursor-pointer px-4 py-3 list-none">
+          <ChevronDown className="h-4 w-4 text-neutral-400 transition-transform group-open:rotate-180" />
+          <StepBadge step={5} done={browserAck} />
+          <h3 className="text-sm font-medium text-neutral-900 dark:text-neutral-100 flex-1">
             Prepare browser for automation
           </h3>
-        </div>
-        <div className="ml-9 space-y-4">
+        </summary>
+        <div className="border-t border-neutral-200 dark:border-neutral-800 px-6 py-4 space-y-4">
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
             Use the browser on the right to set up any authentication or configuration needed:
           </p>
@@ -1835,11 +1865,22 @@ export function PreviewConfigureClient({
               <span>Navigate to your dev server URL (e.g., localhost:3000)</span>
             </li>
           </ul>
+          <div className="flex items-center gap-3 pt-2">
+            <label className="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
+              <input
+                type="checkbox"
+                checked={browserConfirmed}
+                onChange={(event) => setBrowserConfirmed(event.target.checked)}
+                className="h-4 w-4 rounded border-neutral-300 text-neutral-900 focus:ring-2 focus:ring-neutral-500 dark:border-neutral-700 dark:bg-neutral-900"
+              />
+              Browser is set up properly
+            </label>
+          </div>
         </div>
-      </div>
+      </details>
 
       {/* Note about terminal */}
-      <div className="ml-9 rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/20 p-4">
+      <div className="rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/20 p-4">
         <p className="text-sm text-amber-800 dark:text-amber-200">
           <strong>Note:</strong> Any running terminals will be stopped when you save. The dev script you configured will run automatically on each preview.
         </p>
@@ -1886,23 +1927,17 @@ export function PreviewConfigureClient({
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-neutral-50 dark:bg-neutral-950">
+    <div className="flex h-screen overflow-hidden bg-neutral-50 dark:bg-neutral-950 font-mono text-[15px] leading-6">
       {/* Left: Configuration Form */}
       <div className="w-[420px] flex flex-col overflow-hidden border-r border-neutral-200 dark:border-neutral-800 bg-white dark:bg-black">
-        <div className="flex-shrink-0 px-6 pt-4 pb-3">
-          <div className="flex items-center justify-between mb-2">
-            <Link
-              href="/preview"
-              className="inline-flex items-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
-            >
-              <ArrowLeft className="h-3 w-3" />
-              Back to Home
-            </Link>
-            <span className="inline-flex items-center gap-1.5 rounded border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 text-neutral-600 dark:text-neutral-400 px-2 py-0.5 text-xs font-mono">
-              <Github className="h-3 w-3" />
-              {repo}
-            </span>
-          </div>
+        <div className="flex-shrink-0 px-6 pt-4 pb-6">
+          <Link
+            href="/preview"
+            className="inline-flex items-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 mb-3"
+          >
+            <ArrowLeft className="h-3 w-3" />
+            Back to preview.new
+          </Link>
           <h1 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
             Configure environment
           </h1>
@@ -1927,7 +1962,7 @@ export function PreviewConfigureClient({
                 className="inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition"
               >
                 <ArrowLeft className="w-4 h-4" />
-                Back to configure environment
+                Previous
               </button>
             ) : (
               <div />
@@ -1955,7 +1990,7 @@ export function PreviewConfigureClient({
                     Saving...
                   </>
                 ) : (
-                  "Save Configuration"
+                  "Save configuration"
                 )}
               </button>
             )}

@@ -73,6 +73,9 @@ githubReposRouter.openapi(
     if (!accessToken) return c.text("Unauthorized", 401);
 
     const { team, installationId, search, page = 1 } = c.req.valid("query");
+    const perPage = 50;
+    const maxPages = 10;
+    const maxResults = perPage * maxPages;
 
     // Fetch provider connections for this team using Convex (enforces membership)
     const convex = getConvex({ accessToken });
@@ -112,22 +115,39 @@ githubReposRouter.openapi(
       const q = [ownerQualifier, "fork:true", search ? `${search} in:name` : null]
         .filter(Boolean)
         .join(" ");
-      const searchRes = await octokit.request("GET /search/repositories", {
-        q,
-        sort: "updated",
-        order: "desc",
-        per_page: 5,
-        page,
-      });
-      allRepos.push(
-        ...searchRes.data.items.map((r) => ({
-          name: r.name,
-          full_name: r.full_name,
-          private: !!r.private,
-          updated_at: r.updated_at,
-          pushed_at: r.pushed_at,
-        }))
-      );
+      let currentPage = page;
+      let remaining = maxResults;
+      let totalCount = 0;
+
+      while (remaining > 0) {
+        const searchRes = await octokit.request("GET /search/repositories", {
+          q,
+          sort: "updated",
+          order: "desc",
+          per_page: perPage,
+          page: currentPage,
+        });
+        const items = searchRes.data.items ?? [];
+        totalCount = Math.min(searchRes.data.total_count ?? items.length, 1000);
+
+        allRepos.push(
+          ...items.map((r) => ({
+            name: r.name,
+            full_name: r.full_name,
+            private: !!r.private,
+            updated_at: r.updated_at,
+            pushed_at: r.pushed_at,
+          }))
+        );
+
+        remaining -= items.length;
+        const fetchedAll =
+          allRepos.length >= totalCount || items.length < perPage || items.length === 0;
+        if (fetchedAll || currentPage - page + 1 >= maxPages) {
+          break;
+        }
+        currentPage += 1;
+      }
     } catch (err) {
       console.error(
         `GitHub repositories fetch failed for installation ${target.installationId}:`,

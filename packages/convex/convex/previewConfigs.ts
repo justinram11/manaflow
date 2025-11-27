@@ -59,6 +59,22 @@ export const getByRepo = authQuery({
   },
 });
 
+export const remove = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    previewConfigId: v.id("previewConfigs"),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const config = await ctx.db.get(args.previewConfigId);
+    if (!config || config.teamId !== teamId) {
+      throw new Error("Preview config not found");
+    }
+    await ctx.db.delete(args.previewConfigId);
+    return { id: args.previewConfigId };
+  },
+});
+
 export const upsert = authMutation({
   args: {
     teamSlugOrId: v.string(),

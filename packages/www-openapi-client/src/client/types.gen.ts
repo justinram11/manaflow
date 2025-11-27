@@ -337,6 +337,7 @@ export type GithubPrsFileContentsBatchBody = {
 
 export type GithubInstallStateResponse = {
     state: string;
+    installUrl: string;
 };
 
 export type GithubInstallStateRequest = {
@@ -2475,6 +2476,39 @@ export type PostApiPreviewConfigsResponses = {
 };
 
 export type PostApiPreviewConfigsResponse = PostApiPreviewConfigsResponses[keyof PostApiPreviewConfigsResponses];
+
+export type DeleteApiPreviewConfigsByPreviewConfigIdData = {
+    body?: never;
+    path: {
+        previewConfigId: string;
+    };
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/preview/configs/{previewConfigId}';
+};
+
+export type DeleteApiPreviewConfigsByPreviewConfigIdErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Not found
+     */
+    404: unknown;
+};
+
+export type DeleteApiPreviewConfigsByPreviewConfigIdResponses = {
+    /**
+     * Deleted
+     */
+    200: {
+        id: string;
+    };
+};
+
+export type DeleteApiPreviewConfigsByPreviewConfigIdResponse = DeleteApiPreviewConfigsByPreviewConfigIdResponses[keyof DeleteApiPreviewConfigsByPreviewConfigIdResponses];
 
 export type GetApiPreviewConfigsByPreviewConfigIdRunsData = {
     body?: never;
