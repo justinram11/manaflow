@@ -6,6 +6,7 @@ pub mod ip_pool;
 pub mod keyring;
 pub mod models;
 pub mod mux;
+pub mod notifications;
 pub mod palette;
 pub mod service;
 pub mod sync_files;

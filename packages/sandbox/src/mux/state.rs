@@ -29,6 +29,7 @@ pub struct NotificationEntry {
     pub level: NotificationLevel,
     pub sandbox_id: Option<String>,
     pub tab_id: Option<String>,
+    pub pane_id: Option<String>,
     pub sent_at: DateTime<Utc>,
     pub read_at: Option<DateTime<Utc>>,
 }
@@ -320,6 +321,7 @@ impl<'a> MuxApp<'a> {
         level: NotificationLevel,
         sandbox_id: Option<String>,
         tab_id: Option<String>,
+        pane_id: Option<String>,
     ) {
         let entry = NotificationEntry {
             id: Uuid::new_v4(),
@@ -327,6 +329,7 @@ impl<'a> MuxApp<'a> {
             level,
             sandbox_id,
             tab_id,
+            pane_id,
             sent_at: Utc::now(),
             read_at: None,
         };
@@ -785,8 +788,9 @@ impl<'a> MuxApp<'a> {
                 level,
                 sandbox_id,
                 tab_id,
+                pane_id,
             } => {
-                self.record_notification(message, level, sandbox_id, tab_id);
+                self.record_notification(message, level, sandbox_id, tab_id, pane_id);
             }
             MuxEvent::StatusMessage { message } => {
                 self.set_status(message);
@@ -968,6 +972,7 @@ mod tests {
             level: NotificationLevel::Info,
             sandbox_id: None,
             tab_id: None,
+            pane_id: None,
             sent_at: Utc::now(),
             read_at: None,
         };

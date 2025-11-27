@@ -73,11 +73,12 @@ async fn main() {
 
     let sandbox_id = normalized_env_var("CMUX_SANDBOX_ID");
     let tab_id = normalized_env_var("CMUX_TAB_ID");
+    let pane_id = normalized_env_var("CMUX_PANE_ID");
 
     let result = match command {
         Command::OpenUrl { url } => handle_open_url(&cli, url.clone(), sandbox_id, tab_id).await,
         Command::Notify { message, level } => {
-            handle_notify(&cli, message.clone(), *level, sandbox_id, tab_id).await
+            handle_notify(&cli, message.clone(), *level, sandbox_id, tab_id, pane_id).await
         }
         Command::Gh { args } => handle_gh(&cli, args.clone(), sandbox_id, tab_id).await,
     };
@@ -347,12 +348,14 @@ async fn handle_notify(
     level: NotificationLevel,
     sandbox_id: Option<String>,
     tab_id: Option<String>,
+    pane_id: Option<String>,
 ) -> anyhow::Result<()> {
     let request = BridgeRequest::Notify {
         message: message.clone(),
         level,
         sandbox_id: sandbox_id.clone(),
         tab_id: tab_id.clone(),
+        pane_id: pane_id.clone(),
     };
 
     let mut socket_error = None;
@@ -377,6 +380,7 @@ async fn handle_notify(
         level,
         sandbox_id,
         tab_id,
+        pane_id,
     };
 
     let client = build_http_client()?;

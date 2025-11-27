@@ -97,6 +97,8 @@ pub struct NotificationRequest {
     pub sandbox_id: Option<String>,
     #[serde(default)]
     pub tab_id: Option<String>,
+    #[serde(default)]
+    pub pane_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
@@ -113,6 +115,21 @@ pub enum HostEvent {
     OpenUrl(OpenUrlRequest),
     Notification(NotificationRequest),
     GhRequest(GhRequest),
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct NotificationLogEntry {
+    pub id: Uuid,
+    pub message: String,
+    #[serde(default)]
+    pub level: NotificationLevel,
+    #[serde(default)]
+    pub sandbox_id: Option<String>,
+    #[serde(default)]
+    pub tab_id: Option<String>,
+    #[serde(default)]
+    pub pane_id: Option<String>,
+    pub received_at: DateTime<Utc>,
 }
 
 /// Request to run a `gh` CLI command on the host machine.
@@ -182,6 +199,8 @@ pub enum BridgeRequest {
         sandbox_id: Option<String>,
         #[serde(default)]
         tab_id: Option<String>,
+        #[serde(default)]
+        pane_id: Option<String>,
     },
 }
 
@@ -321,6 +340,8 @@ pub enum MuxServerMessage {
         sandbox_id: Option<String>,
         #[serde(default)]
         tab_id: Option<String>,
+        #[serde(default)]
+        pane_id: Option<String>,
     },
     /// Request to run a gh CLI command on the client (host) machine.
     /// Client should respond with MuxClientMessage::GhResponse.

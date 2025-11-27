@@ -2197,12 +2197,14 @@ pub async fn establish_mux_connection(manager: SharedTerminalManager) -> anyhow:
                                     level,
                                     sandbox_id,
                                     tab_id,
+                                    pane_id,
                                 } => {
                                     let _ = event_tx_clone.send(MuxEvent::Notification {
                                         message,
                                         level,
                                         sandbox_id,
                                         tab_id,
+                                        pane_id,
                                     });
                                 }
                                 MuxServerMessage::GhRequest {

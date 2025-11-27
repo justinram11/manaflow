@@ -1,6 +1,7 @@
+use chrono::SecondsFormat;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use cmux_sandbox::models::{
-    CreateSandboxRequest, EnvVar, ExecRequest, ExecResponse, SandboxSummary,
+    CreateSandboxRequest, EnvVar, ExecRequest, ExecResponse, NotificationLogEntry, SandboxSummary,
 };
 use cmux_sandbox::{
     build_default_env_vars, extract_api_key_from_output, store_claude_token,
@@ -96,6 +97,9 @@ enum Command {
     Restart(StartArgs),
     /// Show status of the sandbox server
     Status,
+    /// List recorded notifications
+    #[command(alias = "notifs")]
+    Notifications(NotificationsArgs),
 
     /// Start interactive ACP chat client
     Chat(ChatArgs),
@@ -105,6 +109,13 @@ enum Command {
 
     /// Setup Claude API token by running `claude setup-token` and storing in keyring
     SetupClaude,
+}
+
+#[derive(Args, Debug)]
+struct NotificationsArgs {
+    /// Output notifications as JSON
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Args, Debug)]
@@ -438,6 +449,17 @@ async fn run() -> anyhow::Result<()> {
         Command::Status => {
             handle_server_status(&cli.base_url).await?;
         }
+        Command::Notifications(args) => {
+            check_server_reachable(&client, &cli.base_url).await?;
+            let url = format!("{}/notifications", cli.base_url.trim_end_matches('/'));
+            let response = client.get(url).send().await?;
+            let notifications: Vec<NotificationLogEntry> = parse_response(response).await?;
+            if args.json {
+                print_json(&notifications)?;
+            } else {
+                print_notifications(&notifications);
+            }
+        }
         Command::Chat(args) => {
             if args.demo {
                 cmux_sandbox::run_demo_tui()
@@ -570,6 +592,13 @@ async fn run() -> anyhow::Result<()> {
                     let response = client.post(url).json(&body).send().await?;
                     let summary: SandboxSummary = parse_response(response).await?;
                     print_json(&summary)?;
+
+                    if let Err(error) =
+                        upload_sync_files(&client, &cli.base_url, &summary.id.to_string(), true)
+                            .await
+                    {
+                        eprintln!("Warning: Failed to upload auth files: {}", error);
+                    }
                 }
                 SandboxCommand::New(args) => {
                     let body = CreateSandboxRequest {
@@ -955,6 +984,32 @@ fn should_attach() -> bool {
     }
 
     stdin_tty && stdout_tty && stderr_tty
+}
+
+fn print_notifications(entries: &[NotificationLogEntry]) {
+    if entries.is_empty() {
+        println!("No notifications recorded.");
+        return;
+    }
+
+    println!(
+        "{:<25} {:<7} {:<36} {:<36} {:<36} MESSAGE",
+        "TIME", "LEVEL", "SANDBOX", "TAB", "PANE"
+    );
+
+    for entry in entries {
+        let timestamp = entry.received_at.to_rfc3339_opts(SecondsFormat::Secs, true);
+        let level = format!("{:?}", entry.level);
+        let sandbox = entry.sandbox_id.as_deref().unwrap_or("-");
+        let tab = entry.tab_id.as_deref().unwrap_or("-");
+        let pane = entry.pane_id.as_deref().unwrap_or("-");
+        let message = entry.message.replace('\n', " ");
+
+        println!(
+            "{:<25} {:<7} {:<36} {:<36} {:<36} {}",
+            timestamp, level, sandbox, tab, pane, message
+        );
+    }
 }
 
 fn print_json<T: Serialize>(value: &T) -> anyhow::Result<()> {

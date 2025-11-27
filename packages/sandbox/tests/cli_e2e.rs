@@ -5,6 +5,7 @@ use cmux_sandbox::build_router;
 use cmux_sandbox::models::{
     CreateSandboxRequest, ExecRequest, ExecResponse, SandboxNetwork, SandboxStatus, SandboxSummary,
 };
+use cmux_sandbox::notifications::NotificationStore;
 use cmux_sandbox::service::SandboxService;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -18,7 +19,14 @@ fn make_test_router(service: Arc<MockService>) -> Router {
     let (host_event_tx, _) = tokio::sync::broadcast::channel(16);
     let gh_responses = Arc::new(Mutex::new(HashMap::new()));
     let gh_auth_cache = Arc::new(Mutex::new(None));
-    build_router(service, host_event_tx, gh_responses, gh_auth_cache)
+    let notifications = NotificationStore::new();
+    build_router(
+        service,
+        host_event_tx,
+        gh_responses,
+        gh_auth_cache,
+        notifications,
+    )
 }
 
 struct MockService {

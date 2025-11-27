@@ -1,8 +1,9 @@
 use crate::errors::{ErrorBody, SandboxError, SandboxResult};
 use crate::models::{
     CreateSandboxRequest, ExecRequest, ExecResponse, HealthResponse, HostEvent, NotificationLevel,
-    NotificationRequest, OpenUrlRequest, SandboxSummary,
+    NotificationLogEntry, NotificationRequest, OpenUrlRequest, SandboxSummary,
 };
+use crate::notifications::NotificationStore;
 use crate::service::{AppState, GhResponseRegistry, HostEventSender, SandboxService};
 use axum::body::Body;
 use axum::extract::ws::WebSocketUpgrade;
@@ -46,6 +47,7 @@ fn default_tty() -> bool {
         health,
         upload_files,
         open_url_post,
+        list_notifications,
         send_notification,
     ),
     components(schemas(
@@ -58,6 +60,7 @@ fn default_tty() -> bool {
         HealthResponse,
         ErrorBody,
         NotificationRequest,
+        NotificationLogEntry,
         NotificationLevel,
         OpenUrlRequest
     )),
@@ -70,8 +73,15 @@ pub fn build_router(
     host_events: HostEventSender,
     gh_responses: GhResponseRegistry,
     gh_auth_cache: crate::service::GhAuthCache,
+    notifications: NotificationStore,
 ) -> Router {
-    let state = AppState::new(service, host_events, gh_responses, gh_auth_cache);
+    let state = AppState::new(
+        service,
+        host_events,
+        gh_responses,
+        gh_auth_cache,
+        notifications,
+    );
     let openapi = ApiDoc::openapi();
     let swagger_routes: Router<AppState> =
         SwaggerUi::new("/docs").url("/openapi.json", openapi).into();
@@ -92,7 +102,10 @@ pub fn build_router(
         // Open URL on host - used by sandboxed processes to open links
         .route("/open-url", get(open_url).post(open_url_post))
         // Push a notification to connected clients
-        .route("/notifications", post(send_notification))
+        .route(
+            "/notifications",
+            get(list_notifications).post(send_notification),
+        )
         .merge(swagger_routes)
         .with_state(state)
 }
@@ -308,6 +321,16 @@ async fn handle_open_url(state: AppState, params: OpenUrlRequest) -> StatusCode 
 }
 
 #[utoipa::path(
+    get,
+    path = "/notifications",
+    responses((status = 200, description = "List recent notifications", body = [NotificationLogEntry]))
+)]
+async fn list_notifications(State(state): State<AppState>) -> Json<Vec<NotificationLogEntry>> {
+    let entries = state.notifications.list().await;
+    Json(entries)
+}
+
+#[utoipa::path(
     post,
     path = "/notifications",
     request_body = NotificationRequest,
@@ -320,6 +343,16 @@ async fn send_notification(
     State(state): State<AppState>,
     Json(body): Json<NotificationRequest>,
 ) -> StatusCode {
+    let _ = state
+        .notifications
+        .record(
+            body.message.clone(),
+            body.level,
+            body.sandbox_id.clone(),
+            body.tab_id.clone(),
+            body.pane_id.clone(),
+        )
+        .await;
     match state
         .host_events
         .send(HostEvent::Notification(NotificationRequest {
@@ -327,6 +360,7 @@ async fn send_notification(
             level: body.level,
             sandbox_id: body.sandbox_id.clone(),
             tab_id: body.tab_id.clone(),
+            pane_id: body.pane_id.clone(),
         })) {
         Ok(_) => StatusCode::OK,
         Err(error) => {
@@ -457,11 +491,13 @@ mod tests {
         let (host_event_tx, _) = tokio::sync::broadcast::channel(16);
         let gh_responses = Arc::new(Mutex::new(HashMap::new()));
         let gh_auth_cache = Arc::new(Mutex::new(None));
+        let notifications = NotificationStore::new();
         build_router(
             Arc::new(MockService::default()),
             host_event_tx,
             gh_responses,
             gh_auth_cache,
+            notifications,
         )
     }
 

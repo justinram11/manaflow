@@ -2,6 +2,7 @@ use crate::errors::SandboxResult;
 use crate::models::{
     CreateSandboxRequest, ExecRequest, ExecResponse, GhResponse, HostEvent, SandboxSummary,
 };
+use crate::notifications::NotificationStore;
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::extract::ws::WebSocket;
@@ -62,6 +63,7 @@ pub struct AppState {
     pub host_events: HostEventSender,
     pub gh_responses: GhResponseRegistry,
     pub gh_auth_cache: GhAuthCache,
+    pub notifications: NotificationStore,
 }
 
 impl AppState {
@@ -70,12 +72,14 @@ impl AppState {
         host_events: HostEventSender,
         gh_responses: GhResponseRegistry,
         gh_auth_cache: GhAuthCache,
+        notifications: NotificationStore,
     ) -> Self {
         Self {
             service,
             host_events,
             gh_responses,
             gh_auth_cache,
+            notifications,
         }
     }
 }

@@ -33,6 +33,7 @@ pub enum MuxEvent {
         level: NotificationLevel,
         sandbox_id: Option<String>,
         tab_id: Option<String>,
+        pane_id: Option<String>,
     },
     /// Local status message (does not become a stored notification).
     StatusMessage { message: String },

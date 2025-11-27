@@ -6,8 +6,12 @@
 use crate::models::ExecRequest;
 use anyhow::anyhow;
 use reqwest::Client;
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tar::Builder;
+use tar::Header;
 
 pub struct SyncFileDef {
     pub name: &'static str,
@@ -242,6 +246,25 @@ pub async fn upload_sync_files_with_list(
 
         let temp_dir_name = "__cmux_sync_temp";
 
+        fn ensure_codex_notify(content: &str) -> String {
+            let has_notify = content
+                .lines()
+                .any(|line| line.trim_start().starts_with("notify"));
+            if has_notify {
+                return content.to_string();
+            }
+
+            let notify_block = r#"notify = [
+  "sh",
+  "-c",
+  "echo \"$1\" | jq -r '.[\"last-assistant-message\"] // \"Awaiting input\"' | xargs -I{} cmux-bridge notify \"Codex: {}\"",
+  "--",
+]
+
+"#;
+            format!("{notify_block}{content}")
+        }
+
         for SyncFileToUpload {
             host_path,
             sandbox_path: sandbox_path_str,
@@ -253,9 +276,32 @@ pub async fn upload_sync_files_with_list(
 
             let tar_path = Path::new(temp_dir_name).join(rel_sandbox_path);
 
-            let result = if is_dir {
+            let result: io::Result<()> = if is_dir {
                 // For directories, recursively add all contents
                 tar.append_dir_all(&tar_path, &host_path)
+            } else if sandbox_path_str == "/root/.codex/config.toml" {
+                // Ensure Codex config always has our notify hook
+                match fs::read_to_string(&host_path) {
+                    Ok(raw) => {
+                        let merged = ensure_codex_notify(&raw);
+                        let bytes = merged.as_bytes();
+                        let mut header = Header::new_gnu();
+                        if let Err(e) = header.set_path(&tar_path) {
+                            let _ = tx.blocking_send(Err(e));
+                            return;
+                        }
+                        header.set_size(bytes.len() as u64);
+                        header.set_mode(0o644);
+                        let mtime = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        header.set_mtime(mtime);
+                        header.set_cksum();
+                        tar.append_data(&mut header, &tar_path, bytes)
+                    }
+                    Err(e) => Err(e),
+                }
             } else {
                 // For files, add with the specified name
                 tar.append_path_with_name(&host_path, &tar_path)

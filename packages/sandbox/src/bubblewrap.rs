@@ -1622,6 +1622,7 @@ impl SandboxService for BubblewrapService {
                                     level: notification.level,
                                     sandbox_id: notification.sandbox_id,
                                     tab_id: notification.tab_id,
+                                    pane_id: notification.pane_id,
                                 });
                             }
                             HostEvent::GhRequest(request) => {
