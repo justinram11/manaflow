@@ -455,6 +455,19 @@ fn render_status_bar(f: &mut Frame, app: &mut MuxApp, area: Rect) {
     ));
     spans.push(Span::raw(" "));
 
+    // Debug build indicator (only in debug builds)
+    #[cfg(debug_assertions)]
+    {
+        spans.push(Span::styled(
+            "[debug build]",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw(" "));
+    }
+
     // Active sandbox info
     if let Some(workspace) = app.workspace_manager.active_workspace() {
         spans.push(Span::styled(
