@@ -990,6 +990,20 @@ impl Perform for VirtualTerminal {
                     _ => {}
                 }
             }
+            // Device Attributes (DA1 and DA2)
+            'c' => {
+                if intermediates.is_empty() {
+                    // Primary Device Attributes (DA1): CSI c or CSI 0 c
+                    // Respond as VT220 with various capabilities:
+                    // 62 = VT220, 1 = 132 columns, 2 = printer, 4 = sixel graphics
+                    self.pending_responses.push(b"\x1b[?62;1;2;4c".to_vec());
+                } else if intermediates == [b'>'] {
+                    // Secondary Device Attributes (DA2): CSI > c
+                    // Respond as screen/tmux-like terminal:
+                    // 41 = terminal type (screen), 0 = version, 0 = ROM
+                    self.pending_responses.push(b"\x1b[>41;0;0c".to_vec());
+                }
+            }
             // Set scroll region
             'r' => {
                 let top = params_vec.first().copied().unwrap_or(1).max(1) as usize - 1;
@@ -2287,5 +2301,40 @@ mod tests {
         let responses = term.drain_responses();
         assert_eq!(responses.len(), 1);
         assert_eq!(responses[0], b"\x1b[0n");
+    }
+
+    #[test]
+    fn virtual_terminal_responds_to_da1() {
+        let mut term = VirtualTerminal::new(24, 80);
+        // Send Primary Device Attributes request (CSI c)
+        term.process(b"\x1b[c");
+
+        let responses = term.drain_responses();
+        assert_eq!(responses.len(), 1);
+        // Should respond as VT220 with capabilities
+        assert_eq!(responses[0], b"\x1b[?62;1;2;4c");
+    }
+
+    #[test]
+    fn virtual_terminal_responds_to_da1_with_zero() {
+        let mut term = VirtualTerminal::new(24, 80);
+        // Send Primary Device Attributes request with explicit 0 (CSI 0 c)
+        term.process(b"\x1b[0c");
+
+        let responses = term.drain_responses();
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0], b"\x1b[?62;1;2;4c");
+    }
+
+    #[test]
+    fn virtual_terminal_responds_to_da2() {
+        let mut term = VirtualTerminal::new(24, 80);
+        // Send Secondary Device Attributes request (CSI > c)
+        term.process(b"\x1b[>c");
+
+        let responses = term.drain_responses();
+        assert_eq!(responses.len(), 1);
+        // Should respond as screen-like terminal
+        assert_eq!(responses[0], b"\x1b[>41;0;0c");
     }
 }
