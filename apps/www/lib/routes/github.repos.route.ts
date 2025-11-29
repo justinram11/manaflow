@@ -28,20 +28,6 @@ const Query = z
       .default(1)
       .optional()
       .openapi({ description: "1-based page index (default 1)" }),
-    limit: z.coerce
-      .number()
-      .min(1)
-      .max(100)
-      .default(5)
-      .optional()
-      .openapi({ description: "Items per page (default 5)" }),
-    pages: z.coerce
-      .number()
-      .min(1)
-      .max(10)
-      .default(1)
-      .optional()
-      .openapi({ description: "Max pages to fetch (default 1)" }),
   })
   .openapi("GithubReposQuery");
 
@@ -86,17 +72,7 @@ githubReposRouter.openapi(
     const accessToken = await getAccessTokenFromRequest(c.req.raw);
     if (!accessToken) return c.text("Unauthorized", 401);
 
-    const {
-      team,
-      installationId,
-      search,
-      page = 1,
-      limit = 5,
-      pages = 1,
-    } = c.req.valid("query");
-    const perPage = limit;
-    const maxPages = pages;
-    const maxResults = perPage * maxPages;
+    const { team, installationId, search, page = 1 } = c.req.valid("query");
 
     // Fetch provider connections for this team using Convex (enforces membership)
     const convex = getConvex({ accessToken });
@@ -136,39 +112,22 @@ githubReposRouter.openapi(
       const q = [ownerQualifier, "fork:true", search ? `${search} in:name` : null]
         .filter(Boolean)
         .join(" ");
-      let currentPage = page;
-      let remaining = maxResults;
-      let totalCount = 0;
-
-      while (remaining > 0) {
-        const searchRes = await octokit.request("GET /search/repositories", {
-          q,
-          sort: "updated",
-          order: "desc",
-          per_page: perPage,
-          page: currentPage,
-        });
-        const items = searchRes.data.items ?? [];
-        totalCount = Math.min(searchRes.data.total_count ?? items.length, 1000);
-
-        allRepos.push(
-          ...items.map((r) => ({
-            name: r.name,
-            full_name: r.full_name,
-            private: !!r.private,
-            updated_at: r.updated_at,
-            pushed_at: r.pushed_at,
-          }))
-        );
-
-        remaining -= items.length;
-        const fetchedAll =
-          allRepos.length >= totalCount || items.length < perPage || items.length === 0;
-        if (fetchedAll || currentPage - page + 1 >= maxPages) {
-          break;
-        }
-        currentPage += 1;
-      }
+      const searchRes = await octokit.request("GET /search/repositories", {
+        q,
+        sort: "updated",
+        order: "desc",
+        per_page: 5,
+        page,
+      });
+      allRepos.push(
+        ...searchRes.data.items.map((r) => ({
+          name: r.name,
+          full_name: r.full_name,
+          private: !!r.private,
+          updated_at: r.updated_at,
+          pushed_at: r.pushed_at,
+        }))
+      );
     } catch (err) {
       console.error(
         `GitHub repositories fetch failed for installation ${target.installationId}:`,
