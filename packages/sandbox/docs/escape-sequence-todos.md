@@ -33,11 +33,12 @@ See `src/mux/terminal.rs` for the current implementation. Key supported sequence
   - Reset modes to defaults without clearing screen
   - Resets: insert mode, origin mode, auto-wrap, cursor visibility, SGR, scroll region
 
-- [ ] **OSC 10/11** - Query/Set Default Colors
+- [x] **OSC 10/11** - Query/Set Default Colors
   - OSC 10 = foreground color
   - OSC 11 = background color
   - Query: `OSC 10 ? ST` → respond with current color
   - Set: `OSC 10 ; <color> ST`
+  - OSC 110/111 = reset to terminal defaults
 
 - [ ] **OSC 112** - Reset Cursor Color
   - Simple: reset cursor color to default

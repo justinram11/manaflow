@@ -461,6 +461,15 @@ impl Row {
 
     /// Convert row contents to a ratatui Line for rendering.
     pub fn to_ratatui_line(&self) -> ratatui::text::Line<'static> {
+        self.to_ratatui_line_with_defaults(None, None)
+    }
+
+    /// Convert row contents to a ratatui Line, using default colors for cells without explicit colors.
+    pub fn to_ratatui_line_with_defaults(
+        &self,
+        default_fg: Option<Color>,
+        default_bg: Option<Color>,
+    ) -> ratatui::text::Line<'static> {
         let mut spans: Vec<ratatui::text::Span<'static>> = Vec::new();
         let mut current_style = Style::default();
         let mut current_text = String::new();
@@ -470,7 +479,15 @@ impl Row {
                 continue;
             }
 
-            let char_style = character.styles.to_ratatui_style();
+            let mut char_style = character.styles.to_ratatui_style();
+
+            // Apply default colors if no explicit color is set
+            if char_style.fg.is_none() {
+                char_style.fg = default_fg;
+            }
+            if char_style.bg.is_none() {
+                char_style.bg = default_bg;
+            }
 
             if char_style == current_style {
                 current_text.push(character.character);

@@ -70,6 +70,63 @@ fn line_drawing_char(c: char) -> char {
     }
 }
 
+/// Parse an OSC color specification and return RGB values.
+/// Supports formats:
+/// - `rgb:RRRR/GGGG/BBBB` (X11 format, 16-bit per channel)
+/// - `rgb:RR/GG/BB` (X11 format, 8-bit per channel)
+/// - `#RRGGBB` (6-digit hex)
+/// - `#RGB` (3-digit hex)
+fn parse_osc_color(s: &str) -> Option<(u8, u8, u8)> {
+    let s = s.trim();
+
+    if let Some(rest) = s.strip_prefix("rgb:") {
+        // X11 rgb:RRRR/GGGG/BBBB or rgb:RR/GG/BB format
+        let parts: Vec<&str> = rest.split('/').collect();
+        if parts.len() == 3 {
+            let r = u16::from_str_radix(parts[0], 16).ok()?;
+            let g = u16::from_str_radix(parts[1], 16).ok()?;
+            let b = u16::from_str_radix(parts[2], 16).ok()?;
+
+            // Scale to 8-bit based on input length
+            let scale = |v: u16, len: usize| -> u8 {
+                match len {
+                    1 => ((v * 255) / 15) as u8,   // 4-bit to 8-bit
+                    2 => v as u8,                  // Already 8-bit
+                    3 => ((v * 255) / 4095) as u8, // 12-bit to 8-bit
+                    4 => (v / 257) as u8,          // 16-bit to 8-bit
+                    _ => v as u8,
+                }
+            };
+
+            return Some((
+                scale(r, parts[0].len()),
+                scale(g, parts[1].len()),
+                scale(b, parts[2].len()),
+            ));
+        }
+    } else if let Some(rest) = s.strip_prefix('#') {
+        match rest.len() {
+            // #RGB -> expand to #RRGGBB
+            3 => {
+                let r = u8::from_str_radix(&rest[0..1], 16).ok()?;
+                let g = u8::from_str_radix(&rest[1..2], 16).ok()?;
+                let b = u8::from_str_radix(&rest[2..3], 16).ok()?;
+                return Some((r * 17, g * 17, b * 17));
+            }
+            // #RRGGBB
+            6 => {
+                let r = u8::from_str_radix(&rest[0..2], 16).ok()?;
+                let g = u8::from_str_radix(&rest[2..4], 16).ok()?;
+                let b = u8::from_str_radix(&rest[4..6], 16).ok()?;
+                return Some((r, g, b));
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
 /// Characters that are valid in URLs (simplified)
 fn is_url_char(c: char) -> bool {
     c.is_ascii_alphanumeric()
@@ -206,6 +263,10 @@ pub struct VirtualTerminal {
     last_printed_char: Option<char>,
     /// Pending responses to send back to the PTY (e.g., DSR cursor position report)
     pub pending_responses: Vec<Vec<u8>>,
+    /// Default foreground color (OSC 10) - None means use terminal's native color
+    pub default_fg_color: Option<(u8, u8, u8)>,
+    /// Default background color (OSC 11) - None means use terminal's native color
+    pub default_bg_color: Option<(u8, u8, u8)>,
 }
 
 /// Saved cursor state (DECSC/DECRC)
@@ -258,6 +319,8 @@ impl VirtualTerminal {
             title: None,
             last_printed_char: None,
             pending_responses: Vec::new(),
+            default_fg_color: None, // Use terminal's native color
+            default_bg_color: None, // Use terminal's native color
         }
     }
 
@@ -886,12 +949,66 @@ impl Perform for VirtualTerminal {
 
         let cmd = params[0];
         if let Ok(cmd_str) = std::str::from_utf8(cmd) {
-            if let Ok(0 | 2) = cmd_str.parse::<u8>() {
-                if params.len() > 1 {
-                    if let Ok(title) = std::str::from_utf8(params[1]) {
-                        self.title = Some(title.to_string());
+            match cmd_str {
+                // Window title (OSC 0 and OSC 2)
+                "0" | "2" => {
+                    if params.len() > 1 {
+                        if let Ok(title) = std::str::from_utf8(params[1]) {
+                            self.title = Some(title.to_string());
+                        }
                     }
                 }
+                // OSC 10 - Query/Set default foreground color
+                "10" => {
+                    if params.len() > 1 {
+                        if let Ok(color_str) = std::str::from_utf8(params[1]) {
+                            if color_str == "?" {
+                                // Query - respond with current foreground color (default to white if not set)
+                                let (r, g, b) = self.default_fg_color.unwrap_or((255, 255, 255));
+                                let response = format!(
+                                    "\x1b]10;rgb:{:04x}/{:04x}/{:04x}\x1b\\",
+                                    (r as u16) * 257,
+                                    (g as u16) * 257,
+                                    (b as u16) * 257
+                                );
+                                self.pending_responses.push(response.into_bytes());
+                            } else if let Some(color) = parse_osc_color(color_str) {
+                                // Set foreground color
+                                self.default_fg_color = Some(color);
+                            }
+                        }
+                    }
+                }
+                // OSC 11 - Query/Set default background color
+                "11" => {
+                    if params.len() > 1 {
+                        if let Ok(color_str) = std::str::from_utf8(params[1]) {
+                            if color_str == "?" {
+                                // Query - respond with current background color (default to black if not set)
+                                let (r, g, b) = self.default_bg_color.unwrap_or((0, 0, 0));
+                                let response = format!(
+                                    "\x1b]11;rgb:{:04x}/{:04x}/{:04x}\x1b\\",
+                                    (r as u16) * 257,
+                                    (g as u16) * 257,
+                                    (b as u16) * 257
+                                );
+                                self.pending_responses.push(response.into_bytes());
+                            } else if let Some(color) = parse_osc_color(color_str) {
+                                // Set background color
+                                self.default_bg_color = Some(color);
+                            }
+                        }
+                    }
+                }
+                // OSC 110 - Reset default foreground color to terminal default
+                "110" => {
+                    self.default_fg_color = None;
+                }
+                // OSC 111 - Reset default background color to terminal default
+                "111" => {
+                    self.default_bg_color = None;
+                }
+                _ => {}
             }
         }
     }
@@ -1606,6 +1723,16 @@ impl TerminalBuffer {
         let mut has_content = self.terminal.scrollback_len() > 0;
         let default_styles = CharacterStyles::default();
 
+        // Get default colors from terminal (OSC 10/11) - None means use terminal's native color
+        let default_fg = self
+            .terminal
+            .default_fg_color
+            .map(|(r, g, b)| Color::Rgb(r, g, b));
+        let default_bg = self
+            .terminal
+            .default_bg_color
+            .map(|(r, g, b)| Color::Rgb(r, g, b));
+
         for row in visible_rows {
             if !has_content {
                 for cell in row.iter() {
@@ -1615,7 +1742,7 @@ impl TerminalBuffer {
                     }
                 }
             }
-            lines.push(row.to_ratatui_line());
+            lines.push(row.to_ratatui_line_with_defaults(default_fg, default_bg));
         }
 
         let cursor = self.cursor_position();
@@ -2520,5 +2647,139 @@ mod tests {
         assert_eq!(term.charset_index, 0);
         assert!(!term.g0_charset_line_drawing);
         assert!(!term.g1_charset_line_drawing);
+    }
+
+    #[test]
+    fn virtual_terminal_osc10_query_foreground() {
+        let mut term = VirtualTerminal::new(24, 80);
+
+        // Default foreground is None (use terminal's native color)
+        assert_eq!(term.default_fg_color, None);
+
+        // Query foreground color (OSC 10 ; ? ST) - returns assumed white if not set
+        term.process(b"\x1b]10;?\x1b\\");
+
+        let responses = term.drain_responses();
+        assert_eq!(responses.len(), 1);
+        // 255 * 257 = 65535 = 0xffff
+        assert_eq!(
+            String::from_utf8_lossy(&responses[0]),
+            "\x1b]10;rgb:ffff/ffff/ffff\x1b\\"
+        );
+    }
+
+    #[test]
+    fn virtual_terminal_osc11_query_background() {
+        let mut term = VirtualTerminal::new(24, 80);
+
+        // Default background is None (use terminal's native color)
+        assert_eq!(term.default_bg_color, None);
+
+        // Query background color (OSC 11 ; ? ST) - returns assumed black if not set
+        term.process(b"\x1b]11;?\x1b\\");
+
+        let responses = term.drain_responses();
+        assert_eq!(responses.len(), 1);
+        assert_eq!(
+            String::from_utf8_lossy(&responses[0]),
+            "\x1b]11;rgb:0000/0000/0000\x1b\\"
+        );
+    }
+
+    #[test]
+    fn virtual_terminal_osc10_set_foreground_hex() {
+        let mut term = VirtualTerminal::new(24, 80);
+
+        // Set foreground to red (#ff0000)
+        term.process(b"\x1b]10;#ff0000\x1b\\");
+        assert_eq!(term.default_fg_color, Some((255, 0, 0)));
+
+        // Set foreground using 3-digit hex (#0f0 = green)
+        term.process(b"\x1b]10;#0f0\x1b\\");
+        assert_eq!(term.default_fg_color, Some((0, 255, 0)));
+    }
+
+    #[test]
+    fn virtual_terminal_osc10_set_foreground_rgb() {
+        let mut term = VirtualTerminal::new(24, 80);
+
+        // Set foreground using X11 rgb format (8-bit)
+        term.process(b"\x1b]10;rgb:80/40/c0\x1b\\");
+        assert_eq!(term.default_fg_color, Some((0x80, 0x40, 0xc0)));
+
+        // Set foreground using X11 rgb format (16-bit)
+        term.process(b"\x1b]10;rgb:ffff/8080/0000\x1b\\");
+        assert_eq!(term.default_fg_color, Some((255, 128, 0)));
+    }
+
+    #[test]
+    fn virtual_terminal_osc11_set_background() {
+        let mut term = VirtualTerminal::new(24, 80);
+
+        // Set background to blue (#0000ff)
+        term.process(b"\x1b]11;#0000ff\x1b\\");
+        assert_eq!(term.default_bg_color, Some((0, 0, 255)));
+
+        // Query to verify it responds with the new color
+        term.process(b"\x1b]11;?\x1b\\");
+        let responses = term.drain_responses();
+        assert_eq!(responses.len(), 1);
+        // 255 * 257 = 65535 = 0xffff
+        assert_eq!(
+            String::from_utf8_lossy(&responses[0]),
+            "\x1b]11;rgb:0000/0000/ffff\x1b\\"
+        );
+    }
+
+    #[test]
+    fn virtual_terminal_osc110_reset_foreground() {
+        let mut term = VirtualTerminal::new(24, 80);
+
+        // Set foreground to red
+        term.process(b"\x1b]10;#ff0000\x1b\\");
+        assert_eq!(term.default_fg_color, Some((255, 0, 0)));
+
+        // Reset foreground (OSC 110)
+        term.process(b"\x1b]110\x1b\\");
+        assert_eq!(term.default_fg_color, None);
+    }
+
+    #[test]
+    fn virtual_terminal_osc111_reset_background() {
+        let mut term = VirtualTerminal::new(24, 80);
+
+        // Set background to blue
+        term.process(b"\x1b]11;#0000ff\x1b\\");
+        assert_eq!(term.default_bg_color, Some((0, 0, 255)));
+
+        // Reset background (OSC 111)
+        term.process(b"\x1b]111\x1b\\");
+        assert_eq!(term.default_bg_color, None);
+    }
+
+    #[test]
+    fn parse_osc_color_formats() {
+        use super::parse_osc_color;
+
+        // Hex formats
+        assert_eq!(parse_osc_color("#ff0000"), Some((255, 0, 0)));
+        assert_eq!(parse_osc_color("#00ff00"), Some((0, 255, 0)));
+        assert_eq!(parse_osc_color("#0000ff"), Some((0, 0, 255)));
+        assert_eq!(parse_osc_color("#f00"), Some((255, 0, 0)));
+        assert_eq!(parse_osc_color("#0f0"), Some((0, 255, 0)));
+        assert_eq!(parse_osc_color("#00f"), Some((0, 0, 255)));
+
+        // X11 rgb formats (8-bit)
+        assert_eq!(parse_osc_color("rgb:ff/00/00"), Some((255, 0, 0)));
+        assert_eq!(parse_osc_color("rgb:00/ff/00"), Some((0, 255, 0)));
+
+        // X11 rgb formats (16-bit)
+        assert_eq!(parse_osc_color("rgb:ffff/0000/0000"), Some((255, 0, 0)));
+        assert_eq!(parse_osc_color("rgb:0000/ffff/0000"), Some((0, 255, 0)));
+        assert_eq!(parse_osc_color("rgb:8080/8080/8080"), Some((128, 128, 128)));
+
+        // Invalid
+        assert_eq!(parse_osc_color("invalid"), None);
+        assert_eq!(parse_osc_color("#gg0000"), None);
     }
 }
