@@ -274,18 +274,6 @@ export const TaskList = memo(function TaskList({
           <button
             className={
               "text-sm font-medium transition-colors " +
-              (tab === "archived"
-                ? "text-neutral-900 dark:text-neutral-100"
-                : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200")
-            }
-            onMouseDown={() => setTab("archived")}
-            onClick={() => setTab("archived")}
-          >
-            Archived
-          </button>
-          <button
-            className={
-              "text-sm font-medium transition-colors " +
               (tab === "previews"
                 ? "text-neutral-900 dark:text-neutral-100"
                 : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200")
@@ -294,6 +282,18 @@ export const TaskList = memo(function TaskList({
             onClick={() => setTab("previews")}
           >
             Previews
+          </button>
+          <button
+            className={
+              "text-sm font-medium transition-colors " +
+              (tab === "archived"
+                ? "text-neutral-900 dark:text-neutral-100"
+                : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200")
+            }
+            onMouseDown={() => setTab("archived")}
+            onClick={() => setTab("archived")}
+          >
+            Archived
           </button>
         </div>
       </div>
