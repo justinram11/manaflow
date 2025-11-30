@@ -1270,7 +1270,7 @@ export function setupSocketHandlers(
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
 
         const convex = getConvex();
-        let taskId: Id<"tasks"> | undefined = providedTaskId;
+        const taskId: Id<"tasks"> | undefined = providedTaskId;
         let taskRunId: Id<"taskRuns"> | null = null;
         let responded = false;
 
