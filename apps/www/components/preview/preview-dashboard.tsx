@@ -559,7 +559,7 @@ export function PreviewDashboard({
         </Link>
 
         <h1 className="text-3xl font-semibold tracking-tight text-white mb-2">
-          Screenshot previews for your PRs
+          Screenshot previews for GitHub PRs
         </h1>
         <p className="text-base text-neutral-400 max-w-2xl">
           preview.new sets up a GitHub agent that takes screenshot previews of your dev server so you
