@@ -448,6 +448,48 @@ impl VirtualTerminal {
         self.pending_wrap = false;
     }
 
+    /// Soft Terminal Reset (DECSTR) - CSI ! p
+    /// Resets modes to defaults without clearing screen or scrollback
+    fn soft_reset(&mut self) {
+        // Reset text attributes (SGR)
+        self.internal_grid
+            .set_current_styles(CharacterStyles::default());
+
+        // Reset insert mode
+        self.insert_mode = false;
+
+        // Reset origin mode
+        self.origin_mode = false;
+
+        // Reset auto-wrap mode (default is on)
+        self.auto_wrap = true;
+
+        // Reset cursor visibility (default is visible)
+        self.cursor_visible = true;
+
+        // Reset cursor blink (default is on)
+        self.cursor_blink = true;
+
+        // Reset scroll region to full screen
+        self.internal_grid.scroll_region = (0, self.internal_grid.rows.saturating_sub(1));
+
+        // Reset saved cursor
+        self.saved_cursor = None;
+
+        // Reset pending wrap state
+        self.pending_wrap = false;
+
+        // Reset charset to G0 and clear line drawing modes
+        self.charset_index = 0;
+        self.g0_charset_line_drawing = false;
+        self.g1_charset_line_drawing = false;
+
+        // Reset tab stops to default (every 8 columns)
+        self.tab_stops = (0..self.internal_grid.cols)
+            .filter(|&c| c % 8 == 0 && c > 0)
+            .collect();
+    }
+
     /// Resize the terminal
     pub fn resize(&mut self, new_rows: usize, new_cols: usize) {
         self.internal_grid.resize(new_rows, new_cols);
@@ -1056,6 +1098,10 @@ impl Perform for VirtualTerminal {
             '@' => {
                 let n = params_vec.first().copied().unwrap_or(1).max(1) as usize;
                 self.insert_chars(n);
+            }
+            // Soft Terminal Reset (DECSTR) - CSI ! p
+            'p' if intermediates == [b'!'] => {
+                self.soft_reset();
             }
             // Private modes (DECSET/DECRST) and standard modes (SM/RM)
             'h' | 'l' => {
@@ -2380,5 +2426,99 @@ mod tests {
         // Then re-enable (CSI ? 12 h)
         term.process(b"\x1b[?12h");
         assert!(term.cursor_blink);
+    }
+
+    #[test]
+    fn virtual_terminal_soft_reset_preserves_screen() {
+        let mut term = VirtualTerminal::new(24, 80);
+
+        // Write some content
+        term.process(b"Hello, World!");
+
+        // Apply some styling
+        term.process(b"\x1b[31m"); // Red foreground
+        term.process(b"\x1b[?25l"); // Hide cursor
+        term.process(b"\x1b[?12l"); // Disable cursor blink
+        term.process(b"\x1b[4h"); // Enable insert mode
+
+        // Verify state changed
+        assert!(!term.cursor_visible);
+        assert!(!term.cursor_blink);
+        assert!(term.insert_mode);
+
+        // Perform soft reset (CSI ! p)
+        term.process(b"\x1b[!p");
+
+        // Screen content should be preserved
+        let grid = term.legacy_grid();
+        assert_eq!(grid[0][0].c, 'H');
+        assert_eq!(grid[0][6].c, ' ');
+        assert_eq!(grid[0][7].c, 'W');
+
+        // Modes should be reset to defaults
+        assert!(term.cursor_visible);
+        assert!(term.cursor_blink);
+        assert!(!term.insert_mode);
+        assert!(term.auto_wrap);
+        assert!(!term.origin_mode);
+    }
+
+    #[test]
+    fn virtual_terminal_soft_reset_resets_sgr() {
+        let mut term = VirtualTerminal::new(24, 80);
+
+        // Apply styling
+        term.process(b"\x1b[1;31;44m"); // Bold, red fg, blue bg
+
+        // Verify style is applied
+        let styles = term.internal_grid.current_styles;
+        assert!(styles.modifiers.contains(Modifier::BOLD));
+        assert_eq!(styles.foreground, Some(Color::Red));
+        assert_eq!(styles.background, Some(Color::Blue));
+
+        // Perform soft reset
+        term.process(b"\x1b[!p");
+
+        // SGR should be reset
+        let styles = term.internal_grid.current_styles;
+        assert!(!styles.modifiers.contains(Modifier::BOLD));
+        assert_eq!(styles.foreground, None);
+        assert_eq!(styles.background, None);
+    }
+
+    #[test]
+    fn virtual_terminal_soft_reset_resets_scroll_region() {
+        let mut term = VirtualTerminal::new(24, 80);
+
+        // Set custom scroll region
+        term.process(b"\x1b[5;20r");
+        assert_eq!(term.internal_grid.scroll_region, (4, 19)); // 0-indexed
+
+        // Perform soft reset
+        term.process(b"\x1b[!p");
+
+        // Scroll region should be reset to full screen
+        assert_eq!(term.internal_grid.scroll_region, (0, 23));
+    }
+
+    #[test]
+    fn virtual_terminal_soft_reset_resets_charset() {
+        let mut term = VirtualTerminal::new(24, 80);
+
+        // Enable line drawing charset for G0
+        term.process(b"\x1b(0");
+        assert!(term.g0_charset_line_drawing);
+
+        // Switch to G1
+        term.process(b"\x0e"); // SO - Shift Out
+        assert_eq!(term.charset_index, 1);
+
+        // Perform soft reset
+        term.process(b"\x1b[!p");
+
+        // Charset should be reset
+        assert_eq!(term.charset_index, 0);
+        assert!(!term.g0_charset_line_drawing);
+        assert!(!term.g1_charset_line_drawing);
     }
 }

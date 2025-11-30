@@ -15,21 +15,21 @@ See `src/mux/terminal.rs` for the current implementation. Key supported sequence
 
 ### Easy (1-2 hours each)
 
-- [ ] **CSI c** - Primary Device Attributes (DA1)
+- [x] **CSI c** - Primary Device Attributes (DA1)
   - Apps send `CSI c` or `CSI 0 c` to query terminal type
   - Respond with `CSI ? 62 ; 1 ; 2 ; 4 c` (VT220 with various capabilities)
   - Many CLI tools use this to detect terminal features
 
-- [ ] **CSI > c** - Secondary Device Attributes (DA2)
+- [x] **CSI > c** - Secondary Device Attributes (DA2)
   - Apps send `CSI > c` to get terminal version info
   - Respond with `CSI > 41 ; <version> ; 0 c` (identify as screen/tmux-like)
 
-- [ ] **CSI ? 12 h/l** - Cursor Blink
+- [x] **CSI ? 12 h/l** - Cursor Blink
   - `CSI ? 12 h` = enable cursor blink
   - `CSI ? 12 l` = disable cursor blink
   - Store in terminal state, expose to renderer
 
-- [ ] **CSI ! p** - Soft Terminal Reset (DECSTR)
+- [x] **CSI ! p** - Soft Terminal Reset (DECSTR)
   - Reset modes to defaults without clearing screen
   - Resets: insert mode, origin mode, auto-wrap, cursor visibility, SGR, scroll region
 

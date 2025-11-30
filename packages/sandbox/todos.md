@@ -52,7 +52,11 @@ for virtual terminal make sure TUIs inside the sandbox can also control the poin
 
 clone https://github.com/zellij-org/zellij to a temp place, and refactor our virtual terminal implementation to use the same strategy they do, to increase our performance and handle edge cases. think of how our implementation differs, like how we have server<>client architecture over websockets, and make sure to adapt zellij's terminal strategy accordingly.
 
-go through @docs/escape-sequence-todos.md and let's start fixing the ones that aren't checked off yet. you should fix one at a time, and for each of them, you also need to come up with an easy way for the user to verify it. perhaps by creating a program that user will run inside cmux/dmux that will return debug info as well as query the feature and print out if it worked or not. make sure to write tests for each. after completing each item, ask me to test it with the tools you made.
+go through @docs/escape-sequence-todos.md and let's start fixing the ones that aren't checked off yet. you should fix one at a time, and for each of them, you also need to come up with an easy way for the user to verify it. perhaps by creating a program that user will run inside cmux/dmux that will return debug info as well as query the feature and print out if it worked or not. make sure to write tests for each. after completing each item, ask me to test it with the verification tools you made. i will then test it and tell you "continue" or give you the failing logs. if fail, keep fixing. if i say "continue", you should check off the item in the todolist, commit + push, then keep going with the next one.
+
+if user is typing something, we should make sure to scroll it into view iff it's not already in view.
+
+i want git diff to always use less. rn if diffs fit vertical space, there's no less, and it just prints it.
 
 ## dogfood blockers
 
