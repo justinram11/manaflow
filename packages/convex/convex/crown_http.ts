@@ -805,6 +805,47 @@ export const crownWorkerComplete = httpAction(async (ctx, req) => {
     });
   }
 
+  // Try to create/link a preview run for this task run if it has PR info
+  // This enables screenshot capture and GitHub comment posting for crown tasks
+  try {
+    const previewResult = await ctx.runMutation(
+      internal.previewRuns.enqueueFromTaskRun,
+      { taskRunId }
+    );
+
+    if (previewResult.created && previewResult.previewRunId) {
+      console.log("[convex.crown] Preview run created/linked for task run", {
+        taskRunId,
+        previewRunId: previewResult.previewRunId,
+        isNew: previewResult.isNew,
+      });
+
+      // If a new preview run was created, dispatch it to start the preview job
+      if (previewResult.isNew) {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.preview_jobs.requestDispatch,
+          { previewRunId: previewResult.previewRunId }
+        );
+        console.log("[convex.crown] Preview job dispatch scheduled", {
+          taskRunId,
+          previewRunId: previewResult.previewRunId,
+        });
+      }
+    } else {
+      console.log("[convex.crown] No preview run created for task run", {
+        taskRunId,
+        reason: previewResult.reason,
+      });
+    }
+  } catch (error) {
+    // Don't fail the completion if preview run creation fails
+    console.error("[convex.crown] Failed to create preview run for task run", {
+      taskRunId,
+      error,
+    });
+  }
+
   const response = {
     ok: true,
     taskRun: updatedRun
