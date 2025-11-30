@@ -12,11 +12,6 @@ import {
   Copy,
   ExternalLink,
   GitPullRequest,
-  Loader2,
-  XCircle,
-  CheckCircle2,
-  Clock,
-  SkipForward,
 } from "lucide-react";
 import { memo, useCallback } from "react";
 
@@ -30,30 +25,16 @@ interface PreviewItemProps {
   teamSlugOrId: string;
 }
 
-const STATUS_ICONS = {
-  pending: Clock,
-  running: Loader2,
-  completed: CheckCircle2,
-  failed: XCircle,
-  skipped: SkipForward,
-} as const;
-
-const STATUS_COLORS = {
-  pending: "text-neutral-500 dark:text-neutral-400",
-  running: "text-blue-500 dark:text-blue-400 animate-spin",
-  completed: "text-green-500 dark:text-green-400",
-  failed: "text-red-500 dark:text-red-400",
-  skipped: "text-neutral-400 dark:text-neutral-500",
-} as const;
-
 export const PreviewItem = memo(function PreviewItem({
   previewRun,
   teamSlugOrId,
 }: PreviewItemProps) {
   const clipboard = useClipboard({ timeout: 2000 });
 
-  const StatusIcon = STATUS_ICONS[previewRun.status];
-  const statusColor = STATUS_COLORS[previewRun.status];
+  // Determine if this is a "completed" status (filled green circle) or "in progress" (empty circle)
+  // "completed" and "skipped" show as green (done), "failed" shows as red
+  const isCompleted = previewRun.status === "completed" || previewRun.status === "skipped";
+  const isFailed = previewRun.status === "failed";
 
   // Generate a display title from PR info
   const displayTitle = `PR #${previewRun.prNumber}`;
@@ -100,7 +81,16 @@ export const PreviewItem = memo(function PreviewItem({
         {/* Placeholder for future selection checkbox */}
       </div>
       <div className="flex items-center justify-center">
-        <StatusIcon className={clsx("w-3.5 h-3.5 flex-shrink-0", statusColor)} />
+        <div
+          className={clsx(
+            "rounded-full flex-shrink-0",
+            isCompleted
+              ? "w-[8px] h-[8px] border border-transparent bg-green-500"
+              : isFailed
+                ? "w-[8px] h-[8px] border border-transparent bg-red-500"
+                : "w-[9.5px] h-[9.5px] border border-neutral-400 dark:border-neutral-500 bg-transparent"
+          )}
+        />
       </div>
       <div className="min-w-0 flex items-center gap-2">
         <GitPullRequest className="w-3.5 h-3.5 text-neutral-400 dark:text-neutral-500 flex-shrink-0" />
