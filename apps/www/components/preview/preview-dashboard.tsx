@@ -80,20 +80,19 @@ type FeatureCardProps = {
 };
 
 function FeatureCard({
-  icon: Icon,
-  iconBgColor,
-  iconColor,
+  icon: _Icon,
+  iconBgColor: _iconBgColor,
+  iconColor: _iconColor,
   title,
   description,
 }: FeatureCardProps) {
   return (
-    <div className="flex items-start gap-4 rounded-lg border border-white/5 bg-white/5 p-4">
-      <div className={`shrink-0 rounded p-2 ${iconBgColor} ${iconColor}`}>
-        <Icon className="h-5 w-5" />
-      </div>
+    <div className="flex items-start rounded-lg border border-white/5 bg-white/5 p-4">
       <div>
         <h4 className="text-sm font-medium text-white pb-1">{title}</h4>
-        <p className="text-xs text-neutral-400 leading-normal">{description}</p>
+        <p className="text-[13px] text-neutral-300/90 leading-tight">
+          {description}
+        </p>
       </div>
     </div>
   );
@@ -536,7 +535,7 @@ export function PreviewDashboard({
   // Repo selection box - only this part, not configured repos
   const repoSelectionBox = !isAuthenticated ? (
     <div className="flex flex-1 flex-col items-center justify-center rounded-lg border border-white/5 bg-white/[0.02] px-4 py-10">
-      <p className="text-sm text-neutral-500 pb-6 max-w-xs text-center">
+      <p className="text-sm text-neutral-300/85 pb-6 max-w-xs text-center">
         Select a Git provider to import a Git Repository
       </p>
       <div className="flex flex-col gap-3 w-full max-w-xs">
@@ -557,7 +556,7 @@ export function PreviewDashboard({
         </Button>
         <Button
           asChild
-          className="w-full h-10 bg-[#fc6d26] text-white hover:bg-[#e85d1a] inline-flex items-center justify-center gap-2"
+          className="w-full h-10 bg-[#fc6d26] text-white hover:bg-[#ff8245] inline-flex items-center justify-center gap-2"
         >
           <Link href="/handler/sign-in?after_auth_return_to=/preview">
             <svg
@@ -572,7 +571,7 @@ export function PreviewDashboard({
         </Button>
         <Button
           asChild
-          className="w-full h-10 bg-[#0052cc] text-white hover:bg-[#0747a6] inline-flex items-center justify-center gap-2"
+          className="w-full h-10 bg-[#0052cc] text-white hover:bg-[#006cf2] inline-flex items-center justify-center gap-2"
         >
           <Link href="/handler/sign-in?after_auth_return_to=/preview">
             <svg className="h-4 w-4 shrink-0" viewBox="-2 -2 65 59">
@@ -754,9 +753,9 @@ export function PreviewDashboard({
         <h1 className="text-3xl font-semibold tracking-tight text-white pb-2">
           Screenshot previews for GitHub PRs
         </h1>
-        <p className="text-base text-neutral-400 max-w-2xl">
-          preview.new sets up a GitHub agent that takes screenshot previews of
-          your dev server so you can visually verify your pull requests.
+        <p className="text-lg text-neutral-300/85 max-w-2xl">
+          Code review agent that takes screenshots of code diffs involving UI
+          changes
         </p>
       </div>
 
@@ -846,7 +845,7 @@ export function PreviewDashboard({
               icon={Camera}
               iconBgColor="bg-sky-500/10"
               iconColor="text-sky-400"
-              title="Screenshot agent"
+              title="Computer use agent"
               description="An agent boots your dev server and captures screenshots of your UI on every PR."
             />
             <FeatureCard
@@ -860,7 +859,7 @@ export function PreviewDashboard({
               icon={Server}
               iconBgColor="bg-purple-500/10"
               iconColor="text-purple-400"
-              title="Isolated VMs"
+              title="Isolated dev servers"
               description="Each PR runs in a dedicated VM with your exact dev environment."
             />
           </div>
@@ -878,7 +877,7 @@ export function PreviewDashboard({
             }
           >
             {configs.length === 0 ? (
-              <p className="text-sm text-neutral-500">
+              <p className="text-sm text-neutral-400">
                 No preview configs yet.{" "}
                 {isAuthenticated && hasGithubAppInstallation
                   ? "Choose a repository above to create one."
@@ -978,11 +977,11 @@ export function PreviewDashboard({
               </Link>
             }
           >
-            <p className="text-sm text-neutral-500 pb-2">
+            <p className="text-sm text-neutral-400 pb-2">
               Want UI screenshots for your code reviews? Check out cmux - an
               open-source Claude Code/Codex manager with visual diffs!
             </p>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 pt-2">
               <Link
                 href="https://github.com/manaflow-ai/cmux"
                 className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white"
