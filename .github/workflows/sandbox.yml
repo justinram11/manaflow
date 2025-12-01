@@ -102,8 +102,6 @@ jobs:
           context: .
           file: packages/sandbox/Dockerfile
           platforms: ${{ matrix.platform }}
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
