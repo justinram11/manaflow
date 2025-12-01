@@ -381,17 +381,12 @@ export const postPreviewComment = internalAction({
       // Build links row (under the heading)
       const linkParts: string[] = [];
       if (workspaceUrl) {
-        linkParts.push(`[Open Workspace](${workspaceUrl}?src=preview.new)`);
+        linkParts.push(`[Open Workspace (1 hr)](${workspaceUrl}?src=preview.new)`);
       }
       if (devServerUrl) {
-        linkParts.push(`[Open Dev Browser](${devServerUrl}?src=preview.new)`);
+        linkParts.push(`[Open Dev Browser (1 hr)](${devServerUrl}?src=preview.new)`);
       }
       linkParts.push(`[Open Diff Heatmap](https://0github.com/${repoFullName}/pull/${prNumber}?src=preview.new)`);
-
-      if (linkParts.length > 0) {
-        const expiryNote = workspaceUrl ? " (expires in 30m)" : "";
-        commentSections.push(linkParts.join(" • ") + expiryNote);
-      }
 
       // Render the main screenshot section
       const latestHeading = includePreviousRuns
