@@ -377,9 +377,24 @@ async function main(): Promise<void> {
   if (options.createConfig) {
     console.log("📋 Ensuring preview config exists...\n");
     try {
+      // First check if a config already exists to get the repoInstallationId
+      const existingConfig = await client.query(api.previewConfigs.getByRepo, {
+        teamSlugOrId: options.teamSlugOrId,
+        repoFullName: parsedPr.repoFullName,
+      });
+
+      if (!existingConfig) {
+        console.error(
+          `   ❌ No preview config found for ${parsedPr.repoFullName}.\n` +
+            `      Please create one via the web UI or ensure the GitHub App is installed for this repo.`
+        );
+        process.exit(1);
+      }
+
       await client.mutation(api.previewConfigs.upsert, {
         teamSlugOrId: options.teamSlugOrId,
         repoFullName: parsedPr.repoFullName,
+        repoInstallationId: existingConfig.repoInstallationId,
         status: "active",
       });
       console.log(`   ✅ Preview config ready for ${parsedPr.repoFullName}\n`);
