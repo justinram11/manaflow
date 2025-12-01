@@ -223,28 +223,28 @@ If you can't install dependencies/start the dev server, just let me know. Do not
           //     ],
           //   },
           // },
-        mcpServers: {
-          chrome: {
-            command: "bunx",
-            args: [
-              "chrome-devtools-mcp",
-              "--browserUrl",
-              "http://0.0.0.0:39382",
-            ],
+          mcpServers: {
+            chrome: {
+              command: "bunx",
+              args: [
+                "chrome-devtools-mcp",
+                "--browserUrl",
+                "http://0.0.0.0:39382",
+              ],
+            },
           },
-        },
-        allowDangerouslySkipPermissions: true,
-        permissionMode: "bypassPermissions",
-        cwd: workspaceDir,
-        pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
-        outputFormat: {
-          type: "json_schema",
-          schema: screenshotOutputJsonSchema,
-        },
-        env: {
-          ...process.env,
-          IS_SANDBOX: "1",
-          CLAUDE_CODE_ENABLE_TELEMETRY: "0",
+          allowDangerouslySkipPermissions: true,
+          permissionMode: "bypassPermissions",
+          cwd: workspaceDir,
+          pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
+          outputFormat: {
+            type: "json_schema",
+            schema: screenshotOutputJsonSchema,
+          },
+          env: {
+            ...process.env,
+            IS_SANDBOX: "1",
+            CLAUDE_CODE_ENABLE_TELEMETRY: "0",
             CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
             ...(useTaskRunJwt
               ? {
