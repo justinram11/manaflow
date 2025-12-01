@@ -37,6 +37,10 @@ pub struct Grid {
     current_shared_styles: SharedStyles,
     /// Scroll region (top, bottom) - 0-indexed, inclusive.
     pub scroll_region: (usize, usize),
+    /// Left margin (0-indexed, inclusive) for DECSLRM.
+    pub left_margin: usize,
+    /// Right margin (0-indexed, inclusive) for DECSLRM.
+    pub right_margin: usize,
     /// Set of line indices that have changed since last render.
     pub changed_lines: HashSet<usize>,
     /// Flag to indicate full redraw is needed.
@@ -59,6 +63,8 @@ impl Grid {
             current_styles: CharacterStyles::default(),
             current_shared_styles: SharedStyles::Default,
             scroll_region: (0, rows.saturating_sub(1)),
+            left_margin: 0,
+            right_margin: cols.saturating_sub(1),
             changed_lines: HashSet::new(),
             needs_full_redraw: true,
         }

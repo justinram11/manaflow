@@ -109,6 +109,10 @@ enum Command {
 
     /// Setup Claude API token by running `claude setup-token` and storing in keyring
     SetupClaude,
+
+    /// Run esctest2 terminal escape sequence tests
+    #[command(alias = "et")]
+    Esctest(EsctestArgs),
 }
 
 #[derive(Args, Debug)]
@@ -139,6 +143,29 @@ struct AuthArgs {
 enum AuthCommand {
     /// List detected authentication files on the host
     Status,
+}
+
+#[derive(Args, Debug)]
+struct EsctestArgs {
+    /// Regex pattern to filter tests (e.g., 'DA', 'CUP', 'SGR')
+    #[arg(default_value = ".*")]
+    pattern: String,
+
+    /// Stop on first test failure
+    #[arg(long)]
+    stop_on_failure: bool,
+
+    /// Timeout in seconds for the entire test run
+    #[arg(short, long, default_value_t = 120)]
+    timeout: u32,
+
+    /// Maximum VT level to test (1-5)
+    #[arg(long, default_value_t = 4)]
+    max_vt_level: u8,
+
+    /// List available test names matching pattern
+    #[arg(long)]
+    list: bool,
 }
 
 const ENV_CMUX_NO_ATTACH: &str = "CMUX_NO_ATTACH";
@@ -564,6 +591,9 @@ async fn run() -> anyhow::Result<()> {
         },
         Command::SetupClaude => {
             handle_setup_claude().await?;
+        }
+        Command::Esctest(args) => {
+            handle_esctest(&client, &cli.base_url, args).await?;
         }
         Command::Sandboxes(cmd) => {
             match cmd {
@@ -1717,6 +1747,282 @@ async fn handle_setup_claude() -> anyhow::Result<()> {
         eprintln!("\n\x1b[33mNote: No OAuth token detected in output.\x1b[0m");
         eprintln!("You can manually add with: security add-generic-password -s cmux -a CLAUDE_CODE_OAUTH_TOKEN -w <token> -A");
     }
+
+    Ok(())
+}
+
+const ESCTEST2_REPO: &str = "https://github.com/ThomasDickey/esctest2.git";
+const ESCTEST2_PATH: &str = "/workspace/tools/esctest2";
+
+async fn handle_esctest(client: &Client, base_url: &str, args: EsctestArgs) -> anyhow::Result<()> {
+    // Always create a new sandbox for esctest
+    eprintln!("Creating new sandbox for esctest...");
+    let body = CreateSandboxRequest {
+        name: Some("esctest".into()),
+        workspace: None,
+        tab_id: Some(Uuid::new_v4().to_string()),
+        read_only_paths: vec![],
+        tmpfs: vec![],
+        env: build_default_env_vars(),
+    };
+    let url = format!("{}/sandboxes", base_url.trim_end_matches('/'));
+    let response = client.post(url).json(&body).send().await?;
+    let summary: SandboxSummary = parse_response(response).await?;
+    let target_id = summary.id.to_string();
+    eprintln!("Created sandbox {}", target_id);
+
+    // Install esctest2
+    eprintln!("Installing esctest2 in sandbox...");
+    setup_esctest2(client, base_url, &target_id).await?;
+    eprintln!("\x1b[32m✓ esctest2 installed\x1b[0m\n");
+
+    // Handle --list flag
+    if args.list {
+        let list_cmd = format!(
+            "cd {}/esctest && grep -h 'def test_' tests/*.py | sed 's/.*def //' | sed 's/(self).*//' | grep -E '{}' | sort",
+            ESCTEST2_PATH, args.pattern
+        );
+        let result = exec_in_sandbox(
+            client,
+            base_url,
+            &target_id,
+            &["/bin/sh", "-c", &list_cmd],
+            None,
+        )
+        .await?;
+        println!("{}", result.stdout);
+        return Ok(());
+    }
+
+    // Run tests
+    eprintln!(
+        "Running esctest2 (pattern='{}', timeout={}s)...\n",
+        args.pattern, args.timeout
+    );
+
+    run_esctest_noninteractive(client, base_url, &target_id, &args).await?;
+
+    Ok(())
+}
+
+async fn setup_esctest2(client: &Client, base_url: &str, sandbox_id: &str) -> anyhow::Result<()> {
+    // Create tools directory if needed
+    let _ = exec_in_sandbox(
+        client,
+        base_url,
+        sandbox_id,
+        &["mkdir", "-p", "/workspace/tools"],
+        None,
+    )
+    .await?;
+
+    // Clone esctest2
+    let clone_result = exec_in_sandbox(
+        client,
+        base_url,
+        sandbox_id,
+        &["git", "clone", "--depth", "1", ESCTEST2_REPO, ESCTEST2_PATH],
+        None,
+    )
+    .await?;
+
+    if clone_result.exit_code != 0 && !clone_result.stderr.contains("already exists") {
+        return Err(anyhow::anyhow!(
+            "Failed to clone esctest2: {}",
+            clone_result.stderr
+        ));
+    }
+
+    Ok(())
+}
+
+async fn exec_in_sandbox(
+    client: &Client,
+    base_url: &str,
+    sandbox_id: &str,
+    command: &[&str],
+    workdir: Option<String>,
+) -> anyhow::Result<ExecResponse> {
+    let body = ExecRequest {
+        command: command.iter().map(|s| s.to_string()).collect(),
+        workdir,
+        env: vec![],
+    };
+    let url = format!(
+        "{}/sandboxes/{}/exec",
+        base_url.trim_end_matches('/'),
+        sandbox_id
+    );
+    let response = client.post(url).json(&body).send().await?;
+    parse_response(response).await
+}
+
+async fn run_esctest_via_attach(
+    base_url: &str,
+    sandbox_id: &str,
+    args: &EsctestArgs,
+) -> anyhow::Result<String> {
+    // Connect via WebSocket to test through the VirtualTerminal
+    let ws_url = base_url
+        .replace("http://", "ws://")
+        .replace("https://", "wss://")
+        .trim_end_matches('/')
+        .to_string();
+    let url = format!("{}/sandboxes/{}/attach?cols=80&rows=25", ws_url, sandbox_id);
+
+    let (ws_stream, _) = connect_async(&url).await?;
+    let (mut write, mut read) = ws_stream.split();
+
+    // Build the esctest2 command
+    let mut stop_flag = String::new();
+    if args.stop_on_failure {
+        stop_flag = " --stop-on-failure".to_string();
+    }
+
+    // Use a newline after the marker to distinguish it from command echo
+    let esctest_cmd = format!(
+        "cd {}/esctest && python3 esctest.py --expected-terminal=xterm --max-vt-level={} --timeout=2 --include='{}'{} --logfile=/tmp/esctest2.log 2>&1; echo; echo '___ESCTEST_DONE___'\n",
+        ESCTEST2_PATH, args.max_vt_level, args.pattern, stop_flag
+    );
+
+    // Wait for shell prompt (look for "sandbox" in output)
+    let mut init_output = String::new();
+    let init_start = std::time::Instant::now();
+    while init_start.elapsed() < Duration::from_secs(10) {
+        tokio::select! {
+            msg = read.next() => {
+                match msg {
+                    Some(Ok(Message::Binary(data))) => {
+                        let text = String::from_utf8_lossy(&data);
+                        init_output.push_str(&text);
+                        if init_output.contains("sandbox") {
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Text(text))) => {
+                        init_output.push_str(&text);
+                        if init_output.contains("sandbox") {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+        }
+    }
+
+    // Give shell a moment to fully initialize
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Send the command
+    write
+        .send(Message::Binary(esctest_cmd.into_bytes()))
+        .await?;
+
+    let mut output = String::new();
+    let start = std::time::Instant::now();
+    let timeout_duration = Duration::from_secs(args.timeout as u64);
+
+    // Read output until done marker or timeout
+    loop {
+        if start.elapsed() > timeout_duration {
+            eprintln!("\n\x1b[31mTest timed out after {}s\x1b[0m", args.timeout);
+            break;
+        }
+
+        tokio::select! {
+            msg = read.next() => {
+                match msg {
+                    Some(Ok(Message::Binary(data))) => {
+                        let text = String::from_utf8_lossy(&data);
+                        output.push_str(&text);
+                        print!("{}", text);
+                        use std::io::Write;
+                        std::io::stdout().flush().ok();
+                        // Look for marker at start of line (after newline)
+                        if output.contains("\n___ESCTEST_DONE___") || output.contains("\r___ESCTEST_DONE___") {
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Text(text))) => {
+                        output.push_str(&text);
+                        print!("{}", text);
+                        use std::io::Write;
+                        std::io::stdout().flush().ok();
+                        // Look for marker at start of line (after newline)
+                        if output.contains("\n___ESCTEST_DONE___") || output.contains("\r___ESCTEST_DONE___") {
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                    _ => {}
+                }
+            }
+            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+        }
+    }
+
+    // Send exit to close the connection cleanly
+    let _ = write.send(Message::Binary(b"exit\n".to_vec())).await;
+
+    Ok(output)
+}
+
+async fn run_esctest_noninteractive(
+    _client: &Client,
+    base_url: &str,
+    sandbox_id: &str,
+    args: &EsctestArgs,
+) -> anyhow::Result<()> {
+    // Run esctest through WebSocket attach to test the VirtualTerminal
+    let output = run_esctest_via_attach(base_url, sandbox_id, args).await?;
+
+    // Parse test results from output (e.g., "*** 5 tests passed, 0 known bugs, 3 TESTS FAILED ***")
+    let has_failures = output.contains("FAILED");
+
+    // Simple parsing without regex
+    let passed_match = output
+        .find(" tests passed")
+        .or_else(|| output.find(" test passed"))
+        .and_then(|pos| {
+            let before = &output[..pos];
+            before
+                .rfind(char::is_whitespace)
+                .map(|start| &before[start + 1..])
+                .or(Some(before))
+                .and_then(|s| s.trim().parse::<u32>().ok())
+        })
+        .unwrap_or(0);
+
+    let failed_match = output
+        .find(" TESTS FAILED")
+        .or_else(|| output.find(" TEST FAILED"))
+        .and_then(|pos| {
+            let before = &output[..pos];
+            before
+                .rfind(char::is_whitespace)
+                .map(|start| &before[start + 1..])
+                .or(Some(before))
+                .and_then(|s| s.trim().parse::<u32>().ok())
+        })
+        .unwrap_or(0);
+
+    // Report result
+    if has_failures || failed_match > 0 {
+        eprintln!(
+            "\n\x1b[31m✗ {} passed, {} failed\x1b[0m",
+            passed_match, failed_match
+        );
+    } else if passed_match > 0 {
+        eprintln!("\n\x1b[32m✓ {} tests passed\x1b[0m", passed_match);
+    } else if output.contains("Timeout") {
+        eprintln!("\n\x1b[31mTests failed (timeout)\x1b[0m");
+    } else {
+        eprintln!("\n\x1b[32m✓ Tests completed\x1b[0m");
+    }
+
+    eprintln!("\x1b[90mLogs: /tmp/esctest2.log (in sandbox)\x1b[0m");
 
     Ok(())
 }

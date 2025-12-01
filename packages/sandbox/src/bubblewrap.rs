@@ -4,6 +4,7 @@ use crate::models::{
     CreateSandboxRequest, EnvVar, ExecRequest, ExecResponse, HostEvent, MuxClientMessage,
     MuxServerMessage, PtySessionId, SandboxNetwork, SandboxStatus, SandboxSummary,
 };
+use crate::mux::terminal::VirtualTerminal;
 use crate::service::SandboxService;
 use async_trait::async_trait;
 use axum::body::Body;
@@ -1364,7 +1365,7 @@ impl SandboxService for BubblewrapService {
             return Ok(());
         }
 
-        // PTY Path (existing implementation)
+        // PTY Path with VirtualTerminal layer for escape sequence handling
         let (cols, rows) = initial_size.unwrap_or((80, 24));
 
         let system = NativePtySystem::default();
@@ -1426,7 +1427,7 @@ impl SandboxService for BubblewrapService {
             }
         });
 
-        // Writer thread
+        // Writer thread - receives input from WebSocket AND VirtualTerminal responses
         std::thread::spawn(move || {
             while let Some(data) = rx_in.blocking_recv() {
                 if writer.write_all(&data).is_err() {
@@ -1436,9 +1437,12 @@ impl SandboxService for BubblewrapService {
             }
         });
 
+        // Create VirtualTerminal for escape sequence processing
+        let mut vterm = VirtualTerminal::new(rows as usize, cols as usize);
+
         let mut ticker = tokio::time::interval(std::time::Duration::from_millis(100));
 
-        // WebSocket bridge
+        // WebSocket bridge with VirtualTerminal processing
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
@@ -1459,6 +1463,7 @@ impl SandboxService for BubblewrapService {
                                             pixel_width: 0,
                                             pixel_height: 0,
                                         });
+                                        vterm.resize(rows as usize, cols as usize);
                                     }
                                 }
                             } else if tx_in.send(text.as_bytes().to_vec()).await.is_err() {
@@ -1477,6 +1482,20 @@ impl SandboxService for BubblewrapService {
                 data = rx_out.recv() => {
                     match data {
                         Some(d) => {
+                            // Process PTY output through VirtualTerminal
+                            vterm.process(&d);
+
+                            // Check for any pending responses from VirtualTerminal
+                            // (e.g., CSI 18 t -> CSI 8;rows;cols t)
+                            let responses = vterm.drain_responses();
+                            for response in responses {
+                                // Send responses back to PTY (so application can read them)
+                                if tx_in.send(response).await.is_err() {
+                                    break;
+                                }
+                            }
+
+                            // Forward the original PTY output to WebSocket
                             if socket.send(Message::Binary(d.into())).await.is_err() {
                                 break;
                             }
