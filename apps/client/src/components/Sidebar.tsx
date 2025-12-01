@@ -18,6 +18,7 @@ import {
 } from "react";
 import CmuxLogo from "./logo/cmux-logo";
 import { SidebarNavLink } from "./sidebar/SidebarNavLink";
+import { SidebarPreviewList } from "./sidebar/SidebarPreviewList";
 import { SidebarPullRequestList } from "./sidebar/SidebarPullRequestList";
 import { SidebarSectionLink } from "./sidebar/SidebarSectionLink";
 
@@ -338,6 +339,15 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                 </p>
               )}
             </div>
+          </div>
+
+          <div className="mt-4 flex flex-col">
+            <div className="pl-3 pr-3 py-1 text-xs font-medium text-neutral-500 dark:text-neutral-400 select-none">
+              Previews
+            </div>
+          </div>
+          <div className="ml-2 pt-px">
+            <SidebarPreviewList teamSlugOrId={teamSlugOrId} />
           </div>
         </div>
       </nav>

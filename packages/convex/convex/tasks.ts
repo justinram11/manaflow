@@ -37,7 +37,11 @@ export const get = authQuery({
 
     // Note: order by createdAt desc, fallback to insertion order if not present
     const results = await q.collect();
-    return results.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+    // Also filter out preview tasks by text pattern (for backwards compatibility with tasks created before isPreview was added)
+    const filteredResults = results.filter(
+      (task) => !task.text.startsWith("Preview screenshots for PR"),
+    );
+    return filteredResults.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
   },
 });
 
@@ -59,7 +63,11 @@ export const getPinned = authQuery({
       .filter((q) => q.neq(q.field("isPreview"), true))
       .collect();
 
-    return pinnedTasks.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+    // Also filter out preview tasks by text pattern (for backwards compatibility)
+    const filteredTasks = pinnedTasks.filter(
+      (task) => !task.text.startsWith("Preview screenshots for PR"),
+    );
+    return filteredTasks.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   },
 });
 
@@ -94,7 +102,11 @@ export const getTasksWithTaskRuns = authQuery({
     }
 
     const tasks = await q.collect();
-    const sortedTasks = tasks.sort(
+    // Also filter out preview tasks by text pattern (for backwards compatibility)
+    const filteredTasks = tasks.filter(
+      (task) => !task.text.startsWith("Preview screenshots for PR"),
+    );
+    const sortedTasks = filteredTasks.sort(
       (a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0),
     );
 

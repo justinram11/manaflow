@@ -433,6 +433,41 @@ export const listByConfig = authQuery({
   },
 });
 
+export const listByTeam = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const take = Math.max(1, Math.min(args.limit ?? 50, 100));
+    const runs = await ctx.db
+      .query("previewRuns")
+      .withIndex("by_team_created", (q) => q.eq("teamId", teamId))
+      .order("desc")
+      .take(take);
+
+    // Enrich with config repo name and taskId from linked taskRun
+    const enrichedRuns = await Promise.all(
+      runs.map(async (run) => {
+        const config = await ctx.db.get(run.previewConfigId);
+        let taskId = undefined;
+        if (run.taskRunId) {
+          const taskRun = await ctx.db.get(run.taskRunId);
+          taskId = taskRun?.taskId;
+        }
+        return {
+          ...run,
+          configRepoFullName: config?.repoFullName,
+          taskId,
+        };
+      }),
+    );
+
+    return enrichedRuns;
+  },
+});
+
 /**
  * Create a preview run manually (for local preview scripts).
  * Follows the same flow as the GitHub webhook handler:
