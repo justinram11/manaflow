@@ -461,7 +461,16 @@ export async function startScreenshotCollection(
     if (claudeResult.status === "completed") {
       const collectedScreenshots = claudeResult.screenshots ?? [];
       if (collectedScreenshots.length === 0) {
-        const error = "Claude collector reported success but returned no files";
+        // If Claude explicitly reported no UI changes, this is expected - not an error
+        if (claudeResult.hasUiChanges === false) {
+          const reason = "No UI changes detected in this PR";
+          await logToScreenshotCollector(reason);
+          log("INFO", reason, { headBranch, outputDir });
+          return { status: "skipped", reason };
+        }
+        // Otherwise, Claude thought there were UI changes but returned no files - unexpected
+        const error =
+          "Claude collector reported success but returned no files";
         await logToScreenshotCollector(error);
         log("ERROR", error, { headBranch, outputDir });
         return { status: "failed", error };

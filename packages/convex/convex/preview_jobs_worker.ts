@@ -996,6 +996,33 @@ export async function runPreviewJob(
       headSha: run.headSha,
     });
 
+    // Update local default branch ref to match origin
+    // This ensures tools like Claude that run `git diff main..branch` use fresh refs
+    // Unlike `git pull`, this updates the ref without requiring checkout or modifying working directory
+    const defaultBranch = config.repoDefaultBranch || "main";
+    const updateDefaultBranchResponse = await execInstanceInstanceIdExecPost({
+      client: morphClient,
+      path: { instance_id: instance.id },
+      body: {
+        command: ["git", "-C", repoDir, "fetch", "origin", `${defaultBranch}:${defaultBranch}`],
+      },
+    });
+
+    if (updateDefaultBranchResponse.error || updateDefaultBranchResponse.data?.exit_code !== 0) {
+      // Non-fatal: log warning but continue - the origin/main ref is still available
+      console.warn("[preview-jobs] Failed to update local default branch ref", {
+        previewRunId,
+        defaultBranch,
+        exitCode: updateDefaultBranchResponse.data?.exit_code,
+        stderr: sliceOutput(updateDefaultBranchResponse.data?.stderr),
+      });
+    } else {
+      console.log("[preview-jobs] Updated local default branch ref", {
+        previewRunId,
+        defaultBranch,
+      });
+    }
+
     await ensureCommitAvailable({
       morphClient,
       instanceId: instance.id,
