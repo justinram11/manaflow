@@ -18,9 +18,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import clsx from "clsx";
-import { useQuery } from "@tanstack/react-query";
-import { getApiIntegrationsGithubReposOptions } from "@cmux/www-openapi-client/react-query";
-import type { GithubRepo } from "@cmux/www-openapi-client";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -36,6 +34,13 @@ type ProviderConnection = {
   isActive: boolean;
 };
 
+type RepoSearchResult = {
+  name: string;
+  full_name: string;
+  private: boolean;
+  updated_at?: string | null;
+  pushed_at?: string | null;
+};
 
 type PreviewConfigStatus = "active" | "paused" | "disabled";
 
@@ -66,7 +71,25 @@ type PreviewDashboardProps = {
 
 const ADD_INSTALLATION_VALUE = "__add_github_account__";
 
-export function PreviewDashboard({
+// Create a stable QueryClient instance for the preview dashboard
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
+
+export function PreviewDashboard(props: PreviewDashboardProps) {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <PreviewDashboardInner {...props} />
+    </QueryClientProvider>
+  );
+}
+
+function PreviewDashboardInner({
   selectedTeamSlugOrId,
   teamOptions,
   providerConnectionsByTeam,
@@ -118,18 +141,34 @@ export function PreviewDashboard({
 
   // Fetch repos using TanStack Query
   const reposQuery = useQuery({
-    ...getApiIntegrationsGithubReposOptions({
-      query: {
+    queryKey: [
+      "github-repos",
+      selectedTeamSlugOrIdState,
+      selectedInstallationId,
+      debouncedRepoSearch,
+    ],
+    queryFn: async ({ signal }) => {
+      const params = new URLSearchParams({
         team: selectedTeamSlugOrIdState,
-        installationId: selectedInstallationId ?? undefined,
-        search: debouncedRepoSearch || undefined,
-      },
-    }),
+        installationId: String(selectedInstallationId),
+      });
+      if (debouncedRepoSearch) {
+        params.set("search", debouncedRepoSearch);
+      }
+      const response = await fetch(
+        `/api/integrations/github/repos?${params.toString()}`,
+        { signal }
+      );
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      return response.json() as Promise<{ repos: RepoSearchResult[] }>;
+    },
     enabled: canSearchRepos && selectedInstallationId !== null,
     staleTime: 30_000,
   });
 
-  const repos: GithubRepo[] = useMemo(() => {
+  const repos: RepoSearchResult[] = useMemo(() => {
     if (!reposQuery.data?.repos) return [];
     // When no search, limit to 5 results
     return debouncedRepoSearch ? reposQuery.data.repos : reposQuery.data.repos.slice(0, 5);
