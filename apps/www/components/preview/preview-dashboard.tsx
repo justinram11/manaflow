@@ -18,6 +18,9 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import clsx from "clsx";
+import { useQuery } from "@tanstack/react-query";
+import { getApiIntegrationsGithubReposOptions } from "@cmux/www-openapi-client/react-query";
+import type { GithubRepo } from "@cmux/www-openapi-client";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -33,13 +36,6 @@ type ProviderConnection = {
   isActive: boolean;
 };
 
-type RepoSearchResult = {
-  name: string;
-  full_name: string;
-  private: boolean;
-  updated_at?: string | null;
-  pushed_at?: string | null;
-};
 
 type PreviewConfigStatus = "active" | "paused" | "disabled";
 
@@ -87,8 +83,7 @@ export function PreviewDashboard({
   // Repository selection state
   const [selectedInstallationId, setSelectedInstallationId] = useState<number | null>(null);
   const [repoSearch, setRepoSearch] = useState("");
-  const [repos, setRepos] = useState<RepoSearchResult[]>([]);
-  const [isLoadingRepos, setIsLoadingRepos] = useState(false);
+  const [debouncedRepoSearch, setDebouncedRepoSearch] = useState("");
   const [navigatingRepo, setNavigatingRepo] = useState<string | null>(null);
   const [configs, setConfigs] = useState<PreviewConfigListItem[]>(previewConfigs);
   const [updatingConfigId, setUpdatingConfigId] = useState<string | null>(null);
@@ -112,6 +107,35 @@ export function PreviewDashboard({
     isAuthenticated &&
     Boolean(selectedTeamSlugOrIdState) &&
     hasGithubAppInstallation;
+
+  // Debounce search input
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      setDebouncedRepoSearch(repoSearch.trim());
+    }, 300);
+    return () => clearTimeout(timeoutId);
+  }, [repoSearch]);
+
+  // Fetch repos using TanStack Query
+  const reposQuery = useQuery({
+    ...getApiIntegrationsGithubReposOptions({
+      query: {
+        team: selectedTeamSlugOrIdState,
+        installationId: selectedInstallationId ?? undefined,
+        search: debouncedRepoSearch || undefined,
+      },
+    }),
+    enabled: canSearchRepos && selectedInstallationId !== null,
+    staleTime: 30_000,
+  });
+
+  const repos: GithubRepo[] = useMemo(() => {
+    if (!reposQuery.data?.repos) return [];
+    // When no search, limit to 5 results
+    return debouncedRepoSearch ? reposQuery.data.repos : reposQuery.data.repos.slice(0, 5);
+  }, [reposQuery.data?.repos, debouncedRepoSearch]);
+
+  const isLoadingRepos = reposQuery.isLoading || reposQuery.isFetching;
 
   useEffect(() => {
     setConfigs(previewConfigs);
@@ -343,65 +367,6 @@ export function PreviewDashboard({
     }
   };
 
-  const fetchRepos = useCallback(
-    async (searchTerm: string, signal?: AbortSignal) => {
-      if (!canSearchRepos || selectedInstallationId === null) {
-        setRepos([]);
-        return;
-      }
-      setIsLoadingRepos(true);
-      setErrorMessage(null);
-      try {
-        const params = new URLSearchParams({
-          team: selectedTeamSlugOrIdState,
-          installationId: String(selectedInstallationId),
-        });
-        const trimmed = searchTerm.trim();
-        if (trimmed) {
-          params.set("search", trimmed);
-        }
-        const response = await fetch(`/api/integrations/github/repos?${params.toString()}`, {
-          signal,
-        });
-        if (!response.ok) {
-          throw new Error(await response.text());
-        }
-        const payload = (await response.json()) as { repos: RepoSearchResult[] };
-        setRepos(trimmed ? payload.repos : payload.repos.slice(0, 5));
-        setIsLoadingRepos(false);
-      } catch (err) {
-        if (err instanceof Error && err.name === "AbortError") {
-          // Request was cancelled, don't update any state
-          return;
-        }
-        const message = err instanceof Error ? err.message : "Failed to load repositories";
-        console.error("[PreviewDashboard] Failed to load repositories", err);
-        setErrorMessage(message);
-        setIsLoadingRepos(false);
-      }
-    },
-    [canSearchRepos, selectedInstallationId, selectedTeamSlugOrIdState]
-  );
-
-
-  // Debounced search effect with abort controller
-  useEffect(() => {
-    if (!canSearchRepos || selectedInstallationId === null) {
-      setRepos([]);
-      return;
-    }
-
-    const abortController = new AbortController();
-    const timeoutId = setTimeout(() => {
-      void fetchRepos(repoSearch, abortController.signal);
-    }, 300);
-
-    return () => {
-      clearTimeout(timeoutId);
-      abortController.abort();
-    };
-  }, [repoSearch, canSearchRepos, selectedInstallationId, fetchRepos]);
-
   const handleContinue = useCallback((repoName: string) => {
     if (!repoName.trim()) return;
     setNavigatingRepo(repoName);
@@ -412,18 +377,6 @@ export function PreviewDashboard({
     });
     window.location.href = `/preview/configure?${params.toString()}`;
   }, [selectedInstallationId, selectedTeamSlugOrIdState]);
-
-  useEffect(() => {
-    if (selectedInstallationId !== null) {
-      const abortController = new AbortController();
-      void fetchRepos("", abortController.signal);
-      return () => {
-        abortController.abort();
-      };
-    } else {
-      setRepos([]);
-    }
-  }, [selectedInstallationId, fetchRepos]);
 
   useEffect(() => {
     if (!selectedTeamSlugOrIdState && teamOptions[0]) {
@@ -481,9 +434,6 @@ export function PreviewDashboard({
                 void handleInstallGithubApp();
                 return;
               }
-              // Clear repos and show loading state immediately when switching accounts
-              setRepos([]);
-              setIsLoadingRepos(true);
               setSelectedInstallationId(Number(value));
             }}
             className="h-10 appearance-none bg-transparent py-2 pl-11 pr-8 text-sm text-white focus:outline-none"
