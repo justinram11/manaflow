@@ -37,11 +37,41 @@ export const get = authQuery({
 
     // Note: order by createdAt desc, fallback to insertion order if not present
     const results = await q.collect();
-    // Also filter out preview tasks by text pattern (for backwards compatibility with tasks created before isPreview was added)
-    const filteredResults = results.filter(
-      (task) => !task.text.startsWith("Preview screenshots for PR"),
-    );
-    return filteredResults.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+    return results.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  },
+});
+
+export const getPreviewTasks = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const take = Math.max(1, Math.min(args.limit ?? 50, 100));
+
+    // Get preview tasks using the dedicated index
+    const tasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_team_user_preview", (idx) =>
+        idx.eq("teamId", teamId).eq("userId", userId).eq("isPreview", true),
+      )
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .collect();
+
+    // Sort: in-progress (not completed) first, then by createdAt desc
+    const sorted = tasks.sort((a, b) => {
+      // In-progress first
+      const aInProgress = !a.isCompleted;
+      const bInProgress = !b.isCompleted;
+      if (aInProgress && !bInProgress) return -1;
+      if (!aInProgress && bInProgress) return 1;
+      // Then by createdAt desc
+      return (b.createdAt ?? 0) - (a.createdAt ?? 0);
+    });
+
+    return sorted.slice(0, take);
   },
 });
 
@@ -63,11 +93,7 @@ export const getPinned = authQuery({
       .filter((q) => q.neq(q.field("isPreview"), true))
       .collect();
 
-    // Also filter out preview tasks by text pattern (for backwards compatibility)
-    const filteredTasks = pinnedTasks.filter(
-      (task) => !task.text.startsWith("Preview screenshots for PR"),
-    );
-    return filteredTasks.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+    return pinnedTasks.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   },
 });
 
@@ -102,11 +128,7 @@ export const getTasksWithTaskRuns = authQuery({
     }
 
     const tasks = await q.collect();
-    // Also filter out preview tasks by text pattern (for backwards compatibility)
-    const filteredTasks = tasks.filter(
-      (task) => !task.text.startsWith("Preview screenshots for PR"),
-    );
-    const sortedTasks = filteredTasks.sort(
+    const sortedTasks = tasks.sort(
       (a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0),
     );
 
