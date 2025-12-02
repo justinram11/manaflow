@@ -477,6 +477,20 @@ fi
         let gitconfig = root_home.join(".gitconfig");
         let content = r#"[safe]
 	directory = *
+
+[core]
+	pager = delta
+
+[interactive]
+	diffFilter = delta --color-only
+
+[delta]
+	navigate = true
+	line-numbers = true
+	side-by-side = false
+
+[merge]
+	conflictStyle = zdiff3
 "#;
         fs::write(&gitconfig, content).await?;
         Ok(())
