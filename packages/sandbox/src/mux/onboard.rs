@@ -141,6 +141,13 @@ pub async fn query_image_size(image_name: &str) -> Option<u64> {
         return None;
     }
 
+    // Try GHCR API first for ghcr.io images (works with anonymous access)
+    if image_name.starts_with("ghcr.io/") {
+        if let Some(size) = query_size_from_ghcr(image_name).await {
+            return Some(size);
+        }
+    }
+
     // Try using `crane` first (if available) - it handles auth better
     if let Some(size) = query_size_with_crane(image_name).await {
         return Some(size);
@@ -152,6 +159,129 @@ pub async fn query_image_size(image_name: &str) -> Option<u64> {
     }
 
     None
+}
+
+/// Query image size from GHCR using anonymous token-based access.
+/// GHCR requires token auth even for public images.
+async fn query_size_from_ghcr(image_name: &str) -> Option<u64> {
+    // Parse image name: ghcr.io/org/repo:tag -> org/repo, tag
+    let without_registry = image_name.strip_prefix("ghcr.io/")?;
+    let (repo, tag) = if let Some(at_pos) = without_registry.rfind(':') {
+        (&without_registry[..at_pos], &without_registry[at_pos + 1..])
+    } else {
+        (without_registry, "latest")
+    };
+
+    // Get anonymous token
+    let token_url = format!("https://ghcr.io/token?scope=repository:{}:pull", repo);
+
+    let token_output = Command::new("curl")
+        .args(["-s", &token_url])
+        .output()
+        .await
+        .ok()?;
+
+    if !token_output.status.success() {
+        return None;
+    }
+
+    let token_json: serde_json::Value = serde_json::from_slice(&token_output.stdout).ok()?;
+    let token = token_json.get("token")?.as_str()?;
+
+    // Fetch manifest index
+    let manifest_url = format!("https://ghcr.io/v2/{}/manifests/{}", repo, tag);
+
+    let manifest_output = Command::new("curl")
+        .args([
+            "-s",
+            "-H",
+            &format!("Authorization: Bearer {}", token),
+            "-H",
+            "Accept: application/vnd.oci.image.index.v1+json",
+            &manifest_url,
+        ])
+        .output()
+        .await
+        .ok()?;
+
+    if !manifest_output.status.success() {
+        return None;
+    }
+
+    let manifest_json: serde_json::Value = serde_json::from_slice(&manifest_output.stdout).ok()?;
+
+    // Find the manifest for current architecture
+    let arch = std::env::consts::ARCH;
+    let target_arch = match arch {
+        "x86_64" => "amd64",
+        "aarch64" => "arm64",
+        _ => arch,
+    };
+
+    let manifests = manifest_json.get("manifests")?.as_array()?;
+    let mut platform_digest: Option<&str> = None;
+
+    for manifest in manifests {
+        let manifest_arch = manifest
+            .get("platform")
+            .and_then(|p| p.get("architecture"))
+            .and_then(|a| a.as_str())
+            .unwrap_or("");
+
+        if manifest_arch == target_arch {
+            platform_digest = manifest.get("digest").and_then(|d| d.as_str());
+            break;
+        }
+    }
+
+    let digest = platform_digest?;
+
+    // Fetch platform-specific manifest to get layer sizes
+    let platform_manifest_url = format!("https://ghcr.io/v2/{}/manifests/{}", repo, digest);
+
+    let platform_output = Command::new("curl")
+        .args([
+            "-s",
+            "-H",
+            &format!("Authorization: Bearer {}", token),
+            "-H",
+            "Accept: application/vnd.oci.image.manifest.v1+json",
+            &platform_manifest_url,
+        ])
+        .output()
+        .await
+        .ok()?;
+
+    if !platform_output.status.success() {
+        return None;
+    }
+
+    let platform_json: serde_json::Value = serde_json::from_slice(&platform_output.stdout).ok()?;
+
+    // Sum up layer sizes
+    let mut total_size: u64 = 0;
+
+    if let Some(layers) = platform_json.get("layers").and_then(|l| l.as_array()) {
+        for layer in layers {
+            if let Some(size) = layer.get("size").and_then(|s| s.as_u64()) {
+                total_size += size;
+            }
+        }
+    }
+
+    if let Some(config_size) = platform_json
+        .get("config")
+        .and_then(|c| c.get("size"))
+        .and_then(|s| s.as_u64())
+    {
+        total_size += config_size;
+    }
+
+    if total_size > 0 {
+        Some(total_size)
+    } else {
+        None
+    }
 }
 
 /// Try to get image size using crane (from go-containerregistry)
