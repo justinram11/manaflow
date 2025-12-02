@@ -300,6 +300,28 @@ async fn run_app<B: ratatui::backend::Backend + std::io::Write>(
                             }
                         }
                     }
+                    MuxEvent::ExecInSandbox { sandbox_id, command } => {
+                        // Execute command in sandbox silently via exec API
+                        let base_url = app.base_url.clone();
+                        let sandbox_id = sandbox_id.clone();
+                        let command = command.clone();
+                        tokio::spawn(async move {
+                            let client = reqwest::Client::new();
+                            let url = format!(
+                                "{}/sandboxes/{}/exec",
+                                base_url.trim_end_matches('/'),
+                                sandbox_id
+                            );
+                            let body = crate::models::ExecRequest {
+                                command,
+                                workdir: None,
+                                env: Vec::new(),
+                            };
+                            if let Err(e) = client.post(&url).json(&body).send().await {
+                                tracing::warn!("Failed to exec in sandbox: {}", e);
+                            }
+                        });
+                    }
                     _ => {}
                 }
                 app.handle_event(event);

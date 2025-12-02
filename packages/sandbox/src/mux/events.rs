@@ -51,4 +51,9 @@ pub enum MuxEvent {
     Onboard(OnboardEvent),
     /// Send input to a terminal pane
     SendTerminalInput { pane_id: PaneId, input: Vec<u8> },
+    /// Execute a command in a sandbox silently via exec API
+    ExecInSandbox {
+        sandbox_id: String,
+        command: Vec<String>,
+    },
 }

@@ -643,6 +643,24 @@ fn render_command_palette(f: &mut Frame, app: &mut MuxApp) {
 
     let (items, selected_line_index) = app.command_palette.get_items();
 
+    // Filter out the inappropriate delta command based on current state
+    let delta_enabled = app.is_delta_enabled();
+    let items: Vec<_> = items
+        .into_iter()
+        .filter(|item| {
+            if let PaletteItem::Command { command, .. } = item {
+                // If delta is enabled, hide EnableDeltaPager; if disabled, hide DisableDeltaPager
+                if delta_enabled && *command == MuxCommand::EnableDeltaPager {
+                    return false;
+                }
+                if !delta_enabled && *command == MuxCommand::DisableDeltaPager {
+                    return false;
+                }
+            }
+            true
+        })
+        .collect();
+
     for item in items {
         match item {
             PaletteItem::Header(text) => {
