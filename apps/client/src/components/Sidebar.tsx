@@ -342,9 +342,13 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
           </div>
 
           <div className="mt-2 flex flex-col gap-0.5">
-            <div className="pointer-default cursor-default flex items-center rounded-sm pl-2 ml-2 pr-3 py-0.5 text-[12px] font-medium text-neutral-600 select-none dark:text-neutral-300">
+            <SidebarSectionLink
+              to="/$teamSlugOrId/previews"
+              params={{ teamSlugOrId }}
+              exact
+            >
               Previews
-            </div>
+            </SidebarSectionLink>
           </div>
           <div className="ml-2 pt-px">
             <SidebarPreviewList teamSlugOrId={teamSlugOrId} />
