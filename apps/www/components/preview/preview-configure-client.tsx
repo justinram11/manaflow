@@ -426,6 +426,7 @@ export function PreviewConfigureClient({
   const [devScript, setDevScript] = useState(initialDevScriptValue);
   const [hasUserEditedScripts, setHasUserEditedScripts] = useState(false);
   const [hasCompletedSetup, setHasCompletedSetup] = useState(false);
+  const [isWaitingForWorkspace, setIsWaitingForWorkspace] = useState(false);
   const [isEnvOpen, setIsEnvOpen] = useState(false);
   const [isBuildOpen, setIsBuildOpen] = useState(false);
   const [envNone, setEnvNone] = useState(false);
@@ -518,12 +519,14 @@ export function PreviewConfigureClient({
             title: instance?.instanceId
               ? "Waiting for VS Code"
               : "VS Code workspace not ready",
-            description: instance?.instanceId
-              ? "The editor opens automatically once the environment finishes booting."
-              : "Provisioning the workspace. We'll open VS Code as soon as it's ready.",
-          },
+              description: instance?.instanceId
+                ? "The editor opens automatically once the environment finishes booting."
+                : "Provisioning the workspace. We'll open VS Code as soon as it's ready.",
+            },
     [instance?.instanceId, instance?.vscodeUrl]
   );
+
+  const isWorkspaceReady = Boolean(instance?.vscodeUrl);
 
   const hasEnvValues = useMemo(
     () =>
@@ -550,20 +553,30 @@ export function PreviewConfigureClient({
     envSectionCollapsedOnEnterRef.current = true;
   }, [envDone, hasCompletedSetup]);
 
-  // Auto-enter configuration once VS Code is available when resuming an existing environment
   useEffect(() => {
     if (
-      startAtConfigureEnvironment &&
-      instance?.vscodeUrl &&
+      (startAtConfigureEnvironment || isWaitingForWorkspace) &&
+      isWorkspaceReady &&
       !hasCompletedSetup
     ) {
       setHasCompletedSetup(true);
+      setIsWaitingForWorkspace(false);
     }
-  }, [hasCompletedSetup, instance?.vscodeUrl, startAtConfigureEnvironment]);
+  }, [
+    hasCompletedSetup,
+    isWaitingForWorkspace,
+    isWorkspaceReady,
+    startAtConfigureEnvironment,
+  ]);
 
   const handleEnterConfigureEnvironment = useCallback(() => {
-    setHasCompletedSetup(true);
-  }, []);
+    if (isWorkspaceReady) {
+      setHasCompletedSetup(true);
+      setIsWaitingForWorkspace(false);
+      return;
+    }
+    setIsWaitingForWorkspace(true);
+  }, [isWorkspaceReady]);
 
   const browserPlaceholder = useMemo(
     () =>
@@ -1025,20 +1038,26 @@ export function PreviewConfigureClient({
 
   // Show setup screen while provisioning OR until user clicks Next
   if (!hasCompletedSetup) {
-    const isWorkspaceReady = Boolean(instance?.vscodeUrl);
+    const shouldShowWorkspaceLoader =
+      (startAtConfigureEnvironment || isWaitingForWorkspace) && !isWorkspaceReady;
 
-    // When editing an existing environment, show loader until VS Code is ready
-    if (startAtConfigureEnvironment && !isWorkspaceReady) {
+    if (shouldShowWorkspaceLoader) {
+      const loaderTitle = startAtConfigureEnvironment
+        ? "Resuming your VS Code workspace..."
+        : "Starting your VS Code workspace...";
+      const loaderDescription = startAtConfigureEnvironment
+        ? "We'll show the configuration form once your environment is ready."
+        : "We'll open the configuration as soon as the sandbox is ready.";
+
       return (
         <div className="flex min-h-dvh items-center justify-center bg-white dark:bg-black font-sans">
           <div className="text-center px-6">
             <Loader2 className="mx-auto h-8 w-8 animate-spin text-neutral-400" />
             <h1 className="mt-4 text-lg font-medium text-neutral-900 dark:text-neutral-100">
-              Resuming your VS Code workspace...
+              {loaderTitle}
             </h1>
             <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
-              We&apos;ll show the configuration form once your environment is
-              ready.
+              {loaderDescription}
             </p>
           </div>
         </div>
@@ -1339,13 +1358,11 @@ export function PreviewConfigureClient({
             <div className="flex items-center justify-end gap-4">
               <button
                 type="button"
-                disabled={!isWorkspaceReady}
                 onClick={handleEnterConfigureEnvironment}
                 className={clsx(
                   "inline-flex items-center gap-2 rounded-md px-5 py-2.5 text-sm font-semibold transition",
-                  isWorkspaceReady
-                    ? "bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 hover:bg-neutral-800 dark:hover:bg-neutral-200 cursor-pointer"
-                    : "bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 opacity-50 cursor-not-allowed"
+                  "bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 hover:bg-neutral-800 dark:hover:bg-neutral-200 cursor-pointer",
+                  !isWorkspaceReady && "opacity-80"
                 )}
               >
                 Next
