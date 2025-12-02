@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Camera,
+  CheckCircle2,
   ExternalLink,
   Github,
   Link2,
@@ -67,6 +68,7 @@ type PreviewDashboardProps = {
   providerConnectionsByTeam: Record<string, ProviderConnection[]>;
   isAuthenticated: boolean;
   previewConfigs: PreviewConfigListItem[];
+  popupComplete?: boolean;
 };
 
 const ADD_INSTALLATION_VALUE = "__add_github_account__";
@@ -139,12 +141,93 @@ function Section({
   );
 }
 
+/**
+ * Shown in popup after GitHub App installation completes.
+ * Sends message to opener and auto-closes after delay.
+ */
+function PopupCompleteView() {
+  const [canClose, setCanClose] = useState(true);
+
+  useEffect(() => {
+    if (window.opener) {
+      try {
+        window.opener.postMessage(
+          { type: "github_app_installed" },
+          window.location.origin
+        );
+      } catch (error) {
+        console.error("[PopupComplete] Failed to post message", error);
+      }
+
+      const timer = setTimeout(() => {
+        try {
+          window.close();
+        } catch (error) {
+          console.error("[PopupComplete] Failed to close popup", error);
+          setCanClose(false);
+        }
+      }, 1500);
+
+      return () => clearTimeout(timer);
+    } else {
+      window.location.href = "/preview";
+    }
+  }, []);
+
+  return (
+    <div className="min-h-dvh text-white flex items-center justify-center px-6">
+      <div className="text-center max-w-md">
+        <div className="mx-auto mb-6 grid place-items-center">
+          <div className="h-14 w-14 rounded-full bg-emerald-500/10 ring-8 ring-emerald-500/5 grid place-items-center">
+            <CheckCircle2 className="h-7 w-7 text-emerald-500" />
+          </div>
+        </div>
+        <h1 className="text-2xl font-semibold">Installation Complete</h1>
+        <p className="mt-2 text-sm text-neutral-400">
+          {canClose
+            ? "Closing this window..."
+            : "You can close this window and return to the previous page."}
+        </p>
+        {!canClose && (
+          <button
+            type="button"
+            onClick={() => window.close()}
+            className="mt-6 inline-flex items-center justify-center gap-2 rounded-lg bg-white px-6 py-3 text-base font-medium text-black transition-colors hover:bg-neutral-200"
+          >
+            Close Window
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Opens a centered popup window */
+function openCenteredPopup(
+  url: string,
+  name: string,
+  width: number,
+  height: number
+) {
+  const screenLeft = window.screenLeft ?? window.screenX;
+  const screenTop = window.screenTop ?? window.screenY;
+  const screenWidth = window.innerWidth;
+  const screenHeight = window.innerHeight;
+
+  const left = screenLeft + (screenWidth - width) / 2;
+  const top = screenTop + (screenHeight - height) / 2;
+
+  const features = `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`;
+  return window.open(url, name, features);
+}
+
 export function PreviewDashboard({
   selectedTeamSlugOrId,
   teamOptions,
   providerConnectionsByTeam,
   isAuthenticated,
   previewConfigs,
+  popupComplete,
 }: PreviewDashboardProps) {
   const [selectedTeamSlugOrIdState, setSelectedTeamSlugOrIdState] = useState(
     () => selectedTeamSlugOrId || teamOptions[0]?.slugOrId || ""
@@ -446,14 +529,18 @@ export function PreviewDashboard({
     setIsInstallingApp(true);
     setErrorMessage(null);
     try {
-      const currentUrl = window.location.href;
+      // Use popup_complete query param as returnUrl so it can signal the parent window and close
+      const popupCompleteUrl = new URL(
+        "/preview?popup_complete=true",
+        window.location.origin
+      ).toString();
 
       const response = await fetch("/api/integrations/github/install-state", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           teamSlugOrId: selectedTeamSlugOrIdState,
-          returnUrl: currentUrl,
+          returnUrl: popupCompleteUrl,
         }),
       });
       if (!response.ok) {
@@ -461,30 +548,12 @@ export function PreviewDashboard({
       }
       const payload = (await response.json()) as { installUrl: string };
 
-      // Open popup for GitHub App installation
-      // Prefer 1400x970 but constrain to screen size with some padding
-      const preferredWidth = 1400;
-      const preferredHeight = 970;
-      const screenWidth = window.screen.availWidth;
-      const screenHeight = window.screen.availHeight;
-      const width = Math.min(preferredWidth, screenWidth - 40);
-      const height = Math.min(preferredHeight, screenHeight - 40);
-      const left = Math.floor((screenWidth - width) / 2);
-      const top = Math.floor((screenHeight - height) / 2);
-
-      const features = [
-        `width=${width}`,
-        `height=${height}`,
-        `left=${left}`,
-        `top=${top}`,
-        "resizable=yes",
-        "scrollbars=yes",
-      ].join(",");
-
-      const popup = window.open(
+      // Open centered popup for GitHub App installation
+      const popup = openCenteredPopup(
         payload.installUrl,
         "github-app-install",
-        features
+        1000,
+        700
       );
 
       if (!popup) {
@@ -793,7 +862,7 @@ export function PreviewDashboard({
             Select a team and install the GitHub App to search.
           </div>
         ) : isLoadingRepos ? (
-          <div className="flex items-center justify-center h-full">
+          <div className="flex items-center justify-center h-full min-h-[225px]">
             <Loader2 className="h-5 w-5 animate-spin text-neutral-500" />
           </div>
         ) : repos.length > 0 ? (
@@ -810,7 +879,9 @@ export function PreviewDashboard({
                 >
                   <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z" />
                 </svg>
-                <span className="text-sm text-white">{repo.full_name}</span>
+                <span className="text-sm text-white truncate">
+                  {repo.full_name}
+                </span>
               </div>
               <Button
                 onClick={() => handleContinue(repo.full_name)}
@@ -834,6 +905,11 @@ export function PreviewDashboard({
       </div>
     </div>
   );
+
+  // Render popup complete UI if in popup mode
+  if (popupComplete) {
+    return <PopupCompleteView />;
+  }
 
   return (
     <div className="w-full max-w-5xl px-6 py-10 font-sans">
@@ -1018,8 +1094,8 @@ export function PreviewDashboard({
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5">
-                        <Tooltip delayDuration={0}>
-                          <TooltipTrigger asChild>
+                        <Tooltip>
+                          <TooltipTrigger asChild delayDuration={0}>
                             <button
                               type="button"
                               onClick={() => handleOpenConfig(config)}
@@ -1037,8 +1113,8 @@ export function PreviewDashboard({
                             Edit configuration
                           </TooltipContent>
                         </Tooltip>
-                        <Tooltip delayDuration={0}>
-                          <TooltipTrigger asChild>
+                        <Tooltip>
+                          <TooltipTrigger asChild delayDuration={0}>
                             <button
                               type="button"
                               onClick={() => handleRequestDelete(config)}

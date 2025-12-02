@@ -233,7 +233,7 @@ const SelectContent = forwardRef<
       sideOffset={8}
       {...props}
     >
-      <SelectPrimitive.Viewport className="max-h-64 overflow-y-auto py-1">
+      <SelectPrimitive.Viewport className="max-h-64 overflow-y-auto">
         {children}
       </SelectPrimitive.Viewport>
     </SelectPrimitive.Content>
@@ -293,7 +293,10 @@ export function FrameworkPresetSelect({
         value={value}
         onValueChange={(val) => onValueChange(val as FrameworkPreset)}
       >
-        <SelectTrigger preset={value} aria-labelledby="framework-preset-label" />
+        <SelectTrigger
+          preset={value}
+          aria-labelledby="framework-preset-label"
+        />
         <SelectContent>
           {frameworkOptions.map((preset) => (
             <SelectItem key={preset} value={preset} preset={preset}>
@@ -326,4 +329,3 @@ export function FrameworkPresetSelect({
     </div>
   );
 }
-
