@@ -302,7 +302,21 @@ const convexSchema = defineSchema({
     .index("by_vscode_status", ["vscode.status"])
     .index("by_vscode_container_name", ["vscode.containerName"])
     .index("by_user", ["userId", "createdAt"])
-    .index("by_team_user", ["teamId", "userId"]),
+    .index("by_team_user", ["teamId", "userId"])
+    .index("by_pull_request_url", ["pullRequestUrl"]),
+
+  // Junction table linking taskRuns to pull requests by PR identity
+  // Enables efficient lookup of taskRuns when a PR webhook fires
+  taskRunPullRequests: defineTable({
+    taskRunId: v.id("taskRuns"),
+    teamId: v.string(),
+    repoFullName: v.string(), // owner/repo
+    prNumber: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_task_run", ["taskRunId"])
+    .index("by_pr", ["teamId", "repoFullName", "prNumber"]),
+
   taskRunScreenshotSets: defineTable({
     taskId: v.id("tasks"),
     runId: v.id("taskRuns"),
