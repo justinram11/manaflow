@@ -14,18 +14,30 @@ interface TooltipTriggerProps extends React.ComponentProps<typeof BaseTooltip.Tr
   delay?: number;
   closeDelay?: number;
   delayDuration?: number;
+  children?: React.ReactNode;
 }
 
 function TooltipTrigger({
-  asChild: _asChild,
+  asChild,
   delayDuration,
   delay = delayDuration ?? 0,
   closeDelay,
   children,
   ...props
 }: TooltipTriggerProps) {
+  // Base UI uses `render` prop for composition instead of `asChild`
+  if (asChild && React.isValidElement(children)) {
+    return (
+      <BaseTooltip.Trigger
+        {...props}
+        delay={delay}
+        closeDelay={closeDelay}
+        render={children as React.ReactElement<Record<string, unknown>>}
+      />
+    );
+  }
   return (
-    <BaseTooltip.Trigger {...props} {...{ delay, closeDelay }}>
+    <BaseTooltip.Trigger {...props} delay={delay} closeDelay={closeDelay}>
       {children}
     </BaseTooltip.Trigger>
   );
