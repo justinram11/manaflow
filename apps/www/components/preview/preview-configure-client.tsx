@@ -1479,20 +1479,19 @@ export function PreviewConfigureClient({
                 <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
                   Proceed once dev script is running.
                 </p>
-
-                {/* Continue button inside step */}
-                {isCurrentStep("run-scripts") && (
-                  <button
-                    type="button"
-                    onClick={handleNextConfigStep}
-                    className="w-full mt-4 inline-flex items-center justify-center gap-2 rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 px-4 py-2 text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition cursor-pointer"
-                  >
-                    Continue
-                    <ArrowRight className="w-4 h-4" />
-                  </button>
-                )}
               </div>
             </details>
+            {/* Continue button outside chevron */}
+            {isCurrentStep("run-scripts") && (
+              <button
+                type="button"
+                onClick={handleNextConfigStep}
+                className="w-full mt-4 inline-flex items-center justify-center gap-2 rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 px-4 py-2 text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition cursor-pointer"
+              >
+                Continue
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            )}
           </div>
         )}
 
@@ -1539,34 +1538,26 @@ export function PreviewConfigureClient({
                 <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
                   Proceed once browser is set up properly.
                 </p>
-
-                {/* Terminal warning */}
-                <div className="mt-4 rounded-md border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/20 px-3 py-2.5">
-                  <p className="text-[11px] text-amber-800 dark:text-amber-200">
-                    <strong>Note:</strong> Running terminals will be stopped on save. The maintenance and dev scripts run automatically on each preview.
-                  </p>
-                </div>
-
-                {/* Save button inside step */}
-                {isCurrentStep("browser-setup") && (
-                  <button
-                    type="button"
-                    onClick={handleSaveConfiguration}
-                    disabled={isSaving}
-                    className="w-full mt-4 inline-flex items-center justify-center rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 px-4 py-2 text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isSaving ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Saving...
-                      </>
-                    ) : (
-                      "Save configuration"
-                    )}
-                  </button>
-                )}
               </div>
             </details>
+            {/* Save button outside chevron */}
+            {isCurrentStep("browser-setup") && (
+              <button
+                type="button"
+                onClick={handleSaveConfiguration}
+                disabled={isSaving}
+                className="w-full mt-4 inline-flex items-center justify-center rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 px-4 py-2 text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSaving ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  "Save configuration"
+                )}
+              </button>
+            )}
           </div>
         )}
       </div>
