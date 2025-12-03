@@ -1149,20 +1149,6 @@ export const TermsOfServiceScreen = ({
           Marks.
         </Paragraph>
 
-        {/* <Paragraph>Contact Information:</Paragraph>
-
-      <Paragraph>Lawrence</Paragraph>
-
-      <Paragraph>Address: </Paragraph>
-
-      <Paragraph>9 Tamizar</Paragraph>
-
-      <Paragraph>Irvine, California 92620</Paragraph>
-
-      <Paragraph>Telephone: 9493020749</Paragraph>
-
-      <Paragraph>Email: {contactEmail}</Paragraph> */}
-
         <Paragraph>* * *</Paragraph>
 
         <Paragraph>
