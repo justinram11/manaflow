@@ -980,20 +980,29 @@ impl<'a> MuxApp<'a> {
         }
 
         if self.sidebar.sandboxes.is_empty() {
+            // List is now empty - reset selection
             self.sidebar.selected_index = 0;
             self.workspace_manager.active_sandbox_id = None;
-        } else if let Some(idx) = removed_index {
-            let next_index = if idx < self.sidebar.sandboxes.len() {
-                idx
-            } else {
-                self.sidebar.sandboxes.len() - 1
-            };
+        } else if let Some(removed_idx) = removed_index {
+            let current_selected = self.sidebar.selected_index;
 
-            self.sidebar.selected_index = next_index;
-
-            let next_id = self.sidebar.sandboxes[next_index].id.to_string();
-            let _ = self.select_sandbox(&next_id);
-            self.sidebar.select_by_id(&next_id);
+            if removed_idx == current_selected {
+                // We removed the currently selected item - need to select a neighbor
+                let next_index = if removed_idx < self.sidebar.sandboxes.len() {
+                    removed_idx
+                } else {
+                    self.sidebar.sandboxes.len() - 1
+                };
+                self.sidebar.selected_index = next_index;
+                let next_id = self.sidebar.sandboxes[next_index].id.to_string();
+                let _ = self.select_sandbox(&next_id);
+                self.sidebar.select_by_id(&next_id);
+            } else if removed_idx < current_selected {
+                // We removed an item before the selected item - adjust index to keep
+                // pointing at the same item (which shifted down by 1)
+                self.sidebar.selected_index = current_selected - 1;
+            }
+            // If removed_idx > current_selected, no adjustment needed - selection unchanged
         }
     }
 
