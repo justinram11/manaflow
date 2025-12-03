@@ -302,7 +302,8 @@ async function buildDetectionContext(
     octokit,
     owner,
     name,
-    treeSnapshot?.normalizedFilePaths ?? null
+    treeSnapshot?.normalizedFilePaths ?? null,
+    treeSnapshot?.truncated ?? false
   );
 
   return {
@@ -322,7 +323,8 @@ async function detectPackageManager(
   octokit: ReturnType<typeof createGitHubClient>,
   owner: string,
   name: string,
-  normalizedFilePaths: Set<string> | null
+  normalizedFilePaths: Set<string> | null,
+  treeTruncated: boolean
 ): Promise<PackageManager | null> {
   // Fast path: check tree snapshot (0 API requests)
   for (const { file, manager } of PACKAGE_MANAGER_LOCK_FILES) {
@@ -331,12 +333,13 @@ async function detectPackageManager(
     }
   }
 
-  // If tree available, we already checked everything
-  if (normalizedFilePaths) {
+  // If tree available and NOT truncated, we already checked everything
+  if (normalizedFilePaths && !treeTruncated) {
     return null;
   }
 
   // Slow path: single GraphQL request to check all lock files
+  // Used when tree is unavailable OR truncated (lock files may be missing from snapshot)
   return detectPackageManagerViaGraphQL(octokit, owner, name);
 }
 
