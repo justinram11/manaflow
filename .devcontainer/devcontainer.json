@@ -51,7 +51,7 @@
       "onAutoForward": "openBrowser"
     }
   },
-  "postCreateCommand": "CI=1 pnpm install --frozen-lockfile --prefer-offline",
+  "postCreateCommand": "CI=1 bun install --frozen-lockfile",
   "postStartCommand": "bash /root/workspace/scripts/dev.sh",
   "remoteUser": "root",
   "features": {

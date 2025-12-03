@@ -32,9 +32,6 @@ jobs:
         with:
           node-version: 24
 
-      - name: Enable Corepack (pnpm)
-        run: corepack enable
-
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 

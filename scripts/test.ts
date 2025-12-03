@@ -254,15 +254,15 @@ async function runTests() {
       return new Promise<Result>((resolve) => {
         let combined = "";
         const start = performance.now();
-        const cmd = "pnpm";
+        const cmd = "bun";
         let args: string[];
         const useJson = showTimings && isVitest;
         if (useJson) {
-          // Prefer pnpm exec to avoid the extra `--` being forwarded to vitest
+          // Prefer bun exec to avoid the extra `--` being forwarded to vitest
           if (usesDotenv) {
             // Replicate `dotenv -e <path> -- vitest run` with JSON reporter
             args = [
-              "exec",
+              "x",
               "dotenv",
               ...(dotenvEnvPath ? ["-e", dotenvEnvPath] : []),
               "--",
@@ -272,7 +272,7 @@ async function runTests() {
               "--silent",
             ];
           } else {
-            args = ["exec", "vitest", "run", "--reporter=json", "--silent"];
+            args = ["x", "vitest", "run", "--reporter=json", "--silent"];
           }
         } else {
           // Normal run (no JSON reporter), preserves raw console logs
@@ -382,14 +382,14 @@ async function runTests() {
     const r = await new Promise<Result>((resolve) => {
       let combined = "";
       const start = performance.now();
-      const cmd = "pnpm";
+      const cmd = "bun";
       const useJson = showTimings && serverPkg.isVitest;
       let args: string[];
       const skipDocker = process.env.CMUX_SKIP_DOCKER_TESTS === "1";
       if (useJson) {
         if (serverPkg.usesDotenv) {
           args = [
-            "exec",
+            "x",
             "dotenv",
             ...(serverPkg.dotenvEnvPath ? ["-e", serverPkg.dotenvEnvPath] : []),
             "--",
@@ -401,7 +401,7 @@ async function runTests() {
           ];
         } else {
           args = [
-            "exec",
+            "x",
             "vitest",
             "run",
             "--reporter=json",
@@ -483,7 +483,7 @@ async function runTests() {
         // If we ran vitest with --silent for JSON, re-run to print raw logs.
         try {
           const retry = await new Promise<string>((resolve) => {
-            const child = spawn("pnpm", ["run", "test"], {
+            const child = spawn("bun", ["run", "test"], {
               cwd: r.dir,
               shell: true,
               env: process.env,
