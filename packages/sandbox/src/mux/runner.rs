@@ -200,10 +200,6 @@ async fn run_app<B: ratatui::backend::Backend + std::io::Write>(
                         let workspace_path = workspace_path.clone();
                         let tab_id_value =
                             tab_id.clone().unwrap_or_else(|| TabId::new().to_string());
-                        if let Ok(uuid) = uuid::Uuid::parse_str(&tab_id_value) {
-                            app.pending_creation_tab_ids
-                                .push_back(TabId::from_uuid(uuid));
-                        }
                         tokio::spawn(async move {
                             if let Err(error) = create_sandbox_with_workspace(
                                 base_url,
@@ -1258,7 +1254,10 @@ async fn create_sandbox_with_workspace(
         }
     }
 
-    let _ = event_tx.send(MuxEvent::SandboxCreated(summary.clone()));
+    let _ = event_tx.send(MuxEvent::SandboxCreated {
+        sandbox: summary.clone(),
+        tab_id: Some(tab_id.clone()),
+    });
     let _ = event_tx.send(MuxEvent::StatusMessage {
         message: format!("Created sandbox: {}", sandbox_id),
     });

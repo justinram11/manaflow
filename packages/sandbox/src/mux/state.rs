@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
@@ -165,8 +165,6 @@ pub struct MuxApp<'a> {
     pub show_help: bool,
     // Notifications overlay/state
     pub notifications: NotificationsState,
-    // Pending tab IDs for sandboxes being created (kept in request order)
-    pub pending_creation_tab_ids: VecDeque<crate::mux::layout::TabId>,
 
     // Event channel
     pub event_tx: mpsc::UnboundedSender<MuxEvent>,
@@ -191,7 +189,8 @@ pub struct MuxApp<'a> {
     pub pending_connect: Option<String>,
 
     // Locally created placeholder sandboxes awaiting server confirmation
-    pub pending_placeholder_sandboxes: VecDeque<SandboxId>,
+    // Keyed by tab_id for correlation when sandbox creation completes out-of-order
+    pub pending_placeholder_sandboxes: HashMap<String, SandboxId>,
 
     // Flag to indicate we need to create a sandbox on startup
     pub needs_initial_sandbox: bool,
@@ -227,7 +226,6 @@ impl<'a> MuxApp<'a> {
             zoomed_pane: None,
             show_help: false,
             notifications: NotificationsState::new(),
-            pending_creation_tab_ids: VecDeque::new(),
             event_tx,
             base_url,
             workspace_path,
@@ -236,7 +234,7 @@ impl<'a> MuxApp<'a> {
             rename_input: None,
             terminal_manager: None,
             pending_connect: None,
-            pending_placeholder_sandboxes: VecDeque::new(),
+            pending_placeholder_sandboxes: HashMap::new(),
             needs_initial_sandbox: false,
             last_terminal_views: std::collections::HashMap::new(),
             cursor_blink: true,
@@ -761,7 +759,7 @@ impl<'a> MuxApp<'a> {
                     self.add_sandbox(&sandbox_id_str, &sandbox.name);
                 }
                 // Re-append pending placeholders so they stay visible during creation
-                for placeholder_id in self.pending_placeholder_sandboxes.iter().copied() {
+                for placeholder_id in self.pending_placeholder_sandboxes.values().copied() {
                     if self
                         .sidebar
                         .sandboxes
@@ -793,10 +791,14 @@ impl<'a> MuxApp<'a> {
                 self.sidebar.set_error(error.clone());
                 self.set_status(format!("Error: {}", error));
             }
-            MuxEvent::SandboxCreated(sandbox) => {
-                // Drop one placeholder entry to keep the list responsive
-                if let Some(placeholder_id) = self.pending_placeholder_sandboxes.pop_front() {
-                    self.remove_local_sandbox(placeholder_id);
+            MuxEvent::SandboxCreated { sandbox, tab_id } => {
+                // Use tab_id to find the correct placeholder (handles out-of-order completion)
+                if let Some(tab_id_str) = &tab_id {
+                    if let Some(placeholder_id) =
+                        self.pending_placeholder_sandboxes.remove(tab_id_str)
+                    {
+                        self.remove_local_sandbox(placeholder_id);
+                    }
                 }
                 // Add the new sandbox to workspace manager
                 let sandbox_id_str = sandbox.id.to_string();
@@ -807,11 +809,15 @@ impl<'a> MuxApp<'a> {
                 self.sidebar.sandboxes.push(sandbox.clone());
                 self.sidebar.select_by_id(&sandbox_id_str);
                 self.add_sandbox(&sandbox_id_str, &sandbox.name);
-                if let Some(tab_id) = self.pending_creation_tab_ids.pop_front() {
-                    let _ = self.workspace_manager.set_active_tab_id_for_sandbox(
-                        crate::mux::layout::SandboxId::from_uuid(sandbox.id),
-                        tab_id,
-                    );
+                // Use tab_id from event instead of FIFO queue
+                if let Some(tab_id_str) = &tab_id {
+                    if let Ok(tab_uuid) = Uuid::parse_str(tab_id_str) {
+                        let tab_id = crate::mux::layout::TabId::from_uuid(tab_uuid);
+                        let _ = self.workspace_manager.set_active_tab_id_for_sandbox(
+                            crate::mux::layout::SandboxId::from_uuid(sandbox.id),
+                            tab_id,
+                        );
+                    }
                 }
                 self.workspace_manager
                     .select_sandbox(crate::mux::layout::SandboxId::from_uuid(sandbox.id));
@@ -890,6 +896,8 @@ impl<'a> MuxApp<'a> {
     }
 
     /// Add a local placeholder sandbox for immediate UI feedback while creation runs.
+    /// The tab_id is used as a correlation key to match placeholders with created sandboxes
+    /// even when sandbox creation completes out-of-order.
     pub fn add_placeholder_sandbox(
         &mut self,
         name: impl Into<String>,
@@ -921,9 +929,11 @@ impl<'a> MuxApp<'a> {
             let _ = self
                 .workspace_manager
                 .set_active_tab_id_for_sandbox(sandbox_id, tab_id);
+            // Store placeholder keyed by tab_id for out-of-order completion handling
+            self.pending_placeholder_sandboxes
+                .insert(tab_id.to_string(), sandbox_id);
         }
         self.workspace_manager.select_sandbox(sandbox_id);
-        self.pending_placeholder_sandboxes.push_back(sandbox_id);
     }
 
     fn remove_local_sandbox(&mut self, sandbox_id: SandboxId) {
@@ -1007,7 +1017,10 @@ mod tests {
         let mut app = MuxApp::new("http://localhost".to_string(), tx, PathBuf::from("."));
         let sandbox = sample_sandbox("demo");
 
-        app.handle_event(MuxEvent::SandboxCreated(sandbox.clone()));
+        app.handle_event(MuxEvent::SandboxCreated {
+            sandbox: sandbox.clone(),
+            tab_id: None,
+        });
 
         assert_eq!(
             app.pending_connect,

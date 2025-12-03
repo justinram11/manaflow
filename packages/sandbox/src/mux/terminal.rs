@@ -3655,7 +3655,11 @@ pub async fn establish_mux_connection(manager: SharedTerminalManager) -> anyhow:
 
                             match server_msg {
                                 MuxServerMessage::SandboxCreated(summary) => {
-                                    let _ = event_tx_clone.send(MuxEvent::SandboxCreated(summary));
+                                    // No tab_id for server-broadcast events (created by other clients)
+                                    let _ = event_tx_clone.send(MuxEvent::SandboxCreated {
+                                        sandbox: summary,
+                                        tab_id: None,
+                                    });
                                 }
                                 MuxServerMessage::SandboxList { sandboxes } => {
                                     let _ = event_tx_clone.send(MuxEvent::SandboxesRefreshed(sandboxes));
