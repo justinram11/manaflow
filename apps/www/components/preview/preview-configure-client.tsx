@@ -467,19 +467,19 @@ export function PreviewConfigureClient({
     () => initialMaintenanceNone
   );
   const [devNone, setDevNone] = useState(() => initialDevNone);
-  const [browserConfirmed, setBrowserConfirmed] = useState(false);
+  const [_browserConfirmed, _setBrowserConfirmed] = useState(false);
   const [commandsCopied, setCommandsCopied] = useState(false);
-  const [isEnvSectionOpen, setIsEnvSectionOpen] = useState(
+  const [_isEnvSectionOpen, setIsEnvSectionOpen] = useState(
     () => !initialEnvComplete
   );
-  const [isMaintenanceSectionOpen, _setIsMaintenanceSectionOpen] = useState(
+  const [_isMaintenanceSectionOpen, _setIsMaintenanceSectionOpen] = useState(
     () => !initialMaintenanceComplete
   );
-  const [isDevSectionOpen, _setIsDevSectionOpen] = useState(
+  const [_isDevSectionOpen, _setIsDevSectionOpen] = useState(
     () => !initialDevComplete
   );
-  const [isRunSectionOpen, setIsRunSectionOpen] = useState(true);
-  const [isBrowserSetupSectionOpen, setIsBrowserSetupSectionOpen] =
+  const [_isRunSectionOpen, _setIsRunSectionOpen] = useState(true);
+  const [_isBrowserSetupSectionOpen, _setIsBrowserSetupSectionOpen] =
     useState(true);
 
   const [areEnvValuesHidden, setAreEnvValuesHidden] = useState(true);
