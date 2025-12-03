@@ -206,16 +206,13 @@ async function collectRunSubtreeIds(
 async function fetchTaskRunsForTask(
   ctx: QueryCtx,
   teamId: string,
-  userId: string,
   taskId: Id<"tasks">,
   includeArchived = true,
 ): Promise<TaskRunWithChildren[]> {
   const runs = await ctx.db
     .query("taskRuns")
     .withIndex("by_task", (q) => q.eq("taskId", taskId))
-    .filter(
-      (q) => q.eq(q.field("teamId"), teamId) && q.eq(q.field("userId"), userId),
-    )
+    .filter((q) => q.eq(q.field("teamId"), teamId))
     .collect();
 
   const environmentSummaries = new Map<
@@ -372,24 +369,19 @@ export const getByTask = authQuery({
       return [];
     }
 
-    const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
     return await fetchTaskRunsForTask(
       ctx,
       teamId,
-      userId,
       args.taskId as Id<"tasks">,
       args.includeArchived ?? true,
     );
   },
 });
 
-const SYSTEM_BRANCH_USER_ID = "__system__";
-
 async function fetchBranchMetadataForRepo(
   ctx: QueryCtx,
   teamId: string,
-  userId: string,
   repo: string,
 ): Promise<Doc<"branches">[]> {
   const rows = await ctx.db
@@ -398,12 +390,9 @@ async function fetchBranchMetadataForRepo(
     .filter((q) => q.eq(q.field("teamId"), teamId))
     .collect();
 
-  const relevant = rows.filter(
-    (row) => row.userId === userId || row.userId === SYSTEM_BRANCH_USER_ID,
-  );
-
+  // Deduplicate by branch name, preferring rows with known SHA info or recent activity
   const byName = new Map<string, Doc<"branches">>();
-  for (const row of relevant) {
+  for (const row of rows) {
     const existing = byName.get(row.name);
     if (!existing) {
       byName.set(row.name, row);
@@ -478,15 +467,14 @@ export const getRunDiffContext = authQuery({
     runId: v.id("taskRuns"),
   },
   handler: async (ctx, args) => {
-    const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
 
     const [taskDoc, taskRuns] = await Promise.all([
       ctx.db.get(args.taskId),
-      fetchTaskRunsForTask(ctx, teamId, userId, args.taskId, true),
+      fetchTaskRunsForTask(ctx, teamId, args.taskId, true),
     ]);
 
-    if (!taskDoc || taskDoc.teamId !== teamId || taskDoc.userId !== userId) {
+    if (!taskDoc || taskDoc.teamId !== teamId) {
       return {
         task: null,
         taskRuns,
@@ -520,7 +508,6 @@ export const getRunDiffContext = authQuery({
         const metadata = await fetchBranchMetadataForRepo(
           ctx,
           teamId,
-          userId,
           trimmedProjectFullName,
         );
         if (metadata.length > 0) {
@@ -604,10 +591,9 @@ export const updateSummary = authMutation({
 export const get = authQuery({
   args: { teamSlugOrId: v.string(), id: v.id("taskRuns") },
   handler: async (ctx, args) => {
-    const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
     const doc = await ctx.db.get(args.id);
-    if (!doc || doc.teamId !== teamId || doc.userId !== userId) {
+    if (!doc || doc.teamId !== teamId) {
       return null;
     }
     // Rewrite morph URLs in networking field
@@ -898,7 +884,6 @@ export const updateVSCodePorts = authMutation({
 export const getByContainerName = authQuery({
   args: { teamSlugOrId: v.string(), containerName: v.string() },
   handler: async (ctx, args) => {
-    const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
     const run =
       (await ctx.db
@@ -907,7 +892,6 @@ export const getByContainerName = authQuery({
           q.eq("vscode.containerName", args.containerName),
         )
         .filter((q) => q.eq(q.field("teamId"), teamId))
-        .filter((q) => q.eq(q.field("userId"), userId))
         .first()) ?? null;
 
     if (!run) {

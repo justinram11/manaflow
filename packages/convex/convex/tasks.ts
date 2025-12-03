@@ -301,10 +301,9 @@ export const getById = authQuery({
       return null;
     }
 
-    const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
     const task = await ctx.db.get(args.id as Id<"tasks">);
-    if (!task || task.teamId !== teamId || task.userId !== userId) return null;
+    if (!task || task.teamId !== teamId) return null;
 
     if (task.images && task.images.length > 0) {
       const imagesWithUrls = await Promise.all(
@@ -329,13 +328,11 @@ export const getById = authQuery({
 export const getVersions = authQuery({
   args: { teamSlugOrId: v.string(), taskId: v.id("tasks") },
   handler: async (ctx, args) => {
-    const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
     return await ctx.db
       .query("taskVersions")
       .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
       .filter((q) => q.eq(q.field("teamId"), teamId))
-      .filter((q) => q.eq(q.field("userId"), userId))
       .collect();
   },
 });
