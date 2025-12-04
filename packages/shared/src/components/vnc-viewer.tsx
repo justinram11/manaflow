@@ -215,6 +215,8 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
     const connectInternalRef = useRef<(() => Promise<void>) | null>(null);
 
     const [status, setStatus] = useState<VncConnectionStatus>("disconnected");
+    const [errorMessage, setErrorMessage] = useState<string | null>(null);
+    const [reconnectAttempt, setReconnectAttempt] = useState(0);
 
     // Keep urlRef updated
     useEffect(() => {
@@ -228,8 +230,16 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
 
     // Update status and notify
     const updateStatus = useCallback(
-      (newStatus: VncConnectionStatus) => {
+      (newStatus: VncConnectionStatus, error?: string) => {
         setStatus(newStatus);
+        if (newStatus === "error") {
+          setErrorMessage(error ?? "Connection failed");
+        } else if (newStatus === "connected") {
+          setErrorMessage(null);
+          setReconnectAttempt(0);
+        } else if (newStatus === "connecting") {
+          // Keep error message during reconnect attempts for context
+        }
         onStatusChange?.(newStatus);
       },
       [onStatusChange]
@@ -244,7 +254,7 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
     }, []);
 
     // Schedule reconnect with exponential backoff
-    const scheduleReconnect = useCallback(() => {
+    const scheduleReconnect = useCallback((error?: string) => {
       if (isUnmountedRef.current || !shouldReconnectRef.current) {
         return;
       }
@@ -257,20 +267,22 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
         console.log(
           `[VncViewer] Max reconnect attempts (${maxReconnectAttempts}) reached`
         );
-        updateStatus("error");
+        updateStatus("error", error ?? "Max reconnect attempts reached");
         return;
       }
 
       clearReconnectTimer();
 
       const delay = currentReconnectDelayRef.current;
+      const nextAttempt = reconnectAttemptsRef.current + 1;
       console.log(
-        `[VncViewer] Scheduling reconnect in ${delay}ms (attempt ${reconnectAttemptsRef.current + 1})`
+        `[VncViewer] Scheduling reconnect in ${delay}ms (attempt ${nextAttempt})`
       );
 
       reconnectTimerRef.current = setTimeout(() => {
         if (isUnmountedRef.current) return;
         reconnectAttemptsRef.current++;
+        setReconnectAttempt(reconnectAttemptsRef.current);
         // Exponential backoff
         currentReconnectDelayRef.current = Math.min(
           currentReconnectDelayRef.current * 2,
@@ -342,16 +354,17 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
         rfb.addEventListener("disconnect", (e) => {
           if (isUnmountedRef.current) return;
           const detail = (e as CustomEvent<{ clean: boolean }>).detail;
+          const isClean = detail?.clean ?? false;
           console.log(
-            `[VncViewer] Disconnected (clean: ${detail?.clean ?? false})`
+            `[VncViewer] Disconnected (clean: ${isClean})`
           );
           rfbRef.current = null;
           updateStatus("disconnected");
           onDisconnect?.(rfb, detail ?? { clean: false });
 
           // Auto-reconnect on non-clean disconnect
-          if (!detail?.clean && shouldReconnectRef.current) {
-            scheduleReconnect();
+          if (!isClean && shouldReconnectRef.current) {
+            scheduleReconnect("Connection lost unexpectedly");
           }
         });
 
@@ -366,7 +379,7 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
           const detail = (e as CustomEvent<{ status: number; reason: string }>)
             .detail;
           console.error("[VncViewer] Security failure:", detail);
-          updateStatus("error");
+          updateStatus("error", detail?.reason ?? "Security failure");
           onSecurityFailure?.(rfb, detail ?? { status: 0, reason: "Unknown" });
         });
 
@@ -393,9 +406,10 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
         rfbRef.current = rfb;
       } catch (error) {
         console.error("[VncViewer] Failed to create RFB connection:", error);
-        updateStatus("error");
+        const errorMsg = error instanceof Error ? error.message : "Failed to connect";
+        updateStatus("error", errorMsg);
         if (shouldReconnectRef.current) {
-          scheduleReconnect();
+          scheduleReconnect(errorMsg);
         }
       }
     }, [
@@ -889,34 +903,63 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
             <div className="h-8 w-8 animate-spin rounded-full border-2 border-neutral-400 border-t-transparent" />
             <span className="text-sm text-neutral-400">
               {status === "connecting"
-                ? "Connecting to remote desktop..."
+                ? reconnectAttempt > 0
+                  ? `Reconnecting... (attempt ${reconnectAttempt})`
+                  : "Connecting to remote desktop..."
                 : "Waiting for connection..."}
             </span>
+            {reconnectAttempt > 0 && errorMessage && (
+              <span className="text-xs text-neutral-500 max-w-[280px] text-center">
+                {errorMessage}
+              </span>
+            )}
           </div>
         </div>
       ),
-      [status]
+      [status, reconnectAttempt, errorMessage]
     );
 
     // Default error fallback
     const defaultErrorFallback = useMemo(
       () => (
         <div className="absolute inset-0 flex items-center justify-center">
-          <div className="flex flex-col items-center gap-2">
-            <span className="text-sm text-red-400">
-              Failed to connect to remote desktop
-            </span>
+          <div className="flex flex-col items-center gap-3 text-center px-4">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-red-500/10">
+              <svg
+                className="h-5 w-5 text-red-400"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                />
+              </svg>
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-sm font-medium text-neutral-200">
+                Connection failed
+              </span>
+              {errorMessage && (
+                <span className="text-xs text-neutral-400 max-w-[280px]">
+                  {errorMessage}
+                </span>
+              )}
+            </div>
             <button
               type="button"
               onClick={connect}
-              className="mt-2 rounded-md bg-neutral-800 px-3 py-1.5 text-sm text-white hover:bg-neutral-700"
+              className="mt-1 rounded-md bg-neutral-700 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-600 transition-colors"
             >
-              Retry
+              Retry connection
             </button>
           </div>
         </div>
       ),
-      [connect]
+      [connect, errorMessage]
     );
 
     // Prevent Electron's context menu so noVNC can handle right-clicks
