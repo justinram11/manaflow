@@ -956,6 +956,50 @@ impl<'a> MuxApp<'a> {
                     self.set_status("No sandbox selected");
                 }
             }
+            MuxCommand::OpenCursorSSH => {
+                if let Some(sandbox_id) = self.selected_sandbox_id() {
+                    let ssh_host = format!("sandbox-{}", sandbox_id);
+                    let remote_path = "/workspace";
+
+                    // Ensure SSH config is set up for sandbox-* hosts
+                    let config_status = ensure_ssh_config_for_sandboxes(&self.base_url);
+
+                    // Spawn Cursor with Remote-SSH extension
+                    // Cursor uses the same CLI as VS Code: cursor --remote ssh-remote+<host> <path>
+                    match std::process::Command::new("cursor")
+                        .args(["--remote", &format!("ssh-remote+{}", ssh_host), remote_path])
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn()
+                    {
+                        Ok(_) => {
+                            let msg = match config_status {
+                                SshConfigStatus::AlreadyConfigured => {
+                                    format!("Opening Cursor to {}:{}", ssh_host, remote_path)
+                                }
+                                SshConfigStatus::JustConfigured => {
+                                    format!(
+                                        "Configured SSH for sandbox-* hosts. Opening Cursor to {}:{}",
+                                        ssh_host, remote_path
+                                    )
+                                }
+                                SshConfigStatus::Failed(err) => {
+                                    format!(
+                                        "Warning: couldn't configure SSH ({}). Opening Cursor to {}:{}",
+                                        err, ssh_host, remote_path
+                                    )
+                                }
+                            };
+                            self.set_status(msg);
+                        }
+                        Err(e) => {
+                            self.set_status(format!("Failed to open Cursor: {}", e));
+                        }
+                    }
+                } else {
+                    self.set_status("No sandbox selected");
+                }
+            }
             MuxCommand::OpenBrowser => {
                 if let Some(sandbox_id) = self.selected_sandbox_id() {
                     // Get the binary name (cmux or dmux)

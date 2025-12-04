@@ -83,6 +83,7 @@ pub enum MuxCommand {
 
     // External tools
     OpenVsCodeSSH,
+    OpenCursorSSH,
     OpenBrowser,
 }
 
@@ -166,6 +167,7 @@ impl MuxCommand {
             MuxCommand::CopyScrollback,
             // External tools
             MuxCommand::OpenVsCodeSSH,
+            MuxCommand::OpenCursorSSH,
             MuxCommand::OpenBrowser,
         ]
     }
@@ -233,6 +235,7 @@ impl MuxCommand {
             MuxCommand::DisableDeltaPager => "Disable Delta Pager",
             MuxCommand::CopyScrollback => "Copy Scrollback",
             MuxCommand::OpenVsCodeSSH => "Open VS Code (SSH)",
+            MuxCommand::OpenCursorSSH => "Open Cursor (SSH)",
             MuxCommand::OpenBrowser => "Open Browser",
         }
     }
@@ -269,6 +272,7 @@ impl MuxCommand {
             MuxCommand::DisableDeltaPager => &["git diff", "plain diff", "default pager"],
             MuxCommand::CopyScrollback => &["copy", "clipboard", "terminal output", "history"],
             MuxCommand::OpenVsCodeSSH => &["vscode", "code", "remote", "editor", "ide"],
+            MuxCommand::OpenCursorSSH => &["cursor", "remote", "editor", "ide", "ai"],
             MuxCommand::OpenBrowser => &["chrome", "firefox", "safari", "web", "http", "preview"],
             _ => &[],
         }
@@ -337,6 +341,7 @@ impl MuxCommand {
             MuxCommand::DisableDeltaPager => "Use default pager for git diffs",
             MuxCommand::CopyScrollback => "Copy entire terminal scrollback to clipboard",
             MuxCommand::OpenVsCodeSSH => "Open VS Code connected to sandbox via SSH",
+            MuxCommand::OpenCursorSSH => "Open Cursor connected to sandbox via SSH",
             MuxCommand::OpenBrowser => "Open browser with sandbox network proxy",
         }
     }
@@ -411,7 +416,9 @@ impl MuxCommand {
             | MuxCommand::DisableDeltaPager
             | MuxCommand::CopyScrollback => "Terminal",
 
-            MuxCommand::OpenVsCodeSSH | MuxCommand::OpenBrowser => "External",
+            MuxCommand::OpenVsCodeSSH | MuxCommand::OpenCursorSSH | MuxCommand::OpenBrowser => {
+                "External"
+            }
         }
     }
 
@@ -543,6 +550,7 @@ impl MuxCommand {
 
             // External tools
             MuxCommand::OpenVsCodeSSH => Some((KeyModifiers::ALT, KeyCode::Char('v'))),
+            MuxCommand::OpenCursorSSH => Some((KeyModifiers::ALT, KeyCode::Char('c'))),
             MuxCommand::OpenBrowser => Some((KeyModifiers::ALT, KeyCode::Char('b'))),
         }
     }
