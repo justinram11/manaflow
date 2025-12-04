@@ -528,9 +528,14 @@ async function runScriptInTmuxWindow({
   }
 
   // Create script wrapper matching the environment orchestrator format
+  // Source /etc/profile to get system environment variables like RUSTUP_HOME
   const setFlags = useSetE ? "set -eux" : "set -ux";
   const wrappedScript = `#!/bin/zsh
 ${setFlags}
+
+# Source system profile for environment variables (RUSTUP_HOME, etc.)
+[[ -f /etc/profile ]] && source /etc/profile
+
 cd ${repoDir}
 
 echo "=== ${windowName} Script Started at $(date) ==="
