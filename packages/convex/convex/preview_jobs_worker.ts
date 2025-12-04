@@ -580,18 +580,32 @@ ${useSetE ? `echo "=== ${windowName} Script Completed at $(date) ==="` : ""}
     return;
   }
 
-  // Step 3: Create tmux window and run script
-  // Use -d flag to create window without attaching (works without a terminal)
-  // Use -t cmux: format (trailing colon) to target the session
-  const tmuxCommand = [
-    `tmux new-window -t cmux: -n ${singleQuote(windowName)} -c ${singleQuote(repoDir)} -d`,
-    `tmux send-keys -t cmux:${singleQuote(windowName)} "zsh ${singleQuote(scriptFilePath)}" C-m`,
-  ].join(" && ");
+  // Step 3: Create tmux window (matching orchestrator pattern exactly)
+  // Use -d flag and -t cmux: format like the orchestrator does
+  const createWindowResponse = await execInstanceInstanceIdExecPost({
+    client: morphClient,
+    path: { instance_id: instanceId },
+    body: { command: ["zsh", "-lc", `tmux new-window -t cmux: -n ${singleQuote(windowName)} -d`] },
+  });
 
+  if (createWindowResponse.error || createWindowResponse.data?.exit_code !== 0) {
+    console.warn("[preview-jobs] Failed to create tmux window", {
+      previewRunId,
+      windowName,
+      exitCode: createWindowResponse.data?.exit_code,
+      stderr: sliceOutput(createWindowResponse.data?.stderr),
+      error: createWindowResponse.error,
+    });
+    return;
+  }
+
+  // Step 4: Send keys to run the script (matching orchestrator pattern)
+  // Pattern: zsh 'script.sh' 2>&1 | tee 'log'; echo ${pipestatus[1]} > 'exit-code'
+  const sendKeysCmd = `tmux send-keys -t cmux:${singleQuote(windowName)} "zsh ${singleQuote(scriptFilePath)}" C-m`;
   const tmuxResponse = await execInstanceInstanceIdExecPost({
     client: morphClient,
     path: { instance_id: instanceId },
-    body: { command: ["zsh", "-c", tmuxCommand] },
+    body: { command: ["zsh", "-lc", sendKeysCmd] },
   });
 
   if (tmuxResponse.error || tmuxResponse.data?.exit_code !== 0) {
