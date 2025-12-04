@@ -83,15 +83,16 @@ pub enum MuxCommand {
 
     // External tools
     OpenEditor,
+    OpenWith,
+    OpenWithVSCode,
+    OpenWithCursor,
+    OpenWithZed,
+    OpenWithWindsurf,
     SetDefaultEditor,
     SetEditorVSCode,
     SetEditorCursor,
     SetEditorZed,
     SetEditorWindsurf,
-    OpenVsCodeSSH,
-    OpenCursorSSH,
-    OpenZedSSH,
-    OpenWindsurfSSH,
     OpenBrowser,
 }
 
@@ -175,15 +176,16 @@ impl MuxCommand {
             MuxCommand::CopyScrollback,
             // External tools
             MuxCommand::OpenEditor,
+            MuxCommand::OpenWith,
+            MuxCommand::OpenWithVSCode,
+            MuxCommand::OpenWithCursor,
+            MuxCommand::OpenWithZed,
+            MuxCommand::OpenWithWindsurf,
             MuxCommand::SetDefaultEditor,
             MuxCommand::SetEditorVSCode,
             MuxCommand::SetEditorCursor,
             MuxCommand::SetEditorZed,
             MuxCommand::SetEditorWindsurf,
-            MuxCommand::OpenVsCodeSSH,
-            MuxCommand::OpenCursorSSH,
-            MuxCommand::OpenZedSSH,
-            MuxCommand::OpenWindsurfSSH,
             MuxCommand::OpenBrowser,
         ]
     }
@@ -251,15 +253,16 @@ impl MuxCommand {
             MuxCommand::DisableDeltaPager => "Disable Delta Pager",
             MuxCommand::CopyScrollback => "Copy Scrollback",
             MuxCommand::OpenEditor => "Open Editor",
+            MuxCommand::OpenWith => "Open With...",
+            MuxCommand::OpenWithVSCode => "VS Code",
+            MuxCommand::OpenWithCursor => "Cursor",
+            MuxCommand::OpenWithZed => "Zed",
+            MuxCommand::OpenWithWindsurf => "Windsurf",
             MuxCommand::SetDefaultEditor => "Set Default Editor",
-            MuxCommand::SetEditorVSCode => "Set Editor: VS Code",
-            MuxCommand::SetEditorCursor => "Set Editor: Cursor",
-            MuxCommand::SetEditorZed => "Set Editor: Zed",
-            MuxCommand::SetEditorWindsurf => "Set Editor: Windsurf",
-            MuxCommand::OpenVsCodeSSH => "Open VS Code (SSH)",
-            MuxCommand::OpenCursorSSH => "Open Cursor (SSH)",
-            MuxCommand::OpenZedSSH => "Open Zed (SSH)",
-            MuxCommand::OpenWindsurfSSH => "Open Windsurf (SSH)",
+            MuxCommand::SetEditorVSCode => "VS Code",
+            MuxCommand::SetEditorCursor => "Cursor",
+            MuxCommand::SetEditorZed => "Zed",
+            MuxCommand::SetEditorWindsurf => "Windsurf",
             MuxCommand::OpenBrowser => "Open Browser",
         }
     }
@@ -296,15 +299,16 @@ impl MuxCommand {
             MuxCommand::DisableDeltaPager => &["git diff", "plain diff", "default pager"],
             MuxCommand::CopyScrollback => &["copy", "clipboard", "terminal output", "history"],
             MuxCommand::OpenEditor => &["editor", "ide", "code", "remote", "ssh"],
+            MuxCommand::OpenWith => &["editor", "ide", "code", "remote", "ssh", "choose"],
+            MuxCommand::OpenWithVSCode => &["vscode", "code", "remote", "editor", "ide"],
+            MuxCommand::OpenWithCursor => &["cursor", "remote", "editor", "ide", "ai"],
+            MuxCommand::OpenWithZed => &["zed", "remote", "editor", "ide"],
+            MuxCommand::OpenWithWindsurf => &["windsurf", "remote", "editor", "ide", "ai"],
             MuxCommand::SetDefaultEditor => &["editor", "preference", "config", "settings"],
             MuxCommand::SetEditorVSCode => &["vscode", "code", "default", "preference"],
             MuxCommand::SetEditorCursor => &["cursor", "default", "preference", "ai"],
             MuxCommand::SetEditorZed => &["zed", "default", "preference"],
             MuxCommand::SetEditorWindsurf => &["windsurf", "default", "preference", "ai"],
-            MuxCommand::OpenVsCodeSSH => &["vscode", "code", "remote", "editor", "ide"],
-            MuxCommand::OpenCursorSSH => &["cursor", "remote", "editor", "ide", "ai"],
-            MuxCommand::OpenZedSSH => &["zed", "remote", "editor", "ide"],
-            MuxCommand::OpenWindsurfSSH => &["windsurf", "remote", "editor", "ide", "ai"],
             MuxCommand::OpenBrowser => &["chrome", "firefox", "safari", "web", "http", "preview"],
             _ => &[],
         }
@@ -373,6 +377,11 @@ impl MuxCommand {
             MuxCommand::DisableDeltaPager => "Use default pager for git diffs",
             MuxCommand::CopyScrollback => "Copy entire terminal scrollback to clipboard",
             MuxCommand::OpenEditor => "Open default editor connected to sandbox via SSH",
+            MuxCommand::OpenWith => "Choose editor to open sandbox with",
+            MuxCommand::OpenWithVSCode => "Open VS Code connected to sandbox via SSH",
+            MuxCommand::OpenWithCursor => "Open Cursor connected to sandbox via SSH",
+            MuxCommand::OpenWithZed => "Open Zed connected to sandbox via SSH",
+            MuxCommand::OpenWithWindsurf => "Open Windsurf connected to sandbox via SSH",
             MuxCommand::SetDefaultEditor => {
                 "Choose default editor for Alt+E (VS Code, Cursor, Zed, Windsurf)"
             }
@@ -380,10 +389,6 @@ impl MuxCommand {
             MuxCommand::SetEditorCursor => "Set Cursor as the default editor for Alt+E",
             MuxCommand::SetEditorZed => "Set Zed as the default editor for Alt+E",
             MuxCommand::SetEditorWindsurf => "Set Windsurf as the default editor for Alt+E",
-            MuxCommand::OpenVsCodeSSH => "Open VS Code connected to sandbox via SSH",
-            MuxCommand::OpenCursorSSH => "Open Cursor connected to sandbox via SSH",
-            MuxCommand::OpenZedSSH => "Open Zed connected to sandbox via SSH",
-            MuxCommand::OpenWindsurfSSH => "Open Windsurf connected to sandbox via SSH",
             MuxCommand::OpenBrowser => "Open browser with sandbox network proxy",
         }
     }
@@ -459,15 +464,16 @@ impl MuxCommand {
             | MuxCommand::CopyScrollback => "Terminal",
 
             MuxCommand::OpenEditor
+            | MuxCommand::OpenWith
+            | MuxCommand::OpenWithVSCode
+            | MuxCommand::OpenWithCursor
+            | MuxCommand::OpenWithZed
+            | MuxCommand::OpenWithWindsurf
             | MuxCommand::SetDefaultEditor
             | MuxCommand::SetEditorVSCode
             | MuxCommand::SetEditorCursor
             | MuxCommand::SetEditorZed
             | MuxCommand::SetEditorWindsurf
-            | MuxCommand::OpenVsCodeSSH
-            | MuxCommand::OpenCursorSSH
-            | MuxCommand::OpenZedSSH
-            | MuxCommand::OpenWindsurfSSH
             | MuxCommand::OpenBrowser => "External",
         }
     }
@@ -600,15 +606,16 @@ impl MuxCommand {
 
             // External tools
             MuxCommand::OpenEditor => Some((KeyModifiers::ALT, KeyCode::Char('e'))),
-            MuxCommand::SetDefaultEditor => None, // Access via command palette
-            MuxCommand::SetEditorVSCode => None,  // Access via command palette
-            MuxCommand::SetEditorCursor => None,  // Access via command palette
-            MuxCommand::SetEditorZed => None,     // Access via command palette
-            MuxCommand::SetEditorWindsurf => None, // Access via command palette
-            MuxCommand::OpenVsCodeSSH => Some((KeyModifiers::ALT, KeyCode::Char('v'))),
-            MuxCommand::OpenCursorSSH => Some((KeyModifiers::ALT, KeyCode::Char('c'))),
-            MuxCommand::OpenZedSSH => None, // Access via command palette (Alt+Z conflicts with undo)
-            MuxCommand::OpenWindsurfSSH => None, // Access via command palette
+            MuxCommand::OpenWith => None, // Access via command palette (opens submenu)
+            MuxCommand::OpenWithVSCode => None, // Submenu item
+            MuxCommand::OpenWithCursor => None, // Submenu item
+            MuxCommand::OpenWithZed => None, // Submenu item
+            MuxCommand::OpenWithWindsurf => None, // Submenu item
+            MuxCommand::SetDefaultEditor => None, // Access via command palette (opens submenu)
+            MuxCommand::SetEditorVSCode => None, // Submenu item
+            MuxCommand::SetEditorCursor => None, // Submenu item
+            MuxCommand::SetEditorZed => None, // Submenu item
+            MuxCommand::SetEditorWindsurf => None, // Submenu item
             MuxCommand::OpenBrowser => Some((KeyModifiers::ALT, KeyCode::Char('b'))),
         }
     }
@@ -691,6 +698,12 @@ impl MuxCommand {
     /// these items instead of executing the command directly.
     pub fn submenu_items(&self) -> Option<&'static [MuxCommand]> {
         match self {
+            MuxCommand::OpenWith => Some(&[
+                MuxCommand::OpenWithVSCode,
+                MuxCommand::OpenWithCursor,
+                MuxCommand::OpenWithZed,
+                MuxCommand::OpenWithWindsurf,
+            ]),
             MuxCommand::SetDefaultEditor => Some(&[
                 MuxCommand::SetEditorVSCode,
                 MuxCommand::SetEditorCursor,
@@ -705,7 +718,11 @@ impl MuxCommand {
     pub fn is_submenu_item(&self) -> bool {
         matches!(
             self,
-            MuxCommand::SetEditorVSCode
+            MuxCommand::OpenWithVSCode
+                | MuxCommand::OpenWithCursor
+                | MuxCommand::OpenWithZed
+                | MuxCommand::OpenWithWindsurf
+                | MuxCommand::SetEditorVSCode
                 | MuxCommand::SetEditorCursor
                 | MuxCommand::SetEditorZed
                 | MuxCommand::SetEditorWindsurf

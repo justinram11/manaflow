@@ -607,6 +607,37 @@ impl<'a> MuxApp<'a> {
         }
     }
 
+    /// Open the selected sandbox with a specific editor (one-time, doesn't change default).
+    fn open_with_editor(&mut self, editor: EditorChoice) {
+        if let Some(sandbox_id) = self.selected_sandbox_id() {
+            let ssh_host = format!("sandbox-{}", sandbox_id);
+            let remote_path = "/workspace";
+
+            // Ensure SSH config is set up for sandbox-* hosts
+            let config_status = ensure_ssh_config_for_sandboxes(&self.base_url);
+
+            match editor.open(&ssh_host, remote_path) {
+                Ok(msg) => {
+                    let full_msg = match config_status {
+                        SshConfigStatus::AlreadyConfigured => msg,
+                        SshConfigStatus::JustConfigured => {
+                            format!("Configured SSH for sandbox-* hosts. {}", msg)
+                        }
+                        SshConfigStatus::Failed(err) => {
+                            format!("Warning: couldn't configure SSH ({}). {}", err, msg)
+                        }
+                    };
+                    self.set_status(full_msg);
+                }
+                Err(e) => {
+                    self.set_status(e);
+                }
+            }
+        } else {
+            self.set_status("No sandbox selected");
+        }
+    }
+
     pub fn open_notifications(&mut self) {
         self.notifications.is_open = true;
         self.focus = FocusArea::Notifications;
@@ -1034,137 +1065,21 @@ impl<'a> MuxApp<'a> {
                     }
                 }
             }
-            MuxCommand::OpenVsCodeSSH => {
-                if let Some(sandbox_id) = self.selected_sandbox_id() {
-                    let ssh_host = format!("sandbox-{}", sandbox_id);
-                    let remote_path = "/workspace";
-
-                    // Ensure SSH config is set up for sandbox-* hosts
-                    let config_status = ensure_ssh_config_for_sandboxes(&self.base_url);
-
-                    // Spawn VS Code with Remote-SSH extension
-                    // Format: code --remote ssh-remote+<host> <path>
-                    match std::process::Command::new("code")
-                        .args(["--remote", &format!("ssh-remote+{}", ssh_host), remote_path])
-                        .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null())
-                        .spawn()
-                    {
-                        Ok(_) => {
-                            let msg = match config_status {
-                                SshConfigStatus::AlreadyConfigured => {
-                                    format!("Opening VS Code to {}:{}", ssh_host, remote_path)
-                                }
-                                SshConfigStatus::JustConfigured => {
-                                    format!(
-                                        "Configured SSH for sandbox-* hosts. Opening VS Code to {}:{}",
-                                        ssh_host, remote_path
-                                    )
-                                }
-                                SshConfigStatus::Failed(err) => {
-                                    format!(
-                                        "Warning: couldn't configure SSH ({}). Opening VS Code to {}:{}",
-                                        err, ssh_host, remote_path
-                                    )
-                                }
-                            };
-                            self.set_status(msg);
-                        }
-                        Err(e) => {
-                            self.set_status(format!("Failed to open VS Code: {}", e));
-                        }
-                    }
-                } else {
-                    self.set_status("No sandbox selected");
-                }
+            MuxCommand::OpenWith => {
+                // This normally opens a submenu in the palette, but if executed directly:
+                self.set_status("Use command palette to choose an editor");
             }
-            MuxCommand::OpenCursorSSH => {
-                if let Some(sandbox_id) = self.selected_sandbox_id() {
-                    let ssh_host = format!("sandbox-{}", sandbox_id);
-                    let remote_path = "/workspace";
-
-                    // Ensure SSH config is set up for sandbox-* hosts
-                    let config_status = ensure_ssh_config_for_sandboxes(&self.base_url);
-
-                    // Spawn Cursor with Remote-SSH extension
-                    // Cursor uses the same CLI as VS Code: cursor --remote ssh-remote+<host> <path>
-                    match std::process::Command::new("cursor")
-                        .args(["--remote", &format!("ssh-remote+{}", ssh_host), remote_path])
-                        .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null())
-                        .spawn()
-                    {
-                        Ok(_) => {
-                            let msg = match config_status {
-                                SshConfigStatus::AlreadyConfigured => {
-                                    format!("Opening Cursor to {}:{}", ssh_host, remote_path)
-                                }
-                                SshConfigStatus::JustConfigured => {
-                                    format!(
-                                        "Configured SSH for sandbox-* hosts. Opening Cursor to {}:{}",
-                                        ssh_host, remote_path
-                                    )
-                                }
-                                SshConfigStatus::Failed(err) => {
-                                    format!(
-                                        "Warning: couldn't configure SSH ({}). Opening Cursor to {}:{}",
-                                        err, ssh_host, remote_path
-                                    )
-                                }
-                            };
-                            self.set_status(msg);
-                        }
-                        Err(e) => {
-                            self.set_status(format!("Failed to open Cursor: {}", e));
-                        }
-                    }
-                } else {
-                    self.set_status("No sandbox selected");
-                }
+            MuxCommand::OpenWithVSCode => {
+                self.open_with_editor(EditorChoice::VSCode);
             }
-            MuxCommand::OpenZedSSH => {
-                if let Some(sandbox_id) = self.selected_sandbox_id() {
-                    let ssh_host = format!("sandbox-{}", sandbox_id);
-                    let remote_path = "/workspace";
-
-                    // Ensure SSH config is set up for sandbox-* hosts
-                    let config_status = ensure_ssh_config_for_sandboxes(&self.base_url);
-
-                    // Spawn Zed with SSH URL format: zed ssh://user@host/path
-                    let ssh_url = format!("ssh://root@{}{}", ssh_host, remote_path);
-                    match std::process::Command::new("zed")
-                        .arg(&ssh_url)
-                        .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null())
-                        .spawn()
-                    {
-                        Ok(_) => {
-                            let msg = match config_status {
-                                SshConfigStatus::AlreadyConfigured => {
-                                    format!("Opening Zed to {}", ssh_url)
-                                }
-                                SshConfigStatus::JustConfigured => {
-                                    format!(
-                                        "Configured SSH for sandbox-* hosts. Opening Zed to {}",
-                                        ssh_url
-                                    )
-                                }
-                                SshConfigStatus::Failed(err) => {
-                                    format!(
-                                        "Warning: couldn't configure SSH ({}). Opening Zed to {}",
-                                        err, ssh_url
-                                    )
-                                }
-                            };
-                            self.set_status(msg);
-                        }
-                        Err(e) => {
-                            self.set_status(format!("Failed to open Zed: {}", e));
-                        }
-                    }
-                } else {
-                    self.set_status("No sandbox selected");
-                }
+            MuxCommand::OpenWithCursor => {
+                self.open_with_editor(EditorChoice::Cursor);
+            }
+            MuxCommand::OpenWithZed => {
+                self.open_with_editor(EditorChoice::Zed);
+            }
+            MuxCommand::OpenWithWindsurf => {
+                self.open_with_editor(EditorChoice::Windsurf);
             }
             MuxCommand::OpenEditor => {
                 if let Some(sandbox_id) = self.selected_sandbox_id() {
@@ -1219,49 +1134,6 @@ impl<'a> MuxApp<'a> {
             MuxCommand::SetEditorWindsurf => {
                 self.default_editor = EditorChoice::Windsurf;
                 self.set_status("Default editor set to Windsurf. Press Alt+E to open.");
-            }
-            MuxCommand::OpenWindsurfSSH => {
-                if let Some(sandbox_id) = self.selected_sandbox_id() {
-                    let ssh_host = format!("sandbox-{}", sandbox_id);
-                    let remote_path = "/workspace";
-
-                    // Ensure SSH config is set up for sandbox-* hosts
-                    let config_status = ensure_ssh_config_for_sandboxes(&self.base_url);
-
-                    // Spawn Windsurf with Remote-SSH extension (same CLI as VS Code)
-                    match std::process::Command::new("windsurf")
-                        .args(["--remote", &format!("ssh-remote+{}", ssh_host), remote_path])
-                        .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null())
-                        .spawn()
-                    {
-                        Ok(_) => {
-                            let msg = match config_status {
-                                SshConfigStatus::AlreadyConfigured => {
-                                    format!("Opening Windsurf to {}:{}", ssh_host, remote_path)
-                                }
-                                SshConfigStatus::JustConfigured => {
-                                    format!(
-                                        "Configured SSH for sandbox-* hosts. Opening Windsurf to {}:{}",
-                                        ssh_host, remote_path
-                                    )
-                                }
-                                SshConfigStatus::Failed(err) => {
-                                    format!(
-                                        "Warning: couldn't configure SSH ({}). Opening Windsurf to {}:{}",
-                                        err, ssh_host, remote_path
-                                    )
-                                }
-                            };
-                            self.set_status(msg);
-                        }
-                        Err(e) => {
-                            self.set_status(format!("Failed to open Windsurf: {}", e));
-                        }
-                    }
-                } else {
-                    self.set_status("No sandbox selected");
-                }
             }
             MuxCommand::OpenBrowser => {
                 if let Some(sandbox_id) = self.selected_sandbox_id() {
