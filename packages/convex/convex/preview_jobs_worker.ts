@@ -502,7 +502,6 @@ async function ensureTmuxSession({
 }
 
 // Constants matching the environment orchestrator script
-const CMUX_RUNTIME_DIR = "/var/tmp/cmux-scripts";
 const MAINTENANCE_WINDOW_NAME = "maintenance";
 const DEV_WINDOW_NAME = "dev";
 
