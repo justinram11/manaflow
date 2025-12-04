@@ -11,7 +11,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import RFB from "@novnc/novnc/core/rfb";
+import RFB from "@novnc/novnc/lib/rfb";
 import clsx from "clsx";
 
 export type VncConnectionStatus =
