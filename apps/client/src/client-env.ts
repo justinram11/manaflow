@@ -1,11 +1,6 @@
 import { createEnv } from "@t3-oss/env-core";
 import { z } from "zod";
 
-console.log(
-  "process.env.NEXT_PUBLIC_RELATED_WWW_ORIGIN_PREVIEW",
-  process.env.NEXT_PUBLIC_RELATED_WWW_ORIGIN_PREVIEW
-);
-
 export const env = createEnv({
   server: {},
   /**
@@ -57,3 +52,5 @@ export const env = createEnv({
    */
   emptyStringAsUndefined: true,
 });
+
+console.log("env", env);
