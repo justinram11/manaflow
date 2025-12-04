@@ -907,8 +907,8 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
     }, [focusOnClick, focus]);
 
     // Compute what to render
-    const showLoading = status === "connecting" || status === "disconnected";
-    const showError = status === "error";
+    const showLoading = (status === "connecting" || status === "disconnected") && !isOffline;
+    const showError = status === "error" || isOffline;
 
     // Default loading fallback
     const defaultLoadingFallback = useMemo(
