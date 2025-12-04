@@ -923,6 +923,8 @@ impl<'a> MuxApp<'a> {
                     // Format: code --remote ssh-remote+<host> <path>
                     match std::process::Command::new("code")
                         .args(["--remote", &format!("ssh-remote+{}", ssh_host), remote_path])
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
                         .spawn()
                     {
                         Ok(_) => {
@@ -961,9 +963,11 @@ impl<'a> MuxApp<'a> {
                         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
                         .unwrap_or_else(|| "dmux".to_string());
 
-                    // Spawn the browser command in background
+                    // Spawn the browser command in background, suppressing output
                     match std::process::Command::new(&binary_name)
                         .args(["browser", &sandbox_id.to_string()])
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
                         .spawn()
                     {
                         Ok(_) => {
