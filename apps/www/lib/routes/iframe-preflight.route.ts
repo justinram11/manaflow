@@ -401,19 +401,14 @@ iframePreflightRouter.openapi(
                   typeof metadata.userId === "string"
                     ? metadata.userId
                     : null;
-                if (metadataUserId && metadataUserId !== userId) {
-                  return {
-                    authorized: false,
-                    reason:
-                      "You do not have permission to resume this workspace.",
-                  };
-                }
 
                 const metadataTeamId =
                   typeof metadata.teamId === "string"
                     ? metadata.teamId
                     : null;
 
+                // If workspace belongs to a team, check team membership
+                // (allows team members to resume each other's workspaces)
                 if (metadataTeamId) {
                   try {
                     const memberships = await teamMembershipsPromise;
@@ -441,7 +436,17 @@ iframePreflightRouter.openapi(
                         "We could not verify your team membership for this workspace.",
                     };
                   }
-                } else if (!metadataUserId) {
+                } else if (metadataUserId) {
+                  // Personal workspace (no team) - only the owner can resume
+                  if (metadataUserId !== userId) {
+                    return {
+                      authorized: false,
+                      reason:
+                        "You do not have permission to resume this workspace.",
+                    };
+                  }
+                } else {
+                  // No team or user ID - cannot verify ownership
                   return {
                     authorized: false,
                     reason: "Unable to verify workspace ownership.",
