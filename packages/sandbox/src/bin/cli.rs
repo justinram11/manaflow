@@ -1892,8 +1892,15 @@ async fn handle_onboard() -> anyhow::Result<()> {
 }
 
 /// Handle real SSH to a sandbox (via WebSocket proxy)
-async fn handle_real_ssh(_client: &Client, _base_url: &str, args: &SshArgs) -> anyhow::Result<()> {
+async fn handle_real_ssh(client: &Client, base_url: &str, args: &SshArgs) -> anyhow::Result<()> {
     let binary_name = if is_dmux() { "dmux" } else { "cmux" };
+
+    // Sync SSH keys and config files to sandbox before connecting
+    // This ensures authorized_keys exists and sshd is running
+    eprintln!("Syncing SSH keys to sandbox {}...", args.id);
+    if let Err(e) = upload_sync_files(client, base_url, &args.id, false).await {
+        eprintln!("Warning: Failed to sync files: {}", e);
+    }
 
     // Build SSH command with ProxyCommand using our _ssh-proxy
     let mut ssh_args = vec![
@@ -1919,13 +1926,23 @@ async fn handle_real_ssh(_client: &Client, _base_url: &str, args: &SshArgs) -> a
     eprintln!("Connecting to sandbox {}...", args.id);
 
     // Execute native SSH with ProxyCommand
-    let status = std::process::Command::new("ssh").args(&ssh_args).status()?;
-
-    if !status.success() {
-        return Err(anyhow::anyhow!("SSH connection failed"));
+    // Use exec on Unix to replace process and fully inherit terminal for passphrase prompts
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let err = std::process::Command::new("ssh").args(&ssh_args).exec();
+        // exec only returns on error
+        return Err(anyhow::anyhow!("Failed to exec ssh: {}", err));
     }
 
-    Ok(())
+    #[cfg(not(unix))]
+    {
+        let status = std::process::Command::new("ssh").args(&ssh_args).status()?;
+        if !status.success() {
+            return Err(anyhow::anyhow!("SSH connection failed"));
+        }
+        Ok(())
+    }
 }
 
 /// Generate SSH config for easy sandbox access
