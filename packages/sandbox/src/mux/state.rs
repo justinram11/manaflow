@@ -123,13 +123,14 @@ fn ensure_ssh_config_for_sandboxes() -> SshConfigStatus {
         .unwrap_or_else(|| "dmux".to_string());
 
     // Append the config with IdentityFile pointing to our passwordless key
+    // Note: IdentitiesOnly is NOT set, so SSH agent keys can be used as fallback
+    // if the dedicated key hasn't been synced yet
     let config_block = format!(
         r#"
 # SSH config for {} sandboxes (auto-configured)
 Host sandbox-*
     User root
     IdentityFile {}
-    IdentitiesOnly yes
     StrictHostKeyChecking no
     UserKnownHostsFile /dev/null
     LogLevel ERROR
@@ -371,6 +372,10 @@ impl<'a> MuxApp<'a> {
         event_tx: mpsc::UnboundedSender<MuxEvent>,
         workspace_path: PathBuf,
     ) -> Self {
+        // Pre-generate SSH key for sandbox access so it's included in initial syncs
+        // This ensures VS Code SSH works without additional setup
+        let _ = ensure_ssh_config_for_sandboxes();
+
         Self {
             workspace_manager: WorkspaceManager::new(),
             sidebar: Sidebar::new(),
