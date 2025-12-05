@@ -99,6 +99,7 @@ export const uploadScreenshot = httpAction(async (ctx, req) => {
       taskId: run.taskId,
       runId: payload.runId,
       status: payload.status,
+      commitSha: payload.commitSha,
       hasUiChanges: payload.hasUiChanges,
       screenshots: storedScreens,
       error: payload.error,

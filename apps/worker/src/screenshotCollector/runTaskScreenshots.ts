@@ -99,8 +99,10 @@ export async function runTaskScreenshots(
   let hasUiChanges: boolean | undefined;
   let status: ScreenshotUploadPayload["status"] = "failed";
   let error: string | undefined;
+  let commitSha: string | undefined;
 
   if (result.status === "completed") {
+    commitSha = result.commitSha;
     const capturedScreens = result.screenshots ?? [];
     hasUiChanges = result.hasUiChanges;
     if (capturedScreens.length === 0) {
@@ -160,6 +162,7 @@ export async function runTaskScreenshots(
   } else if (result.status === "skipped") {
     status = "skipped";
     error = result.reason;
+    commitSha = result.commitSha;
     log("INFO", "Screenshot workflow skipped", {
       taskRunId,
       reason: result.reason,
@@ -167,6 +170,7 @@ export async function runTaskScreenshots(
   } else if (result.status === "failed") {
     status = "failed";
     error = result.error;
+    commitSha = result.commitSha;
     log("ERROR", "Screenshot workflow failed", {
       taskRunId,
       error: result.error,
@@ -179,6 +183,15 @@ export async function runTaskScreenshots(
       result,
     });
   }
+  if (!commitSha) {
+    log("ERROR", "Cannot upload screenshot result without commitSha", {
+      taskRunId,
+      status,
+      error,
+    });
+    return;
+  }
+
   await uploadScreenshot({
     token,
     baseUrlOverride: convexUrl,
@@ -186,6 +199,7 @@ export async function runTaskScreenshots(
       taskId,
       runId: taskRunId,
       status,
+      commitSha,
       images,
       error,
       hasUiChanges,

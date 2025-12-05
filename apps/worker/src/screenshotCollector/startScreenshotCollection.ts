@@ -42,8 +42,8 @@ export type ScreenshotCollectionResult =
       commitSha: string;
       hasUiChanges?: boolean;
     }
-  | { status: "skipped"; reason: string }
-  | { status: "failed"; error: string };
+  | { status: "skipped"; reason: string; commitSha?: string }
+  | { status: "failed"; error: string; commitSha?: string };
 
 function sanitizeSegment(segment: string | null | undefined): string {
   if (!segment) {
@@ -425,7 +425,7 @@ export async function startScreenshotCollection(
       `Auth debug: taskRunJwt=${options.taskRunJwt ? "present" : "missing"}, anthropicApiKey=${options.anthropicApiKey ? "present" : "missing"}, env ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY ? "present" : "missing"}`
     );
     log("ERROR", reason, { baseBranch, mergeBase });
-    return { status: "skipped", reason };
+    return { status: "skipped", reason, commitSha };
   }
 
   const headBranch =
@@ -466,14 +466,14 @@ export async function startScreenshotCollection(
           const reason = "No UI changes detected in this PR";
           await logToScreenshotCollector(reason);
           log("INFO", reason, { headBranch, outputDir });
-          return { status: "skipped", reason };
+          return { status: "skipped", reason, commitSha };
         }
         // Otherwise, Claude thought there were UI changes but returned no files - unexpected
         const error =
           "Claude collector reported success but returned no files";
         await logToScreenshotCollector(error);
         log("ERROR", error, { headBranch, outputDir });
-        return { status: "failed", error };
+        return { status: "failed", error, commitSha };
       }
 
       const screenshotEntries: CapturedScreenshot[] =
@@ -493,7 +493,7 @@ export async function startScreenshotCollection(
             (screenshot) => screenshot.path
           ),
         });
-        return { status: "failed", error };
+        return { status: "failed", error, commitSha };
       }
 
       const initialPrimary = screenshotEntries[0];
@@ -507,7 +507,7 @@ export async function startScreenshotCollection(
             (screenshot) => screenshot.path
           ),
         });
-        return { status: "failed", error };
+        return { status: "failed", error, commitSha };
       }
       let primaryScreenshot: CapturedScreenshot = initialPrimary;
 
@@ -592,7 +592,7 @@ export async function startScreenshotCollection(
     if (claudeResult.status === "skipped") {
       const reason = claudeResult.reason ?? "Claude collector skipped";
       await logToScreenshotCollector(reason);
-      return { status: "skipped", reason };
+      return { status: "skipped", reason, commitSha };
     }
 
     const error = claudeResult.error ?? "Claude collector failed";
@@ -602,7 +602,7 @@ export async function startScreenshotCollection(
       headBranch,
       baseBranch,
     });
-    return { status: "failed", error };
+    return { status: "failed", error, commitSha };
   } catch (error) {
     const reason =
       error instanceof Error ? error.message : String(error ?? "unknown error");
@@ -614,6 +614,6 @@ export async function startScreenshotCollection(
       openVSCodeUrl: SCREENSHOT_COLLECTOR_DIRECTORY_URL,
       error: reason,
     });
-    return { status: "failed", error: reason };
+    return { status: "failed", error: reason, commitSha };
   }
 }
