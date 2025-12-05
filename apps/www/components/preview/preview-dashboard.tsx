@@ -5,15 +5,31 @@ import {
   ArrowLeft,
   Camera,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Circle,
+  Code,
+  Download,
   ExternalLink,
+  FileText,
+  Folder,
+  GitBranch,
+  GitCompare as GitCompareIcon,
   Github,
+  Home,
   Link2,
   Loader2,
+  Maximize2,
+  Monitor,
   Pencil,
+  Plus,
   Search,
   Server,
+  Settings,
   Star,
+  TerminalSquare,
   Trash2,
+  X,
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
@@ -178,24 +194,193 @@ const MOCK_SCREENSHOTS: MockScreenshot[] = [
   },
   {
     id: "4",
+    caption: "Maintenance and Dev Scripts section expanded showing script input fields",
+    imageUrl: "https://famous-camel-162.convex.cloud/api/storage/4c392058-9bd7-4be9-8cfc-46cdf18633af",
+  },
+  {
+    id: "5",
+    caption: "Environment Variables section expanded with name/value input fields and reveal/hide toggle",
+    imageUrl: "https://famous-camel-162.convex.cloud/api/storage/017f34cf-6f10-46a0-af77-06d9fef44a84",
+  },
+  {
+    id: "6",
     caption: "Full page view of workspace configuration showing sidebar with step-by-step wizard (step 3 active) and VS Code iframe embedded on the right",
     imageUrl: "https://famous-camel-162.convex.cloud/api/storage/e6517fb1-194c-4128-9dc8-b0a7ed1ca67d",
   },
   {
-    id: "5",
+    id: "7",
+    caption: "Back to project setup button in the sidebar",
+    imageUrl: "https://famous-camel-162.convex.cloud/api/storage/767aa6b4-b584-4f44-9bb8-508f4edb8439",
+  },
+  {
+    id: "8",
+    caption: "Sidebar header showing Configure workspace title and repository name",
+    imageUrl: "https://famous-camel-162.convex.cloud/api/storage/494c475c-6fae-424b-acd5-be81cceb56a1",
+  },
+  {
+    id: "9",
+    caption: "Step 1 (Maintenance and Dev Scripts) in collapsed state with checkmark badge",
+    imageUrl: "https://famous-camel-162.convex.cloud/api/storage/bccc7af4-180e-45bc-94bf-77a3def45816",
+  },
+  {
+    id: "10",
+    caption: "Step 2 (Environment Variables) in collapsed state with checkmark badge",
+    imageUrl: "https://famous-camel-162.convex.cloud/api/storage/90e57824-11b9-4d79-919b-a43dfcdf16c1",
+  },
+  {
+    id: "11",
     caption: "Step 3 (Run scripts in VS Code terminal) expanded showing instructions and command block",
     imageUrl: "https://famous-camel-162.convex.cloud/api/storage/9bc44cf5-bd16-4f37-9312-62963d10311d",
   },
+  {
+    id: "12",
+    caption: "Command block in step 3 showing combined maintenance and dev scripts with copy button",
+    imageUrl: "https://famous-camel-162.convex.cloud/api/storage/9c88db8b-9dee-4f33-8fc1-e695d3f225f1",
+  },
+  {
+    id: "13",
+    caption: "Full page view of workspace configuration at step 4 showing sidebar and browser VNC iframe on the right",
+    imageUrl: "https://famous-camel-162.convex.cloud/api/storage/61dfb080-6b98-4c28-82eb-70d675daf1ef",
+  },
+  {
+    id: "14",
+    caption: "Step 4 (Configure browser) expanded showing browser setup instructions",
+    imageUrl: "https://famous-camel-162.convex.cloud/api/storage/191dc959-3d69-4c53-8350-e7a986631f2b",
+  },
+  {
+    id: "15",
+    caption: "Step 3 (Run scripts) in collapsed state after moving to step 4",
+    imageUrl: "https://famous-camel-162.convex.cloud/api/storage/f4efebf5-a4ce-4297-9193-7a5b86166ef6",
+  },
+  {
+    id: "16",
+    caption: "Save configuration button shown at the end of step 4",
+    imageUrl: "https://famous-camel-162.convex.cloud/api/storage/cdb540a9-5e16-4d3c-bd82-96b551fc7a78",
+  },
+  {
+    id: "17",
+    caption: "Step 1 scripts section re-expanded in sidebar showing compact form with script input fields",
+    imageUrl: "https://famous-camel-162.convex.cloud/api/storage/aa3f1ee7-6849-4fc0-be2e-76ecf56e2a96",
+  },
+  {
+    id: "18",
+    caption: "Step 2 environment variables section re-expanded in sidebar showing compact form with env var inputs",
+    imageUrl: "https://famous-camel-162.convex.cloud/api/storage/80c2281a-e9ba-4007-9f0f-f6d44469c786",
+  },
+  {
+    id: "19",
+    caption: "Full page view showing multiple steps expanded simultaneously in the sidebar demonstrating component reuse",
+    imageUrl: "https://famous-camel-162.convex.cloud/api/storage/6853f198-8c7e-4383-9f27-05856250d888",
+  },
+  {
+    id: "20",
+    caption: "Full page view after clicking back button, returning to the initial setup layout",
+    imageUrl: "https://famous-camel-162.convex.cloud/api/storage/a6c469ed-ad11-4329-8d4f-88976a037a54",
+  },
+  {
+    id: "21",
+    caption: "Framework preset dropdown menu open showing all available options (Other, Next.js, Vite, Remix, Nuxt, SvelteKit, Angular, Create React App, Vue)",
+    imageUrl: "https://famous-camel-162.convex.cloud/api/storage/a6c04dc1-7867-46e6-b359-e401c4acb224",
+  },
 ];
+
+// Height for both tab contents (consistent across tabs)
+const MOCK_BROWSER_CONTENT_HEIGHT = 975;
 
 function MockGitHubPRBrowser() {
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"github" | "workspace">("github");
 
+  // State for collapsed git diff files
+  const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set(["file3"]));
+
+  // State for resizable panels (percentages)
+  const [leftPanelWidth, setLeftPanelWidth] = useState(55); // Workspace panel width %
+  const [topPanelHeight, setTopPanelHeight] = useState(50); // Browser panel height %
+
+  // Refs for resize handling
+  const containerRef = useRef<HTMLDivElement>(null);
+  const isResizingHorizontal = useRef(false);
+  const isResizingVertical = useRef(false);
+
+  const toggleFileCollapse = useCallback((fileId: string) => {
+    setCollapsedFiles(prev => {
+      const next = new Set(prev);
+      if (next.has(fileId)) {
+        next.delete(fileId);
+      } else {
+        next.add(fileId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleHorizontalResize = useCallback((e: MouseEvent) => {
+    if (!isResizingHorizontal.current || !containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    // Account for sidebar width (220px)
+    const sidebarWidth = 220;
+    const availableWidth = rect.width - sidebarWidth;
+    const relativeX = e.clientX - rect.left - sidebarWidth;
+    const newWidth = Math.min(Math.max((relativeX / availableWidth) * 100, 30), 70);
+    setLeftPanelWidth(newWidth);
+  }, []);
+
+  const handleVerticalResize = useCallback((e: MouseEvent) => {
+    if (!isResizingVertical.current || !containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const relativeY = e.clientY - rect.top;
+    const newHeight = Math.min(Math.max((relativeY / rect.height) * 100, 25), 75);
+    setTopPanelHeight(newHeight);
+  }, []);
+
+  const stopResizing = useCallback(() => {
+    isResizingHorizontal.current = false;
+    isResizingVertical.current = false;
+    document.body.style.cursor = "";
+    document.body.classList.remove("select-none");
+  }, []);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (isResizingHorizontal.current) {
+        handleHorizontalResize(e);
+      } else if (isResizingVertical.current) {
+        handleVerticalResize(e);
+      }
+    };
+
+    const handleMouseUp = () => {
+      stopResizing();
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [handleHorizontalResize, handleVerticalResize, stopResizing]);
+
+  const startHorizontalResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizingHorizontal.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.classList.add("select-none");
+  }, []);
+
+  const startVerticalResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizingVertical.current = true;
+    document.body.style.cursor = "row-resize";
+    document.body.classList.add("select-none");
+  }, []);
+
   return (
-    <div className="pt-12">
-      {/* Browser window frame */}
-      <div className="rounded-xl border border-neutral-700 bg-[#202124] overflow-hidden shadow-2xl">
+    <div className="pt-12 w-screen relative left-1/2 -translate-x-1/2 px-4">
+      {/* Browser window frame - wider than container */}
+      <div className="rounded-xl border border-neutral-700 bg-[#202124] overflow-hidden shadow-2xl max-w-[1400px] mx-auto">
         {/* Chrome-style tab bar */}
         <div className="flex items-end h-10 bg-[#202124] pt-2 px-2">
           {/* Traffic lights */}
@@ -288,10 +473,10 @@ function MockGitHubPRBrowser() {
 
         {/* Content area - conditionally render based on active tab */}
         {activeTab === "github" ? (
-          <div className="bg-[#0d1117]">
+          <div className="bg-[#0d1117] flex flex-col" style={{ height: MOCK_BROWSER_CONTENT_HEIGHT }}>
 
           {/* GitHub header */}
-          <div className="bg-[#010409] border-b border-[#30363d] px-4 py-3">
+          <div className="bg-[#010409] border-b border-[#30363d] px-4 py-3 shrink-0">
             <div className="flex items-center gap-2 text-sm">
               <svg className="h-4 w-4 text-[#7d8590]" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z" />
@@ -303,7 +488,7 @@ function MockGitHubPRBrowser() {
           </div>
 
           {/* PR header */}
-          <div className="bg-[#0d1117] border-b border-[#30363d] px-6 py-4">
+          <div className="bg-[#0d1117] border-b border-[#30363d] px-6 py-4 shrink-0">
             <div className="flex items-start gap-2">
               <h1 className="text-xl font-semibold text-[#e6edf3]">
                 reuse preview config component for step by step re 6k4tq
@@ -328,7 +513,7 @@ function MockGitHubPRBrowser() {
           </div>
 
           {/* PR tabs */}
-          <div className="bg-[#0d1117] border-b border-[#30363d] px-6">
+          <div className="bg-[#0d1117] border-b border-[#30363d] px-6 shrink-0">
             <nav className="flex gap-4">
               <button className="flex items-center gap-2 px-2 py-3 text-sm font-medium text-[#e6edf3] border-b-2 border-[#f78166] -mb-px">
                 <svg className="h-4 w-4" viewBox="0 0 16 16" fill="currentColor">
@@ -362,7 +547,7 @@ function MockGitHubPRBrowser() {
           </div>
 
           {/* GitHub PR content - scrollable */}
-          <div className="bg-[#0d1117] max-h-[550px] overflow-y-auto" style={{ scrollbarWidth: "thin", scrollbarColor: "#30363d #0d1117" }}>
+          <div className="bg-[#0d1117] overflow-y-auto flex-1 min-h-0" style={{ scrollbarWidth: "thin", scrollbarColor: "#30363d #0d1117" }}>
             <div className="px-6 py-4 space-y-4">
               {/* Timeline: User opened PR */}
               <div className="flex items-center gap-3 text-sm">
@@ -533,184 +718,445 @@ function MockGitHubPRBrowser() {
           </div>
         </div>
         ) : (
-          <div className="bg-[#1e1e1e] flex h-[550px]">
-            {/* Left Sidebar - Source Control */}
-            <div className="w-[280px] bg-[#252526] border-r border-[#3c3c3c] flex flex-col shrink-0">
-              {/* Sidebar Header */}
-              <div className="flex items-center justify-between px-3 py-2 border-b border-[#3c3c3c]">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-bold text-[#7c3aed]">&gt;</span>
-                  <span className="text-sm font-medium text-white">Workspace</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <button className="p-1 text-[#858585] hover:text-white hover:bg-[#3c3c3c] rounded">
-                    <svg className="h-4 w-4" viewBox="0 0 16 16" fill="currentColor">
-                      <path d="M9.5 13a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"/>
-                    </svg>
+          <div ref={containerRef} className="bg-neutral-900 flex" style={{ height: MOCK_BROWSER_CONTENT_HEIGHT }}>
+            {/* Left Sidebar - cmux style */}
+            <div className="w-[220px] bg-neutral-950 border-r border-neutral-800 flex flex-col shrink-0">
+              {/* Header with logo */}
+              <div className="h-[38px] flex items-center px-3 shrink-0">
+                <CmuxLogo height={28} wordmarkText="cmux.dev" />
+                <div className="ml-auto">
+                  <button className="w-[25px] h-[25px] border border-neutral-800 hover:bg-neutral-900 rounded-lg flex items-center justify-center">
+                    <Plus className="w-4 h-4 text-neutral-300" />
                   </button>
                 </div>
               </div>
 
-              {/* Search */}
-              <div className="px-2 py-2">
-                <div className="flex items-center gap-2 px-2 py-1 bg-[#3c3c3c] rounded text-sm">
-                  <Search className="h-3.5 w-3.5 text-[#858585]" />
-                  <span className="text-[#858585]">workspace</span>
-                </div>
-              </div>
+              {/* Navigation items */}
+              <nav className="flex-1 overflow-y-auto">
+                <ul className="flex flex-col gap-px">
+                  <li>
+                    <div className="mx-1 flex items-center gap-2 rounded-sm pl-2 ml-2 pr-3 py-1 text-[13px] text-neutral-100 hover:bg-neutral-800/45 cursor-pointer">
+                      <Home className="w-4 h-4 text-neutral-400" />
+                      <span>Home</span>
+                    </div>
+                  </li>
+                  <li>
+                    <div className="mx-1 flex items-center gap-2 rounded-sm pl-2 ml-2 pr-3 py-1 text-[13px] text-neutral-100 hover:bg-neutral-800/45 cursor-pointer">
+                      <Server className="w-4 h-4 text-neutral-400" />
+                      <span>Environments</span>
+                    </div>
+                  </li>
+                  <li>
+                    <div className="mx-1 flex items-center gap-2 rounded-sm pl-2 ml-2 pr-3 py-1 text-[13px] text-neutral-100 hover:bg-neutral-800/45 cursor-pointer">
+                      <Settings className="w-4 h-4 text-neutral-400" />
+                      <span>Settings</span>
+                    </div>
+                  </li>
+                </ul>
 
-              {/* Source Control Section */}
-              <div className="flex-1 overflow-y-auto">
-                <div className="px-2">
-                  <div className="flex items-center gap-1 py-1 text-[11px] font-semibold text-[#858585] uppercase tracking-wide">
-                    <svg className="h-3 w-3" viewBox="0 0 16 16" fill="currentColor">
-                      <path d="M5 3l6 5-6 5V3z"/>
-                    </svg>
-                    Source Control
+                {/* Previews section */}
+                <div className="mt-4 flex flex-col">
+                  <div className="pl-2 ml-2 pr-3 py-0.5 text-[12px] font-medium text-neutral-300 cursor-pointer hover:bg-neutral-800/45 rounded-sm mx-1">
+                    Previews
                   </div>
+                  <div className="ml-2 pt-px">
+                    {/* Preview task item */}
+                    <div className="space-y-px">
+                      <div className="mx-1 flex items-center gap-2 rounded-sm pl-2 ml-2 pr-3 py-1 text-[13px] text-neutral-100 hover:bg-neutral-800/45 cursor-pointer">
+                        <ChevronDown className="w-3 h-3 text-neutral-500" />
+                        <Circle className="w-3 h-3 text-neutral-400" />
+                        <div className="flex flex-col min-w-0">
+                          <span className="truncate">Preview screenshots for PR #1168</span>
+                          <span className="text-[11px] text-neutral-500 truncate">main &bull; manaflow-ai/cmux</span>
+                        </div>
+                      </div>
 
-                  {/* Changes header */}
-                  <div className="flex items-center justify-between py-1 text-[11px] text-[#858585]">
-                    <span className="flex items-center gap-1">
-                      <svg className="h-3 w-3" viewBox="0 0 16 16" fill="currentColor">
-                        <path d="M5 3l6 5-6 5V3z"/>
-                      </svg>
-                      CHANGES
-                    </span>
-                  </div>
+                      {/* screenshot-collector run */}
+                      <div className="ml-4">
+                        <div className="mx-1 flex items-center gap-2 rounded-sm pl-2 ml-2 pr-3 py-1 text-[13px] text-neutral-300 hover:bg-neutral-800/45 cursor-pointer">
+                          <ChevronDown className="w-3 h-3 text-neutral-500" />
+                          <Circle className="w-3 h-3 text-neutral-400" />
+                          <span>screenshot-collector</span>
+                        </div>
 
-                  {/* Message input */}
-                  <div className="mt-1 mb-2">
-                    <input
-                      type="text"
-                      placeholder="Message (⌘..."
-                      className="w-full px-2 py-1 bg-[#3c3c3c] border border-[#3c3c3c] rounded text-xs text-white placeholder:text-[#858585] focus:outline-none focus:border-[#007acc]"
-                    />
-                  </div>
-
-                  {/* Publish Branch button */}
-                  <button className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-[#0e639c] hover:bg-[#1177bb] text-white text-xs rounded mb-3">
-                    <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="currentColor">
-                      <path d="M5 3.25a.75.75 0 0 1 1.5 0v2.5h2.5a.75.75 0 0 1 0 1.5h-2.5v2.5a.75.75 0 0 1-1.5 0v-2.5h-2.5a.75.75 0 0 1 0-1.5h2.5v-2.5Z"/>
-                    </svg>
-                    Publish Branch
-                  </button>
-
-                  {/* File changes */}
-                  <div className="space-y-0.5 text-[12px]">
-                    <div className="flex items-center gap-2 px-1 py-0.5 hover:bg-[#2a2d2e] rounded cursor-pointer">
-                      <span className="text-[#73c991]">M</span>
-                      <span className="text-[#cccccc] truncate">TaskTree.tsx</span>
-                      <span className="text-[#858585] text-[10px] ml-auto">apps/client/src...</span>
+                        {/* Detail links */}
+                        <div className="ml-6 space-y-px">
+                          <div className="flex items-center gap-2 px-2 py-1 text-xs rounded-md hover:bg-neutral-800/45 cursor-pointer ml-2">
+                            <Code className="w-3 h-3 text-neutral-400" />
+                            <span className="text-neutral-400">VS Code</span>
+                          </div>
+                          <div className="flex items-center gap-2 px-2 py-1 text-xs rounded-md hover:bg-neutral-800/45 cursor-pointer ml-2">
+                            <GitCompareIcon className="w-3 h-3 text-neutral-400" />
+                            <span className="text-neutral-400">Git diff</span>
+                          </div>
+                          <div className="flex items-center gap-2 px-2 py-1 text-xs rounded-md hover:bg-neutral-800/45 cursor-pointer ml-2">
+                            <Monitor className="w-3 h-3 text-neutral-400" />
+                            <span className="text-neutral-400">Browser</span>
+                          </div>
+                          <div className="flex items-center gap-2 px-2 py-1 text-xs rounded-md hover:bg-neutral-800/45 cursor-pointer ml-2">
+                            <TerminalSquare className="w-3 h-3 text-neutral-400" />
+                            <span className="text-neutral-400">Terminals</span>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
-
-                {/* Diff preview */}
-                <div className="mt-3 px-2">
-                  <div className="rounded border border-[#3c3c3c] overflow-hidden text-[10px] font-mono">
-                    <div className="bg-[#2d2d2d] px-2 py-1 text-[#858585] border-b border-[#3c3c3c]">
-                      TaskTree.tsx
-                    </div>
-                    <div className="bg-[#1e1e1e] p-2 space-y-0.5">
-                      <div className="text-[#858585]">  7  import &#123;</div>
-                      <div className="text-[#858585]">  8    import &#123;</div>
-                      <div className="text-[#858585]">  9    import &#123;</div>
-                      <div className="bg-[#2ea04326] text-[#3fb950]">+10  import &#123;</div>
-                      <div className="text-[#858585]"> 11    import &#123;</div>
-                      <div className="text-[#858585]"> 12    import &#123;</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              </nav>
             </div>
 
-            {/* Main Content Area */}
-            <div className="flex-1 flex flex-col">
-              {/* Top Row - VS Code and Browser */}
-              <div className="flex-1 flex min-h-0">
-                {/* VS Code Panel */}
-                <div className="flex-1 bg-[#1e1e1e] border-r border-[#3c3c3c] flex flex-col">
-                  <div className="flex items-center gap-2 px-3 py-1.5 bg-[#252526] border-b border-[#3c3c3c]">
-                    <svg className="h-4 w-4 text-[#007acc]" viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M23.15 2.587L18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.261A1 1 0 0 0 .326 8.74L3.899 12 .326 15.26a1 1 0 0 0 .001 1.479L1.65 17.94a.999.999 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 20.06V3.939a1.5 1.5 0 0 0-.85-1.352zm-5.146 14.861L10.826 12l7.178-5.448v10.896z"/>
-                    </svg>
-                    <span className="text-xs text-[#cccccc]">VS Code</span>
-                  </div>
-                  <div className="flex-1 flex items-center justify-center text-[#858585] text-xs">
-                    <div className="text-center">
-                      <svg className="h-8 w-8 mx-auto mb-2 text-[#007acc]" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M23.15 2.587L18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.261A1 1 0 0 0 .326 8.74L3.899 12 .326 15.26a1 1 0 0 0 .001 1.479L1.65 17.94a.999.999 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 20.06V3.939a1.5 1.5 0 0 0-.85-1.352zm-5.146 14.861L10.826 12l7.178-5.448v10.896z"/>
-                      </svg>
-                      <p>Get Started with VS Code</p>
-                      <p className="text-[10px] mt-1">for the Web</p>
-                    </div>
+            {/* Main Content Area - horizontal split with resizable panels */}
+            <div className="flex-1 flex min-w-0 relative">
+              {/* Left: Workspace (VS Code) - resizable width */}
+              <div className="bg-[#1e1e1e] border-r border-[#2d2d2d] flex flex-col min-w-0" style={{ width: `${leftPanelWidth}%` }}>
+                {/* Panel header */}
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-[#252526] border-b border-[#2d2d2d]">
+                  <Code className="h-4 w-4 text-[#007acc]" />
+                  <span className="text-xs text-[#cccccc]">Workspace</span>
+                  <div className="ml-auto flex items-center gap-1">
+                    <button className="p-0.5 text-[#858585] hover:text-white hover:bg-[#3c3c3c] rounded">
+                      <Maximize2 className="h-3 w-3" />
+                    </button>
+                    <button className="p-0.5 text-[#858585] hover:text-white hover:bg-[#3c3c3c] rounded">
+                      <X className="h-3 w-3" />
+                    </button>
                   </div>
                 </div>
-
-                {/* Browser Panel */}
-                <div className="w-[280px] bg-[#1e1e1e] flex flex-col shrink-0">
-                  <div className="flex items-center gap-2 px-3 py-1.5 bg-[#252526] border-b border-[#3c3c3c]">
-                    <svg className="h-4 w-4 text-[#858585]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <rect x="3" y="3" width="18" height="18" rx="2"/>
-                      <path d="M3 9h18"/>
-                      <circle cx="7" cy="6" r="1"/>
-                      <circle cx="10" cy="6" r="1"/>
-                    </svg>
-                    <span className="text-xs text-[#cccccc]">Browser</span>
-                  </div>
-                  <div className="flex-1 bg-[#0d1117] flex flex-col items-center justify-center p-4">
-                    <div className="w-12 h-12 rounded-lg bg-[#161b22] border border-[#30363d] flex items-center justify-center mb-3">
-                      <svg className="h-6 w-6 text-[#7d8590]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                        <path d="M12 4v16m8-8H4"/>
-                      </svg>
+                {/* VS Code content */}
+                <div className="flex-1 flex min-h-0">
+                  {/* File explorer sidebar */}
+                  <div className="w-[180px] bg-[#252526] border-r border-[#2d2d2d] flex flex-col shrink-0">
+                    <div className="px-2 py-1 text-[10px] font-semibold text-[#858585] uppercase tracking-wide">
+                      Explorer
                     </div>
-                    <h3 className="text-white text-sm font-medium mb-1">Build with Agent</h3>
-                    <p className="text-[#7d8590] text-[10px] text-center">AI responses may be inaccurate.</p>
-                    <div className="mt-3 flex flex-col gap-1.5 w-full">
-                      <button className="px-3 py-1 border border-[#30363d] rounded text-[10px] text-[#7d8590] hover:bg-[#161b22]">
-                        Build Workspace
-                      </button>
-                      <button className="px-3 py-1 border border-[#30363d] rounded text-[10px] text-[#7d8590] hover:bg-[#161b22]">
-                        Show Config
-                      </button>
+                    <div className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-[#cccccc] bg-[#37373d]">
+                      <ChevronDown className="h-3 w-3" />
+                      <span className="font-semibold">CMUX</span>
+                    </div>
+                    <div className="flex-1 overflow-y-auto text-[11px]">
+                      {[".cursor", ".devcontainer", ".github", "apps", "configs", "crates", "data", "docs", "docs-ai", "logs", "node_modules", "packages"].map((folder) => (
+                        <div key={folder} className="flex items-center gap-1 px-4 py-0.5 text-[#cccccc] hover:bg-[#2a2d2e] cursor-pointer">
+                          <ChevronRight className="h-3 w-3 text-[#858585]" />
+                          <Folder className="h-3 w-3 text-[#dcb67a]" />
+                          <span>{folder}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  {/* Editor area */}
+                  <div className="flex-1 flex flex-col min-w-0">
+                    {/* Tabs */}
+                    <div className="flex items-center bg-[#252526] border-b border-[#2d2d2d]">
+                      <div className="flex items-center gap-1 px-3 py-1 bg-[#1e1e1e] border-r border-[#2d2d2d] text-[11px] text-[#cccccc]">
+                        <FileText className="h-3 w-3 text-[#858585]" />
+                        <span>LAUNCH.md</span>
+                        <X className="h-3 w-3 ml-1 text-[#858585] hover:text-white" />
+                      </div>
+                    </div>
+                    {/* File content */}
+                    <div className="flex-1 p-3 font-mono text-[11px] text-[#cccccc] overflow-auto">
+                      <div className="flex">
+                        <div className="pr-3 text-[#858585] select-none text-right w-8">1</div>
+                        <div>today we&apos;re launching cmux</div>
+                      </div>
+                      <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">2</div><div></div></div>
+                      <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">3</div><div>it&apos;s basically Linear for Claude Code</div></div>
+                      <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">4</div><div></div></div>
+                      <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">5</div><div>we made Linear for Claude Code</div></div>
+                      <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">6</div><div></div></div>
+                      <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">7</div><div className="text-[#6a9955]">cmux is an open source coding CLI manager</div></div>
+                      <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">8</div><div className="text-[#6a9955]">that spawns Claude Code, Cursor CLI, Codex</div></div>
+                      <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">9</div><div className="text-[#6a9955]">CLI, Gemini CLI, Amp, Opencode, and</div></div>
+                      <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">10</div><div className="text-[#6a9955]">other coding agent CLIs in parallel</div></div>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Bottom Row - Git Diff with Screenshots */}
-              <div className="h-[180px] bg-[#1e1e1e] border-t border-[#3c3c3c] flex flex-col shrink-0">
-                <div className="flex items-center justify-between px-3 py-1.5 bg-[#252526] border-b border-[#3c3c3c]">
-                  <div className="flex items-center gap-2">
-                    <svg className="h-4 w-4 text-[#858585]" viewBox="0 0 16 16" fill="currentColor">
-                      <path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Z"/>
-                    </svg>
-                    <span className="text-xs text-[#cccccc]">Git Diff</span>
+              {/* Horizontal resize handle */}
+              <div
+                onMouseDown={startHorizontalResize}
+                className="w-1 cursor-col-resize bg-[#2d2d2d] hover:bg-[#007acc] active:bg-[#007acc] transition-colors shrink-0"
+                title="Drag to resize panels"
+              />
+
+              {/* Right: Browser + Git Diff stacked vertically */}
+              <div className="flex flex-col min-w-0 relative" style={{ width: `${100 - leftPanelWidth}%` }}>
+                {/* Browser Panel - Chrome style */}
+                <div className="bg-[#1e1e1e] flex flex-col" style={{ height: `${topPanelHeight}%` }}>
+                  {/* Panel header */}
+                  <div className="flex items-center gap-2 px-3 py-1.5 bg-[#252526] border-b border-[#2d2d2d]">
+                    <Monitor className="h-4 w-4 text-[#858585]" />
+                    <span className="text-xs text-[#cccccc]">Browser</span>
+                    <div className="ml-auto flex items-center gap-1">
+                      <button className="p-0.5 text-[#858585] hover:text-white hover:bg-[#3c3c3c] rounded">
+                        <Maximize2 className="h-3 w-3" />
+                      </button>
+                      <button className="p-0.5 text-[#858585] hover:text-white hover:bg-[#3c3c3c] rounded">
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
+                  {/* Chrome browser inside */}
+                  <div className="flex-1 flex flex-col bg-[#202124] overflow-hidden" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
+                    {/* Chrome tab bar */}
+                    <div className="flex items-end bg-[#35363a] h-[34px] px-2">
+                      {/* Tab */}
+                      <div className="flex items-center gap-2 bg-[#202124] rounded-t-lg px-3 py-1.5 max-w-[200px] mt-auto">
+                        <CmuxLogo height={12} showWordmark={false} />
+                        <span className="text-[11px] text-[#e8eaed] truncate">cmux - Manage AI coding ag...</span>
+                        <button className="p-0.5 hover:bg-[#35363a] rounded">
+                          <X className="h-3 w-3 text-[#9aa0a6]" />
+                        </button>
+                      </div>
+                      <button className="p-1 hover:bg-[#4a4c50] rounded ml-1 mb-1.5">
+                        <Plus className="h-3.5 w-3.5 text-[#9aa0a6]" />
+                      </button>
+                    </div>
+                    {/* Chrome toolbar */}
+                    <div className="flex items-center gap-2 px-2 py-1.5 bg-[#202124]">
+                      <div className="flex items-center gap-1">
+                        <button className="p-1 hover:bg-[#35363a] rounded">
+                          <ArrowLeft className="h-3.5 w-3.5 text-[#9aa0a6]" />
+                        </button>
+                      </div>
+                      {/* URL bar */}
+                      <div className="flex-1 flex items-center gap-2 px-3 py-1 bg-[#35363a] rounded-full text-[11px]">
+                        <svg className="h-3 w-3 text-[#9aa0a6]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                        </svg>
+                        <span className="text-[#e8eaed]">cmux.dev</span>
+                      </div>
+                    </div>
+                    {/* Browser content - cmux.dev landing page */}
+                    <div className="flex-1 bg-[#030712] overflow-y-auto">
+                      {/* Gradient background */}
+                      <div className="relative">
+                        <div className="absolute inset-0 overflow-hidden">
+                          <div className="absolute inset-x-[-20%] top-[-30%] h-[200px] rounded-full bg-gradient-to-br from-blue-600/30 via-sky-500/20 to-purple-600/10 blur-3xl" />
+                        </div>
+                        {/* Header */}
+                        <div className="relative flex items-center justify-between px-4 py-3">
+                          <CmuxLogo height={20} />
+                          <div className="flex items-center gap-3 text-[9px] text-neutral-300">
+                            <span>About</span>
+                            <span>Workflow</span>
+                            <span>GitHub</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1 text-[9px] text-neutral-300">
+                              <Github className="h-3 w-3" />
+                              <span>649</span>
+                            </div>
+                            <button className="px-2 py-0.5 bg-white text-black text-[8px] rounded-full flex items-center gap-1">
+                              <Download className="w-2.5 h-2.5" />
+                              <span>Download</span>
+                            </button>
+                          </div>
+                        </div>
+                        {/* Hero section */}
+                        <div className="relative px-4 py-4">
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-3">
+                              <h1 className="text-white text-base font-semibold leading-tight">
+                                Universal AI coding agent manager for 10x engineers
+                              </h1>
+                              <p className="text-[9px] text-neutral-300 leading-relaxed">
+                                cmux is a universal AI coding agent manager that supports Claude Code, Codex, Gemini CLI, Amp, Opencode, and other coding CLIs.
+                              </p>
+                              <p className="text-[9px] text-neutral-300 leading-relaxed">
+                                Every run spins up an isolated VS Code workspace either in the cloud or in a local Docker container with the git diff view, terminal, and dev server preview ready.
+                              </p>
+                              <div className="flex items-center gap-2 pt-2">
+                                <button className="px-2 py-1 bg-white text-black text-[8px] rounded-lg flex items-center gap-1 font-medium">
+                                  <svg className="h-2.5 w-2.5" viewBox="0 0 16 16" fill="currentColor">
+                                    <path d="M12.665 15.358c-.905.844-1.893.711-2.843.311-1.006-.409-1.93-.427-2.991 0-1.33.551-2.03.391-2.825-.31C-.498 10.886.166 4.078 5.28 3.83c1.246.062 2.114.657 2.843.71 1.09-.213 2.133-.826 3.296-.746 1.393.107 2.446.64 3.138 1.6-2.88 1.662-2.197 5.315.443 6.337-.526 1.333-1.21 2.657-2.345 3.635zM8.03 3.778C7.892 1.794 9.563.16 11.483 0c.268 2.293-2.16 4-3.452 3.777" />
+                                  </svg>
+                                  Download for macOS
+                                </button>
+                                <button className="px-2 py-1 border border-white/10 bg-white/5 text-white text-[8px] rounded-lg flex items-center gap-1">
+                                  GitHub repo
+                                  <Github className="w-2.5 h-2.5" />
+                                </button>
+                              </div>
+                            </div>
+                            {/* Right side - video + features */}
+                            <div className="space-y-2">
+                              <div className="rounded-xl border border-white/10 bg-white/5 p-2">
+                                {/* Video placeholder */}
+                                <div className="bg-neutral-900 rounded-lg aspect-video flex items-center justify-center mb-2">
+                                  <div className="w-8 h-8 rounded-full bg-red-600 flex items-center justify-center">
+                                    <div className="w-0 h-0 border-t-[5px] border-t-transparent border-l-[8px] border-l-white border-b-[5px] border-b-transparent ml-0.5" />
+                                  </div>
+                                </div>
+                                {/* Feature bullets */}
+                                <div className="space-y-1.5">
+                                  <div className="flex gap-2">
+                                    <div className="mt-0.5 h-4 w-4 flex-none rounded-full bg-gradient-to-br from-sky-500/80 to-indigo-500/80 text-center text-[8px] font-semibold leading-4 text-white">
+                                      &bull;
+                                    </div>
+                                    <div>
+                                      <p className="text-[8px] text-white font-medium">Run multiple agent CLIs side-by-side</p>
+                                      <p className="text-[7px] text-neutral-400">Claude Code, Codex, Gemini CLI, Amp, and more.</p>
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <div className="mt-0.5 h-4 w-4 flex-none rounded-full bg-gradient-to-br from-sky-500/80 to-indigo-500/80 text-center text-[8px] font-semibold leading-4 text-white">
+                                      &bull;
+                                    </div>
+                                    <div>
+                                      <p className="text-[8px] text-white font-medium">Dedicated VS Code instance per agent</p>
+                                      <p className="text-[7px] text-neutral-400">Isolated VS Code, terminal, and git diff view.</p>
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <div className="mt-0.5 h-4 w-4 flex-none rounded-full bg-gradient-to-br from-sky-500/80 to-indigo-500/80 text-center text-[8px] font-semibold leading-4 text-white">
+                                      &bull;
+                                    </div>
+                                    <div>
+                                      <p className="text-[8px] text-white font-medium">Preview environments for verification</p>
+                                      <p className="text-[7px] text-neutral-400">Browser previews to verify dev server output.</p>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          {/* App screenshot preview */}
+                          <div className="mt-4 rounded-lg overflow-hidden border border-white/10 bg-neutral-900 h-[100px]">
+                            <div className="flex h-full">
+                              <div className="w-[70px] bg-neutral-950 border-r border-white/10 p-1.5">
+                                <div className="text-[7px] text-neutral-400 space-y-0.5">
+                                  <div className="flex items-center gap-1"><Home className="w-2.5 h-2.5" /><span>Home</span></div>
+                                  <div className="flex items-center gap-1"><Server className="w-2.5 h-2.5" /><span>Environments</span></div>
+                                  <div className="flex items-center gap-1"><Settings className="w-2.5 h-2.5" /><span>Settings</span></div>
+                                </div>
+                              </div>
+                              <div className="flex-1 bg-neutral-900 p-2">
+                                <div className="text-[6px] text-neutral-500 text-center">cmux dashboard preview</div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
-                <div className="flex-1 p-3 overflow-hidden">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-[11px] font-medium text-white">Screenshots</span>
-                    <span className="text-[10px] text-[#858585]">1 capture</span>
+
+                {/* Vertical resize handle */}
+                <div
+                  onMouseDown={startVerticalResize}
+                  className="h-1 cursor-row-resize bg-[#2d2d2d] hover:bg-[#007acc] active:bg-[#007acc] transition-colors shrink-0"
+                  title="Drag to resize panels"
+                />
+
+                {/* Git Diff Panel */}
+                <div className="bg-[#1e1e1e] flex flex-col" style={{ height: `${100 - topPanelHeight}%` }}>
+                  <div className="flex items-center justify-between px-3 py-1.5 bg-[#252526] border-b border-[#2d2d2d] shrink-0">
+                    <div className="flex items-center gap-2">
+                      <GitBranch className="h-4 w-4 text-[#f97316]" />
+                      <span className="text-xs text-[#cccccc]">Git Diff</span>
+                      <span className="text-[10px] text-[#858585]">3 files changed</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button className="p-0.5 text-[#858585] hover:text-white hover:bg-[#3c3c3c] rounded">
+                        <Maximize2 className="h-3 w-3" />
+                      </button>
+                      <button className="p-0.5 text-[#858585] hover:text-white hover:bg-[#3c3c3c] rounded">
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1 mb-2">
-                    <button className="px-2 py-0.5 bg-[#0e639c] text-white text-[10px] rounded">Completed</button>
-                    <button className="px-2 py-0.5 text-[#858585] text-[10px] hover:bg-[#3c3c3c] rounded">Latest</button>
-                    <span className="text-[10px] text-[#858585] ml-2">5 minutes ago</span>
-                    <span className="text-[10px] text-[#858585]">fcca1695305e</span>
-                    <span className="text-[10px] text-[#858585]">10 images</span>
-                  </div>
-                  {/* Screenshot thumbnails */}
-                  <div className="flex gap-1.5 overflow-x-auto pb-1">
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((i) => (
-                      <div
-                        key={i}
-                        className="w-[50px] h-[35px] rounded border border-[#3c3c3c] bg-[#2d2d2d] shrink-0 flex items-center justify-center text-[8px] text-[#858585]"
+                  <div className="flex-1 flex flex-col min-h-0 overflow-y-auto" style={{ scrollbarWidth: "thin", scrollbarColor: "#30363d #1e1e1e" }}>
+                    {/* File 1 - Modified */}
+                    <div className="border-b border-[#2d2d2d]">
+                      <button
+                        onClick={() => toggleFileCollapse("file1")}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-[#252526] sticky top-0 w-full text-left hover:bg-[#2a2d2e] transition-colors"
                       >
-                        {i}...
-                      </div>
-                    ))}
+                        {collapsedFiles.has("file1") ? (
+                          <ChevronRight className="h-3 w-3 text-[#858585]" />
+                        ) : (
+                          <ChevronDown className="h-3 w-3 text-[#858585]" />
+                        )}
+                        <div className="w-2 h-2 rounded-full bg-yellow-500" />
+                        <span className="text-[10px] text-[#cccccc] truncate flex-1">apps/client/src/components/TaskItem.tsx</span>
+                        <span className="text-[9px] text-[#3fb950]">+28</span>
+                        <span className="text-[9px] text-[#f85149]">-4</span>
+                      </button>
+                      {!collapsedFiles.has("file1") && (
+                        <div className="text-[9px] font-mono">
+                          <div className="px-2 py-0.5 text-[#858585] bg-[#1f2733] text-[8px]">@@ -1,12 +1,15 @@</div>
+                          <div className="flex"><span className="w-6 text-[#858585] text-right pr-2 select-none bg-[#1e1e1e]">1</span><span className="w-6 text-[#858585] text-right pr-2 select-none bg-[#1e1e1e]">1</span><span className="flex-1 px-2 text-[#cccccc]">import {"{"} useState {"}"} from &quot;react&quot;;</span></div>
+                          <div className="flex"><span className="w-6 text-[#858585] text-right pr-2 select-none bg-[#1e1e1e]">2</span><span className="w-6 text-[#858585] text-right pr-2 select-none bg-[#1e1e1e]">2</span><span className="flex-1 px-2 text-[#cccccc]">import {"{"} useQuery {"}"} from &quot;convex/react&quot;;</span></div>
+                          <div className="flex bg-[#f851491a]"><span className="w-6 text-[#ff7b72] text-right pr-2 select-none bg-[#f851494d]">3</span><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="flex-1 px-2 text-[#f85149]">-import {"{"} api {"}"} from &quot;@/convex&quot;;</span></div>
+                          <div className="flex bg-[#2ea04326]"><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="w-6 text-[#7ee787] text-right pr-2 select-none bg-[#3fb9504d]">3</span><span className="flex-1 px-2 text-[#3fb950]">+import {"{"} api {"}"} from &quot;@cmux/convex/api&quot;;</span></div>
+                          <div className="flex bg-[#2ea04326]"><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="w-6 text-[#7ee787] text-right pr-2 select-none bg-[#3fb9504d]">4</span><span className="flex-1 px-2 text-[#3fb950]">+import {"{"} isFakeConvexId {"}"} from &quot;@/lib/utils&quot;;</span></div>
+                          <div className="flex"><span className="w-6 text-[#858585] text-right pr-2 select-none bg-[#1e1e1e]">4</span><span className="w-6 text-[#858585] text-right pr-2 select-none bg-[#1e1e1e]">5</span><span className="flex-1 px-2 text-[#cccccc]">import {"{"} TaskTree {"}"} from &quot;./TaskTree&quot;;</span></div>
+                          <div className="px-2 py-0.5 text-[#858585] bg-[#1f2733] text-[8px]">... 18 unchanged lines ...</div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* File 2 - Added */}
+                    <div className="border-b border-[#2d2d2d]">
+                      <button
+                        onClick={() => toggleFileCollapse("file2")}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-[#252526] sticky top-0 w-full text-left hover:bg-[#2a2d2e] transition-colors"
+                      >
+                        {collapsedFiles.has("file2") ? (
+                          <ChevronRight className="h-3 w-3 text-[#858585]" />
+                        ) : (
+                          <ChevronDown className="h-3 w-3 text-[#858585]" />
+                        )}
+                        <div className="w-2 h-2 rounded-full bg-green-500" />
+                        <span className="text-[10px] text-[#cccccc] truncate flex-1">apps/client/src/lib/utils.ts</span>
+                        <span className="text-[9px] text-[#3fb950]">+45</span>
+                        <span className="text-[9px] text-[#858585]">-0</span>
+                      </button>
+                      {!collapsedFiles.has("file2") && (
+                        <div className="text-[9px] font-mono">
+                          <div className="px-2 py-0.5 text-[#858585] bg-[#1f2733] text-[8px]">@@ -0,0 +1,45 @@</div>
+                          <div className="flex bg-[#2ea04326]"><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="w-6 text-[#7ee787] text-right pr-2 select-none bg-[#3fb9504d]">1</span><span className="flex-1 px-2 text-[#3fb950]">+export function isFakeConvexId(id: string): boolean {"{"}</span></div>
+                          <div className="flex bg-[#2ea04326]"><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="w-6 text-[#7ee787] text-right pr-2 select-none bg-[#3fb9504d]">2</span><span className="flex-1 px-2 text-[#3fb950]">+  return id.startsWith(&quot;fake_&quot;);</span></div>
+                          <div className="flex bg-[#2ea04326]"><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="w-6 text-[#7ee787] text-right pr-2 select-none bg-[#3fb9504d]">3</span><span className="flex-1 px-2 text-[#3fb950]">+{"}"}</span></div>
+                          <div className="flex bg-[#2ea04326]"><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="w-6 text-[#7ee787] text-right pr-2 select-none bg-[#3fb9504d]">4</span><span className="flex-1 px-2 text-[#3fb950]">+</span></div>
+                          <div className="flex bg-[#2ea04326]"><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="w-6 text-[#7ee787] text-right pr-2 select-none bg-[#3fb9504d]">5</span><span className="flex-1 px-2 text-[#3fb950]">+export function rewriteLocalId(id: string) {"{"}</span></div>
+                          <div className="flex bg-[#2ea04326]"><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="w-6 text-[#7ee787] text-right pr-2 select-none bg-[#3fb9504d]">6</span><span className="flex-1 px-2 text-[#3fb950]">+  return id.replace(&quot;fake_&quot;, &quot;&quot;);</span></div>
+                          <div className="flex bg-[#2ea04326]"><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="w-6 text-[#7ee787] text-right pr-2 select-none bg-[#3fb9504d]">7</span><span className="flex-1 px-2 text-[#3fb950]">+{"}"}</span></div>
+                          <div className="px-2 py-0.5 text-[#858585] bg-[#1f2733] text-[8px]">... 38 more lines ...</div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* File 3 - Deleted (starts collapsed) */}
+                    <div className="border-b border-[#2d2d2d]">
+                      <button
+                        onClick={() => toggleFileCollapse("file3")}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-[#252526] sticky top-0 w-full text-left hover:bg-[#2a2d2e] transition-colors"
+                      >
+                        {collapsedFiles.has("file3") ? (
+                          <ChevronRight className="h-3 w-3 text-[#858585]" />
+                        ) : (
+                          <ChevronDown className="h-3 w-3 text-[#858585]" />
+                        )}
+                        <div className="w-2 h-2 rounded-full bg-red-500" />
+                        <span className="text-[10px] text-[#cccccc] truncate flex-1">apps/client/src/legacy/helpers.ts</span>
+                        <span className="text-[9px] text-[#858585]">+0</span>
+                        <span className="text-[9px] text-[#f85149]">-12</span>
+                      </button>
+                      {!collapsedFiles.has("file3") && (
+                        <div className="text-[9px] font-mono">
+                          <div className="px-2 py-0.5 text-[#858585] bg-[#1f2733] text-[8px]">@@ -1,12 +0,0 @@</div>
+                          <div className="flex bg-[#f851491a]"><span className="w-6 text-[#ff7b72] text-right pr-2 select-none bg-[#f851494d]">1</span><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="flex-1 px-2 text-[#f85149]">-// Legacy helper functions</span></div>
+                          <div className="flex bg-[#f851491a]"><span className="w-6 text-[#ff7b72] text-right pr-2 select-none bg-[#f851494d]">2</span><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="flex-1 px-2 text-[#f85149]">-export function oldHelper() {"{"}</span></div>
+                          <div className="flex bg-[#f851491a]"><span className="w-6 text-[#ff7b72] text-right pr-2 select-none bg-[#f851494d]">3</span><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="flex-1 px-2 text-[#f85149]">-  return &quot;deprecated&quot;;</span></div>
+                          <div className="flex bg-[#f851491a]"><span className="w-6 text-[#ff7b72] text-right pr-2 select-none bg-[#f851494d]">4</span><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="flex-1 px-2 text-[#f85149]">-{"}"}</span></div>
+                          <div className="px-2 py-0.5 text-[#858585] bg-[#1f2733] text-[8px]">... 8 more lines ...</div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
