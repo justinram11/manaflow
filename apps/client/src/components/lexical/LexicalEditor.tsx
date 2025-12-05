@@ -1,7 +1,5 @@
-import Prism from "prismjs";
-if (typeof globalThis.Prism === "undefined") {
-  globalThis.Prism = Prism;
-}
+// IMPORTANT: Import prism-setup BEFORE @lexical/code to ensure Prism is globally available
+import "./prism-setup";
 
 import { editorStorage } from "@/lib/editorStorage";
 import { CodeNode } from "@lexical/code";
