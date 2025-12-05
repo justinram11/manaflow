@@ -136,21 +136,33 @@ interface SidebarArchiveOverlayProps {
   icon: ReactNode;
   label: string;
   onArchive: () => void;
+  /** Named group for scoped hover (e.g., "task" or "run") */
+  groupName: "task" | "run";
 }
 
 function SidebarArchiveOverlay({
   icon,
   label,
   onArchive,
+  groupName,
 }: SidebarArchiveOverlayProps) {
+  // Use named groups to prevent parent hover from triggering child archive buttons
+  const hoverShow =
+    groupName === "task"
+      ? "group-hover/task:opacity-100 group-hover/task:pointer-events-auto group-data-[focus-visible=true]/task:opacity-100 group-data-[focus-visible=true]/task:pointer-events-auto"
+      : "group-hover/run:opacity-100 group-hover/run:pointer-events-auto group-data-[focus-visible=true]/run:opacity-100 group-data-[focus-visible=true]/run:pointer-events-auto";
+
   return (
-    <div className="relative flex h-4 w-4 items-center justify-center">
+    <div className="flex items-center gap-1">
       <Tooltip delayDuration={0}>
         <TooltipTrigger asChild>
           <button
             type="button"
             aria-label={label}
-            className="peer absolute inset-0 flex items-center justify-center rounded-sm text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-50 opacity-0 pointer-events-none focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover:opacity-100 group-hover:pointer-events-auto group-data-[focus-visible=true]:opacity-100 group-data-[focus-visible=true]:pointer-events-auto focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-400 dark:focus-visible:outline-neutral-500"
+            className={clsx(
+              "flex h-4 w-4 -mr-0.5 items-center justify-center rounded-sm text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-50 opacity-0 pointer-events-none focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-400 dark:focus-visible:outline-neutral-500",
+              hoverShow
+            )}
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -162,9 +174,7 @@ function SidebarArchiveOverlay({
         </TooltipTrigger>
         <TooltipContent side="right">{label}</TooltipContent>
       </Tooltip>
-      <div className="flex items-center justify-center group-hover:pointer-events-none group-hover:opacity-0 group-data-[focus-visible=true]:pointer-events-none group-data-[focus-visible=true]:opacity-0 peer-focus-visible:pointer-events-none peer-focus-visible:opacity-0">
-        {icon}
-      </div>
+      {icon ? <div className="flex items-center justify-center">{icon}</div> : null}
     </div>
   );
 }
@@ -790,6 +800,7 @@ function TaskTreeInner({
       icon={taskLeadingIcon}
       label="Archive"
       onArchive={handleArchive}
+      groupName="task"
     />
   ) : (
     taskLeadingIcon
@@ -806,7 +817,7 @@ function TaskTreeInner({
               params={{ teamSlugOrId, taskId: task._id }}
               search={{ runId: undefined }}
               activeOptions={{ exact: true }}
-              className="group block"
+              className="group/task block"
               data-focus-visible={isTaskLinkFocusVisible ? "true" : undefined}
               onMouseEnter={handlePrefetch}
               onFocus={handleTaskLinkFocus}
@@ -1335,16 +1346,6 @@ function TaskRunTreeInner({
       isLocalWorkspaceRunEntry ||
       isCloudWorkspaceRunEntry);
 
-  const runMetaIcon = shouldShowRunArchiveOverlay ? (
-    <SidebarArchiveOverlay
-      icon={runLeadingIcon}
-      label="Archive"
-      onArchive={handleArchiveRun}
-    />
-  ) : (
-    runLeadingIcon
-  );
-
   const crownIcon = run.isCrowned ? (
     <Tooltip delayDuration={0}>
       <TooltipTrigger asChild>
@@ -1367,13 +1368,25 @@ function TaskRunTreeInner({
     </Tooltip>
   ) : null;
 
-  const leadingContent = crownIcon ? (
+  // Combine crown + status icon, with archive overlay on the left of everything
+  const iconsContent = crownIcon ? (
     <div className="flex items-center gap-1">
       {crownIcon}
-      {runMetaIcon}
+      {runLeadingIcon}
     </div>
   ) : (
-    runMetaIcon
+    runLeadingIcon
+  );
+
+  const leadingContent = shouldShowRunArchiveOverlay ? (
+    <SidebarArchiveOverlay
+      icon={iconsContent}
+      label="Archive"
+      onArchive={handleArchiveRun}
+      groupName="run"
+    />
+  ) : (
+    iconsContent
   );
 
   // Generate VSCode URL if available - used for "Open with" actions
@@ -1451,7 +1464,7 @@ function TaskRunTreeInner({
               ...(prev ?? {}),
               runId: run._id,
             })}
-            className="group block"
+            className="group/run block"
             data-focus-visible={isRunLinkFocusVisible ? "true" : undefined}
             activeOptions={{ exact: false }}
             onFocus={handleRunLinkFocus}
@@ -1632,7 +1645,7 @@ function TaskRunDetailLink({
         <span className="text-neutral-600 dark:text-neutral-400">{label}</span>
       </span>
       {trailing ? (
-        <span className="pr-0.5 flex shrink-0 items-center">{trailing}</span>
+        <span className="flex shrink-0 items-center">{trailing}</span>
       ) : null}
     </Link>
   );
@@ -1902,15 +1915,31 @@ function TaskRunDetails({
     </Tooltip>
   ) : null;
 
-  // Determine loading state - show spinner when VSCode is not yet running
+  // Determine loading/error state for the detail links
   const isVSCodeReady = run.vscode?.status === "running";
-  const loadingIndicator = !isVSCodeReady ? (
+  const isRunFailed = run.status === "failed";
+
+  // Show error icon with tooltip if run failed, otherwise show loading spinner
+  const statusIndicator = isRunFailed ? (
+    <Tooltip delayDuration={0}>
+      <TooltipTrigger asChild>
+        <XCircle className="w-3 h-3 text-red-500" />
+      </TooltipTrigger>
+      {run.errorMessage ? (
+        <TooltipContent
+          side="right"
+          className="max-w-xs whitespace-pre-wrap break-words"
+        >
+          {run.errorMessage}
+        </TooltipContent>
+      ) : null}
+    </Tooltip>
+  ) : !isVSCodeReady ? (
     <Loader2 className="w-3 h-3 animate-spin text-neutral-400" />
   ) : null;
 
-  // For VSCode, combine environment error with loading indicator
-  const vscodeTrailing =
-    environmentErrorIndicator || (!isVSCodeReady ? loadingIndicator : null);
+  // For VSCode, combine environment error with status indicator
+  const vscodeTrailing = environmentErrorIndicator || statusIndicator;
 
   return (
     <Fragment>
@@ -1947,7 +1976,7 @@ function TaskRunDetails({
           icon={<Monitor className="w-3 h-3 mr-2 text-neutral-400" />}
           label="Browser"
           indentLevel={indentLevel}
-          trailing={loadingIndicator}
+          trailing={statusIndicator}
         />
       ) : null}
 
@@ -1959,7 +1988,7 @@ function TaskRunDetails({
           icon={<TerminalSquare className="w-3 h-3 mr-2 text-neutral-400" />}
           label="Terminals"
           indentLevel={indentLevel}
-          trailing={loadingIndicator}
+          trailing={statusIndicator}
         />
       ) : null}
 

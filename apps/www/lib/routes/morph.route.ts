@@ -7,6 +7,7 @@ import { getAccessTokenFromRequest } from "@/lib/utils/auth";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
+import { HTTPException } from "hono/http-exception";
 import { type Instance, MorphCloudClient } from "morphcloud";
 import { getConvex } from "../utils/get-convex";
 import { selectGitIdentity } from "../utils/gitIdentity";
@@ -690,6 +691,10 @@ morphRouter.openapi(
         failedClones,
       });
     } catch (error) {
+      // Re-throw HTTPException to preserve auth error status codes (401, 403, 404)
+      if (error instanceof HTTPException) {
+        throw error;
+      }
       console.error("Failed to setup Morph instance:", error);
       return c.text("Failed to setup instance", 500);
     }

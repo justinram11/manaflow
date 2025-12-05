@@ -68,6 +68,9 @@ export async function spawnAgent(
   },
   teamSlugOrId: string
 ): Promise<AgentSpawnResult> {
+  // Declare taskRunId outside try block so it's accessible in catch for error reporting
+  let taskRunId: Id<"taskRuns"> | null = null;
+
   try {
     // Capture the current auth token and header JSON from AsyncLocalStorage so we can
     // re-enter the auth context inside async event handlers later.
@@ -84,17 +87,16 @@ export async function spawnAgent(
     );
 
     // Create a task run for this specific agent
-    const { taskRunId, jwt: taskRunJwt } = await getConvex().mutation(
-      api.taskRuns.create,
-      {
+    const { taskRunId: createdTaskRunId, jwt: taskRunJwt } =
+      await getConvex().mutation(api.taskRuns.create, {
         teamSlugOrId,
         taskId: taskId,
         prompt: options.taskDescription,
         agentName: agent.name,
         newBranch,
         environmentId: options.environmentId,
-      }
-    );
+      });
+    taskRunId = createdTaskRunId;
 
     // Fetch the task to get image storage IDs
     const task = await getConvex().query(api.tasks.getById, {
@@ -933,13 +935,38 @@ exit $EXIT_CODE
     };
   } catch (error) {
     serverLogger.error("Error spawning agent", error);
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+
+    // Mark the task run as failed in Convex so the UI shows the failure
+    if (taskRunId) {
+      try {
+        await retryOnOptimisticConcurrency(() =>
+          getConvex().mutation(api.taskRuns.fail, {
+            teamSlugOrId,
+            id: taskRunId,
+            errorMessage: `Agent spawn failed: ${errorMessage}`,
+            exitCode: 1,
+          })
+        );
+        serverLogger.info(
+          `[AgentSpawner] Marked taskRun ${taskRunId} as failed due to spawn error`
+        );
+      } catch (failError) {
+        serverLogger.error(
+          `[AgentSpawner] Failed to mark taskRun as failed`,
+          failError
+        );
+      }
+    }
+
     return {
       agentName: agent.name,
       terminalId: "",
-      taskRunId: "",
+      taskRunId: taskRunId ?? "",
       worktreePath: "",
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: errorMessage,
     };
   }
 }
