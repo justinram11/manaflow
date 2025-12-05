@@ -11,8 +11,6 @@ import { useOpenWithActions } from "@/hooks/useOpenWithActions";
 import { useTaskRename } from "@/hooks/useTaskRename";
 import { isElectron } from "@/lib/electron";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
-import { rewriteLocalWorkspaceUrlIfNeeded } from "@/lib/toProxyWorkspaceUrl";
-import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 import type { AnnotatedTaskRun, TaskRunWithChildren } from "@/types/task";
 import { ContextMenu } from "@base-ui-components/react/context-menu";
 import { api } from "@cmux/convex/api";
@@ -337,9 +335,7 @@ function TaskTreeInner({
   defaultExpanded = false,
   teamSlugOrId,
 }: TaskTreeProps) {
-  // Get local VSCode serve web origin for local workspace URL rewriting
-  const localServeWeb = useLocalVSCodeServeWebQuery();
-  const localServeWebOrigin = localServeWeb.data?.baseUrl ?? null;
+  const navigate = useNavigate();
 
   // Get the current route to determine if this task is selected
   const location = useLocation();
@@ -388,24 +384,16 @@ function TaskTreeInner({
   const hasVisibleRuns = activeRunsFlat.length > 0;
   const showRunNumbers = flattenedRuns.length > 1;
 
-  // For local workspaces, compute the VSCode URL to open directly
-  const localWorkspaceVscodeUrl = useMemo(() => {
+  // For local workspaces, find the run with VSCode to navigate to VSCode view directly
+  const localWorkspaceRunWithVscode = useMemo(() => {
     if (!task.isLocalWorkspace) {
       return null;
     }
     // Find the first active run with a running VSCode instance
-    const runWithVscode = activeRunsFlat.find(
+    return activeRunsFlat.find(
       (run) => run.vscode?.status === "running" && run.vscode?.url
-    );
-    if (!runWithVscode?.vscode?.url) {
-      return null;
-    }
-    const normalizedUrl = rewriteLocalWorkspaceUrlIfNeeded(
-      runWithVscode.vscode.url,
-      localServeWebOrigin
-    );
-    return `${normalizedUrl}?folder=/root/workspace`;
-  }, [task.isLocalWorkspace, activeRunsFlat, localServeWebOrigin]);
+    ) ?? null;
+  }, [task.isLocalWorkspace, activeRunsFlat]);
 
   const runMenuEntries = useMemo(
     () =>
@@ -709,8 +697,7 @@ function TaskTreeInner({
   const isCrownEvaluating = task.crownEvaluationStatus === "in_progress";
   const isLocalWorkspace = task.isLocalWorkspace;
   const isCloudWorkspace = task.isCloudWorkspace;
-  // For local workspaces with VSCode URL, don't show expand toggle since clicking opens VSCode directly
-  const canExpand = !localWorkspaceVscodeUrl;
+  const canExpand = true;
 
   const taskLeadingIcon = (() => {
     if (isCrownEvaluating) {
@@ -850,16 +837,6 @@ function TaskTreeInner({
                 }
                 if (isRenaming) {
                   event.preventDefault();
-                  return;
-                }
-                // For local workspaces with active VSCode, open VSCode directly
-                if (localWorkspaceVscodeUrl) {
-                  event.preventDefault();
-                  window.open(
-                    localWorkspaceVscodeUrl,
-                    "_blank",
-                    "noopener,noreferrer"
-                  );
                   return;
                 }
                 handleToggle(event);
@@ -1003,8 +980,25 @@ function TaskTreeInner({
           </ContextMenu.Portal>
         </ContextMenu.Root>
 
-        {/* Hide task runs for local workspaces - clicking opens VSCode directly */}
-        {isExpanded && !localWorkspaceVscodeUrl ? (
+        {/* For local workspaces, only show VSCode link when expanded */}
+        {isExpanded && localWorkspaceRunWithVscode ? (
+          <TaskRunDetailLink
+            to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
+            params={{
+              teamSlugOrId,
+              taskId: task._id,
+              runId: localWorkspaceRunWithVscode._id,
+            }}
+            icon={
+              <VSCodeIcon className="w-3 h-3 mr-2 text-neutral-400 grayscale opacity-60" />
+            }
+            label="VS Code"
+            indentLevel={level + 1}
+          />
+        ) : null}
+
+        {/* For non-local workspaces, show normal task runs content */}
+        {isExpanded && !localWorkspaceRunWithVscode ? (
           <TaskRunsContent
             taskId={task._id}
             teamSlugOrId={teamSlugOrId}
