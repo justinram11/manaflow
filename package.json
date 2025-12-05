@@ -69,6 +69,7 @@
     "@sentry/core": "10.27.0",
     "@sentry/electron": "7.3.0",
     "@sentry/nextjs": "10.27.0",
+    "@sentry/node": "^10.29.0",
     "@sentry/react": "10.27.0",
     "@sentry/types": "10.27.0",
     "@sentry/vite-plugin": "4.6.1",
