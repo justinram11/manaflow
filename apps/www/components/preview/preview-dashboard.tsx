@@ -1096,8 +1096,8 @@ function MockGitHubPRBrowser() {
               <div className="h-[38px] flex items-center px-3 shrink-0">
                 <CmuxLogo height={28} wordmarkText="cmux" />
                 <div className="ml-auto">
-                  <div className="w-[25px] h-[25px] border border-neutral-800 hover:bg-neutral-900 rounded-lg flex items-center justify-center cursor-pointer">
-                    <Plus className="w-4 h-4 text-neutral-300" />
+                  <div className="w-[25px] h-[25px] border border-neutral-800 rounded-lg flex items-center justify-center cursor-not-allowed">
+                    <Plus className="w-4 h-4 text-neutral-400" />
                   </div>
                 </div>
               </div>
@@ -1106,19 +1106,19 @@ function MockGitHubPRBrowser() {
               <nav className="flex-1 overflow-y-auto">
                 <ul className="flex flex-col gap-px">
                   <li>
-                    <div className="mx-1 flex items-center gap-2 rounded-sm pl-2 ml-2 pr-3 py-1 text-[13px] text-neutral-100 hover:bg-neutral-800/45 cursor-pointer">
+                    <div className="mx-1 flex items-center gap-2 rounded-sm pl-2 ml-2 pr-3 py-1 text-[13px] text-neutral-400 cursor-not-allowed">
                       <Home className="w-4 h-4 text-neutral-400" />
                       <span>Home</span>
                     </div>
                   </li>
                   <li>
-                    <div className="mx-1 flex items-center gap-2 rounded-sm pl-2 ml-2 pr-3 py-1 text-[13px] text-neutral-100 hover:bg-neutral-800/45 cursor-pointer">
+                    <div className="mx-1 flex items-center gap-2 rounded-sm pl-2 ml-2 pr-3 py-1 text-[13px] text-neutral-400 cursor-not-allowed">
                       <Server className="w-4 h-4 text-neutral-400" />
                       <span>Environments</span>
                     </div>
                   </li>
                   <li>
-                    <div className="mx-1 flex items-center gap-2 rounded-sm pl-2 ml-2 pr-3 py-1 text-[13px] text-neutral-100 hover:bg-neutral-800/45 cursor-pointer">
+                    <div className="mx-1 flex items-center gap-2 rounded-sm pl-2 ml-2 pr-3 py-1 text-[13px] text-neutral-400 cursor-not-allowed">
                       <Settings className="w-4 h-4 text-neutral-400" />
                       <span>Settings</span>
                     </div>
@@ -1460,7 +1460,7 @@ function MockGitHubPRBrowser() {
                       <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">3</div><div>Welcome to cmux!</div></div>
                       <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">4</div><div></div></div>
                       <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">5</div><div>Feel free to click around and explore!</div></div>
-                      <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">6</div><div>- Explore around in the sidebar</div></div>
+                      <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">6</div><div>- Explore preview tasks in the sidebar</div></div>
                       <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">7</div><div>- Check out the git diff view</div></div>
                       <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">8</div><div>- View the browser preview</div></div>
                       <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">9</div><div>- Switch between tmux sessions in terminal</div></div>
@@ -1827,7 +1827,7 @@ function MockGitHubPRBrowser() {
                         <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">3</div><div>Welcome to cmux!</div></div>
                         <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">4</div><div></div></div>
                         <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">5</div><div>Feel free to click around and explore!</div></div>
-                        <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">6</div><div>- Browse files in the explorer</div></div>
+                        <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">6</div><div>- Explore preview tasks in the sidebar</div></div>
                         <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">7</div><div>- Check out the git diff view</div></div>
                         <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">8</div><div>- View the browser preview</div></div>
                         <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">9</div><div>- There may be some Easter eggs</div></div>
