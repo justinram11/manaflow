@@ -35,6 +35,7 @@ import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { prettyJSON } from "hono/pretty-json";
 import { decodeJwt } from "jose";
+import { setupHonoErrorHandler } from "@sentry/node";
 
 // Get client preview URL from related projects for CORS
 const clientPreviewOriginRaw = relatedProjects({ noThrow: true }).find(
@@ -160,6 +161,9 @@ app.notFound((c) => {
     404,
   );
 });
+
+// Sentry error handler - must be before custom error handler
+setupHonoErrorHandler(app);
 
 // Error handler
 app.onError((err, c) => {

@@ -1,19 +1,16 @@
 /**
  * Benchmark script for /morph/setup-instance endpoint
  *
- * This script calls the endpoint with instrumentation to identify performance bottlenecks.
- * Run with: bun apps/www/scripts/bench-morph-setup.ts
+ * This script calls the endpoint with client-side timing to measure end-to-end latency.
+ * Server-side timing is captured via Sentry tracing.
  *
- * To enable server-side timing logs, set MORPH_BENCH=1 before running.
+ * Run with: bun apps/www/scripts/bench-morph-setup.ts
  */
 
 import { __TEST_INTERNAL_ONLY_GET_STACK_TOKENS } from "@/lib/test-utils/__TEST_INTERNAL_ONLY_GET_STACK_TOKENS";
 import { __TEST_INTERNAL_ONLY_MORPH_CLIENT } from "@/lib/test-utils/__TEST_INTERNAL_ONLY_MORPH_CLIENT";
 import { testApiClient } from "@/lib/test-utils/openapi-client";
 import { postApiMorphSetupInstance } from "@cmux/www-openapi-client";
-
-// Enable server-side instrumentation
-process.env.MORPH_BENCH = "1";
 
 interface TimingResult {
   label: string;
@@ -64,12 +61,10 @@ async function main() {
   try {
     console.log("Benchmarking /morph/setup-instance endpoint\n");
 
-    // Step 1: Get auth tokens
     const tokens = await time("Get Stack auth tokens", async () => {
       return __TEST_INTERNAL_ONLY_GET_STACK_TOKENS();
     });
 
-    // Step 2: Create a new instance (no repos)
     console.log("\n--- Creating new instance (no repos) ---");
     const createResult = await time("Total: Create new instance", async () => {
       return postApiMorphSetupInstance({
@@ -96,7 +91,6 @@ async function main() {
     createdInstanceId = instanceId;
     console.log(`  Created instance: ${instanceId}`);
 
-    // Step 3: Reuse instance (no repos)
     console.log("\n--- Reusing existing instance (no repos) ---");
     await time("Total: Reuse instance (no repos)", async () => {
       return postApiMorphSetupInstance({
@@ -110,7 +104,6 @@ async function main() {
       });
     });
 
-    // Step 4: Clone a single repo
     console.log("\n--- Cloning 1 repo ---");
     const cloneResult = await time("Total: Clone 1 repo", async () => {
       return postApiMorphSetupInstance({
@@ -129,7 +122,6 @@ async function main() {
       console.log(`  Cloned: ${cloneResult.data?.clonedRepos?.join(", ") || "none"}`);
     }
 
-    // Step 5: Clone multiple repos
     console.log("\n--- Cloning 3 repos ---");
     const clone3Result = await time("Total: Clone 3 repos", async () => {
       return postApiMorphSetupInstance({
@@ -152,10 +144,8 @@ async function main() {
       console.log(`  Cloned: ${clone3Result.data?.clonedRepos?.join(", ") || "none"}`);
     }
 
-    // Print summary
     printSummary();
   } finally {
-    // Cleanup: stop the instance
     if (createdInstanceId) {
       console.log(`\nCleaning up: stopping instance ${createdInstanceId}`);
       try {
