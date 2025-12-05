@@ -116,3 +116,20 @@ if (!firstPreset) {
 }
 
 export const DEFAULT_MORPH_SNAPSHOT_ID: MorphSnapshotId = firstPreset.id;
+
+/**
+ * Get the latest snapshot ID for a given preset ID.
+ */
+export const getSnapshotIdByPresetId = (
+  presetId: string,
+): MorphSnapshotId | undefined => {
+  const preset = MORPH_SNAPSHOT_PRESETS.find((p) => p.presetId === presetId);
+  return preset?.id;
+};
+
+/**
+ * The default snapshot ID for preview configure environments.
+ * Uses the 8vcpu preset for better performance during environment setup.
+ */
+export const DEFAULT_PREVIEW_CONFIGURE_SNAPSHOT_ID: MorphSnapshotId =
+  getSnapshotIdByPresetId("8vcpu_32gb_48gb") ?? DEFAULT_MORPH_SNAPSHOT_ID;

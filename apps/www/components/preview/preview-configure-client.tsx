@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { formatEnvVarsContent } from "@cmux/shared/utils/format-env-vars-content";
+import { DEFAULT_PREVIEW_CONFIGURE_SNAPSHOT_ID } from "@cmux/shared";
 import clsx from "clsx";
 import {
   FrameworkPresetSelect,
@@ -662,6 +663,7 @@ export function PreviewConfigureClient({
           repoUrl: `https://github.com/${repo}`,
           branch: "main",
           ttlSeconds: 3600,
+          snapshotId: DEFAULT_PREVIEW_CONFIGURE_SNAPSHOT_ID,
         }),
       });
 
