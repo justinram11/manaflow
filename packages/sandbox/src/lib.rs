@@ -9,6 +9,7 @@ pub mod mux;
 pub mod notifications;
 pub mod palette;
 pub mod service;
+pub mod settings;
 pub mod sync_files;
 
 pub use acp_client::{

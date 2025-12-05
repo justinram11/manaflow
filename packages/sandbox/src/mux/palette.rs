@@ -1,7 +1,7 @@
 //! Command palette for the mux TUI.
 //!
 //! This is a thin wrapper around the shared palette component
-//! that adds MuxCommand-specific functionality.
+//! that adds MuxCommand-specific functionality including submenu support.
 
 use crate::mux::commands::MuxCommand;
 use crate::palette::{Palette, PaletteItem as SharedPaletteItem};
@@ -20,10 +20,12 @@ pub enum PaletteItem {
 }
 
 /// State for the command palette.
-/// Wraps the shared Palette component.
+/// Wraps the shared Palette component with submenu support.
 #[derive(Debug)]
 pub struct CommandPalette<'a> {
     inner: Palette<'a, MuxCommand>,
+    /// The parent command when in a submenu, None when at top level.
+    submenu_parent: Option<MuxCommand>,
 }
 
 impl Default for CommandPalette<'_> {
@@ -35,7 +37,9 @@ impl Default for CommandPalette<'_> {
 impl<'a> CommandPalette<'a> {
     pub fn new() -> Self {
         Self {
-            inner: Palette::new(MuxCommand::all().to_vec()),
+            // Use main_palette_commands to exclude submenu items from default view
+            inner: Palette::new(MuxCommand::main_palette_commands()),
+            submenu_parent: None,
         }
     }
 
@@ -44,13 +48,51 @@ impl<'a> CommandPalette<'a> {
         self.inner.visible
     }
 
-    /// Open the palette.
+    /// Check if we're currently in a submenu.
+    pub fn is_in_submenu(&self) -> bool {
+        self.submenu_parent.is_some()
+    }
+
+    /// Get the parent command if in a submenu.
+    pub fn submenu_parent(&self) -> Option<MuxCommand> {
+        self.submenu_parent
+    }
+
+    /// Open the palette at the top level.
     pub fn open(&mut self) {
+        self.submenu_parent = None;
+        self.inner.set_commands(MuxCommand::main_palette_commands());
         self.inner.open();
+    }
+
+    /// Open a submenu for the given parent command.
+    pub fn open_submenu(&mut self, parent: MuxCommand) {
+        if let Some(items) = parent.submenu_items() {
+            self.submenu_parent = Some(parent);
+            self.inner.set_commands(items.to_vec());
+            self.inner.open();
+        }
+    }
+
+    /// Go back from submenu to main palette.
+    pub fn back_to_main(&mut self) {
+        self.submenu_parent = None;
+        self.inner.set_commands(MuxCommand::main_palette_commands());
+        self.inner.search_input = tui_textarea::TextArea::default();
+        self.inner
+            .search_input
+            .set_placeholder_text("Type to search...");
+        self.inner
+            .search_input
+            .set_cursor_line_style(ratatui::style::Style::default());
+        self.inner.selected_index = 0;
+        self.inner.scroll_offset = 0;
+        self.inner.update_filtered_commands();
     }
 
     /// Close the palette.
     pub fn close(&mut self) {
+        self.submenu_parent = None;
         self.inner.close();
     }
 
@@ -80,8 +122,20 @@ impl<'a> CommandPalette<'a> {
     }
 
     /// Execute the selected command and close the palette.
+    /// If the command has submenu items, opens the submenu instead.
+    /// Returns Some(command) if a command was executed, None if submenu was opened.
     pub fn execute_selection(&mut self) -> Option<MuxCommand> {
-        self.inner.execute_selection()
+        let selected = self.inner.selected_command()?;
+
+        // If command has submenu items, open submenu instead of executing
+        if selected.submenu_items().is_some() {
+            self.open_submenu(selected);
+            return None;
+        }
+
+        // Otherwise, execute and close
+        self.close();
+        Some(selected)
     }
 
     /// Get palette items grouped by category for rendering.

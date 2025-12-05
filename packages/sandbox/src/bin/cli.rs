@@ -1932,7 +1932,7 @@ async fn handle_real_ssh(client: &Client, base_url: &str, args: &SshArgs) -> any
         use std::os::unix::process::CommandExt;
         let err = std::process::Command::new("ssh").args(&ssh_args).exec();
         // exec only returns on error
-        return Err(anyhow::anyhow!("Failed to exec ssh: {}", err));
+        Err(anyhow::anyhow!("Failed to exec ssh: {}", err))
     }
 
     #[cfg(not(unix))]

@@ -12,7 +12,160 @@ use crate::mux::onboard::OnboardState;
 use crate::mux::palette::CommandPalette;
 use crate::mux::sidebar::Sidebar;
 use crate::mux::terminal::{SharedTerminalManager, TerminalRenderView};
+use crate::settings::{EditorChoice, Settings};
 use uuid::Uuid;
+
+/// Result of ensuring SSH config is set up for sandboxes.
+enum SshConfigStatus {
+    AlreadyConfigured,
+    JustConfigured,
+    Failed(String),
+}
+
+/// Generates a dedicated passwordless SSH key for sandbox access.
+/// Returns the path to the private key, or an error message.
+fn ensure_sandbox_ssh_key(ssh_dir: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let key_path = ssh_dir.join("dmux_sandbox_key");
+    let pub_key_path = ssh_dir.join("dmux_sandbox_key.pub");
+
+    // If key already exists, return it
+    if key_path.exists() && pub_key_path.exists() {
+        return Ok(key_path);
+    }
+
+    // Generate a new ed25519 key without passphrase using ssh-keygen
+    let output = std::process::Command::new("ssh-keygen")
+        .args([
+            "-t",
+            "ed25519",
+            "-f",
+            key_path.to_str().unwrap_or(""),
+            "-N",
+            "", // Empty passphrase
+            "-C",
+            "dmux-sandbox-key",
+        ])
+        .output();
+
+    match output {
+        Ok(result) => {
+            if result.status.success() {
+                // Set proper permissions
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ =
+                        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600));
+                    let _ = std::fs::set_permissions(
+                        &pub_key_path,
+                        std::fs::Permissions::from_mode(0o644),
+                    );
+                }
+                Ok(key_path)
+            } else {
+                Err(format!(
+                    "ssh-keygen failed: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                ))
+            }
+        }
+        Err(e) => Err(format!("couldn't run ssh-keygen: {}", e)),
+    }
+}
+
+/// Ensures ~/.ssh/config has the sandbox-* host configuration.
+/// Also generates a dedicated passwordless SSH key for sandbox access.
+/// Returns the status of what happened.
+fn ensure_ssh_config_for_sandboxes(base_url: &str) -> SshConfigStatus {
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return SshConfigStatus::Failed("HOME not set".to_string()),
+    };
+
+    let ssh_dir = std::path::Path::new(&home).join(".ssh");
+    let config_path = ssh_dir.join("config");
+
+    // Check if config already has sandbox-* entry
+    if config_path.exists() {
+        match std::fs::read_to_string(&config_path) {
+            Ok(content) => {
+                if content.contains("Host sandbox-*") {
+                    // Config exists, but ensure the key exists too
+                    let _ = ensure_sandbox_ssh_key(&ssh_dir);
+                    return SshConfigStatus::AlreadyConfigured;
+                }
+            }
+            Err(e) => return SshConfigStatus::Failed(format!("couldn't read config: {}", e)),
+        }
+    }
+
+    // Ensure .ssh directory exists with proper permissions
+    if !ssh_dir.exists() {
+        if let Err(e) = std::fs::create_dir_all(&ssh_dir) {
+            return SshConfigStatus::Failed(format!("couldn't create .ssh: {}", e));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&ssh_dir, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+
+    // Generate dedicated SSH key for sandboxes (passwordless)
+    let key_path = match ensure_sandbox_ssh_key(&ssh_dir) {
+        Ok(p) => p,
+        Err(e) => return SshConfigStatus::Failed(format!("couldn't create SSH key: {}", e)),
+    };
+
+    // Get the binary name (cmux or dmux) for ProxyCommand
+    let binary_name = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| "dmux".to_string());
+
+    // Append the config with IdentityFile pointing to our passwordless key
+    // Note: IdentitiesOnly is NOT set, so SSH agent keys can be used as fallback
+    // if the dedicated key hasn't been synced yet
+    let config_block = format!(
+        r#"
+# SSH config for {} sandboxes (auto-configured)
+Host sandbox-*
+    User root
+    IdentityFile {}
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    LogLevel ERROR
+    ProxyCommand {} --base-url {} _ssh-proxy $(echo %n | sed 's/sandbox-//')
+"#,
+        binary_name,
+        key_path.display(),
+        binary_name,
+        base_url
+    );
+
+    let mut file = match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&config_path)
+    {
+        Ok(f) => f,
+        Err(e) => return SshConfigStatus::Failed(format!("couldn't open config: {}", e)),
+    };
+
+    use std::io::Write;
+    if let Err(e) = file.write_all(config_block.as_bytes()) {
+        return SshConfigStatus::Failed(format!("couldn't write config: {}", e));
+    }
+
+    // Set proper permissions on config file
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600));
+    }
+
+    SshConfigStatus::JustConfigured
+}
 
 /// Which area of the UI has focus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -213,6 +366,9 @@ pub struct MuxApp<'a> {
     /// The tab_id of the most recently initiated sandbox creation.
     /// Only this sandbox will steal focus/selection when it completes.
     pub most_recent_creation_tab_id: Option<String>,
+
+    /// Persistent settings (editor choice, etc.)
+    pub settings: Settings,
 }
 
 impl<'a> MuxApp<'a> {
@@ -221,6 +377,10 @@ impl<'a> MuxApp<'a> {
         event_tx: mpsc::UnboundedSender<MuxEvent>,
         workspace_path: PathBuf,
     ) -> Self {
+        // Pre-generate SSH key for sandbox access so it's included in initial syncs
+        // This ensures VS Code SSH works without additional setup
+        let _ = ensure_ssh_config_for_sandboxes(&base_url);
+
         Self {
             workspace_manager: WorkspaceManager::new(),
             sidebar: Sidebar::new(),
@@ -245,6 +405,7 @@ impl<'a> MuxApp<'a> {
             delta_enabled_sandboxes: HashSet::new(),
             pending_creation_tab_ids: HashSet::new(),
             most_recent_creation_tab_id: None,
+            settings: Settings::load(),
         }
     }
 
@@ -326,6 +487,56 @@ impl<'a> MuxApp<'a> {
             if time.elapsed() > std::time::Duration::from_secs(3) {
                 self.status_message = None;
             }
+        }
+    }
+
+    /// Open the selected sandbox with a specific editor (one-time, doesn't change default).
+    fn open_with_editor(&mut self, editor: EditorChoice) {
+        if let Some(sandbox_id) = self.selected_sandbox_id() {
+            let ssh_host = format!("sandbox-{}", sandbox_id);
+            let remote_path = "/workspace";
+
+            // Ensure SSH config is set up for sandbox-* hosts
+            let config_status = ensure_ssh_config_for_sandboxes(&self.base_url);
+
+            match editor.open(&ssh_host, remote_path) {
+                Ok(msg) => {
+                    let full_msg = match config_status {
+                        SshConfigStatus::AlreadyConfigured => msg,
+                        SshConfigStatus::JustConfigured => {
+                            format!("Configured SSH for sandbox-* hosts. {}", msg)
+                        }
+                        SshConfigStatus::Failed(err) => {
+                            format!("Warning: couldn't configure SSH ({}). {}", err, msg)
+                        }
+                    };
+                    self.set_status(full_msg);
+                }
+                Err(e) => {
+                    self.set_status(e);
+                }
+            }
+        } else {
+            self.set_status("No sandbox selected");
+        }
+    }
+
+    /// Set the default editor and persist to disk.
+    fn set_default_editor(&mut self, editor: EditorChoice) {
+        let label = editor.label().to_string();
+        self.settings.default_editor = editor;
+
+        // Save to disk
+        if let Err(e) = self.settings.save() {
+            self.set_status(format!(
+                "Default editor set to {} (warning: failed to save: {})",
+                label, e
+            ));
+        } else {
+            self.set_status(format!(
+                "Default editor set to {}. Press Alt+E to open.",
+                label
+            ));
         }
     }
 
@@ -754,6 +965,103 @@ impl<'a> MuxApp<'a> {
                     Err(msg) => {
                         self.set_status(msg);
                     }
+                }
+            }
+            MuxCommand::OpenWith => {
+                // This normally opens a submenu in the palette, but if executed directly:
+                self.set_status("Use command palette to choose an editor");
+            }
+            MuxCommand::OpenWithVSCode => {
+                self.open_with_editor(EditorChoice::VSCode);
+            }
+            MuxCommand::OpenWithCursor => {
+                self.open_with_editor(EditorChoice::Cursor);
+            }
+            MuxCommand::OpenWithZed => {
+                self.open_with_editor(EditorChoice::Zed);
+            }
+            MuxCommand::OpenWithWindsurf => {
+                self.open_with_editor(EditorChoice::Windsurf);
+            }
+            MuxCommand::OpenEditor => {
+                if let Some(sandbox_id) = self.selected_sandbox_id() {
+                    let ssh_host = format!("sandbox-{}", sandbox_id);
+                    let remote_path = "/workspace";
+
+                    // Ensure SSH config is set up for sandbox-* hosts
+                    let config_status = ensure_ssh_config_for_sandboxes(&self.base_url);
+
+                    // Use the default editor
+                    match self.settings.default_editor.open(&ssh_host, remote_path) {
+                        Ok(msg) => {
+                            let full_msg = match config_status {
+                                SshConfigStatus::AlreadyConfigured => msg,
+                                SshConfigStatus::JustConfigured => {
+                                    format!("Configured SSH for sandbox-* hosts. {}", msg)
+                                }
+                                SshConfigStatus::Failed(err) => {
+                                    format!("Warning: couldn't configure SSH ({}). {}", err, msg)
+                                }
+                            };
+                            self.set_status(full_msg);
+                        }
+                        Err(e) => {
+                            self.set_status(e);
+                        }
+                    }
+                } else {
+                    self.set_status("No sandbox selected");
+                }
+            }
+            MuxCommand::SetDefaultEditor => {
+                // This normally opens a submenu in the palette, but if executed directly:
+                let current = self.settings.default_editor.label();
+                self.set_status(format!(
+                    "Current editor: {}. For custom: set DMUX_EDITOR='myeditor --remote {{host}} {{path}}'",
+                    current
+                ));
+            }
+            MuxCommand::SetEditorVSCode => {
+                self.set_default_editor(EditorChoice::VSCode);
+            }
+            MuxCommand::SetEditorCursor => {
+                self.set_default_editor(EditorChoice::Cursor);
+            }
+            MuxCommand::SetEditorZed => {
+                self.set_default_editor(EditorChoice::Zed);
+            }
+            MuxCommand::SetEditorWindsurf => {
+                self.set_default_editor(EditorChoice::Windsurf);
+            }
+            MuxCommand::OpenBrowser => {
+                if let Some(sandbox_id) = self.selected_sandbox_id() {
+                    // Get the binary name (cmux or dmux)
+                    let binary_name = std::env::current_exe()
+                        .ok()
+                        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                        .unwrap_or_else(|| "dmux".to_string());
+
+                    // Spawn the browser command in background, suppressing output
+                    // Pass base_url via env var so it connects to the same backend
+                    match std::process::Command::new(&binary_name)
+                        .args(["browser", &sandbox_id.to_string()])
+                        .env("CMUX_SANDBOX_URL", &self.base_url)
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn()
+                    {
+                        Ok(_) => {
+                            self.set_status(format!(
+                                "Opening browser proxy for sandbox {}",
+                                sandbox_id
+                            ));
+                        }
+                        Err(e) => {
+                            self.set_status(format!("Failed to open browser: {}", e));
+                        }
+                    }
+                } else {
+                    self.set_status("No sandbox selected");
                 }
             }
         }

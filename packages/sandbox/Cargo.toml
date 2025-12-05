@@ -69,6 +69,7 @@ base64 = "0.22.1"
 unicode-width = "0.2"
 open = "5"
 arboard = "3"
+dirs = "5"
 
 [dev-dependencies]
 assert_cmd = "2.0"

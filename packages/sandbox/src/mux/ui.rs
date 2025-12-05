@@ -14,6 +14,7 @@ use crate::mux::onboard::OnboardPhase;
 use crate::mux::palette::PaletteItem;
 use crate::mux::sidebar::Sidebar;
 use crate::mux::state::{FocusArea, MuxApp};
+use crate::settings::EditorChoice;
 
 /// Main UI rendering function.
 pub fn ui(f: &mut Frame, app: &mut MuxApp) {
@@ -609,8 +610,15 @@ fn render_command_palette(f: &mut Frame, app: &mut MuxApp) {
     let palette_area = Rect::new(x, y, palette_width, palette_height);
     f.render_widget(Clear, palette_area);
 
+    // Customize title based on whether we're in a submenu
+    let title = if let Some(parent) = app.command_palette.submenu_parent() {
+        format!(" {} ", parent.label())
+    } else {
+        " Command Palette ".to_string()
+    };
+
     let block = Block::default()
-        .title(" Command Palette ")
+        .title(title)
         .title_style(
             Style::default()
                 .fg(Color::Cyan)
@@ -645,6 +653,7 @@ fn render_command_palette(f: &mut Frame, app: &mut MuxApp) {
 
     // Filter out the inappropriate delta command based on current state
     let delta_enabled = app.is_delta_enabled();
+    let default_editor = &app.settings.default_editor;
     let items: Vec<_> = items
         .into_iter()
         .filter(|item| {
@@ -695,6 +704,22 @@ fn render_command_palette(f: &mut Frame, app: &mut MuxApp) {
 
                 // Calculate padding for right-aligned keybinding
                 let label = command.label();
+                let is_default = match command {
+                    MuxCommand::SetEditorVSCode => {
+                        matches!(default_editor, EditorChoice::VSCode)
+                    }
+                    MuxCommand::SetEditorCursor => {
+                        matches!(default_editor, EditorChoice::Cursor)
+                    }
+                    MuxCommand::SetEditorZed => {
+                        matches!(default_editor, EditorChoice::Zed)
+                    }
+                    MuxCommand::SetEditorWindsurf => {
+                        matches!(default_editor, EditorChoice::Windsurf)
+                    }
+                    _ => false,
+                };
+                let default_suffix = if is_default { " (default)" } else { "" };
                 let kb_width = keybinding.len();
                 let label_width = items_area
                     .width
@@ -704,8 +729,14 @@ fn render_command_palette(f: &mut Frame, app: &mut MuxApp) {
                 let mut spans = vec![Span::styled(prefix, style)];
                 let mut label_spans =
                     highlighted_spans(label, &label_highlights, style, is_highlighted);
+                if is_default {
+                    label_spans.push(Span::styled(
+                        default_suffix,
+                        Style::default().fg(Color::DarkGray),
+                    ));
+                }
 
-                let label_len = label.chars().count();
+                let label_len = label.chars().count() + default_suffix.chars().count();
                 let padding = label_width.saturating_sub(label_len);
                 if padding > 0 {
                     label_spans.push(Span::styled(" ".repeat(padding), style));
@@ -733,15 +764,20 @@ fn render_command_palette(f: &mut Frame, app: &mut MuxApp) {
     let paragraph = Paragraph::new(lines).scroll((scroll_offset as u16, 0));
     f.render_widget(paragraph, items_area);
 
-    // Help text at bottom
+    // Help text at bottom - changes based on whether we're in a submenu
     let help_area = Rect::new(
         inner_area.x,
         inner_area.y + inner_area.height - 1,
         inner_area.width,
         1,
     );
+    let help_text = if app.command_palette.is_in_submenu() {
+        "↑↓: navigate │ Enter: select │ Esc: back"
+    } else {
+        "↑↓: navigate │ Enter: execute │ Esc: cancel"
+    };
     let help = Paragraph::new(Line::styled(
-        "↑↓: navigate │ Enter: execute │ Esc: cancel",
+        help_text,
         Style::default().fg(Color::DarkGray),
     ));
     f.render_widget(help, help_area);

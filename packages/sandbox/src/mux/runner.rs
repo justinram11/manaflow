@@ -712,7 +712,12 @@ fn handle_input(
             if app.focus == FocusArea::CommandPalette {
                 match key.code {
                     KeyCode::Esc => {
-                        app.close_command_palette();
+                        // If in submenu, go back to main palette; otherwise close
+                        if app.command_palette.is_in_submenu() {
+                            app.command_palette.back_to_main();
+                        } else {
+                            app.close_command_palette();
+                        }
                         return false;
                     }
                     KeyCode::Enter => {
@@ -723,6 +728,7 @@ fn handle_input(
                             }
                             app.execute_command(cmd);
                         }
+                        // If execute_selection returned None, it opened a submenu - stay in palette
                         return false;
                     }
                     KeyCode::Up => {

@@ -858,6 +858,7 @@ fi
         let mut cmd = CommandBuilder::new(&self.nsenter_path);
         cmd.args(nsenter_args(inner_pid, None, &command));
         cmd.env("HOME", "/root");
+        cmd.env("SHELL", "/bin/zsh");
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor"); // Enable 24-bit RGB color support
         cmd.env("LANG", "C.UTF-8");
@@ -1254,6 +1255,7 @@ impl SandboxService for BubblewrapService {
                 cmd.env(&env.key, &env.value);
             }
             cmd.env("IS_SANDBOX", "1");
+            cmd.env("SHELL", "/bin/zsh");
 
             cmd.stdin(Stdio::piped());
             cmd.stdout(Stdio::piped());
@@ -1393,6 +1395,7 @@ impl SandboxService for BubblewrapService {
 
         cmd.args(nsenter_args(entry.inner_pid, None, &target_command));
         cmd.env("HOME", "/root");
+        cmd.env("SHELL", "/bin/zsh");
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor"); // Enable 24-bit RGB color support
         cmd.env("LANG", "C.UTF-8");
