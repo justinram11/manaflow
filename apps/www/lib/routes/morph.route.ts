@@ -7,7 +7,7 @@ import { getAccessTokenFromRequest } from "@/lib/utils/auth";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
-import { MorphCloudClient } from "morphcloud";
+import { type Instance, MorphCloudClient } from "morphcloud";
 import { getConvex } from "../utils/get-convex";
 import { selectGitIdentity } from "../utils/gitIdentity";
 import { stackServerAppJs } from "../utils/stack";
@@ -19,6 +19,29 @@ import {
   fetchGitIdentityInputs,
 } from "./sandboxes/git";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
+
+// Instrumentation helper for benchmarking
+const isBenchMode = () => process.env.MORPH_BENCH === "1";
+
+function formatMs(ms: number): string {
+  if (ms >= 1000) {
+    return `${(ms / 1000).toFixed(2)}s`;
+  }
+  return `${ms.toFixed(0)}ms`;
+}
+
+async function bench<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  if (!isBenchMode()) {
+    return fn();
+  }
+  const start = performance.now();
+  try {
+    return await fn();
+  } finally {
+    const duration = performance.now() - start;
+    console.log(`[MORPH_BENCH] ${formatMs(duration).padStart(8)} | ${label}`);
+  }
+}
 
 export const morphRouter = new OpenAPIHono();
 
@@ -292,11 +315,21 @@ morphRouter.openapi(
     },
   }),
   async (c) => {
-    const user = await stackServerAppJs.getUser({ tokenStore: c.req.raw });
+    const requestStart = performance.now();
+    if (isBenchMode()) {
+      console.log(`[MORPH_BENCH] -------- setup-instance START --------`);
+    }
+
+    // Phase 1: Auth (must be sequential)
+    const user = await bench("stackServerAppJs.getUser", () =>
+      stackServerAppJs.getUser({ tokenStore: c.req.raw })
+    );
     if (!user) {
       return c.text("Unauthorized", 401);
     }
-    const { accessToken } = await user.getAuthJson();
+    const { accessToken } = await bench("user.getAuthJson", () =>
+      user.getAuthJson()
+    );
     if (!accessToken) return c.text("Unauthorized", 401);
     const {
       teamSlugOrId,
@@ -308,33 +341,44 @@ morphRouter.openapi(
 
     const convex = getConvex({ accessToken });
 
-    // Verify team access and get the team
-    const team = await verifyTeamAccess({ req: c.req.raw, teamSlugOrId });
-    const githubAccessTokenPromise = (async () => {
-      const githubAccount = await user.getConnectedAccount("github");
-      if (!githubAccount) {
-        return {
-          githubAccessTokenError: "GitHub account not found",
-          githubAccessToken: null,
-        } as const;
-      }
-      const { accessToken: githubAccessToken } =
-        await githubAccount.getAccessToken();
-      if (!githubAccessToken) {
-        return {
-          githubAccessTokenError: "GitHub access token not found",
-          githubAccessToken: null,
-        } as const;
-      }
+    // Phase 2: Start parallel operations that only depend on `user`
+    // Both verifyTeamAccess and githubAccessToken only need user - run in parallel!
+    const verifyTeamPromise = bench("verifyTeamAccess", () =>
+      verifyTeamAccess({ req: c.req.raw, teamSlugOrId })
+    );
 
-      return { githubAccessTokenError: null, githubAccessToken } as const;
-    })();
+    const githubAccessTokenPromise = bench(
+      "getGithubAccessToken",
+      async () => {
+        const githubAccount = await user.getConnectedAccount("github");
+        if (!githubAccount) {
+          return {
+            githubAccessTokenError: "GitHub account not found",
+            githubAccessToken: null,
+          } as const;
+        }
+        const { accessToken: githubAccessToken } =
+          await githubAccount.getAccessToken();
+        if (!githubAccessToken) {
+          return {
+            githubAccessTokenError: "GitHub access token not found",
+            githubAccessToken: null,
+          } as const;
+        }
+
+        return { githubAccessTokenError: null, githubAccessToken } as const;
+      }
+    );
+
+    // Chain fetchGitIdentityInputs off githubAccessToken (starts ASAP once token ready)
     const gitIdentityPromise = githubAccessTokenPromise.then(
       ({ githubAccessToken }) => {
         if (!githubAccessToken) {
           throw new Error("GitHub access token not found");
         }
-        return fetchGitIdentityInputs(convex, githubAccessToken);
+        return bench("fetchGitIdentityInputs", () =>
+          fetchGitIdentityInputs(convex, githubAccessToken)
+        );
       }
     );
 
@@ -343,33 +387,48 @@ morphRouter.openapi(
         apiKey: env.MORPH_API_KEY,
       });
 
-      let instance;
+      let instance: Instance;
       let instanceId = existingInstanceId;
       const selectedSnapshotId = snapshotId ?? DEFAULT_MORPH_SNAPSHOT_ID;
 
-      // If no instanceId provided, create a new instance
+      // Phase 3: Get or create instance
       if (!instanceId) {
+        // NEW INSTANCE: Need team.uuid for metadata, so await verifyTeamAccess first
+        const team = await verifyTeamPromise;
+
         console.log(
           `Creating new Morph instance (snapshot: ${selectedSnapshotId})`
         );
-        instance = await client.instances.start({
-          snapshotId: selectedSnapshotId,
-          ttlSeconds,
-          ttlAction: "pause",
-          metadata: {
-            app: "cmux-dev",
-            userId: user.id,
-            teamId: team.uuid,
-          },
-        });
+        instance = await bench("client.instances.start", () =>
+          client.instances.start({
+            snapshotId: selectedSnapshotId,
+            ttlSeconds,
+            ttlAction: "pause",
+            metadata: {
+              app: "cmux-dev",
+              userId: user.id,
+              teamId: team.uuid,
+            },
+          })
+        );
         instanceId = instance.id;
         void (async () => {
-          await instance.setWakeOn(true, true);
+          await bench("instance.setWakeOn", () =>
+            instance.setWakeOn(true, true)
+          );
         })();
       } else {
-        // Get existing instance
+        // REUSE INSTANCE: Can parallelize verifyTeamAccess with instances.get!
         console.log(`Using existing Morph instance: ${instanceId}`);
-        instance = await client.instances.get({ instanceId });
+
+        const [team, inst] = await Promise.all([
+          verifyTeamPromise,
+          bench("client.instances.get", () =>
+            client.instances.get({ instanceId: instanceId! })
+          ),
+        ]);
+
+        instance = inst;
 
         // Security: ensure the instance belongs to the requested team
         const meta = instance.metadata;
@@ -382,18 +441,6 @@ morphRouter.openapi(
         }
       }
 
-      void gitIdentityPromise
-        .then(([who, gh]) => {
-          const { name, email } = selectGitIdentity(who, gh);
-          return configureGitIdentity(instance, { name, email });
-        })
-        .catch((error) => {
-          console.log(
-            `[sandboxes.start] Failed to configure git identity; continuing...`,
-            error
-          );
-        });
-
       // Get VSCode URL
       const vscodeUrl = instance.networking.httpServices.find(
         (service) => service.port === 39378
@@ -403,6 +450,8 @@ morphRouter.openapi(
         throw new Error("VSCode URL not found");
       }
 
+      // Phase 4: Configure git access
+      // Wait for github token (should already be done or nearly done due to parallel start)
       const { githubAccessToken, githubAccessTokenError } =
         await githubAccessTokenPromise;
       if (githubAccessTokenError) {
@@ -411,7 +460,29 @@ morphRouter.openapi(
         );
         return c.text("Failed to resolve GitHub credentials", 401);
       }
-      await configureGithubAccess(instance, githubAccessToken);
+
+      // Start configureGithubAccess immediately
+      const configureGithubPromise = bench("configureGithubAccess", () =>
+        configureGithubAccess(instance, githubAccessToken)
+      );
+
+      // Start configureGitIdentity in parallel (fire-and-forget, but now truly parallel)
+      void gitIdentityPromise
+        .then(([who, gh]) => {
+          const { name, email } = selectGitIdentity(who, gh);
+          return bench("configureGitIdentity", () =>
+            configureGitIdentity(instance, { name, email })
+          );
+        })
+        .catch((error) => {
+          console.log(
+            `[sandboxes.start] Failed to configure git identity; continuing...`,
+            error
+          );
+        });
+
+      // Wait for configureGithubAccess (required for repo cloning)
+      await configureGithubPromise;
 
       const url = `${vscodeUrl}/?folder=/root/workspace`;
 
@@ -457,12 +528,14 @@ morphRouter.openapi(
         }
 
         // First, get list of existing repos with their remote URLs
-        const listReposCmd = await instance.exec(
-          "for dir in /root/workspace/*/; do " +
-            'if [ -d "$dir/.git" ]; then ' +
-            'basename "$dir"; ' +
-            "cd \"$dir\" && git remote get-url origin 2>/dev/null || echo 'no-remote'; " +
-            "fi; done"
+        const listReposCmd = await bench("instance.exec (list repos)", () =>
+          instance.exec(
+            "for dir in /root/workspace/*/; do " +
+              'if [ -d "$dir/.git" ]; then ' +
+              'basename "$dir"; ' +
+              "cd \"$dir\" && git remote get-url origin 2>/dev/null || echo 'no-remote'; " +
+              "fi; done"
+          )
         );
 
         const lines = listReposCmd.stdout.split("\n").filter(Boolean);
@@ -485,14 +558,18 @@ morphRouter.openapi(
           if (!selectedRepo) {
             // Repo not in selected list, remove it
             console.log(`Removing repository: ${existingName}`);
-            await instance.exec(`rm -rf /root/workspace/${existingName}`);
+            await bench(`instance.exec (rm ${existingName})`, () =>
+              instance.exec(`rm -rf /root/workspace/${existingName}`)
+            );
             removedRepos.push(existingName);
           } else if (existingUrl && !existingUrl.includes(selectedRepo)) {
             // Repo exists but points to different remote, remove and re-clone
             console.log(
               `Repository ${existingName} points to different remote, removing for re-clone`
             );
-            await instance.exec(`rm -rf /root/workspace/${existingName}`);
+            await bench(`instance.exec (rm ${existingName})`, () =>
+              instance.exec(`rm -rf /root/workspace/${existingName}`)
+            );
             removedRepos.push(existingName);
             existingRepos.delete(existingName); // Mark for re-cloning
           }
@@ -511,8 +588,12 @@ morphRouter.openapi(
               let isAuthError = false;
 
               for (let attempt = 1; attempt <= maxRetries; attempt++) {
-                const cloneCmd = await instance.exec(
-                  `mkdir -p /root/workspace && cd /root/workspace && git clone https://github.com/${repo}.git ${repoName} 2>&1`
+                const cloneCmd = await bench(
+                  `instance.exec (clone ${repoName} attempt ${attempt})`,
+                  () =>
+                    instance.exec(
+                      `mkdir -p /root/workspace && cd /root/workspace && git clone https://github.com/${repo}.git ${repoName} 2>&1`
+                    )
                 );
 
                 if (cloneCmd.exit_code === 0) {
@@ -592,6 +673,14 @@ morphRouter.openapi(
       }
 
       console.log(`VSCode Workspace URL: ${url}`);
+
+      if (isBenchMode()) {
+        const totalMs = performance.now() - requestStart;
+        console.log(
+          `[MORPH_BENCH] ${formatMs(totalMs).padStart(8)} | TOTAL REQUEST TIME`
+        );
+        console.log(`[MORPH_BENCH] -------- setup-instance END --------`);
+      }
 
       return c.json({
         instanceId,
