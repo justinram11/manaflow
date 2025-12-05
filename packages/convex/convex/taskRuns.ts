@@ -813,6 +813,116 @@ export const updateWorktreePath = authMutation({
   },
 });
 
+// Update branch name for a task run (called after branch generation completes)
+export const updateBranch = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    id: v.id("taskRuns"),
+    newBranch: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const doc = await ctx.db.get(args.id);
+    if (!doc || doc.teamId !== teamId || doc.userId !== userId) {
+      throw new Error("Task run not found or unauthorized");
+    }
+    await ctx.db.patch(args.id, {
+      newBranch: args.newBranch,
+      updatedAt: Date.now(),
+    });
+
+    // Also update the task's generatedBranchName if this is the first branch
+    const task = await ctx.db.get(doc.taskId);
+    if (task) {
+      const generatedBranchName = deriveGeneratedBranchName(args.newBranch);
+      if (
+        generatedBranchName &&
+        task.generatedBranchName !== generatedBranchName
+      ) {
+        await ctx.db.patch(doc.taskId, {
+          generatedBranchName,
+        });
+      }
+    }
+  },
+});
+
+// Batch update branch names for multiple task runs
+export const updateBranchBatch = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    updates: v.array(
+      v.object({
+        id: v.id("taskRuns"),
+        newBranch: v.string(),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const now = Date.now();
+
+    let firstGeneratedBranchName: string | undefined;
+
+    for (const update of args.updates) {
+      const doc = await ctx.db.get(update.id);
+      if (!doc || doc.teamId !== teamId || doc.userId !== userId) {
+        throw new Error(`Task run ${update.id} not found or unauthorized`);
+      }
+      await ctx.db.patch(update.id, {
+        newBranch: update.newBranch,
+        updatedAt: now,
+      });
+
+      // Track the first generated branch name to update the task
+      if (!firstGeneratedBranchName) {
+        firstGeneratedBranchName = deriveGeneratedBranchName(update.newBranch);
+        if (firstGeneratedBranchName) {
+          const task = await ctx.db.get(doc.taskId);
+          if (
+            task &&
+            task.generatedBranchName !== firstGeneratedBranchName
+          ) {
+            await ctx.db.patch(doc.taskId, {
+              generatedBranchName: firstGeneratedBranchName,
+            });
+          }
+        }
+      }
+    }
+  },
+});
+
+// Get JWT for an existing task run (used when task runs are pre-created)
+export const getJwt = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    taskRunId: v.id("taskRuns"),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const doc = await ctx.db.get(args.taskRunId);
+    if (!doc || doc.teamId !== teamId || doc.userId !== userId) {
+      throw new Error("Task run not found or unauthorized");
+    }
+
+    const jwt = await new SignJWT({
+      taskRunId: args.taskRunId,
+      teamId,
+      userId,
+    })
+      .setProtectedHeader({ alg: "HS256" })
+      .setIssuedAt()
+      .setExpirationTime("12h")
+      .sign(new TextEncoder().encode(env.CMUX_TASK_RUN_JWT_SECRET));
+
+    return { jwt };
+  },
+});
+
 // Internal query to get a task run by ID
 export const getById = internalQuery({
   args: { id: v.id("taskRuns") },

@@ -877,7 +877,7 @@ export function CommandBar({
         const environmentName = environment?.name ?? "Unknown Environment";
 
         // Create task in Convex without task description (it's just a workspace)
-        const taskId = await createTask({
+        const { taskId } = await createTask({
           teamSlugOrId,
           text: `Cloud Workspace: ${environmentName}`,
           projectFullName: undefined, // No repo for cloud environment workspaces
@@ -957,7 +957,7 @@ export function CommandBar({
         const repoUrl = `https://github.com/${projectFullName}.git`;
 
         // Create task in Convex for repo-based cloud workspace
-        const taskId = await createTask({
+        const { taskId } = await createTask({
           teamSlugOrId,
           text: `Cloud Workspace: ${projectFullName}`,
           projectFullName,

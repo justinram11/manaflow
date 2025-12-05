@@ -35,6 +35,8 @@ export const StartTaskSchema = z.object({
   taskDescription: z.string(),
   projectFullName: z.string(),
   taskId: typedZid("tasks"),
+  // Pre-created task run IDs (one per agent) - if provided, server skips creating runs
+  taskRunIds: z.array(typedZid("taskRuns")).optional(),
   selectedAgents: z.array(z.string()).optional(),
   isCloudMode: z.boolean().optional().default(false),
   images: z

@@ -182,6 +182,8 @@ export const create = authMutation({
     ),
     environmentId: v.optional(v.id("environments")),
     isCloudWorkspace: v.optional(v.boolean()),
+    // Optional: create task runs atomically with the task
+    selectedAgents: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -209,7 +211,28 @@ export const create = authMutation({
       isCloudWorkspace: args.isCloudWorkspace,
     });
 
-    return taskId;
+    // If selectedAgents provided, create task runs atomically
+    let taskRunIds: Id<"taskRuns">[] | undefined;
+    if (args.selectedAgents && args.selectedAgents.length > 0) {
+      taskRunIds = await Promise.all(
+        args.selectedAgents.map(async (agentName) => {
+          return ctx.db.insert("taskRuns", {
+            taskId,
+            prompt: args.text,
+            agentName,
+            status: "pending",
+            createdAt: now,
+            updatedAt: now,
+            userId,
+            teamId,
+            environmentId: args.environmentId,
+            isCloudWorkspace: args.isCloudWorkspace,
+          });
+        }),
+      );
+    }
+
+    return { taskId, taskRunIds };
   },
 });
 

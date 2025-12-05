@@ -46,7 +46,7 @@ import { getRustTime } from "./native/core";
 import type { RealtimeServer } from "./realtime";
 import { RepositoryManager } from "./repositoryManager";
 import type { GitRepoInfo } from "./server";
-import { getPRTitleFromTaskDescription } from "./utils/branchNameGenerator";
+import { generatePRInfoAndBranchNames } from "./utils/branchNameGenerator";
 import { getConvex } from "./utils/convexClient";
 import { ensureRunWorktreeAndBranch } from "./utils/ensureRunWorktree";
 import { serverLogger } from "./utils/fileLogger";
@@ -591,30 +591,40 @@ export function setupSocketHandlers(
 
         (async () => {
           try {
-            // Generate PR title early from the task description
+            // Determine number of agents to spawn
+            const agentCount = taskData.selectedAgents?.length || 1;
+
+            // Generate PR title and branch names in a single API call
             let generatedTitle: string | null = null;
+            let branchNames: string[] | undefined;
             try {
-              generatedTitle = await getPRTitleFromTaskDescription(
+              const prInfo = await generatePRInfoAndBranchNames(
                 taskData.taskDescription,
+                agentCount,
                 safeTeam
               );
-              // Persist to Convex immediately
+              generatedTitle = prInfo.prTitle;
+              branchNames = prInfo.branchNames;
+
+              // Persist PR title to Convex
               await getConvex().mutation(api.tasks.setPullRequestTitle, {
                 teamSlugOrId: safeTeam,
                 id: taskId,
                 pullRequestTitle: generatedTitle,
               });
               serverLogger.info(
-                `[Server] Saved early PR title: ${generatedTitle}`
+                `[Server] Generated PR title and ${branchNames.length} branch names in single call`
               );
             } catch (e) {
               serverLogger.error(
-                `[Server] Failed generating/saving early PR title:`,
+                `[Server] Failed generating PR info:`,
                 e
               );
             }
 
-            // Spawn all agents in parallel (each will create its own taskRun)
+            // Spawn all agents in parallel
+            // - If taskRunIds provided, uses pre-created runs (fast path)
+            // - If branchNames generated above, passes them to avoid re-generating
             const agentResults = await spawnAllAgents(
               taskId,
               {
@@ -622,7 +632,9 @@ export function setupSocketHandlers(
                 branch: taskData.branch,
                 taskDescription: taskData.taskDescription,
                 prTitle: generatedTitle ?? undefined,
+                branchNames, // Pass pre-generated branch names to avoid second API call
                 selectedAgents: taskData.selectedAgents,
+                taskRunIds: taskData.taskRunIds,
                 isCloudMode: taskData.isCloudMode,
                 images: taskData.images,
                 theme: taskData.theme,
@@ -2140,7 +2152,7 @@ Context:
 Please address the issue mentioned in the comment above.`;
 
         // Create a new task in Convex
-        const taskId = await getConvex().mutation(api.tasks.create, {
+        const { taskId } = await getConvex().mutation(api.tasks.create, {
           teamSlugOrId: safeTeam,
           text: formattedPrompt,
           projectFullName: "manaflow-ai/cmux",
