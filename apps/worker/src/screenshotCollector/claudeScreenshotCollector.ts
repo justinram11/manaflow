@@ -199,7 +199,7 @@ Please:
 6. Save every screenshot directly inside ${outputDir} (no subdirectories) with descriptive names like "homepage-${branch}.png" or "button-hover-${branch}.png"
 
 <IMPORTANT>
-Focus on capturing visual changes, including interactive states that aren't visible by default. If no UI changes are present, just let me know.
+Focus on capturing UI changes, including interactive states that aren't visible by default. If no UI changes are present, just let me know.
 When providing structured_output, set hasUiChanges to true if you saw UI changes and false otherwise. Include every screenshot you saved with the absolute file path (or a path relative to ${outputDir}) and a short description of what the screenshot shows. The paths must match the files you saved.
 Do not close the browser after you're done, since I will want to click around the final page you navigated to.
 Do not create summary documents.
