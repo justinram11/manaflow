@@ -59,6 +59,7 @@ import {
 } from "./utils/providerStatus";
 import { refreshGitHubData } from "./utils/refreshGitHubData";
 import { runWithAuth, runWithAuthToken } from "./utils/requestContext";
+import { extractSandboxStartError } from "./utils/sandboxErrors";
 import { getWwwClient } from "./utils/wwwClient";
 import { getWwwOpenApiModule } from "./utils/wwwOpenApiModule";
 import { DockerVSCodeInstance } from "./vscode/DockerVSCodeInstance";
@@ -1361,7 +1362,8 @@ export function setupSocketHandlers(
 
           const data = startRes.data;
           if (!data) {
-            throw new Error("Failed to start sandbox");
+            const errorMessage = extractSandboxStartError(startRes);
+            throw new Error(errorMessage);
           }
 
           const sandboxId = data.instanceId;

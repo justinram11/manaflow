@@ -183,16 +183,13 @@ export const TaskItem = memo(function TaskItem({
 
   const handleLinkClick = useCallback(
     (event: React.MouseEvent<HTMLAnchorElement>) => {
-      // Don't navigate if we're renaming or if modifier keys are pressed
-      if (
-        isRenaming ||
-        event.defaultPrevented ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.shiftKey ||
-        event.altKey
-      ) {
+      // Don't navigate if we're renaming
+      if (isRenaming || event.defaultPrevented) {
         event.preventDefault();
+        return;
+      }
+      // Let browser handle modifier key clicks (cmd+click for new tab, etc.)
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
         return;
       }
       // For local workspaces with active VSCode, navigate to VSCode view directly

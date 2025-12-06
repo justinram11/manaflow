@@ -30,6 +30,97 @@ import {
 } from "./utils/ensure-env-vars";
 import { VM_CLEANUP_COMMANDS } from "./sandboxes/cleanup";
 
+/**
+ * Extract a safe, descriptive error message from sandbox start errors.
+ * Avoids leaking sensitive information like API keys, tokens, or internal paths.
+ */
+function getSandboxStartErrorMessage(error: unknown): string {
+  const baseMessage = "Failed to start sandbox";
+
+  if (!(error instanceof Error)) {
+    return baseMessage;
+  }
+
+  const message = error.message.toLowerCase();
+
+  // Check for common error patterns and provide helpful context
+  // Network/connectivity issues
+  if (message.includes("timeout") || message.includes("timed out")) {
+    return `${baseMessage}: request timed out while provisioning instance`;
+  }
+  if (message.includes("econnrefused") || message.includes("connection refused")) {
+    return `${baseMessage}: could not connect to sandbox provider`;
+  }
+  if (message.includes("enotfound") || message.includes("getaddrinfo")) {
+    return `${baseMessage}: could not resolve sandbox provider address`;
+  }
+  if (message.includes("network") || message.includes("socket")) {
+    return `${baseMessage}: network error while provisioning instance`;
+  }
+
+  // Quota/resource issues (common with cloud providers)
+  if (message.includes("quota") || message.includes("limit") || message.includes("exceeded")) {
+    return `${baseMessage}: resource quota exceeded`;
+  }
+  if (message.includes("capacity") || message.includes("unavailable")) {
+    return `${baseMessage}: sandbox provider capacity unavailable`;
+  }
+
+  // Snapshot issues
+  if (message.includes("snapshot") && (message.includes("not found") || message.includes("invalid"))) {
+    return `${baseMessage}: snapshot not found or invalid`;
+  }
+
+  // Authentication/authorization (without revealing details)
+  if (message.includes("unauthorized") || message.includes("401")) {
+    return `${baseMessage}: authentication failed with sandbox provider`;
+  }
+  if (message.includes("forbidden") || message.includes("403")) {
+    return `${baseMessage}: access denied by sandbox provider`;
+  }
+
+  // Rate limiting
+  if (message.includes("rate limit") || message.includes("429") || message.includes("too many")) {
+    return `${baseMessage}: rate limited by sandbox provider`;
+  }
+
+  // Instance startup issues
+  if (message.includes("instance") && message.includes("start")) {
+    return `${baseMessage}: instance failed to start`;
+  }
+
+  // If error message is reasonably safe (no obvious secrets patterns), include part of it
+  const sensitivePatterns = [
+    /api[_-]?key/i,
+    /token/i,
+    /secret/i,
+    /password/i,
+    /credential/i,
+    /bearer/i,
+    /authorization/i,
+    /sk[_-][a-z0-9]/i,
+    /pk[_-][a-z0-9]/i,
+  ];
+
+  const hasSensitiveContent = sensitivePatterns.some((pattern) =>
+    pattern.test(error.message)
+  );
+
+  if (!hasSensitiveContent && error.message.length < 200) {
+    // Sanitize the message: remove potential file paths and URLs
+    const sanitized = error.message
+      .replace(/\/[^\s]+/g, "[path]") // Replace file paths
+      .replace(/https?:\/\/[^\s]+/g, "[url]") // Replace URLs
+      .trim();
+
+    if (sanitized.length > 0 && sanitized !== "[path]" && sanitized !== "[url]") {
+      return `${baseMessage}: ${sanitized}`;
+    }
+  }
+
+  return baseMessage;
+}
+
 export const sandboxesRouter = new OpenAPIHono();
 
 const StartSandboxBody = z
@@ -425,7 +516,9 @@ sandboxesRouter.openapi(
         return c.text(message, error.status);
       }
       console.error("Failed to start sandbox:", error);
-      return c.text("Failed to start sandbox", 500);
+      // Provide a more descriptive error message without leaking sensitive details
+      const errorMessage = getSandboxStartErrorMessage(error);
+      return c.text(errorMessage, 500);
     }
   },
 );

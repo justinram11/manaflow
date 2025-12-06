@@ -1,4 +1,5 @@
 import { dockerLogger } from "../utils/fileLogger";
+import { extractSandboxStartError } from "../utils/sandboxErrors";
 import { getWwwClient } from "../utils/wwwClient";
 import { getWwwOpenApiModule } from "../utils/wwwOpenApiModule";
 import {
@@ -70,7 +71,9 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
     });
     const data = startRes.data;
     if (!data) {
-      throw new Error("Failed to start sandbox");
+      // Extract error details from the response for a more descriptive message
+      const errorMessage = extractSandboxStartError(startRes);
+      throw new Error(errorMessage);
     }
 
     this.sandboxId = data.instanceId;
