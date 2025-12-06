@@ -171,40 +171,95 @@ The user did not provide installation or dev commands. You will need to discover
     return "\n" + parts.join("\n");
   })();
 
-  const prompt = `I need you to take screenshots of the UI changes in this pull request.
+  const prompt = `You are a screenshot collector for pull request reviews. Your job is to determine if a PR contains UI changes and, if so, capture screenshots of those changes.
 
-PR Title: ${prTitle}
-PR Description: ${prDescription || "No description provided"}
-
-Current branch: ${branch}
-Files changed in this PR:
+<PR_CONTEXT>
+Title: ${prTitle}
+Description: ${prDescription || "No description provided"}
+Branch: ${branch}
+Files changed:
 ${changedFiles.map((f) => `- ${f}`).join("\n")}
+</PR_CONTEXT>
 
+<ENVIRONMENT>
 Working directory: ${workspaceDir}
 Screenshot output directory: ${outputDir}
 ${devInstructions}
-Please:
-0. Read CLAUDE.md or AGENTS.md (they may be one level deeper) and install dependencies if needed
-1. Start the development server if needed (check files like README.md, package.json or .devcontainer.json for dev script, or use the dev_command provided above if available). Check tmux panes comprehensively to see if the server is already running.
-2. Wait for the server to be ready by using curl to check if it returns a 200 status code (e.g., curl -s -o /dev/null -w "%{http_code}" http://localhost:PORT)
-3. Navigate to the pages/components that were modified in the PR
-4. Take full-page screenshots as well as element-specific screenshots of each relevant UI view that was changed
-5. Don't just screenshot the page at rest - also capture interactive and hidden UI states that may have changed:
-   - Hover states (buttons, links, cards)
-   - Focus states (form inputs, interactive elements)
-   - Loading/error/empty states
-   - Modals, dialogs, dropdowns, tooltips
-   - Collapsed vs expanded states (accordions, menus)
-   - Different viewport sizes if responsive changes were made
-6. Save every screenshot directly inside ${outputDir} (no subdirectories) with descriptive names like "homepage-${branch}.png" or "button-hover-${branch}.png"
+</ENVIRONMENT>
 
-<IMPORTANT>
-Focus on capturing UI changes, including interactive states that aren't visible by default. If no UI changes are present, just let me know.
-When providing structured_output, set hasUiChanges to true if you saw UI changes and false otherwise. Include every screenshot you saved with the absolute file path (or a path relative to ${outputDir}) and a short description of what the screenshot shows. The paths must match the files you saved.
-Do not close the browser after you're done, since I will want to click around the final page you navigated to.
-Do not create summary documents.
-If you can't install dependencies/start the dev server, just let me know. Do not create fake html mocks. We must take screenshots of the actual ground truth UI.
-</IMPORTANT>`;
+<PHASE_1_ANALYSIS>
+First, analyze the changed files to determine if this PR contains UI changes.
+
+IMPORTANT: Base your decision on the ACTUAL FILES CHANGED, not the PR title or description. PR descriptions can be misleading or incomplete. If the diff contains UI-affecting code, there ARE UI changes regardless of what the description says.
+
+UI changes ARE present if the PR modifies code that affects what users see in the browser:
+- Frontend components or templates (any framework: React, Vue, Rails ERB, PHP Blade, Django templates, etc.)
+- Stylesheets (CSS, SCSS, Tailwind, styled-components, etc.)
+- Markup or template files (HTML, JSX, ERB, Twig, Jinja, Handlebars, etc.)
+- Client-side JavaScript/TypeScript that affects rendering
+- UI states like loading indicators, error messages, empty states, or toasts
+- Accessibility attributes, ARIA labels, or semantic markup
+
+UI changes are NOT present if the PR only modifies:
+- Server-side logic that doesn't change what's rendered (API handlers, database queries, background jobs)
+- Configuration files (unless they affect theming or UI behavior)
+- Tests, documentation, or build scripts
+- Type definitions or interfaces for non-UI code
+
+If no UI changes exist: Set hasUiChanges=false, take ZERO screenshots, and explain why. Do not start the dev server or open a browser.
+</PHASE_1_ANALYSIS>
+
+<PHASE_2_CAPTURE>
+If UI changes exist, capture screenshots:
+
+1. Read CLAUDE.md or AGENTS.md (may be one level deeper) and install dependencies if needed
+2. Start the dev server. Check tmux panes first to see if already running. Look for instructions in README.md, CLAUDE.md, or framework-specific files (package.json, Makefile, Gemfile, composer.json, requirements.txt, etc.). Use dev_command above if provided.
+3. Wait for the server to be ready (curl -s -o /dev/null -w "%{http_code}" http://localhost:PORT should return 200)
+4. Navigate to the pages/components modified in the PR
+5. Capture screenshots of the changes, including:
+   - The default/resting state of changed components
+   - Interactive states: hover, focus, active, disabled
+   - Conditional states: loading, error, empty, success (if the PR modifies these!)
+   - Hidden UI: modals, dropdowns, tooltips, accordions
+   - Responsive layouts if the PR includes responsive changes
+6. Save screenshots to ${outputDir} with descriptive names like "component-state-${branch}.png"
+</PHASE_2_CAPTURE>
+
+<WHAT_TO_CAPTURE>
+Screenshot the UI states that the PR actually modifies. Be intentional:
+
+- If the PR changes a loading spinner → screenshot the loading state
+- If the PR changes error handling UI → screenshot the error state
+- If the PR changes a skeleton loader → screenshot the skeleton
+- If the PR changes hover styles → screenshot the hover state
+- If the PR changes a modal → open and screenshot the modal
+
+Don't screenshot loading/error states incidentally while waiting for the "real" UI. Screenshot them when they ARE the change.
+</WHAT_TO_CAPTURE>
+
+<CRITICAL_MISTAKES>
+Avoid these failure modes:
+
+FALSE POSITIVE: Taking screenshots when the PR has no UI changes. Backend-only, config, or test changes = hasUiChanges=false, zero screenshots.
+
+FALSE NEGATIVE: Failing to capture screenshots when UI changes exist. If React components, CSS, or templates changed, you MUST capture them.
+
+FAKE UI: Creating mock HTML files instead of screenshotting the real app. Never fabricate UIs. If the dev server won't start, report the failure.
+
+WRONG PAGE: Screenshotting pages unrelated to the PR. Only capture components/pages that the changed files actually render.
+
+DUPLICATE SCREENSHOTS: Taking multiple identical screenshots. Each screenshot should show something distinct.
+
+INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are visible and not cut off.
+</CRITICAL_MISTAKES>
+
+<OUTPUT_REQUIREMENTS>
+- Set hasUiChanges to true only if the PR modifies UI-rendering code AND you captured screenshots
+- Set hasUiChanges to false if the PR has no UI changes (with zero screenshots)
+- Include every screenshot path with a description of what it shows
+- Do not close the browser when done
+- Do not create summary documents
+</OUTPUT_REQUIREMENTS>`;
 
   await logToScreenshotCollector(
     `Starting Claude Agent with browser MCP for branch: ${branch}`
