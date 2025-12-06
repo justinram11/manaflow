@@ -513,7 +513,7 @@ function MockGitHubPRBrowser() {
         {/* Chrome-style tab bar */}
         <div className="flex items-end h-10 bg-[#202124] pt-2 px-2">
           {/* Traffic lights */}
-          <div className="flex items-center gap-2 px-2 pb-2">
+          <div className="flex items-center gap-2 px-2 mb-auto mt-2">
             <div className="w-3 h-3 rounded-full bg-[#ff5f57]" />
             <div className="w-3 h-3 rounded-full bg-[#febc2e]" />
             <div className="w-3 h-3 rounded-full bg-[#28c840]" />
