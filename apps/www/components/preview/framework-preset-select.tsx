@@ -204,6 +204,7 @@ function FrameworkIconBubble({ preset }: { preset: FrameworkPreset }) {
 type FrameworkPresetSelectProps = {
   value: FrameworkPreset;
   onValueChange: (value: FrameworkPreset) => void;
+  isLoading?: boolean;
 };
 
 const SelectTrigger = forwardRef<
@@ -299,17 +300,25 @@ SelectItem.displayName = "SelectItem";
 export function FrameworkPresetSelect({
   value,
   onValueChange,
+  isLoading = false,
 }: FrameworkPresetSelectProps) {
   const frameworkOptions = Object.keys(FRAMEWORK_PRESETS) as FrameworkPreset[];
 
   return (
     <div>
-      <label
-        id="framework-preset-label"
-        className="block text-sm font-medium text-neutral-900 dark:text-neutral-100 mb-2"
-      >
-        Framework Preset
-      </label>
+      <div className="flex items-center gap-2 mb-2">
+        <label
+          id="framework-preset-label"
+          className="block text-sm font-medium text-neutral-900 dark:text-neutral-100"
+        >
+          Framework Preset
+        </label>
+        {isLoading && (
+          <span className="text-xs text-neutral-500 dark:text-neutral-400 animate-pulse">
+            Detecting...
+          </span>
+        )}
+      </div>
       <SelectPrimitive.Root
         value={value}
         onValueChange={(val) => onValueChange(val as FrameworkPreset)}

@@ -116,6 +116,17 @@ export type GithubReposResponse = {
     repos: Array<GithubRepo>;
 };
 
+export type FrameworkPreset = 'other' | 'next' | 'vite' | 'remix' | 'nuxt' | 'sveltekit' | 'angular' | 'cra' | 'vue';
+
+export type PackageManager = 'npm' | 'yarn' | 'pnpm' | 'bun';
+
+export type FrameworkDetectionResponse = {
+    framework: FrameworkPreset;
+    packageManager: PackageManager;
+    maintenanceScript: string;
+    devScript: string;
+};
+
 export type GithubPullRequestItem = {
     id: number;
     number: number;
@@ -1125,6 +1136,38 @@ export type GetApiIntegrationsGithubReposResponses = {
 };
 
 export type GetApiIntegrationsGithubReposResponse = GetApiIntegrationsGithubReposResponses[keyof GetApiIntegrationsGithubReposResponses];
+
+export type GetApiIntegrationsGithubFrameworkDetectionData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Full repository name (owner/repo)
+         */
+        repo: string;
+    };
+    url: '/api/integrations/github/framework-detection';
+};
+
+export type GetApiIntegrationsGithubFrameworkDetectionErrors = {
+    /**
+     * Bad request
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type GetApiIntegrationsGithubFrameworkDetectionResponses = {
+    /**
+     * OK
+     */
+    200: FrameworkDetectionResponse;
+};
+
+export type GetApiIntegrationsGithubFrameworkDetectionResponse = GetApiIntegrationsGithubFrameworkDetectionResponses[keyof GetApiIntegrationsGithubFrameworkDetectionResponses];
 
 export type GetApiIntegrationsGithubPrsData = {
     body?: never;

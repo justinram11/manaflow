@@ -1,5 +1,6 @@
 export { booksRouter } from "./books.route";
 export { devServerRouter } from "./dev-server.route";
+export { githubFrameworkDetectionRouter } from "./github.framework-detection.route";
 export { environmentsRouter } from "./environments.route";
 export { githubOAuthTokenRouter } from "./github.oauth-token.route";
 export { githubPrsBackfillRepoRouter } from "./github.prs.backfill-repo.route";

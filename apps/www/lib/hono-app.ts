@@ -15,6 +15,7 @@ import {
   codeReviewRouter,
   devServerRouter,
   environmentsRouter,
+  githubFrameworkDetectionRouter,
   githubInstallStateRouter,
   githubOAuthTokenRouter,
   healthRouter,
@@ -118,6 +119,7 @@ app.route("/", usersRouter);
 app.route("/", booksRouter);
 app.route("/", devServerRouter);
 app.route("/", githubReposRouter);
+app.route("/", githubFrameworkDetectionRouter);
 app.route("/", githubPrsRouter);
 app.route("/", githubPrsBackfillRouter);
 app.route("/", githubPrsBackfillRepoRouter);
