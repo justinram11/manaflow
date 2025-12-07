@@ -51,6 +51,7 @@ import { getConvex } from "./utils/convexClient";
 import { ensureRunWorktreeAndBranch } from "./utils/ensureRunWorktree";
 import { serverLogger } from "./utils/fileLogger";
 import { getGitHubTokenFromKeychain } from "./utils/getGitHubToken";
+import { createGitHubApiClient } from "./ghApi";
 import { createDraftPr, fetchPrDetail } from "./utils/githubPr";
 import { getOctokit } from "./utils/octokit";
 import {
@@ -2245,8 +2246,20 @@ Please address the issue mentioned in the comment above.`;
       try {
         const { repo } = GitHubFetchBranchesSchema.parse(data);
 
-        const { listRemoteBranches } = await import("./native/git.js");
-        const branches = await listRemoteBranches({ repoFullName: repo });
+        // Get OAuth token from Stack Auth for authenticated GitHub API access
+        const githubToken = await getGitHubTokenFromKeychain();
+        if (!githubToken) {
+          callback({
+            success: false,
+            branches: [],
+            error: "GitHub token is not configured. Please connect your GitHub account.",
+          });
+          return;
+        }
+
+        // Use GitHub API with OAuth token for branch listing
+        const ghClient = createGitHubApiClient(githubToken);
+        const branches = await ghClient.getRepoBranchesWithActivity(repo);
         const defaultBranch = branches.find((branch) => branch.isDefault)?.name;
 
         callback({
