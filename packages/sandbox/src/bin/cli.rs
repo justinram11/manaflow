@@ -144,6 +144,10 @@ enum Command {
     /// Manage SSH keys for sandbox access
     #[command(subcommand)]
     SshKeys(SshKeysCommand),
+
+    /// Manage cloud VMs (create, list, etc.)
+    #[command(subcommand)]
+    Vm(VmCommand),
 }
 
 #[derive(Args, Debug)]
@@ -195,6 +199,44 @@ enum SshKeysCommand {
         /// Fingerprint (SHA256:...) or key ID to remove
         fingerprint_or_id: String,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum VmCommand {
+    /// Create a new cloud VM
+    Create(VmCreateArgs),
+    /// List running VMs
+    #[command(alias = "ls")]
+    List(VmListArgs),
+}
+
+#[derive(Args, Debug)]
+struct VmCreateArgs {
+    /// Team slug or ID
+    #[arg(long, short = 't', env = "CMUX_TEAM")]
+    team: Option<String>,
+    /// Time-to-live in seconds before VM auto-pauses (default: 30 minutes)
+    #[arg(long, default_value_t = 1800)]
+    ttl: u64,
+    /// Snapshot preset to use (e.g., "4vcpu_16gb_48gb", "8vcpu_32gb_48gb")
+    #[arg(long)]
+    preset: Option<String>,
+    /// GitHub repositories to clone (format: owner/repo)
+    #[arg(long = "repo", short = 'r')]
+    repos: Vec<String>,
+    /// Output format (json or text)
+    #[arg(long, default_value = "text")]
+    output: String,
+}
+
+#[derive(Args, Debug)]
+struct VmListArgs {
+    /// Team slug or ID
+    #[arg(long, short = 't', env = "CMUX_TEAM")]
+    team: Option<String>,
+    /// Output format (json or text)
+    #[arg(long, default_value = "text")]
+    output: String,
 }
 
 #[derive(Args, Debug)]
@@ -759,6 +801,14 @@ async fn run() -> anyhow::Result<()> {
             }
             SshKeysCommand::Remove { fingerprint_or_id } => {
                 handle_ssh_keys_remove(&fingerprint_or_id).await?;
+            }
+        },
+        Command::Vm(cmd) => match cmd {
+            VmCommand::Create(args) => {
+                handle_vm_create(args).await?;
+            }
+            VmCommand::List(args) => {
+                handle_vm_list(args).await?;
             }
         },
         Command::Sandboxes(cmd) => {
@@ -2906,6 +2956,141 @@ async fn handle_ssh_keys_remove(fingerprint_or_id: &str) -> anyhow::Result<()> {
 
     eprintln!("\x1b[32m✓ SSH key removed: {}\x1b[0m", key.name);
     eprintln!("  Fingerprint: {}", key.fingerprint);
+
+    Ok(())
+}
+
+/// Response from the setup-instance endpoint
+#[derive(serde::Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct SetupInstanceResponse {
+    instance_id: String,
+    vscode_url: String,
+    cloned_repos: Vec<String>,
+    removed_repos: Vec<String>,
+}
+
+/// Handle `cmux vm create` - create a new cloud VM
+async fn handle_vm_create(args: VmCreateArgs) -> anyhow::Result<()> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()?;
+    let access_token = get_access_token(&client).await?;
+    let api_url = get_cmux_api_url();
+
+    // Build the request body
+    let mut body = serde_json::json!({
+        "ttlSeconds": args.ttl,
+    });
+
+    if let Some(team) = &args.team {
+        body["teamId"] = serde_json::json!(team);
+    }
+
+    if let Some(preset) = &args.preset {
+        body["presetId"] = serde_json::json!(preset);
+    }
+
+    if !args.repos.is_empty() {
+        body["repos"] = serde_json::json!(args.repos);
+    }
+
+    eprintln!("Creating cloud VM...");
+
+    let url = format!("{}/api/morph/setup-instance", api_url);
+    let response = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .json(&body)
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!(
+            "Failed to create VM: {} - {}",
+            status,
+            text
+        ));
+    }
+
+    let result: SetupInstanceResponse = response.json().await?;
+
+    if args.output == "json" {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "instanceId": result.instance_id,
+                "vscodeUrl": result.vscode_url,
+                "clonedRepos": result.cloned_repos,
+                "removedRepos": result.removed_repos,
+            }))?
+        );
+    } else {
+        eprintln!("\x1b[32m✓ VM created successfully!\x1b[0m");
+        eprintln!();
+        eprintln!("  Instance ID: {}", result.instance_id);
+        eprintln!("  VS Code URL: {}", result.vscode_url);
+        if !result.cloned_repos.is_empty() {
+            eprintln!("  Cloned repos: {}", result.cloned_repos.join(", "));
+        }
+        eprintln!();
+        eprintln!("Connect via SSH:");
+        eprintln!("  cmux ssh {}", result.instance_id);
+    }
+
+    Ok(())
+}
+
+/// Handle `cmux vm list` - list running VMs
+async fn handle_vm_list(args: VmListArgs) -> anyhow::Result<()> {
+    let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
+    let access_token = get_access_token(&client).await?;
+    let api_url = get_cmux_api_url();
+
+    // Build query params
+    let mut url = format!("{}/api/morph/instances", api_url);
+    if let Some(team) = &args.team {
+        url = format!("{}?teamId={}", url, team);
+    }
+
+    let response = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!("Failed to list VMs: {} - {}", status, text));
+    }
+
+    let instances: serde_json::Value = response.json().await?;
+
+    if args.output == "json" {
+        println!("{}", serde_json::to_string_pretty(&instances)?);
+    } else {
+        let empty_vec = vec![];
+        let instances_arr = instances.as_array().unwrap_or(&empty_vec);
+        if instances_arr.is_empty() {
+            println!("No running VMs found.");
+            println!("\nCreate a VM with: cmux vm create");
+            return Ok(());
+        }
+
+        // Print header
+        println!("{:<20} {:<12} {:<40}", "INSTANCE ID", "STATUS", "CREATED");
+        println!("{}", "-".repeat(75));
+
+        for instance in instances_arr {
+            let id = instance["id"].as_str().unwrap_or("unknown");
+            let status = instance["status"].as_str().unwrap_or("unknown");
+            let created = instance["createdAt"].as_str().unwrap_or("unknown");
+            println!("{:<20} {:<12} {:<40}", id, status, created);
+        }
+    }
 
     Ok(())
 }
