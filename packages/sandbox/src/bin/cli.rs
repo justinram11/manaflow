@@ -1937,21 +1937,26 @@ async fn handle_exec_request(
 }
 
 // =============================================================================
-// Stack Auth CLI Authentication
+// CLI Authentication
 // =============================================================================
 
-/// Stack Auth API base URL
-fn get_stack_api_url() -> String {
+/// CMUX API base URL (for cmux-specific endpoints like /api/sandboxes)
+fn get_cmux_api_url() -> String {
     std::env::var("CMUX_API_URL").unwrap_or_else(|_| "https://cmux.sh".to_string())
 }
 
-/// Stack Auth project ID
-fn get_stack_project_id() -> String {
+/// Auth provider API base URL (for authentication endpoints)
+fn get_auth_api_url() -> String {
+    std::env::var("AUTH_API_URL").unwrap_or_else(|_| "https://api.stack-auth.com".to_string())
+}
+
+/// Auth project ID
+fn get_auth_project_id() -> String {
     std::env::var("STACK_PROJECT_ID").unwrap_or_else(|_| "a]7Li4]:V-|0GTq$G[gY".to_string())
 }
 
-/// Stack Auth publishable client key
-fn get_stack_publishable_key() -> String {
+/// Auth publishable client key
+fn get_auth_publishable_key() -> String {
     std::env::var("STACK_PUBLISHABLE_CLIENT_KEY")
         .unwrap_or_else(|_| "pck_tqsy12xgs4m6yfb4dgjrmjv78mpjy3jk8n2h55bf6ndr0".to_string())
 }
@@ -2020,9 +2025,9 @@ async fn get_access_token(client: &Client) -> anyhow::Result<String> {
     let refresh_token = get_stack_refresh_token()
         .ok_or_else(|| anyhow::anyhow!("Not logged in. Run 'cmux auth login' first."))?;
 
-    let api_url = get_stack_api_url();
-    let project_id = get_stack_project_id();
-    let publishable_key = get_stack_publishable_key();
+    let api_url = get_auth_api_url();
+    let project_id = get_auth_project_id();
+    let publishable_key = get_auth_publishable_key();
 
     let refresh_url = format!("{}/api/v1/auth/sessions/current/refresh", api_url);
     let response = client
@@ -2049,9 +2054,9 @@ async fn get_access_token(client: &Client) -> anyhow::Result<String> {
 
 /// Get the user's teams from Stack Auth
 async fn get_user_teams(client: &Client, access_token: &str) -> anyhow::Result<Vec<StackTeam>> {
-    let api_url = get_stack_api_url();
-    let project_id = get_stack_project_id();
-    let publishable_key = get_stack_publishable_key();
+    let api_url = get_auth_api_url();
+    let project_id = get_auth_project_id();
+    let publishable_key = get_auth_publishable_key();
 
     let teams_url = format!("{}/api/v1/users/me/teams", api_url);
     let response = client
@@ -2147,9 +2152,9 @@ async fn resolve_team(
 
 /// Handle `cmux auth login` - browser-based Stack Auth flow
 async fn handle_auth_login() -> anyhow::Result<()> {
-    let api_url = get_stack_api_url();
-    let project_id = get_stack_project_id();
-    let publishable_key = get_stack_publishable_key();
+    let api_url = get_auth_api_url();
+    let project_id = get_auth_project_id();
+    let publishable_key = get_auth_publishable_key();
 
     // Check if already logged in
     if get_stack_refresh_token().is_some() {
@@ -2189,10 +2194,11 @@ async fn handle_auth_login() -> anyhow::Result<()> {
 
     let init_response: CliAuthInitResponse = response.json().await?;
 
-    // Step 2: Open browser
+    // Step 2: Open browser (use cmux.sh for browser URL, not auth API)
+    let cmux_url = get_cmux_api_url();
     let auth_url = format!(
         "{}/handler/cli-auth-confirm?login_code={}",
-        api_url, init_response.login_code
+        cmux_url, init_response.login_code
     );
 
     eprintln!("\nOpening browser to complete authentication...");
@@ -2288,9 +2294,9 @@ async fn handle_auth_login() -> anyhow::Result<()> {
 
 /// Get user info using a refresh token
 async fn get_user_info(client: &Client, refresh_token: &str) -> anyhow::Result<StackUserInfo> {
-    let api_url = get_stack_api_url();
-    let project_id = get_stack_project_id();
-    let publishable_key = get_stack_publishable_key();
+    let api_url = get_auth_api_url();
+    let project_id = get_auth_project_id();
+    let publishable_key = get_auth_publishable_key();
 
     // First get an access token
     let refresh_url = format!("{}/api/v1/auth/sessions/current/refresh", api_url);
@@ -2401,9 +2407,9 @@ async fn handle_auth_token() -> anyhow::Result<()> {
     let refresh_token = get_stack_refresh_token()
         .ok_or_else(|| anyhow::anyhow!("Not logged in. Run 'cmux auth login' first."))?;
 
-    let api_url = get_stack_api_url();
-    let project_id = get_stack_project_id();
-    let publishable_key = get_stack_publishable_key();
+    let api_url = get_auth_api_url();
+    let project_id = get_auth_project_id();
+    let publishable_key = get_auth_publishable_key();
 
     let client = Client::builder().timeout(Duration::from_secs(10)).build()?;
 
@@ -2570,7 +2576,7 @@ fn format_relative_time(timestamp_ms: i64) -> String {
 async fn handle_ssh_keys_list() -> anyhow::Result<()> {
     let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
     let access_token = get_access_token(&client).await?;
-    let api_url = get_stack_api_url();
+    let api_url = get_cmux_api_url();
 
     let url = format!("{}/api/user/ssh-keys", api_url);
     let response = client
@@ -2694,7 +2700,7 @@ async fn handle_ssh_keys_add(args: SshKeysAddArgs) -> anyhow::Result<()> {
     // Get access token and make API request
     let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
     let access_token = get_access_token(&client).await?;
-    let api_url = get_stack_api_url();
+    let api_url = get_cmux_api_url();
 
     let url = format!("{}/api/user/ssh-keys", api_url);
     let body = serde_json::json!({
@@ -2740,7 +2746,7 @@ async fn handle_ssh_keys_import_github() -> anyhow::Result<()> {
 
     let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
     let access_token = get_access_token(&client).await?;
-    let api_url = get_stack_api_url();
+    let api_url = get_cmux_api_url();
 
     let url = format!("{}/api/user/ssh-keys/import-github", api_url);
     let response = client
@@ -2789,7 +2795,7 @@ async fn handle_ssh_keys_import_github() -> anyhow::Result<()> {
 async fn handle_ssh_keys_remove(fingerprint_or_id: &str) -> anyhow::Result<()> {
     let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
     let access_token = get_access_token(&client).await?;
-    let api_url = get_stack_api_url();
+    let api_url = get_cmux_api_url();
 
     // First, list keys to find the one to delete
     let list_url = format!("{}/api/user/ssh-keys", api_url);
