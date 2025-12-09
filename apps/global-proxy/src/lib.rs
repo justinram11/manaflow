@@ -343,6 +343,14 @@ async fn forward_request(
     behavior: ProxyBehavior,
 ) -> Response<Body> {
     if is_upgrade_request(&req) {
+        // Ensure upgrade headers are present for hyper's upgrade mechanism to work.
+        // When requests come through HTTP/2 load balancers, these headers may be stripped.
+        req.headers_mut()
+            .entry(CONNECTION)
+            .or_insert(HeaderValue::from_static("Upgrade"));
+        req.headers_mut()
+            .entry(UPGRADE)
+            .or_insert(HeaderValue::from_static("websocket"));
         return handle_websocket(state, req, target, behavior).await;
     }
 
@@ -585,6 +593,16 @@ async fn handle_websocket(
             .insert(name.clone(), value.clone());
     }
 
+    // Ensure WebSocket upgrade headers are present (may have been stripped by HTTP/2 load balancer)
+    backend_request
+        .headers_mut()
+        .entry(CONNECTION)
+        .or_insert(HeaderValue::from_static("Upgrade"));
+    backend_request
+        .headers_mut()
+        .entry(UPGRADE)
+        .or_insert(HeaderValue::from_static("websocket"));
+
     let (backend_stream, backend_headers) =
         match connect_upstream_websocket(state.client.clone(), backend_request).await {
             Ok(result) => result,
@@ -684,6 +702,8 @@ fn is_upgrade_request(req: &Request<Body>) -> bool {
     if req.method() == Method::CONNECT {
         return true;
     }
+
+    // HTTP/1.1 style upgrade: Connection: Upgrade + Upgrade: websocket
     let has_conn_upgrade = req
         .headers()
         .get(CONNECTION)
@@ -691,7 +711,15 @@ fn is_upgrade_request(req: &Request<Body>) -> bool {
         .map(|v| v.to_ascii_lowercase().contains("upgrade"))
         .unwrap_or(false);
     let has_upgrade_hdr = req.headers().get(UPGRADE).is_some();
-    has_conn_upgrade && has_upgrade_hdr
+    if has_conn_upgrade && has_upgrade_hdr {
+        return true;
+    }
+
+    // HTTP/2 fallback: When requests come through HTTP/2 load balancers (like Cloud Run),
+    // the hop-by-hop headers (Connection, Upgrade) are stripped. However, the WebSocket-specific
+    // headers (Sec-WebSocket-Key, Sec-WebSocket-Version) are preserved. Detect WebSocket
+    // requests by these headers.
+    req.headers().get("sec-websocket-key").is_some()
 }
 
 async fn connect_upstream_websocket(
