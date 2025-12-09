@@ -470,6 +470,7 @@ dependencies = [
  "hyper-rustls",
  "lol_html",
  "reqwest",
+ "rustls 0.21.12",
  "serde",
  "serde_json",
  "thiserror",
