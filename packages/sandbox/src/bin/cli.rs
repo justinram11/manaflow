@@ -94,11 +94,14 @@ enum Command {
     #[command(name = "_internal-proxy", hide = true)]
     InternalProxy { address: String },
 
-    /// Internal helper to proxy SSH through WebSocket to a sandbox (used as SSH ProxyCommand)
+    /// Internal helper to proxy SSH through direct TCP to Morph (used as SSH ProxyCommand)
     #[command(name = "_ssh-proxy", hide = true)]
     SshProxy {
-        /// Sandbox ID or index
+        /// Sandbox ID (morphvm_xxx or task-run ID)
         id: String,
+        /// Team slug or ID
+        #[arg(long, short = 't', env = "CMUX_TEAM")]
+        team: Option<String>,
     },
 
     /// Start the sandbox server container
@@ -208,8 +211,11 @@ struct SshKeysAddArgs {
 
 #[derive(Args, Debug)]
 struct SshArgs {
-    /// Sandbox ID or index
+    /// Sandbox ID or index (can be morphvm_xxx or task-run ID)
     id: String,
+    /// Team slug or ID (required for remote SSH connections)
+    #[arg(long, short = 't', env = "CMUX_TEAM")]
+    team: Option<String>,
     /// Additional SSH arguments (e.g., -L 8080:localhost:8080 for port forwarding)
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     ssh_args: Vec<String>,
@@ -598,8 +604,8 @@ async fn run() -> anyhow::Result<()> {
                 tokio::io::copy(&mut ri, &mut stdout)
             );
         }
-        Command::SshProxy { id } => {
-            handle_ssh_proxy(&cli.base_url, &id).await?;
+        Command::SshProxy { id, team } => {
+            handle_ssh_proxy(&id, team.as_deref()).await?;
         }
         Command::Proxy { id, port } => {
             handle_proxy(cli.base_url, id, port).await?;
@@ -1979,6 +1985,159 @@ struct StackUserInfo {
     primary_email: Option<String>,
 }
 
+/// SSH connection info from the cmux API
+#[derive(serde::Deserialize, Debug)]
+struct SandboxSshInfo {
+    #[serde(rename = "morphInstanceId")]
+    morph_instance_id: String,
+    host: String,
+    port: u16,
+    user: String,
+}
+
+/// Stack Auth team info
+#[derive(serde::Deserialize, Debug)]
+#[allow(dead_code)]
+struct StackTeam {
+    id: String,
+    #[serde(default, rename = "displayName")]
+    display_name: Option<String>,
+    #[serde(default, rename = "clientMetadata")]
+    client_metadata: Option<serde_json::Value>,
+}
+
+/// Stack Auth teams list response
+#[derive(serde::Deserialize, Debug)]
+struct StackTeamsResponse {
+    items: Vec<StackTeam>,
+}
+
+/// Get an access token using the stored refresh token
+async fn get_access_token(client: &Client) -> anyhow::Result<String> {
+    let refresh_token = get_stack_refresh_token().ok_or_else(|| {
+        anyhow::anyhow!("Not logged in. Run 'cmux auth login' first.")
+    })?;
+
+    let api_url = get_stack_api_url();
+    let project_id = get_stack_project_id();
+    let publishable_key = get_stack_publishable_key();
+
+    let refresh_url = format!("{}/api/v1/auth/sessions/current/refresh", api_url);
+    let response = client
+        .post(&refresh_url)
+        .header("x-stack-project-id", &project_id)
+        .header("x-stack-publishable-client-key", &publishable_key)
+        .header("x-stack-refresh-token", &refresh_token)
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!(
+            "Failed to refresh token: {} - {}. Try 'cmux auth login' to re-authenticate.",
+            status,
+            text
+        ));
+    }
+
+    let token_response: TokenRefreshResponse = response.json().await?;
+    Ok(token_response.access_token)
+}
+
+/// Get the user's teams from Stack Auth
+async fn get_user_teams(client: &Client, access_token: &str) -> anyhow::Result<Vec<StackTeam>> {
+    let api_url = get_stack_api_url();
+    let project_id = get_stack_project_id();
+    let publishable_key = get_stack_publishable_key();
+
+    let teams_url = format!("{}/api/v1/users/me/teams", api_url);
+    let response = client
+        .get(&teams_url)
+        .header("x-stack-project-id", &project_id)
+        .header("x-stack-publishable-client-key", &publishable_key)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!("Failed to get teams: {} - {}", status, text));
+    }
+
+    let teams_response: StackTeamsResponse = response.json().await?;
+    Ok(teams_response.items)
+}
+
+/// Get SSH connection info for a sandbox from the cmux API
+async fn get_sandbox_ssh_info(
+    client: &Client,
+    access_token: &str,
+    sandbox_id: &str,
+    team_slug_or_id: &str,
+) -> anyhow::Result<SandboxSshInfo> {
+    let api_url = get_stack_api_url();
+
+    // URL-encode the query parameters
+    let query: String = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("teamSlugOrId", team_slug_or_id)
+        .finish();
+    let ssh_url = format!("{}/api/sandboxes/{}/ssh?{}", api_url, sandbox_id, query);
+
+    let response = client
+        .get(&ssh_url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!(
+            "Failed to get SSH info: {} - {}",
+            status,
+            text
+        ));
+    }
+
+    let ssh_info: SandboxSshInfo = response.json().await?;
+    Ok(ssh_info)
+}
+
+/// Resolve the team to use - from explicit flag, env var, or first available team
+async fn resolve_team(
+    client: &Client,
+    access_token: &str,
+    explicit_team: Option<&str>,
+) -> anyhow::Result<String> {
+    // If explicitly provided, use that
+    if let Some(team) = explicit_team {
+        return Ok(team.to_string());
+    }
+
+    // Try to get the user's teams and use the first one
+    let teams = get_user_teams(client, access_token).await?;
+
+    if teams.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No teams found. Create a team at https://cmux.sh or specify --team."
+        ));
+    }
+
+    // Prefer teams with a slug in metadata
+    for team in &teams {
+        if let Some(metadata) = &team.client_metadata {
+            if let Some(slug) = metadata.get("slug").and_then(|v| v.as_str()) {
+                return Ok(slug.to_string());
+            }
+        }
+    }
+
+    // Fall back to the first team's ID
+    Ok(teams[0].id.clone())
+}
+
 /// Handle `cmux auth login` - browser-based Stack Auth flow
 async fn handle_auth_login() -> anyhow::Result<()> {
     let api_url = get_stack_api_url();
@@ -2872,18 +3031,25 @@ async fn handle_onboard() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Handle real SSH to a sandbox (via WebSocket proxy)
-async fn handle_real_ssh(client: &Client, base_url: &str, args: &SshArgs) -> anyhow::Result<()> {
+/// Handle real SSH to a sandbox (via direct TCP to Morph)
+async fn handle_real_ssh(client: &Client, _base_url: &str, args: &SshArgs) -> anyhow::Result<()> {
     let binary_name = if is_dmux() { "dmux" } else { "cmux" };
 
-    // Sync SSH keys and config files to sandbox before connecting
-    // This ensures authorized_keys exists and sshd is running
-    eprintln!("Syncing SSH keys to sandbox {}...", args.id);
-    if let Err(e) = upload_sync_files(client, base_url, &args.id, false).await {
-        eprintln!("Warning: Failed to sync files: {}", e);
-    }
+    // Get access token and resolve team
+    eprintln!("Authenticating...");
+    let access_token = get_access_token(client).await?;
+    let team = resolve_team(client, &access_token, args.team.as_deref()).await?;
+
+    // Verify we can get SSH info for this sandbox (validates sandbox exists and is accessible)
+    eprintln!("Resolving sandbox {}...", args.id);
+    let ssh_info = get_sandbox_ssh_info(client, &access_token, &args.id, &team).await?;
+    eprintln!(
+        "Connecting to {} ({}:{})...",
+        ssh_info.morph_instance_id, ssh_info.host, ssh_info.port
+    );
 
     // Build SSH command with ProxyCommand using our _ssh-proxy
+    // Pass the team to the proxy command so it can authenticate
     let mut ssh_args = vec![
         "-o".to_string(),
         "StrictHostKeyChecking=no".to_string(),
@@ -2892,19 +3058,23 @@ async fn handle_real_ssh(client: &Client, base_url: &str, args: &SshArgs) -> any
         "-o".to_string(),
         "LogLevel=ERROR".to_string(),
         "-o".to_string(),
-        format!("ProxyCommand={} _ssh-proxy {}", binary_name, args.id),
+        format!(
+            "ProxyCommand={} _ssh-proxy {} --team {}",
+            binary_name, args.id, team
+        ),
     ];
 
     // The hostname (doesn't matter since we use ProxyCommand, but SSH requires one)
     // Must come before any remote command
-    ssh_args.push(format!("root@sandbox-{}", args.id));
+    ssh_args.push(format!(
+        "{}@sandbox-{}",
+        ssh_info.user, ssh_info.morph_instance_id
+    ));
 
     // Add any extra SSH args from user (typically remote commands to execute)
     for arg in &args.ssh_args {
         ssh_args.push(arg.clone());
     }
-
-    eprintln!("Connecting to sandbox {}...", args.id);
 
     // Execute native SSH with ProxyCommand
     // Use exec on Unix to replace process and fully inherit terminal for passphrase prompts
@@ -2933,6 +3103,9 @@ async fn handle_ssh_config(_client: &Client, _base_url: &str) -> anyhow::Result<
     println!("# SSH config for {} sandboxes", binary_name);
     println!("# Add this to ~/.ssh/config");
     println!();
+    println!("# NOTE: Set CMUX_TEAM environment variable or the proxy will use your default team");
+    println!("# Example: export CMUX_TEAM=my-team");
+    println!();
 
     // Generate a wildcard config for sandbox-* pattern using _ssh-proxy
     println!("# Wildcard config for all sandboxes (works from macOS shell)");
@@ -2949,54 +3122,66 @@ async fn handle_ssh_config(_client: &Client, _base_url: &str) -> anyhow::Result<
 
     eprintln!();
     eprintln!("Usage examples:");
-    eprintln!("  ssh sandbox-0                           # SSH into sandbox 0");
-    eprintln!("  ssh sandbox-0 -L 8080:localhost:8080    # With port forwarding");
-    eprintln!("  scp sandbox-0:/workspace/file ./        # Copy files");
-    eprintln!("  rsync -avz sandbox-0:/workspace/ ./     # Rsync with sandbox");
+    eprintln!("  ssh sandbox-morphvm_xxx                   # SSH using Morph instance ID");
+    eprintln!("  ssh sandbox-morphvm_xxx -L 8080:localhost:8080  # With port forwarding");
+    eprintln!("  scp sandbox-morphvm_xxx:/workspace/file ./      # Copy files");
+    eprintln!("  rsync -avz sandbox-morphvm_xxx:/workspace/ ./   # Rsync with sandbox");
     eprintln!();
     eprintln!("Or use '{}' directly:", binary_name);
-    eprintln!("  {} ssh <index>              # Direct SSH", binary_name);
     eprintln!(
-        "  {} ssh <index> -L 8080:localhost:8080  # With port forwarding",
+        "  {} ssh <sandbox-id>                         # Direct SSH (uses default team)",
+        binary_name
+    );
+    eprintln!(
+        "  {} ssh <sandbox-id> --team my-team          # With explicit team",
+        binary_name
+    );
+    eprintln!(
+        "  {} ssh <sandbox-id> -L 8080:localhost:8080  # With port forwarding",
         binary_name
     );
 
     Ok(())
 }
 
-/// Internal SSH proxy command - bridges stdin/stdout to WebSocket for SSH ProxyCommand
-async fn handle_ssh_proxy(base_url: &str, id: &str) -> anyhow::Result<()> {
-    // Build WebSocket URL for the proxy endpoint
-    let ws_url = base_url
-        .replace("http://", "ws://")
-        .replace("https://", "wss://");
-    let proxy_url = format!(
-        "{}/sandboxes/{}/proxy?port=22",
-        ws_url.trim_end_matches('/'),
-        id
-    );
+/// Internal SSH proxy command - bridges stdin/stdout to direct TCP to Morph SSH gateway
+/// This is used as SSH ProxyCommand to route SSH through the Morph gateway
+async fn handle_ssh_proxy(id: &str, team: Option<&str>) -> anyhow::Result<()> {
+    // Create a client for API calls
+    let client = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?;
 
-    // Connect to WebSocket
-    let (ws_stream, _) = connect_async(&proxy_url)
+    // Get access token and resolve team
+    let access_token = get_access_token(&client).await?;
+    let team = resolve_team(&client, &access_token, team).await?;
+
+    // Get SSH connection info from the API
+    let ssh_info = get_sandbox_ssh_info(&client, &access_token, id, &team).await?;
+
+    // The Morph SSH gateway expects connections with the instance ID as the username
+    // Format: ssh -p 22222 morphvm_xxx@ssh.cloud.morph.so
+    // But since we're acting as a ProxyCommand, we just open the TCP connection
+    // and the SSH client will handle the protocol
+    let address = format!("{}:{}", ssh_info.host, ssh_info.port);
+
+    // Connect to Morph SSH gateway
+    let mut stream = tokio::net::TcpStream::connect(&address)
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to connect to proxy: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to connect to SSH gateway {}: {}", address, e))?;
 
-    let (mut ws_write, mut ws_read) = ws_stream.split();
+    let (mut read_half, mut write_half) = stream.split();
     let mut stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
 
-    // Bridge stdin/stdout to WebSocket
-    let stdin_to_ws = async {
+    // Bridge stdin/stdout to TCP socket
+    let stdin_to_tcp = async {
         let mut buf = [0u8; 8192];
         loop {
             match stdin.read(&mut buf).await {
                 Ok(0) => break,
                 Ok(n) => {
-                    if ws_write
-                        .send(Message::Binary(buf[..n].to_vec()))
-                        .await
-                        .is_err()
-                    {
+                    if write_half.write_all(&buf[..n]).await.is_err() {
                         break;
                     }
                 }
@@ -3005,34 +3190,27 @@ async fn handle_ssh_proxy(base_url: &str, id: &str) -> anyhow::Result<()> {
         }
     };
 
-    let ws_to_stdout = async {
-        while let Some(msg) = ws_read.next().await {
-            match msg {
-                Ok(Message::Binary(data)) => {
-                    if stdout.write_all(&data).await.is_err() {
+    let tcp_to_stdout = async {
+        let mut buf = [0u8; 8192];
+        loop {
+            match read_half.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    if stdout.write_all(&buf[..n]).await.is_err() {
                         break;
                     }
                     if stdout.flush().await.is_err() {
                         break;
                     }
                 }
-                Ok(Message::Text(text)) => {
-                    if stdout.write_all(text.as_bytes()).await.is_err() {
-                        break;
-                    }
-                    if stdout.flush().await.is_err() {
-                        break;
-                    }
-                }
-                Ok(Message::Close(_)) | Err(_) => break,
-                _ => {}
+                Err(_) => break,
             }
         }
     };
 
     tokio::select! {
-        _ = stdin_to_ws => {}
-        _ = ws_to_stdout => {}
+        _ = stdin_to_tcp => {}
+        _ = tcp_to_stdout => {}
     }
 
     Ok(())
