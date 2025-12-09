@@ -135,8 +135,8 @@ enum Command {
     /// SSH into a sandbox (real SSH, not WebSocket attach)
     Ssh(SshArgs),
 
-    /// Generate SSH config for easy sandbox access (e.g., `ssh sandbox-0`)
-    SshConfig,
+    /// Generate SSH config for easy sandbox access (e.g., `ssh sandbox-<id>`)
+    SshConfig(SshConfigArgs),
 
     /// Manage SSH keys for sandbox access
     #[command(subcommand)]
@@ -219,6 +219,13 @@ struct SshArgs {
     /// Additional SSH arguments (e.g., -L 8080:localhost:8080 for port forwarding)
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     ssh_args: Vec<String>,
+}
+
+#[derive(Args, Debug)]
+struct SshConfigArgs {
+    /// Install config to ~/.ssh/config (with backup)
+    #[arg(long)]
+    install: bool,
 }
 
 #[derive(Args, Debug)]
@@ -743,8 +750,8 @@ async fn run() -> anyhow::Result<()> {
         Command::Ssh(args) => {
             handle_real_ssh(&client, &cli.base_url, &args).await?;
         }
-        Command::SshConfig => {
-            handle_ssh_config(&client, &cli.base_url).await?;
+        Command::SshConfig(args) => {
+            handle_ssh_config(args.install).await?;
         }
         Command::SshKeys(cmd) => match cmd {
             SshKeysCommand::List => {
@@ -2463,8 +2470,8 @@ struct ImportGithubKeysResponse {
     keys: Vec<CreateSshKeyResponse>,
 }
 
-/// Get an access token from the stored refresh token
-async fn get_access_token() -> anyhow::Result<String> {
+/// Get an access token from the stored refresh token (creates its own client)
+async fn get_access_token_standalone() -> anyhow::Result<String> {
     let refresh_token = get_stack_refresh_token().ok_or_else(|| {
         anyhow::anyhow!("Not logged in. Run 'cmux auth login' first.")
     })?;
@@ -2605,7 +2612,7 @@ fn format_relative_time(timestamp_ms: i64) -> String {
 
 /// Handle `cmux ssh-keys list` - list registered SSH keys
 async fn handle_ssh_keys_list() -> anyhow::Result<()> {
-    let access_token = get_access_token().await?;
+    let access_token = get_access_token_standalone().await?;
     let api_url = get_stack_api_url();
 
     let client = Client::builder()
@@ -2727,7 +2734,7 @@ async fn handle_ssh_keys_add(args: SshKeysAddArgs) -> anyhow::Result<()> {
     };
 
     // Get access token and make API request
-    let access_token = get_access_token().await?;
+    let access_token = get_access_token_standalone().await?;
     let api_url = get_stack_api_url();
 
     let client = Client::builder()
@@ -2770,7 +2777,7 @@ async fn handle_ssh_keys_add(args: SshKeysAddArgs) -> anyhow::Result<()> {
 async fn handle_ssh_keys_import_github() -> anyhow::Result<()> {
     eprintln!("Importing SSH keys from connected GitHub account...");
 
-    let access_token = get_access_token().await?;
+    let access_token = get_access_token_standalone().await?;
     let api_url = get_stack_api_url();
 
     let client = Client::builder()
@@ -2817,7 +2824,7 @@ async fn handle_ssh_keys_import_github() -> anyhow::Result<()> {
 
 /// Handle `cmux ssh-keys remove` - remove an SSH key
 async fn handle_ssh_keys_remove(fingerprint_or_id: &str) -> anyhow::Result<()> {
-    let access_token = get_access_token().await?;
+    let access_token = get_access_token_standalone().await?;
     let api_url = get_stack_api_url();
 
     let client = Client::builder()
@@ -3096,50 +3103,184 @@ async fn handle_real_ssh(client: &Client, _base_url: &str, args: &SshArgs) -> an
     }
 }
 
-/// Generate SSH config for easy sandbox access
-async fn handle_ssh_config(_client: &Client, _base_url: &str) -> anyhow::Result<()> {
+const SSH_CONFIG_MARKER: &str = "# cmux sandboxes - added by 'cmux ssh-config'";
+
+/// Generate the SSH config content
+fn generate_ssh_config() -> String {
     let binary_name = if is_dmux() { "dmux" } else { "cmux" };
 
-    println!("# SSH config for {} sandboxes", binary_name);
-    println!("# Add this to ~/.ssh/config");
-    println!();
-    println!("# NOTE: Set CMUX_TEAM environment variable or the proxy will use your default team");
-    println!("# Example: export CMUX_TEAM=my-team");
-    println!();
+    format!(
+        r#"{marker}
+# This enables: ssh sandbox-<id>, VSCode Remote SSH, etc.
+Host sandbox-*
+    User root
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    LogLevel ERROR
+    ProxyCommand {binary} _ssh-proxy $(echo %n | sed 's/sandbox-//')
 
-    // Generate a wildcard config for sandbox-* pattern using _ssh-proxy
-    println!("# Wildcard config for all sandboxes (works from macOS shell)");
-    println!("Host sandbox-*");
-    println!("    User root");
-    println!("    StrictHostKeyChecking no");
-    println!("    UserKnownHostsFile /dev/null");
-    println!("    LogLevel ERROR");
-    println!(
-        "    ProxyCommand {} _ssh-proxy $(echo %n | sed 's/sandbox-//')",
-        binary_name
-    );
-    println!();
+# For task runs: ssh task-run-<id>
+Host task-run-*
+    User root
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    LogLevel ERROR
+    ProxyCommand {binary} _ssh-proxy $(echo %n | sed 's/task-run-//')
+"#,
+        marker = SSH_CONFIG_MARKER,
+        binary = binary_name
+    )
+}
 
+/// Generate SSH config for easy sandbox access
+async fn handle_ssh_config(install: bool) -> anyhow::Result<()> {
+    let config = generate_ssh_config();
+
+    if !install {
+        // Just print to stdout
+        print!("{}", config);
+        return Ok(());
+    }
+
+    // Install to ~/.ssh/config
+    let home = std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME environment variable not set"))?;
+    let ssh_dir = PathBuf::from(&home).join(".ssh");
+    let config_path = ssh_dir.join("config");
+    let backup_path = ssh_dir.join("config.backup");
+
+    // Create .ssh directory if it doesn't exist
+    if !ssh_dir.exists() {
+        std::fs::create_dir_all(&ssh_dir)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&ssh_dir, std::fs::Permissions::from_mode(0o700))?;
+        }
+    }
+
+    // Read existing config if it exists
+    let existing_config = if config_path.exists() {
+        std::fs::read_to_string(&config_path)?
+    } else {
+        String::new()
+    };
+
+    // Check if already installed
+    if existing_config.contains(SSH_CONFIG_MARKER) {
+        use dialoguer::Confirm;
+
+        eprintln!("SSH config already contains cmux configuration.");
+        let update = Confirm::new()
+            .with_prompt("Do you want to update it?")
+            .default(true)
+            .interact()?;
+
+        if !update {
+            eprintln!("Skipped. No changes made.");
+            return Ok(());
+        }
+
+        // Remove existing cmux config block and reinstall
+        let cleaned_config = remove_cmux_config_block(&existing_config);
+        install_ssh_config(&config_path, &backup_path, &cleaned_config, &config)?;
+    } else {
+        // Fresh install - append to existing config
+        install_ssh_config(&config_path, &backup_path, &existing_config, &config)?;
+    }
+
+    let binary_name = if is_dmux() { "dmux" } else { "cmux" };
     eprintln!();
-    eprintln!("Usage examples:");
-    eprintln!("  ssh sandbox-morphvm_xxx                   # SSH using Morph instance ID");
-    eprintln!("  ssh sandbox-morphvm_xxx -L 8080:localhost:8080  # With port forwarding");
-    eprintln!("  scp sandbox-morphvm_xxx:/workspace/file ./      # Copy files");
-    eprintln!("  rsync -avz sandbox-morphvm_xxx:/workspace/ ./   # Rsync with sandbox");
+    eprintln!("You can now use:");
+    eprintln!("  ssh sandbox-<id>");
+    eprintln!("  ssh task-run-<id>");
+    eprintln!("  code --remote ssh-remote+sandbox-<id> /workspace");
     eprintln!();
     eprintln!("Or use '{}' directly:", binary_name);
-    eprintln!(
-        "  {} ssh <sandbox-id>                         # Direct SSH (uses default team)",
-        binary_name
-    );
-    eprintln!(
-        "  {} ssh <sandbox-id> --team my-team          # With explicit team",
-        binary_name
-    );
-    eprintln!(
-        "  {} ssh <sandbox-id> -L 8080:localhost:8080  # With port forwarding",
-        binary_name
-    );
+    eprintln!("  {} ssh <id>", binary_name);
+
+    Ok(())
+}
+
+/// Remove the cmux config block from existing SSH config
+fn remove_cmux_config_block(config: &str) -> String {
+    let mut result = String::new();
+    let mut in_cmux_block = false;
+
+    for line in config.lines() {
+        if line.contains(SSH_CONFIG_MARKER) {
+            in_cmux_block = true;
+            continue;
+        }
+
+        // End of cmux block: next Host directive or non-comment, non-empty, non-indented line
+        if in_cmux_block {
+            let trimmed = line.trim();
+            // Continue skipping until we hit the next Host directive or end of related config
+            if trimmed.starts_with("Host ") && !trimmed.starts_with("Host sandbox-") && !trimmed.starts_with("Host task-run-") {
+                in_cmux_block = false;
+            } else if trimmed.starts_with("Host sandbox-") || trimmed.starts_with("Host task-run-") {
+                // Still in our block
+                continue;
+            } else if trimmed.starts_with('#') || trimmed.is_empty() || trimmed.starts_with(' ') || trimmed.starts_with('\t') {
+                // Comments, empty lines, or indented lines within our hosts - skip
+                continue;
+            } else if !trimmed.is_empty() {
+                // Some other directive - end of our block
+                in_cmux_block = false;
+            }
+        }
+
+        if !in_cmux_block {
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+
+    // Remove trailing newlines that may have accumulated
+    while result.ends_with("\n\n") {
+        result.pop();
+    }
+
+    result
+}
+
+/// Install SSH config with backup
+fn install_ssh_config(
+    config_path: &Path,
+    backup_path: &Path,
+    existing_config: &str,
+    new_config: &str,
+) -> anyhow::Result<()> {
+    // Backup existing config if it exists and has content
+    if config_path.exists() && !existing_config.is_empty() {
+        std::fs::copy(config_path, backup_path)?;
+        eprintln!("Backed up existing config to {}", backup_path.display());
+    }
+
+    // Build new config content
+    let mut final_config = existing_config.to_string();
+
+    // Add newlines if needed before appending
+    if !final_config.is_empty() && !final_config.ends_with('\n') {
+        final_config.push('\n');
+    }
+    if !final_config.is_empty() {
+        final_config.push('\n');
+    }
+
+    final_config.push_str(new_config);
+
+    // Write the config
+    std::fs::write(config_path, &final_config)?;
+
+    // Set proper permissions on the config file
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(config_path, std::fs::Permissions::from_mode(0o600))?;
+    }
+
+    eprintln!("\x1b[32m✓\x1b[0m SSH config installed to {}", config_path.display());
 
     Ok(())
 }
