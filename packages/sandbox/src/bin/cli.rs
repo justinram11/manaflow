@@ -5,7 +5,8 @@ use cmux_sandbox::models::{
     CreateSandboxRequest, EnvVar, ExecRequest, ExecResponse, NotificationLogEntry, SandboxSummary,
 };
 use cmux_sandbox::{
-    build_default_env_vars, delete_stack_refresh_token, extract_api_key_from_output,
+    build_default_env_vars, cache_access_token, clear_cached_access_token,
+    delete_stack_refresh_token, extract_api_key_from_output, get_cached_access_token,
     get_stack_refresh_token, store_claude_token, store_stack_refresh_token,
     sync_files::{
         prebuild_sync_files_tar, upload_prebuilt_sync_files, upload_sync_files, SYNC_FILES,
@@ -2103,37 +2104,129 @@ struct StackTeamsResponse {
     items: Vec<StackTeam>,
 }
 
-/// Get an access token using the stored refresh token
+/// Custom error type for session expiry
+#[derive(Debug)]
+struct SessionExpiredError;
+
+impl std::fmt::Display for SessionExpiredError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Session expired or revoked. Please run 'cmux auth login' to re-authenticate."
+        )
+    }
+}
+
+impl std::error::Error for SessionExpiredError {}
+
+/// Get an access token using the stored refresh token.
+/// Uses caching to avoid unnecessary refresh calls (access tokens are valid for ~10 minutes).
+/// Implements retry logic with exponential backoff for network resilience.
 async fn get_access_token(client: &Client) -> anyhow::Result<String> {
+    // Buffer time: refresh if token expires in less than 60 seconds
+    const MIN_VALIDITY_SECS: i64 = 60;
+
+    // Check cache first
+    if let Some(cached_token) = get_cached_access_token(MIN_VALIDITY_SECS) {
+        return Ok(cached_token);
+    }
+
+    // Need to refresh - get the refresh token
     let refresh_token = get_stack_refresh_token()
         .ok_or_else(|| anyhow::anyhow!("Not logged in. Run 'cmux auth login' first."))?;
 
+    // Refresh the access token with retries
+    let access_token = refresh_access_token_with_retry(client, &refresh_token).await?;
+
+    // Cache the new token
+    cache_access_token(&access_token);
+
+    Ok(access_token)
+}
+
+/// Refresh access token with retry logic and proper error handling
+async fn refresh_access_token_with_retry(
+    client: &Client,
+    refresh_token: &str,
+) -> anyhow::Result<String> {
     let api_url = get_auth_api_url();
     let project_id = get_auth_project_id();
     let publishable_key = get_auth_publishable_key();
-
     let refresh_url = format!("{}/api/v1/auth/sessions/current/refresh", api_url);
-    let response = client
-        .post(&refresh_url)
-        .header("x-stack-project-id", &project_id)
-        .header("x-stack-publishable-client-key", &publishable_key)
-        .header("x-stack-access-type", "client")
-        .header("x-stack-refresh-token", &refresh_token)
-        .send()
-        .await?;
 
-    if !response.status().is_success() {
-        let status = response.status();
-        let text = response.text().await.unwrap_or_default();
-        return Err(anyhow::anyhow!(
-            "Failed to refresh token: {} - {}. Try 'cmux auth login' to re-authenticate.",
-            status,
-            text
-        ));
+    const MAX_RETRIES: u32 = 3;
+    const INITIAL_DELAY_MS: u64 = 500;
+
+    let mut last_error: Option<anyhow::Error> = None;
+
+    for attempt in 0..MAX_RETRIES {
+        if attempt > 0 {
+            // Exponential backoff: 500ms, 1000ms, 2000ms
+            let delay = INITIAL_DELAY_MS * (1 << (attempt - 1));
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+        }
+
+        let result = client
+            .post(&refresh_url)
+            .header("x-stack-project-id", &project_id)
+            .header("x-stack-publishable-client-key", &publishable_key)
+            .header("x-stack-access-type", "client")
+            .header("x-stack-refresh-token", refresh_token)
+            .send()
+            .await;
+
+        match result {
+            Ok(response) => {
+                let status = response.status();
+
+                if status.is_success() {
+                    let token_response: TokenRefreshResponse = response.json().await?;
+                    return Ok(token_response.access_token);
+                }
+
+                let body = response.text().await.unwrap_or_default();
+
+                // Check for session expired error - don't retry these
+                if status == reqwest::StatusCode::UNAUTHORIZED
+                    && body.contains("REFRESH_TOKEN_NOT_FOUND_OR_EXPIRED")
+                {
+                    // Clear any cached tokens and stored refresh token
+                    clear_cached_access_token();
+                    let _ = delete_stack_refresh_token();
+                    return Err(SessionExpiredError.into());
+                }
+
+                // Server errors (5xx) are retryable
+                if status.is_server_error() {
+                    last_error = Some(anyhow::anyhow!(
+                        "Server error refreshing token: {} - {}",
+                        status,
+                        body
+                    ));
+                    continue;
+                }
+
+                // Client errors (4xx other than 401 session expired) are not retryable
+                return Err(anyhow::anyhow!(
+                    "Failed to refresh token: {} - {}. Try 'cmux auth login' to re-authenticate.",
+                    status,
+                    body
+                ));
+            }
+            Err(e) => {
+                // Network errors are retryable
+                if e.is_timeout() || e.is_connect() || e.is_request() {
+                    last_error = Some(anyhow::anyhow!("Network error: {}", e));
+                    continue;
+                }
+                // Other errors are not retryable
+                return Err(e.into());
+            }
+        }
     }
 
-    let token_response: TokenRefreshResponse = response.json().await?;
-    Ok(token_response.access_token)
+    // All retries exhausted
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Failed to refresh token after retries")))
 }
 
 /// Get the user's teams from Stack Auth
@@ -2437,7 +2530,9 @@ async fn get_user_info(client: &Client, refresh_token: &str) -> anyhow::Result<S
 fn handle_auth_logout() -> anyhow::Result<()> {
     let had_token = get_stack_refresh_token().is_some();
 
+    // Clear both refresh token and cached access token
     delete_stack_refresh_token().map_err(|e| anyhow::anyhow!("Failed to delete token: {}", e))?;
+    clear_cached_access_token();
 
     if had_token {
         eprintln!("\x1b[32m✓ Logged out successfully.\x1b[0m");
@@ -3009,9 +3104,10 @@ async fn handle_vm_create(args: VmCreateArgs) -> anyhow::Result<()> {
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
         return Err(anyhow::anyhow!(
-            "Failed to create VM: {} - {}",
+            "Failed to create VM: {} - {} (url: {})",
             status,
-            text
+            text,
+            url
         ));
     }
 
@@ -3064,7 +3160,12 @@ async fn handle_vm_list(args: VmListArgs) -> anyhow::Result<()> {
     if !response.status().is_success() {
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
-        return Err(anyhow::anyhow!("Failed to list VMs: {} - {}", status, text));
+        return Err(anyhow::anyhow!(
+            "Failed to list VMs: {} - {} (url: {})",
+            status,
+            text,
+            url
+        ));
     }
 
     let instances: serde_json::Value = response.json().await?;
