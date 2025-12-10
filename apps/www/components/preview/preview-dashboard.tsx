@@ -281,26 +281,26 @@ function ChromeTab({
       onMouseDown={onClick}
       onClick={onClick}
       className={clsx(
-        "group relative flex items-center gap-2 px-3 text-xs font-medium w-[240px] h-[36px]",
+        "group relative flex items-center gap-2 pl-3 pr-2 pb-0.5 text-xs font-medium w-[240px] h-[33px]",
         isActive ? "bg-[#35363A] text-[#E8EAED] rounded-t-lg" : "text-[#9AA0A6]"
       )}
     >
       {/* Active tab curved corners connectors */}
       {isActive && (
         <>
-          <div className="absolute bottom-0 -left-2 w-2 h-2 pointer-events-none shadow-[2px_2px_0_0_#35363A] rounded-br-full" />
-          <div className="absolute bottom-0 -right-2 w-2 h-2 pointer-events-none shadow-[-2px_2px_0_0_#35363A] rounded-bl-full" />
+          <div className="absolute bottom-0 -left-3 size-3 pointer-events-none shadow-[3px_3px_0_0_#35363A] rounded-br-full" />
+          <div className="absolute bottom-0 -right-3 size-3 pointer-events-none shadow-[-3px_3px_0_0_#35363A] rounded-bl-full" />
         </>
       )}
       {/* Hover pill for inactive tab */}
       {!isActive && (
-        <div className="absolute inset-x-1 top-0 bottom-[3px] rounded-lg bg-transparent group-hover:bg-[#35363A]/70 transition-colors" />
+        <div className="absolute inset-x-0 top-0 bottom-[3px] rounded-[9px] bg-transparent group-hover:bg-[#35363A]/70 transition-colors" />
       )}
 
       <span className="shrink-0 relative z-10">{icon}</span>
       <span className="truncate flex-1 text-left relative z-10">{label}</span>
       <span
-        className="p-0.5 rounded-full hover:bg-white/20 transition-all relative z-10"
+        className="p-0.5 rounded-full hover:bg-white/20 transition-all relative z-10 active:bg-white/20"
         onClick={(e) => {
           e.stopPropagation();
           onClose?.();
@@ -641,9 +641,9 @@ function MockGitHubPRBrowser() {
   return (
     <div className="pt-12 pb-4 h-dvh w-screen relative left-1/2 -translate-x-1/2 px-4 flex flex-col">
       {/* Browser window frame - Chrome Dark Mode style */}
-      <div className="rounded-xl border border-[#35363A] bg-[#202124] overflow-hidden shadow-2xl max-w-[1190px] mx-auto flex-1 flex flex-col min-h-0">
+      <div className="rounded-2xl border border-[#35363A] bg-[#202124] overflow-hidden shadow-2xl w-full flex-1 flex flex-col min-h-0 max-w-[1800px] mx-auto">
         {/* Tab strip */}
-        <div className="flex items-end h-[44px] bg-[#202124] px-2 select-none">
+        <div className="flex items-end h-[38px] bg-[#202124] px-2 select-none">
           {/* Traffic lights */}
           <div className="flex items-center gap-2 px-2 pb-3">
             <div className="w-3 h-3 rounded-full bg-[#ff5f57] border border-[#e0443e]" />
@@ -652,7 +652,7 @@ function MockGitHubPRBrowser() {
           </div>
 
           {/* Chrome-style tabs */}
-          <div className="flex items-end ml-2 gap-0 flex-1 min-w-0 pr-8">
+          <div className="flex items-end ml-2 flex-1 min-w-0 pr-8 gap-[3px]">
             <ChromeTab
               icon={
                 <svg
@@ -812,10 +812,10 @@ function MockGitHubPRBrowser() {
                 <button
                   onClick={() => setActivePRTab("conversation")}
                   className={clsx(
-                    "flex items-center gap-2 px-2 py-3 text-sm -mb-px",
+                    "flex items-center gap-2 px-2 py-3 text-sm -mb-px border-b-2",
                     activePRTab === "conversation"
-                      ? "font-medium text-[#e6edf3] border-b-2 border-[#f78166]"
-                      : "text-[#7d8590] hover:text-[#e6edf3]"
+                      ? "font-medium text-[#e6edf3] border-[#f78166]"
+                      : "text-[#7d8590] hover:text-[#e6edf3] border-transparent"
                   )}
                 >
                   <svg
@@ -833,10 +833,10 @@ function MockGitHubPRBrowser() {
                 <button
                   onClick={() => setActivePRTab("commits")}
                   className={clsx(
-                    "flex items-center gap-2 px-2 py-3 text-sm -mb-px",
+                    "flex items-center gap-2 px-2 py-3 text-sm -mb-px border-b-2",
                     activePRTab === "commits"
-                      ? "font-medium text-[#e6edf3] border-b-2 border-[#f78166]"
-                      : "text-[#7d8590] hover:text-[#e6edf3]"
+                      ? "font-medium text-[#e6edf3] border-[#f78166]"
+                      : "text-[#7d8590] hover:text-[#e6edf3] border-transparent"
                   )}
                 >
                   <svg
@@ -854,10 +854,10 @@ function MockGitHubPRBrowser() {
                 <button
                   onClick={() => setActivePRTab("checks")}
                   className={clsx(
-                    "flex items-center gap-2 px-2 py-3 text-sm -mb-px",
+                    "flex items-center gap-2 px-2 py-3 text-sm -mb-px border-b-2",
                     activePRTab === "checks"
-                      ? "font-medium text-[#e6edf3] border-b-2 border-[#f78166]"
-                      : "text-[#7d8590] hover:text-[#e6edf3]"
+                      ? "font-medium text-[#e6edf3] border-[#f78166]"
+                      : "text-[#7d8590] hover:text-[#e6edf3] border-transparent"
                   )}
                 >
                   <svg
@@ -875,10 +875,10 @@ function MockGitHubPRBrowser() {
                 <button
                   onClick={() => setActivePRTab("files")}
                   className={clsx(
-                    "flex items-center gap-2 px-2 py-3 text-sm -mb-px",
+                    "flex items-center gap-2 px-2 py-3 text-sm -mb-px border-b-2",
                     activePRTab === "files"
-                      ? "font-medium text-[#e6edf3] border-b-2 border-[#f78166]"
-                      : "text-[#7d8590] hover:text-[#e6edf3]"
+                      ? "font-medium text-[#e6edf3] border-[#f78166]"
+                      : "text-[#7d8590] hover:text-[#e6edf3] border-transparent"
                   )}
                 >
                   <svg
