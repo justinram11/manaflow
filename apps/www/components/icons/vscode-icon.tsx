@@ -13,6 +13,7 @@ export function VSCodeIcon(props: SVGProps<SVGSVGElement>) {
       {/* Icon from Visual Studio Code - https://code.visualstudio.com/brand */}
       <mask
         id="vscode-mask0"
+        // @ts-expect-error maskType is a valid SVG attribute but not in React's types
         maskType="alpha"
         maskUnits="userSpaceOnUse"
         x="0"
@@ -44,4 +45,3 @@ export function VSCodeIcon(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
-
