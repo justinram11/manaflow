@@ -730,8 +730,8 @@ function TaskDetailPage() {
           onPanelSettings={handleOpenPanelSettings}
         />
         <PanelConfigModal
-          isOpen={isPanelSettingsOpen}
-          onClose={handleClosePanelSettings}
+          open={isPanelSettingsOpen}
+          onOpenChange={(open) => !open && handleClosePanelSettings()}
           config={panelConfig}
           onChange={handlePanelConfigChange}
         />
