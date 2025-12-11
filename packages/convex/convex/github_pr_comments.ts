@@ -210,18 +210,25 @@ const collapseCommentBody = (body: string): string => {
     .trimEnd();
 };
 
+/**
+ * Collapses older preview comments on a PR to keep the comment thread clean.
+ * Only collapses comments posted by the same GitHub App (determined by expectedBotLogin).
+ * This prevents cross-environment interference between different cmux apps.
+ */
 async function collapseOlderPreviewComments({
   octokit,
   owner,
   repo,
   prNumber,
   latestCommentId,
+  expectedBotLogin,
 }: {
   octokit: Octokit;
   owner: string;
   repo: string;
   prNumber: number;
   latestCommentId: number;
+  expectedBotLogin: string;
 }): Promise<void> {
   let collapsedCount = 0;
   const iterator = octokit.paginate.iterator(
@@ -242,6 +249,11 @@ async function collapseOlderPreviewComments({
       const { body } = comment;
       if (!body) continue;
       if (comment.id === latestCommentId) continue;
+
+      // Only collapse comments posted by this same GitHub App
+      // This prevents one app from collapsing another app's comments
+      if (comment.user?.login !== expectedBotLogin) continue;
+
       const hasSignature = COMMENT_SIGNATURE_MATCHERS.some((signature) =>
         body.includes(signature),
       );
@@ -260,12 +272,14 @@ async function collapseOlderPreviewComments({
         collapsedCount += 1;
         console.log("[github_pr_comments] Collapsed previous preview comment", {
           commentId: comment.id,
+          expectedBotLogin,
         });
       } catch (error) {
         console.error(
           "[github_pr_comments] Failed to collapse previous preview comment",
           {
             commentId: comment.id,
+            expectedBotLogin,
             error,
           },
         );
@@ -278,6 +292,10 @@ async function collapseOlderPreviewComments({
  * Finds an existing cmux preview comment on a PR by checking for signature markers.
  * This is used as a fallback when githubCommentId is not stored on the preview run.
  * Returns the most recent non-collapsed comment if found.
+ *
+ * IMPORTANT: Only matches comments posted by the same GitHub App that is currently
+ * authenticated. This prevents cross-environment interference (e.g., dev agent
+ * editing production agent's comments).
  */
 export const findExistingPreviewComment = internalAction({
   args: {
@@ -309,6 +327,23 @@ export const findExistingPreviewComment = internalAction({
 
       const octokit = createOctokit(accessToken);
 
+      // Get the current GitHub App's info to filter comments by author
+      // This prevents one app (e.g., dev) from editing another app's (e.g., prod) comments
+      const { data: appData } = await octokit.rest.apps.getAuthenticated();
+      if (!appData?.slug) {
+        console.error("[github_pr_comments] Could not get app slug", { installationId });
+        return { ok: false, error: "Could not get app slug" };
+      }
+      const expectedBotLogin = `${appData.slug}[bot]`;
+
+      console.log("[github_pr_comments] Searching for comments from app", {
+        appSlug: appData.slug,
+        expectedBotLogin,
+        installationId,
+        repoFullName,
+        prNumber,
+      });
+
       // Search through comments to find a cmux preview comment that hasn't been collapsed
       // We want the most recent non-collapsed comment to update
       const iterator = octokit.paginate.iterator(
@@ -327,6 +362,10 @@ export const findExistingPreviewComment = internalAction({
         for (const comment of data) {
           const { body } = comment;
           if (!body) continue;
+
+          // Only consider comments posted by this same GitHub App
+          // This prevents cross-environment interference between different cmux apps
+          if (comment.user?.login !== expectedBotLogin) continue;
 
           // Check if this is a cmux comment by signature
           const hasSignature = COMMENT_SIGNATURE_MATCHERS.some((signature) =>
@@ -356,6 +395,7 @@ export const findExistingPreviewComment = internalAction({
           repoFullName,
           prNumber,
           commentId: candidateComment.id,
+          expectedBotLogin,
         });
         return { ok: true, commentId: candidateComment.id };
       }
@@ -364,6 +404,7 @@ export const findExistingPreviewComment = internalAction({
         installationId,
         repoFullName,
         prNumber,
+        expectedBotLogin,
       });
       return { ok: true, commentId: null };
     } catch (error) {
@@ -487,6 +528,14 @@ export const postInitialPreviewComment = internalAction({
 
       const octokit = createOctokit(accessToken);
 
+      // Get the current GitHub App's info to only collapse comments from this same app
+      const { data: appData } = await octokit.rest.apps.getAuthenticated();
+      if (!appData?.slug) {
+        console.error("[github_pr_comments] Could not get app slug", { installationId });
+        return { ok: false, error: "Could not get app slug" };
+      }
+      const expectedBotLogin = `${appData.slug}[bot]`;
+
       // Build the initial comment with diff heatmap link and loading state
       const commentSections: string[] = ["## Preview Screenshots"];
 
@@ -533,6 +582,7 @@ export const postInitialPreviewComment = internalAction({
         repo: repo.repo,
         prNumber,
         latestCommentId: data.id,
+        expectedBotLogin,
       });
 
       return { ok: true, commentId: data.id, commentUrl: data.html_url };
@@ -606,6 +656,14 @@ export const updatePreviewComment = internalAction({
       }
 
       const octokit = createOctokit(accessToken);
+
+      // Get the current GitHub App's info to only collapse comments from this same app
+      const { data: appData } = await octokit.rest.apps.getAuthenticated();
+      if (!appData?.slug) {
+        console.error("[github_pr_comments] Could not get app slug", { installationId });
+        return { ok: false, error: "Could not get app slug" };
+      }
+      const expectedBotLogin = `${appData.slug}[bot]`;
 
       // First, fetch the existing comment to check if it's been collapsed
       let isCollapsed = false;
@@ -759,6 +817,15 @@ export const updatePreviewComment = internalAction({
         screenshotSetId,
       });
 
+      // Collapse older preview comments (only from this same app)
+      await collapseOlderPreviewComments({
+        octokit,
+        owner: repo.owner,
+        repo: repo.repo,
+        prNumber,
+        latestCommentId: commentId,
+        expectedBotLogin,
+      });
 
       return { ok: true };
     } catch (error) {
@@ -834,6 +901,14 @@ export const postPreviewComment = internalAction({
       }
 
       const octokit = createOctokit(accessToken);
+
+      // Get the current GitHub App's info to only collapse comments from this same app
+      const { data: appData } = await octokit.rest.apps.getAuthenticated();
+      if (!appData?.slug) {
+        console.error("[github_pr_comments] Could not get app slug", { installationId });
+        return { ok: false, error: "Could not get app slug" };
+      }
+      const expectedBotLogin = `${appData.slug}[bot]`;
 
       const screenshotSet = await ctx.runQuery(
         internal.previewScreenshots.getScreenshotSet,
@@ -958,6 +1033,7 @@ export const postPreviewComment = internalAction({
         repo: repo.repo,
         prNumber,
         latestCommentId: data.id,
+        expectedBotLogin,
       });
 
       return { ok: true, commentId: data.id, commentUrl: data.html_url };
