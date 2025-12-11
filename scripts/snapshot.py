@@ -1010,41 +1010,54 @@ EOF
 
 
 @registry.task(
-    name="install-chisel",
-    deps=("configure-sshd",),
-    description="Install chisel for SSH-over-HTTPS tunneling",
+    name="install-ws-ssh-proxy",
+    deps=("apt-bootstrap",),  # Run early, before configure-sshd changes SSH port
+    description="Install ws-ssh-proxy for SSH-over-HTTPS tunneling",
 )
-async def task_install_chisel(ctx: TaskContext) -> None:
+async def task_install_ws_ssh_proxy(ctx: TaskContext) -> None:
+    # Build ws-ssh-proxy locally for linux/amd64
+    ws_ssh_proxy_src = Path(__file__).resolve().parent / "ws-ssh-proxy"
+    ws_ssh_proxy_dist = ws_ssh_proxy_src / "dist"
+    ws_ssh_proxy_dist.mkdir(exist_ok=True)
+    ws_ssh_proxy_binary = ws_ssh_proxy_dist / "ws-ssh-proxy"
+
+    ctx.console.info("Building ws-ssh-proxy with Go (GOOS=linux, GOARCH=amd64)...")
+    result = subprocess.run(
+        ["go", "build", "-o", str(ws_ssh_proxy_binary), "."],
+        cwd=ws_ssh_proxy_src,
+        env={**os.environ, "GOOS": "linux", "GOARCH": "amd64", "CGO_ENABLED": "0"},
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to build ws-ssh-proxy: {result.stderr}")
+    ctx.console.info(f"Built ws-ssh-proxy at {ws_ssh_proxy_binary}")
+
+    # Upload to sandbox using instance.aupload, then move to final location
+    await ctx.instance.aupload(str(ws_ssh_proxy_binary), "/tmp/ws-ssh-proxy")
+
     cmd = textwrap.dedent(
         """
         set -eux
 
-        CHISEL_VERSION="1.10.1"
-        arch="$(uname -m)"
-        case "${arch}" in
-          x86_64) chisel_arch="amd64" ;;
-          aarch64|arm64) chisel_arch="arm64" ;;
-          *) echo "Unsupported architecture: ${arch}" >&2; exit 1 ;;
-        esac
-
-        # Download and install chisel
-        curl -fsSL "https://github.com/jpillora/chisel/releases/download/v${CHISEL_VERSION}/chisel_${CHISEL_VERSION}_linux_${chisel_arch}.gz" | gunzip > /usr/local/bin/chisel
-        chmod +x /usr/local/bin/chisel
+        # Move binary to final location and set permissions
+        mv /tmp/ws-ssh-proxy /usr/local/bin/ws-ssh-proxy
+        chmod 755 /usr/local/bin/ws-ssh-proxy
 
         # Verify installation
-        /usr/local/bin/chisel --version
+        /usr/local/bin/ws-ssh-proxy --help || echo "Binary installed"
 
-        # Create systemd service for chisel SSH-over-HTTPS tunnel
-        # This runs chisel in server mode on port 8080, allowing clients to tunnel SSH through HTTP
-        cat > /etc/systemd/system/chisel-ssh.service << 'EOF'
+        # Create systemd service for ws-ssh-proxy SSH-over-HTTPS tunnel
+        # This bridges WebSocket connections to local SSH (simple protocol, no chisel complexity)
+        cat > /etc/systemd/system/ws-ssh-proxy.service << 'EOF'
 [Unit]
-Description=Chisel SSH-over-HTTPS tunnel server
+Description=WebSocket to SSH proxy for SSH-over-HTTPS tunneling
 After=network.target ssh.service
 Wants=ssh.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/chisel server --port 8080 --reverse
+ExecStart=/usr/local/bin/ws-ssh-proxy --listen :8080 --ssh localhost:22222
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -1056,20 +1069,20 @@ EOF
 
         # Enable and start the service
         systemctl daemon-reload
-        systemctl enable chisel-ssh.service
-        systemctl start chisel-ssh.service
+        systemctl enable ws-ssh-proxy.service
+        systemctl start ws-ssh-proxy.service
 
-        # Verify chisel is running
+        # Verify ws-ssh-proxy is running
         sleep 2
         if ! ss -tlnp | grep -q ':8080'; then
-            echo "WARNING: chisel not yet listening on port 8080, checking status..."
-            systemctl status chisel-ssh.service --no-pager || true
+            echo "WARNING: ws-ssh-proxy not yet listening on port 8080, checking status..."
+            systemctl status ws-ssh-proxy.service --no-pager || true
         fi
 
-        echo "chisel installed and configured for SSH-over-HTTPS on port 8080"
+        echo "ws-ssh-proxy installed and configured for SSH-over-HTTPS on port 8080"
         """
     )
-    await ctx.run("install-chisel", cmd)
+    await ctx.run("install-ws-ssh-proxy", cmd)
 
 
 @registry.task(
@@ -2155,7 +2168,7 @@ async def task_check_envctl(ctx: TaskContext) -> None:
 
 @registry.task(
     name="check-ssh-service",
-    deps=("configure-memory-protection", "cleanup-build-artifacts", "configure-sshd"),
+    deps=("configure-memory-protection", "cleanup-build-artifacts", "install-ws-ssh-proxy"),
     description="Verify SSH service is active on port 22222",
 )
 async def task_check_ssh_service(ctx: TaskContext) -> None:

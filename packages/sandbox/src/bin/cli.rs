@@ -3541,8 +3541,8 @@ async fn handle_ssh_config(_client: &Client, _base_url: &str) -> anyhow::Result<
     Ok(())
 }
 
-/// Internal SSH proxy command - bridges stdin/stdout to direct TCP to Morph SSH gateway
-/// This is used as SSH ProxyCommand to route SSH through the Morph gateway
+/// Internal SSH proxy command - bridges stdin/stdout through WebSocket to sandbox SSH
+/// This is used as SSH ProxyCommand to tunnel SSH through HTTPS via ws-ssh-proxy
 async fn handle_ssh_proxy(id: &str, team: Option<&str>, base_url: &str) -> anyhow::Result<()> {
     // Create a client for API calls
     let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
@@ -3554,29 +3554,36 @@ async fn handle_ssh_proxy(id: &str, team: Option<&str>, base_url: &str) -> anyho
     // Get SSH connection info from the API
     let ssh_info = get_sandbox_ssh_info(&client, &access_token, id, &team, base_url).await?;
 
-    // The Morph SSH gateway expects connections with the instance ID as the username
-    // Format: ssh -p 22222 morphvm_xxx@ssh.cloud.morph.so
-    // But since we're acting as a ProxyCommand, we just open the TCP connection
-    // and the SSH client will handle the protocol
-    let address = format!("{}:{}", ssh_info.host, ssh_info.port);
+    // Build WebSocket URL for the ws-ssh-proxy running on port 8080
+    // Morph exposes ports via: https://port-{port}-{instance-id-with-dashes}.http.cloud.morph.so
+    // The instance ID has underscores (morphvm_xxx) but URL needs dashes (morphvm-xxx)
+    let instance_id_dashed = ssh_info.morph_instance_id.replace('_', "-");
+    let ws_url = format!(
+        "wss://port-8080-{}.http.cloud.morph.so",
+        instance_id_dashed
+    );
 
-    // Connect to Morph SSH gateway
-    let mut stream = tokio::net::TcpStream::connect(&address)
+    // Connect via WebSocket to the ws-ssh-proxy
+    let (ws_stream, _response) = connect_async(&ws_url)
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to connect to SSH gateway {}: {}", address, e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to connect to SSH tunnel {}: {}", ws_url, e))?;
 
-    let (mut read_half, mut write_half) = stream.split();
+    let (mut ws_write, mut ws_read) = ws_stream.split();
     let mut stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
 
-    // Bridge stdin/stdout to TCP socket
-    let stdin_to_tcp = async {
-        let mut buf = [0u8; 8192];
+    // Bridge stdin -> WebSocket
+    let stdin_to_ws = async {
+        let mut buf = [0u8; 16384];
         loop {
             match stdin.read(&mut buf).await {
                 Ok(0) => break,
                 Ok(n) => {
-                    if write_half.write_all(&buf[..n]).await.is_err() {
+                    if ws_write
+                        .send(Message::Binary(buf[..n].to_vec().into()))
+                        .await
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -3585,27 +3592,37 @@ async fn handle_ssh_proxy(id: &str, team: Option<&str>, base_url: &str) -> anyho
         }
     };
 
-    let tcp_to_stdout = async {
-        let mut buf = [0u8; 8192];
+    // Bridge WebSocket -> stdout
+    let ws_to_stdout = async {
         loop {
-            match read_half.read(&mut buf).await {
-                Ok(0) => break,
-                Ok(n) => {
-                    if stdout.write_all(&buf[..n]).await.is_err() {
+            match ws_read.next().await {
+                Some(Ok(Message::Binary(data))) => {
+                    if stdout.write_all(&data).await.is_err() {
                         break;
                     }
                     if stdout.flush().await.is_err() {
                         break;
                     }
                 }
-                Err(_) => break,
+                Some(Ok(Message::Text(text))) => {
+                    // Also handle text messages (shouldn't happen but be safe)
+                    if stdout.write_all(text.as_bytes()).await.is_err() {
+                        break;
+                    }
+                    if stdout.flush().await.is_err() {
+                        break;
+                    }
+                }
+                Some(Ok(Message::Close(_))) | None => break,
+                Some(Ok(_)) => {} // Ignore ping/pong
+                Some(Err(_)) => break,
             }
         }
     };
 
     tokio::select! {
-        _ = stdin_to_tcp => {}
-        _ = tcp_to_stdout => {}
+        _ = stdin_to_ws => {}
+        _ = ws_to_stdout => {}
     }
 
     Ok(())
