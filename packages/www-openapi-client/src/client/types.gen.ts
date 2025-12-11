@@ -428,7 +428,7 @@ export type SetupInstanceBody = {
     instanceId?: string;
     selectedRepos?: Array<string>;
     ttlSeconds?: number;
-    snapshotId?: string | ('snapshot_qh9prpvp' | 'snapshot_6sigze02' | 'snapshot_pcmfvjra');
+    snapshotId?: string | ('snapshot_zxcvee0u' | 'snapshot_ftedxb6j' | 'snapshot_pcmfvjra');
 };
 
 export type InstanceInfo = {
@@ -579,8 +579,10 @@ export type UpdateSandboxEnvBody = {
 
 export type SandboxSshResponse = {
     morphInstanceId: string;
-    host: string;
-    port: number;
+    /**
+     * WebSocket URL for SSH-over-HTTPS tunnel
+     */
+    websocketUrl: string;
     user: string;
 };
 

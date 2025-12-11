@@ -878,8 +878,7 @@ sandboxesRouter.openapi(
 const SandboxSshResponse = z
   .object({
     morphInstanceId: z.string(),
-    host: z.string(),
-    port: z.number(),
+    websocketUrl: z.string().describe("WebSocket URL for SSH-over-HTTPS tunnel"),
     user: z.string(),
   })
   .openapi("SandboxSshResponse");
@@ -1023,12 +1022,15 @@ sandboxesRouter.openapi(
         return c.text("Could not resolve sandbox instance", 404);
       }
 
-      // Return SSH connection info
-      // The Morph SSH gateway is at ssh.cloud.morph.so on port 22222
+      // Return SSH connection info via WebSocket tunnel
+      // The ws-ssh-proxy service listens on port 8080 inside the VM and is exposed via HTTPS
+      // TODO: Update to port 22221 once new snapshots are deployed
+      // Convert morphvm_abc123 to morphvm-abc123 for the URL
+      const instanceIdForUrl = morphInstanceId.replace("_", "-");
+      const websocketUrl = `wss://port-8080-${instanceIdForUrl}.http.cloud.morph.so`;
       return c.json({
         morphInstanceId,
-        host: "ssh.cloud.morph.so",
-        port: 22222,
+        websocketUrl,
         user: "root",
       });
     } catch (error) {

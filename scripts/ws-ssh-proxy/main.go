@@ -17,7 +17,7 @@ import (
 )
 
 var (
-	listenAddr = flag.String("listen", ":8080", "Address to listen on")
+	listenAddr = flag.String("listen", ":22221", "Address to listen on")
 	sshAddr    = flag.String("ssh", "localhost:22", "SSH server address to connect to")
 )
 

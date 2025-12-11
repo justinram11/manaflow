@@ -2104,8 +2104,8 @@ struct StackUserInfo {
 struct SandboxSshInfo {
     #[serde(rename = "morphInstanceId")]
     morph_instance_id: String,
-    host: String,
-    port: u16,
+    #[serde(rename = "websocketUrl")]
+    websocket_url: String,
     user: String,
 }
 
@@ -3369,7 +3369,17 @@ async fn handle_onboard() -> anyhow::Result<()> {
 
 /// Handle real SSH to a sandbox (via direct TCP to Morph)
 async fn handle_real_ssh(client: &Client, base_url: &str, args: &SshArgs) -> anyhow::Result<()> {
-    let binary_name = if is_dmux() { "dmux" } else { "cmux" };
+    // Use the actual path to the current executable, not just "dmux" or "cmux"
+    // This ensures the same binary is used for the _ssh-proxy subprocess
+    let binary_path = std::env::current_exe()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| {
+            if is_dmux() {
+                "dmux".to_string()
+            } else {
+                "cmux".to_string()
+            }
+        });
 
     // Get access token and resolve team
     eprintln!("Authenticating...");
@@ -3380,8 +3390,8 @@ async fn handle_real_ssh(client: &Client, base_url: &str, args: &SshArgs) -> any
     eprintln!("Resolving sandbox {}...", args.id);
     let ssh_info = get_sandbox_ssh_info(client, &access_token, &args.id, &team, base_url).await?;
     eprintln!(
-        "Connecting to {} ({}:{})...",
-        ssh_info.morph_instance_id, ssh_info.host, ssh_info.port
+        "Connecting to {} via {}...",
+        ssh_info.morph_instance_id, ssh_info.websocket_url
     );
 
     // Build SSH command with ProxyCommand using our _ssh-proxy
@@ -3396,21 +3406,22 @@ async fn handle_real_ssh(client: &Client, base_url: &str, args: &SshArgs) -> any
         "-o".to_string(),
         format!(
             "ProxyCommand={} _ssh-proxy {} --team {} --base-url {}",
-            binary_name, args.id, team, base_url
+            binary_path, args.id, team, base_url
         ),
     ];
 
+    // Add any extra SSH args from user BEFORE the hostname
+    // SSH options like -i, -L must come before user@host
+    for arg in &args.ssh_args {
+        ssh_args.push(arg.clone());
+    }
+
     // The hostname (doesn't matter since we use ProxyCommand, but SSH requires one)
-    // Must come before any remote command
+    // Must come after all options
     ssh_args.push(format!(
         "{}@sandbox-{}",
         ssh_info.user, ssh_info.morph_instance_id
     ));
-
-    // Add any extra SSH args from user (typically remote commands to execute)
-    for arg in &args.ssh_args {
-        ssh_args.push(arg.clone());
-    }
 
     // Execute native SSH with ProxyCommand
     // Use exec on Unix to replace process and fully inherit terminal for passphrase prompts
@@ -3443,7 +3454,17 @@ async fn handle_ssh_exec(
     base_url: &str,
     args: &SshExecArgs,
 ) -> anyhow::Result<()> {
-    let binary_name = if is_dmux() { "dmux" } else { "cmux" };
+    // Use the actual path to the current executable, not just "dmux" or "cmux"
+    // This ensures the same binary is used for the _ssh-proxy subprocess
+    let binary_path = std::env::current_exe()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| {
+            if is_dmux() {
+                "dmux".to_string()
+            } else {
+                "cmux".to_string()
+            }
+        });
 
     // Get access token and resolve team
     let access_token = get_access_token(client).await?;
@@ -3468,7 +3489,7 @@ async fn handle_ssh_exec(
         "-o".to_string(),
         format!(
             "ProxyCommand={} _ssh-proxy {} --team {} --base-url {}",
-            binary_name, args.id, team, base_url
+            binary_path, args.id, team, base_url
         ),
     ];
 
@@ -3554,17 +3575,11 @@ async fn handle_ssh_proxy(id: &str, team: Option<&str>, base_url: &str) -> anyho
     // Get SSH connection info from the API
     let ssh_info = get_sandbox_ssh_info(&client, &access_token, id, &team, base_url).await?;
 
-    // Build WebSocket URL for the ws-ssh-proxy running on port 8080
-    // Morph exposes ports via: https://port-{port}-{instance-id-with-dashes}.http.cloud.morph.so
-    // The instance ID has underscores (morphvm_xxx) but URL needs dashes (morphvm-xxx)
-    let instance_id_dashed = ssh_info.morph_instance_id.replace('_', "-");
-    let ws_url = format!(
-        "wss://port-8080-{}.http.cloud.morph.so",
-        instance_id_dashed
-    );
+    // Use WebSocket URL from API response (points to ws-ssh-proxy on port 22221)
+    let ws_url = &ssh_info.websocket_url;
 
     // Connect via WebSocket to the ws-ssh-proxy
-    let (ws_stream, _response) = connect_async(&ws_url)
+    let (ws_stream, _response) = connect_async(ws_url)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to connect to SSH tunnel {}: {}", ws_url, e))?;
 
@@ -3580,7 +3595,7 @@ async fn handle_ssh_proxy(id: &str, team: Option<&str>, base_url: &str) -> anyho
                 Ok(0) => break,
                 Ok(n) => {
                     if ws_write
-                        .send(Message::Binary(buf[..n].to_vec().into()))
+                        .send(Message::Binary(buf[..n].to_vec()))
                         .await
                         .is_err()
                     {

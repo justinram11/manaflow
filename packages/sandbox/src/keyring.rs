@@ -425,14 +425,20 @@ pub fn clear_cached_access_token() {
     let _ = delete_cached_access_token_file();
 }
 
-/// Get the path to the access token cache file
+/// Get the path to the access token cache file.
+/// Uses separate cache files for dev and prod builds to prevent cross-contamination.
 fn get_access_token_cache_path() -> Option<std::path::PathBuf> {
     let home = std::env::var("HOME").ok()?;
+    // Use separate cache files for dev and prod to prevent using wrong project's token
+    #[cfg(debug_assertions)]
+    let cache_filename = "access_token_cache_dev.json";
+    #[cfg(not(debug_assertions))]
+    let cache_filename = "access_token_cache_prod.json";
     Some(
         std::path::PathBuf::from(home)
             .join(".config")
             .join("cmux")
-            .join("access_token_cache.json"),
+            .join(cache_filename),
     )
 }
 

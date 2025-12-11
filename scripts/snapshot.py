@@ -74,7 +74,7 @@ CDP_HTTP_PORT = 39381
 XTERM_HTTP_PORT = 39383
 CDP_PROXY_BINARY_NAME = "cmux-cdp-proxy"
 VNC_PROXY_BINARY_NAME = "cmux-vnc-proxy"
-CHISEL_SSH_HTTP_PORT = 8080
+WS_SSH_HTTP_PORT = 22221
 MORPH_SNAPSHOT_MANIFEST_PATH = (
     Path(__file__).resolve().parent.parent / "packages/shared/src/morph-snapshots.json"
 )
@@ -552,7 +552,7 @@ async def _expose_standard_ports(
         XTERM_HTTP_PORT,
         VNC_HTTP_PORT,
         CDP_HTTP_PORT,
-        CHISEL_SSH_HTTP_PORT,
+        WS_SSH_HTTP_PORT,
     ]
     console.info("Exposing standard HTTP services...")
 
@@ -1057,7 +1057,7 @@ Wants=ssh.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/ws-ssh-proxy --listen :8080 --ssh localhost:22222
+ExecStart=/usr/local/bin/ws-ssh-proxy --listen :22221 --ssh localhost:22222
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -1074,12 +1074,12 @@ EOF
 
         # Verify ws-ssh-proxy is running
         sleep 2
-        if ! ss -tlnp | grep -q ':8080'; then
-            echo "WARNING: ws-ssh-proxy not yet listening on port 8080, checking status..."
+        if ! ss -tlnp | grep -q ':22221'; then
+            echo "WARNING: ws-ssh-proxy not yet listening on port 22221, checking status..."
             systemctl status ws-ssh-proxy.service --no-pager || true
         fi
 
-        echo "ws-ssh-proxy installed and configured for SSH-over-HTTPS on port 8080"
+        echo "ws-ssh-proxy installed and configured for SSH-over-HTTPS on port 22221"
         """
     )
     await ctx.run("install-ws-ssh-proxy", cmd)
