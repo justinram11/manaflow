@@ -110,18 +110,18 @@ async function getChangedFiles({
   });
 
   if (mergeBaseResponse.error || mergeBaseResponse.data?.exit_code !== 0) {
-    console.warn("[preview-jobs] Failed to get merge base, falling back to HEAD diff", {
+    console.warn("[preview-jobs] Failed to get merge base, falling back to origin diff", {
       previewRunId,
       exitCode: mergeBaseResponse.data?.exit_code,
       stderr: sliceOutput(mergeBaseResponse.data?.stderr),
     });
 
-    // Fallback: diff against HEAD
+    // Fallback: diff against origin/baseBranch directly
     const fallbackResponse = await execInstanceInstanceIdExecPost({
       client: morphClient,
       path: { instance_id: instanceId },
       body: {
-        command: ["git", "-C", repoDir, "diff", "--name-only", "HEAD"],
+        command: ["git", "-C", repoDir, "diff", "--name-only", `origin/${baseBranch}`],
       },
     });
 
@@ -193,10 +193,36 @@ interface ScreenshotCollectorResult {
 }
 
 /**
- * Write content to a file on Morph instance by fetching from a URL
- * The content is fetched in Convex and passed via stdin to avoid shell escaping
+ * Verify a file exists and is non-empty on Morph instance
  */
-async function writeFileToMorphFromUrl({
+async function verifyFileOnMorph({
+  morphClient,
+  instanceId,
+  filePath,
+}: {
+  morphClient: ReturnType<typeof createMorphCloudClient>;
+  instanceId: string;
+  filePath: string;
+}): Promise<number> {
+  const verifyResponse = await execInstanceInstanceIdExecPost({
+    client: morphClient,
+    path: { instance_id: instanceId },
+    body: {
+      command: ["stat", "-c", "%s", filePath],
+    },
+  });
+
+  const fileSize = parseInt(verifyResponse.data?.stdout?.trim() || "0", 10);
+  if (verifyResponse.error || verifyResponse.data?.exit_code !== 0 || fileSize === 0) {
+    throw new Error(`File ${filePath} missing or empty: size=${fileSize}`);
+  }
+  return fileSize;
+}
+
+/**
+ * Download a file from URL directly to Morph instance via curl
+ */
+async function downloadFileToMorph({
   morphClient,
   instanceId,
   filePath,
@@ -208,15 +234,7 @@ async function writeFileToMorphFromUrl({
   filePath: string;
   url: string;
   previewRunId: Id<"previewRuns">;
-}): Promise<{ content: string; fileSize: number }> {
-  // Fetch the content in Convex
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
-  }
-  const content = await response.text();
-
-  // Use curl to download directly on Morph (simpler and more reliable)
+}): Promise<number> {
   const downloadResponse = await execInstanceInstanceIdExecPost({
     client: morphClient,
     path: { instance_id: instanceId },
@@ -231,19 +249,7 @@ async function writeFileToMorphFromUrl({
     );
   }
 
-  // Verify the file was written
-  const verifyResponse = await execInstanceInstanceIdExecPost({
-    client: morphClient,
-    path: { instance_id: instanceId },
-    body: {
-      command: ["stat", "-c", "%s", filePath],
-    },
-  });
-
-  const fileSize = parseInt(verifyResponse.data?.stdout?.trim() || "0", 10);
-  if (verifyResponse.error || verifyResponse.data?.exit_code !== 0 || fileSize === 0) {
-    throw new Error(`File ${filePath} missing or empty after download: size=${fileSize}`);
-  }
+  const fileSize = await verifyFileOnMorph({ morphClient, instanceId, filePath });
 
   console.log("[preview-jobs] File downloaded successfully", {
     previewRunId,
@@ -251,7 +257,7 @@ async function writeFileToMorphFromUrl({
     fileSize,
   });
 
-  return { content, fileSize };
+  return fileSize;
 }
 
 /**
@@ -316,19 +322,7 @@ async function writeStringToMorph({
     );
   }
 
-  // Verify the file was written
-  const verifyResponse = await execInstanceInstanceIdExecPost({
-    client: morphClient,
-    path: { instance_id: instanceId },
-    body: {
-      command: ["stat", "-c", "%s", filePath],
-    },
-  });
-
-  const fileSize = parseInt(verifyResponse.data?.stdout?.trim() || "0", 10);
-  if (verifyResponse.error || verifyResponse.data?.exit_code !== 0 || fileSize === 0) {
-    throw new Error(`File ${filePath} missing or empty after download: size=${fileSize}`);
-  }
+  const fileSize = await verifyFileOnMorph({ morphClient, instanceId, filePath });
 
   console.log("[preview-jobs] File written successfully via curl", {
     previewRunId,
@@ -420,7 +414,7 @@ async function runScreenshotCollector({
     collectorUrl,
   });
 
-  await writeFileToMorphFromUrl({
+  await downloadFileToMorph({
     morphClient,
     instanceId,
     filePath: collectorPath,
@@ -646,7 +640,7 @@ async function ensureCommitAvailable({
   // If PR is from a fork, add fork fetch as the highest priority
   if (headRepoCloneUrl && headRef) {
     fetchAttempts.unshift({
-      description: "Check the git diff and look for frontend changes where screenshots could add good context.",
+      description: "fetch from fork repository",
       command: [
         "git",
         "-C",
