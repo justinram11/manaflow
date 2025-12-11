@@ -1,5 +1,5 @@
+import { getAccessTokenFromRequest, getUserFromRequest } from "@/lib/utils/auth";
 import { getConvex } from "@/lib/utils/get-convex";
-import { stackServerAppJs } from "@/lib/utils/stack";
 import { api } from "@cmux/convex/api";
 import type { Id } from "@cmux/convex/dataModel";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
@@ -154,11 +154,7 @@ userSshKeysRouter.openapi(
     },
   }),
   async (c) => {
-    const user = await stackServerAppJs.getUser({ tokenStore: c.req.raw });
-    if (!user) {
-      return c.text("Unauthorized", 401);
-    }
-    const { accessToken } = await user.getAuthJson();
+    const accessToken = await getAccessTokenFromRequest(c.req.raw);
     if (!accessToken) {
       return c.text("Unauthorized", 401);
     }
@@ -217,11 +213,7 @@ userSshKeysRouter.openapi(
     },
   }),
   async (c) => {
-    const user = await stackServerAppJs.getUser({ tokenStore: c.req.raw });
-    if (!user) {
-      return c.text("Unauthorized", 401);
-    }
-    const { accessToken } = await user.getAuthJson();
+    const accessToken = await getAccessTokenFromRequest(c.req.raw);
     if (!accessToken) {
       return c.text("Unauthorized", 401);
     }
@@ -291,11 +283,7 @@ userSshKeysRouter.openapi(
     },
   }),
   async (c) => {
-    const user = await stackServerAppJs.getUser({ tokenStore: c.req.raw });
-    if (!user) {
-      return c.text("Unauthorized", 401);
-    }
-    const { accessToken } = await user.getAuthJson();
+    const accessToken = await getAccessTokenFromRequest(c.req.raw);
     if (!accessToken) {
       return c.text("Unauthorized", 401);
     }
@@ -346,7 +334,8 @@ userSshKeysRouter.openapi(
     },
   }),
   async (c) => {
-    const user = await stackServerAppJs.getUser({ tokenStore: c.req.raw });
+    // For GitHub import, we need the full user object to access connected accounts
+    const user = await getUserFromRequest(c.req.raw);
     if (!user) {
       return c.text("Unauthorized", 401);
     }
