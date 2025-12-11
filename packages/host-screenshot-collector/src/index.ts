@@ -641,3 +641,57 @@ export async function claudeCodeCapturePRScreenshots(
 // Re-export utilities
 export { logToScreenshotCollector } from "./logger";
 export { formatClaudeMessage } from "./claudeMessageFormatter";
+
+// CLI entry point - runs when executed directly
+const cliOptionsSchema = z.object({
+  workspaceDir: z.string(),
+  changedFiles: z.array(z.string()),
+  prTitle: z.string(),
+  prDescription: z.string(),
+  baseBranch: z.string(),
+  headBranch: z.string(),
+  outputDir: z.string(),
+  pathToClaudeCodeExecutable: z.string().optional(),
+  installCommand: z.string().optional(),
+  devCommand: z.string().optional(),
+  auth: z.union([
+    z.object({ taskRunJwt: z.string() }),
+    z.object({ anthropicApiKey: z.string() }),
+  ]),
+});
+
+async function main() {
+  const optionsJson = process.env.SCREENSHOT_OPTIONS;
+  if (!optionsJson) {
+    console.error("SCREENSHOT_OPTIONS environment variable is required");
+    process.exit(1);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(optionsJson);
+  } catch (error) {
+    console.error("Failed to parse SCREENSHOT_OPTIONS as JSON:", error);
+    process.exit(1);
+  }
+
+  const validated = cliOptionsSchema.safeParse(parsed);
+  if (!validated.success) {
+    console.error("Invalid SCREENSHOT_OPTIONS:", validated.error.format());
+    process.exit(1);
+  }
+
+  const options = validated.data;
+  const result = await claudeCodeCapturePRScreenshots(options as CaptureScreenshotsOptions);
+
+  // Output result as JSON to stdout
+  console.log(JSON.stringify(result));
+}
+
+// Check if running as CLI (not imported as module)
+if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("/index.js")) {
+  main().catch((error) => {
+    console.error("CLI execution failed:", error);
+    process.exit(1);
+  });
+}

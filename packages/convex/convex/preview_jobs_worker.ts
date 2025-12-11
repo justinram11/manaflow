@@ -6,7 +6,6 @@ import {
   stopInstanceInstanceInstanceIdDelete,
   type InstanceModel,
 } from "@cmux/morphcloud-openapi-client";
-import type { WorkerRunTaskScreenshots } from "@cmux/shared";
 import { SignJWT } from "jose";
 import { env } from "../_shared/convex-env";
 import { fetchInstallationAccessToken } from "../_shared/githubApp";
@@ -15,13 +14,17 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import type { ActionCtx } from "./_generated/server";
 
+interface ScreenshotCollectorRelease {
+  url: string;
+  version: string;
+  commitSha?: string;
+}
+
 const sliceOutput = (value?: string | null, length = 200): string | undefined =>
   value?.slice(0, length);
 
 const singleQuote = (value: string): string =>
   `'${value.replace(/'/g, "'\\''")}'`;
-
-const WORKER_SOCKET_TIMEOUT_MS = 30_000;
 
 const resolveConvexUrl = (): string | null => {
   const explicitUrl = process.env.CONVEX_SITE_URL || process.env.CONVEX_URL || process.env.CONVEX_CLOUD_URL;
@@ -37,138 +40,268 @@ const resolveConvexUrl = (): string | null => {
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-const formatWorkerSocketError = (error: unknown): string => {
-  if (!error) {
-    return "Unknown worker socket error";
-  }
-  if (error instanceof Error) {
-    return error.message;
-  }
-  if (typeof error === "string") {
-    return error;
-  }
-  if (typeof error === "object") {
-    const errorMessage =
-      "message" in error && typeof (error as { message?: unknown }).message === "string"
-        ? (error as { message?: string }).message
-        : undefined;
-
-    if (errorMessage) {
-      return errorMessage;
-    }
-
-    try {
-      return JSON.stringify(error);
-    } catch {
-      return String(error);
-    }
-  }
-  return String(error);
-};
-
-async function waitForWorkerHealth({
-  workerUrl,
+/**
+ * Fetch the screenshot collector release URL from Convex
+ */
+async function fetchScreenshotCollectorRelease({
+  convexUrl,
+  isStaging,
   previewRunId,
-  timeoutMs = 60_000,
 }: {
-  workerUrl: string;
+  convexUrl: string;
+  isStaging: boolean;
   previewRunId: Id<"previewRuns">;
-  timeoutMs?: number;
-}): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const response = await fetch(`${workerUrl}/health`);
-      if (response.ok) {
-        const payload = await response.json();
-        console.log("[preview-jobs] Worker health check ok", {
-          previewRunId,
-          mainServerConnected: payload?.mainServerConnected,
-        });
-        if (!payload || payload.status === "healthy") {
-          return;
-        }
-      } else {
-        console.warn("[preview-jobs] Worker health check failed", {
-          previewRunId,
-          status: response.status,
-        });
-      }
-    } catch (error) {
-      console.warn("[preview-jobs] Worker health fetch error", {
-        previewRunId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-    await delay(2_000);
+}): Promise<ScreenshotCollectorRelease> {
+  // Use .site URL for HTTP endpoints
+  const siteUrl = convexUrl.replace(".convex.cloud", ".convex.site");
+  const endpoint = `${siteUrl}/api/host-screenshot-collector/latest?staging=${isStaging}`;
+
+  console.log("[preview-jobs] Fetching screenshot collector release", {
+    previewRunId,
+    endpoint,
+    isStaging,
+  });
+
+  const response = await fetch(endpoint);
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(
+      `Failed to fetch screenshot collector release (${response.status}): ${errorText}`
+    );
   }
-  throw new Error("Worker did not become healthy before timeout");
+
+  const releaseInfo = await response.json() as ScreenshotCollectorRelease;
+  if (!releaseInfo.url) {
+    throw new Error("No URL in screenshot collector release info");
+  }
+
+  console.log("[preview-jobs] Found screenshot collector release", {
+    previewRunId,
+    version: releaseInfo.version,
+    commitSha: releaseInfo.commitSha,
+  });
+
+  return releaseInfo;
 }
 
-async function triggerWorkerScreenshotCollection({
-  workerUrl,
-  payload,
+/**
+ * Get changed files in the PR via Morph exec
+ */
+async function getChangedFiles({
+  morphClient,
+  instanceId,
+  repoDir,
+  baseBranch,
   previewRunId,
-  maxAttempts = 3,
 }: {
-  workerUrl: string;
-  payload: WorkerRunTaskScreenshots;
+  morphClient: ReturnType<typeof createMorphCloudClient>;
+  instanceId: string;
+  repoDir: string;
+  baseBranch: string;
   previewRunId: Id<"previewRuns">;
-  maxAttempts?: number;
-}): Promise<void> {
-  await waitForWorkerHealth({ workerUrl, previewRunId });
-  let attempt = 0;
-  let lastError: Error | null = null;
-  while (attempt < maxAttempts) {
-    attempt += 1;
-    try {
-      console.log("[preview-jobs] Triggering screenshot collection via HTTP", {
-        previewRunId,
-        attempt,
-        url: `${workerUrl}/api/run-task-screenshots`,
-      });
+}): Promise<string[]> {
+  // Get the merge base first
+  const mergeBaseResponse = await execInstanceInstanceIdExecPost({
+    client: morphClient,
+    path: { instance_id: instanceId },
+    body: {
+      command: ["git", "-C", repoDir, "merge-base", `origin/${baseBranch}`, "HEAD"],
+    },
+  });
 
-      const response = await fetch(`${workerUrl}/api/run-task-screenshots`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(WORKER_SOCKET_TIMEOUT_MS),
-      });
+  if (mergeBaseResponse.error || mergeBaseResponse.data?.exit_code !== 0) {
+    console.warn("[preview-jobs] Failed to get merge base, falling back to HEAD diff", {
+      previewRunId,
+      exitCode: mergeBaseResponse.data?.exit_code,
+      stderr: sliceOutput(mergeBaseResponse.data?.stderr),
+    });
 
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => "Unknown error");
-        throw new Error(
-          `Worker returned ${response.status}: ${errorText}`
-        );
-      }
+    // Fallback: diff against HEAD
+    const fallbackResponse = await execInstanceInstanceIdExecPost({
+      client: morphClient,
+      path: { instance_id: instanceId },
+      body: {
+        command: ["git", "-C", repoDir, "diff", "--name-only", "HEAD"],
+      },
+    });
 
-      const result = await response.json();
-
-      if (result.error) {
-        throw new Error(formatWorkerSocketError(result.error));
-      }
-
-      console.log("[preview-jobs] Screenshot collection triggered successfully", {
-        previewRunId,
-        attempt,
-      });
-      return;
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-      console.warn("[preview-jobs] Screenshot trigger attempt failed", {
-        previewRunId,
-        attempt,
-        maxAttempts,
-        error: lastError.message,
-      });
-      if (attempt < maxAttempts) {
-        await delay(5_000);
-      }
+    if (fallbackResponse.error || fallbackResponse.data?.exit_code !== 0) {
+      throw new Error("Failed to get changed files");
     }
+
+    return (fallbackResponse.data?.stdout || "")
+      .split("\n")
+      .map((f) => f.trim())
+      .filter((f) => f.length > 0);
   }
-  throw lastError ?? new Error("Unknown worker HTTP error");
+
+  const mergeBase = mergeBaseResponse.data?.stdout?.trim();
+  if (!mergeBase) {
+    throw new Error("Empty merge base result");
+  }
+
+  // Get changed files between merge base and HEAD
+  const diffResponse = await execInstanceInstanceIdExecPost({
+    client: morphClient,
+    path: { instance_id: instanceId },
+    body: {
+      command: ["git", "-C", repoDir, "diff", "--name-only", `${mergeBase}..HEAD`],
+    },
+  });
+
+  if (diffResponse.error || diffResponse.data?.exit_code !== 0) {
+    throw new Error(
+      `Failed to get changed files: ${diffResponse.data?.stderr || diffResponse.error}`
+    );
+  }
+
+  const changedFiles = (diffResponse.data?.stdout || "")
+    .split("\n")
+    .map((f) => f.trim())
+    .filter((f) => f.length > 0);
+
+  console.log("[preview-jobs] Got changed files", {
+    previewRunId,
+    mergeBase,
+    fileCount: changedFiles.length,
+    files: changedFiles.slice(0, 10), // Log first 10 files
+  });
+
+  return changedFiles;
+}
+
+interface ScreenshotCollectorOptions {
+  workspaceDir: string;
+  changedFiles: string[];
+  prTitle: string;
+  prDescription: string;
+  baseBranch: string;
+  headBranch: string;
+  outputDir: string;
+  pathToClaudeCodeExecutable?: string;
+  installCommand?: string;
+  devCommand?: string;
+  auth: { taskRunJwt: string } | { anthropicApiKey: string };
+}
+
+interface ScreenshotCollectorResult {
+  status: "completed" | "failed" | "skipped";
+  screenshots?: Array<{ path: string; description?: string }>;
+  hasUiChanges?: boolean;
+  error?: string;
+  reason?: string;
+}
+
+/**
+ * Download and run the screenshot collector via Morph exec
+ */
+async function runScreenshotCollector({
+  morphClient,
+  instanceId,
+  collectorUrl,
+  options,
+  previewRunId,
+}: {
+  morphClient: ReturnType<typeof createMorphCloudClient>;
+  instanceId: string;
+  collectorUrl: string;
+  options: ScreenshotCollectorOptions;
+  previewRunId: Id<"previewRuns">;
+}): Promise<ScreenshotCollectorResult> {
+  const collectorPath = "/tmp/screenshot-collector.mjs";
+  const optionsJson = JSON.stringify(options);
+
+  console.log("[preview-jobs] Downloading screenshot collector", {
+    previewRunId,
+    collectorUrl,
+    collectorPath,
+  });
+
+  // Download the collector
+  const downloadResponse = await execInstanceInstanceIdExecPost({
+    client: morphClient,
+    path: { instance_id: instanceId },
+    body: {
+      command: ["bash", "-lc", `curl -sL -o '${collectorPath}' '${collectorUrl}'`],
+    },
+  });
+
+  if (downloadResponse.error || downloadResponse.data?.exit_code !== 0) {
+    throw new Error(
+      `Failed to download screenshot collector: ${downloadResponse.data?.stderr || downloadResponse.error}`
+    );
+  }
+
+  console.log("[preview-jobs] Running screenshot collector", {
+    previewRunId,
+    optionsLength: optionsJson.length,
+  });
+
+  // Run the collector with options passed via environment variable
+  // Use bash -lc to source shell hooks (which includes envctl variables)
+  const runResponse = await execInstanceInstanceIdExecPost({
+    client: morphClient,
+    path: { instance_id: instanceId },
+    body: {
+      command: [
+        "bash",
+        "-lc",
+        `SCREENSHOT_OPTIONS='${optionsJson.replace(/'/g, "'\\''")}' bun '${collectorPath}'`,
+      ],
+    },
+  });
+
+  if (runResponse.error) {
+    throw new Error(`Screenshot collector exec error: ${JSON.stringify(runResponse.error)}`);
+  }
+
+  const { exit_code: exitCode, stdout, stderr } = runResponse.data || {};
+
+  console.log("[preview-jobs] Screenshot collector completed", {
+    previewRunId,
+    exitCode,
+    stdoutLength: stdout?.length,
+    stderrLength: stderr?.length,
+  });
+
+  if (exitCode !== 0) {
+    console.error("[preview-jobs] Screenshot collector failed", {
+      previewRunId,
+      exitCode,
+      stderr: sliceOutput(stderr, 500),
+      stdout: sliceOutput(stdout, 500),
+    });
+    return {
+      status: "failed",
+      error: stderr || stdout || `Collector exited with code ${exitCode}`,
+    };
+  }
+
+  // Parse the JSON result from stdout
+  // The collector outputs JSON as the last line
+  const stdoutLines = (stdout || "").split("\n").filter((line) => line.trim());
+  const lastLine = stdoutLines[stdoutLines.length - 1];
+
+  if (!lastLine) {
+    return {
+      status: "failed",
+      error: "No output from screenshot collector",
+    };
+  }
+
+  try {
+    const result = JSON.parse(lastLine) as ScreenshotCollectorResult;
+    return result;
+  } catch {
+    console.error("[preview-jobs] Failed to parse collector output", {
+      previewRunId,
+      lastLine: sliceOutput(lastLine, 500),
+    });
+    return {
+      status: "failed",
+      error: `Failed to parse collector output: ${sliceOutput(lastLine, 200)}`,
+    };
+  }
 }
 
 async function repoHasCommit({
@@ -1281,6 +1414,10 @@ export async function runPreviewJob(
       console.log("[preview-jobs] Applied environment variables via envctl", {
         previewRunId,
         taskRunId,
+        convexUrl,
+        cmuxIsStaging: env.CMUX_IS_STAGING ?? "true",
+        envctlStdout: sliceOutput(envctlResponse.data?.stdout),
+        envctlStderr: sliceOutput(envctlResponse.data?.stderr),
       });
 
       // Start tmux session and run maintenance/dev scripts if provided
@@ -1352,31 +1489,68 @@ export async function runPreviewJob(
         throw new Error(`Task run ${taskRunId} not queryable after verification attempts`);
       }
 
-      // Trigger screenshot collection via worker HTTP endpoint
-      // The JWT contains taskRunId, and the worker will call /api/crown/check to get taskId
-      const screenshotPayload: WorkerRunTaskScreenshots = {
-        token: previewJwt,
-        convexUrl,
-        // Pass environment scripts so Claude knows how to install deps and run dev server
-        installCommand: environment.maintenanceScript ?? undefined,
-        devCommand: environment.devScript ?? undefined,
-      };
+      // Trigger screenshot collection via Morph exec (bypasses worker)
+      // Convex determines staging and downloads/runs the collector directly
+      const isStaging = env.CMUX_IS_STAGING === "true";
 
-      try {
-        await triggerWorkerScreenshotCollection({
-          workerUrl: workerService.url,
-          payload: screenshotPayload,
+      // Fetch the screenshot collector release URL
+      const collectorRelease = await fetchScreenshotCollectorRelease({
+        convexUrl,
+        isStaging,
+        previewRunId,
+      });
+
+      // Get changed files via Morph exec
+      const changedFiles = await getChangedFiles({
+        morphClient,
+        instanceId: instance.id,
+        repoDir,
+        baseBranch: defaultBranch,
+        previewRunId,
+      });
+
+      if (changedFiles.length === 0) {
+        console.log("[preview-jobs] No changed files detected, skipping screenshot collection", {
           previewRunId,
         });
-      } catch (error) {
-        console.error("[preview-jobs] Failed to trigger screenshots", {
+      } else {
+        // Build screenshot collector options
+        const screenshotOptions: ScreenshotCollectorOptions = {
+          workspaceDir: repoDir,
+          changedFiles,
+          prTitle: run.prTitle || `PR #${run.prNumber}`,
+          prDescription: run.prDescription || "",
+          baseBranch: defaultBranch,
+          headBranch: run.headRef || run.headSha,
+          outputDir: `/root/screenshots/${Date.now()}-pr-${run.prNumber}`,
+          pathToClaudeCodeExecutable: "/root/.bun/bin/claude",
+          installCommand: environment.maintenanceScript ?? undefined,
+          devCommand: environment.devScript ?? undefined,
+          auth: { taskRunJwt: previewJwt },
+        };
+
+        // Run the screenshot collector via Morph exec
+        const collectorResult = await runScreenshotCollector({
+          morphClient,
+          instanceId: instance.id,
+          collectorUrl: collectorRelease.url,
+          options: screenshotOptions,
           previewRunId,
-          error: error instanceof Error ? error.message : String(error),
         });
-        throw new Error("Failed to trigger screenshot collection");
+
+        console.log("[preview-jobs] Screenshot collector result", {
+          previewRunId,
+          status: collectorResult.status,
+          screenshotCount: collectorResult.screenshots?.length ?? 0,
+          hasUiChanges: collectorResult.hasUiChanges,
+          error: collectorResult.error,
+        });
+
+        // TODO: Upload screenshots to Convex storage if needed
+        // For now, the collector handles this via the taskRunJwt auth
       }
 
-      console.log("[preview-jobs] Triggered screenshot collection via HTTP", {
+      console.log("[preview-jobs] Screenshot collection completed via Morph exec", {
         previewRunId,
         taskRunId,
       });

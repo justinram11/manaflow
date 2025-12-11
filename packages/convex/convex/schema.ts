@@ -596,6 +596,8 @@ const convexSchema = defineSchema({
     repoInstallationId: v.optional(v.number()),
     prNumber: v.number(),
     prUrl: v.string(),
+    prTitle: v.optional(v.string()), // PR title from GitHub
+    prDescription: v.optional(v.string()), // PR body/description from GitHub
     headSha: v.string(),
     baseSha: v.optional(v.string()),
     headRef: v.optional(v.string()), // Branch name in head repo
