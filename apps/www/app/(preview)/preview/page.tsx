@@ -3,6 +3,7 @@ import { stackServerApp } from "@/lib/utils/stack";
 import { getConvex } from "@/lib/utils/get-convex";
 import { api } from "@cmux/convex/api";
 import { PreviewDashboard } from "@/components/preview/preview-dashboard";
+import { WaitlistScreen } from "@/components/preview/waitlist-screen";
 import {
   getTeamDisplayName,
   getTeamSlugOrId,
@@ -121,12 +122,65 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
     );
   }
 
-  const [auth, teamsResult] = await Promise.all([
+  const [auth, teamsResult, githubAccount, gitlabAccount, bitbucketAccount] = await Promise.all([
     user.getAuthJson(),
     user.listTeams(),
+    user.getConnectedAccount("github"),
+    user.getConnectedAccount("gitlab"),
+    user.getConnectedAccount("bitbucket"),
   ]);
   const teams: StackTeam[] = teamsResult;
   const { accessToken } = auth;
+
+  // Check if user authenticated with GitLab or Bitbucket but not GitHub
+  // These providers are still in beta, so show waitlist screen
+  const hasGitHub = !!githubAccount;
+  const hasGitLab = !!gitlabAccount;
+  const hasBitbucket = !!bitbucketAccount;
+
+  if (!hasGitHub && (hasGitLab || hasBitbucket)) {
+    const waitlistProvider = hasGitLab ? "gitlab" : "bitbucket";
+    return (
+      <div className="relative isolate min-h-dvh bg-[#05050a] text-white flex justify-center">
+        <svg
+          className="absolute inset-0 -z-10 w-full h-full -mx-8 sm:mx-0"
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 832 252"
+          fill="none"
+          preserveAspectRatio="none"
+        >
+          <ellipse className="sm:hidden" cx="446" cy="96" rx="500" ry="126" fill="url(#paint0_radial_preview_waitlist_sm)" />
+          <ellipse className="hidden sm:block" cx="446" cy="96" rx="416" ry="126" fill="url(#paint0_radial_preview_waitlist)" />
+          <defs>
+            <radialGradient
+              id="paint0_radial_preview_waitlist_sm"
+              cx="0"
+              cy="0"
+              r="1"
+              gradientUnits="userSpaceOnUse"
+              gradientTransform="translate(446 96) scale(500 126)"
+            >
+              <stop stopColor="rgba(4,120,255,0.25)" />
+              <stop offset="1" stopColor="rgba(4,120,255,0)" />
+            </radialGradient>
+            <radialGradient
+              id="paint0_radial_preview_waitlist"
+              cx="0"
+              cy="0"
+              r="1"
+              gradientUnits="userSpaceOnUse"
+              gradientTransform="translate(446 96) scale(416 126)"
+            >
+              <stop stopColor="rgba(4,120,255,0.25)" />
+              <stop offset="1" stopColor="rgba(4,120,255,0)" />
+            </radialGradient>
+          </defs>
+        </svg>
+
+        <WaitlistScreen provider={waitlistProvider} userEmail={user.primaryEmail} />
+      </div>
+    );
+  }
 
   if (!accessToken) {
     throw new Error("Missing Stack access token");
