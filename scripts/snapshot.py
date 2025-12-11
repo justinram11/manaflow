@@ -74,6 +74,7 @@ CDP_HTTP_PORT = 39381
 XTERM_HTTP_PORT = 39383
 CDP_PROXY_BINARY_NAME = "cmux-cdp-proxy"
 VNC_PROXY_BINARY_NAME = "cmux-vnc-proxy"
+CHISEL_SSH_HTTP_PORT = 8080
 MORPH_SNAPSHOT_MANIFEST_PATH = (
     Path(__file__).resolve().parent.parent / "packages/shared/src/morph-snapshots.json"
 )
@@ -551,6 +552,7 @@ async def _expose_standard_ports(
         XTERM_HTTP_PORT,
         VNC_HTTP_PORT,
         CDP_HTTP_PORT,
+        CHISEL_SSH_HTTP_PORT,
     ]
     console.info("Exposing standard HTTP services...")
 
@@ -1005,6 +1007,69 @@ EOF
         """
     )
     await ctx.run("configure-sshd", cmd)
+
+
+@registry.task(
+    name="install-chisel",
+    deps=("configure-sshd",),
+    description="Install chisel for SSH-over-HTTPS tunneling",
+)
+async def task_install_chisel(ctx: TaskContext) -> None:
+    cmd = textwrap.dedent(
+        """
+        set -eux
+
+        CHISEL_VERSION="1.10.1"
+        arch="$(uname -m)"
+        case "${arch}" in
+          x86_64) chisel_arch="amd64" ;;
+          aarch64|arm64) chisel_arch="arm64" ;;
+          *) echo "Unsupported architecture: ${arch}" >&2; exit 1 ;;
+        esac
+
+        # Download and install chisel
+        curl -fsSL "https://github.com/jpillora/chisel/releases/download/v${CHISEL_VERSION}/chisel_${CHISEL_VERSION}_linux_${chisel_arch}.gz" | gunzip > /usr/local/bin/chisel
+        chmod +x /usr/local/bin/chisel
+
+        # Verify installation
+        /usr/local/bin/chisel --version
+
+        # Create systemd service for chisel SSH-over-HTTPS tunnel
+        # This runs chisel in server mode on port 8080, allowing clients to tunnel SSH through HTTP
+        cat > /etc/systemd/system/chisel-ssh.service << 'EOF'
+[Unit]
+Description=Chisel SSH-over-HTTPS tunnel server
+After=network.target ssh.service
+Wants=ssh.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/chisel server --port 8080 --reverse
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+        # Enable and start the service
+        systemctl daemon-reload
+        systemctl enable chisel-ssh.service
+        systemctl start chisel-ssh.service
+
+        # Verify chisel is running
+        sleep 2
+        if ! ss -tlnp | grep -q ':8080'; then
+            echo "WARNING: chisel not yet listening on port 8080, checking status..."
+            systemctl status chisel-ssh.service --no-pager || true
+        fi
+
+        echo "chisel installed and configured for SSH-over-HTTPS on port 8080"
+        """
+    )
+    await ctx.run("install-chisel", cmd)
 
 
 @registry.task(
