@@ -1055,7 +1055,7 @@ export async function runPreviewJob(
       repoFullName: run.repoFullName,
       prNumber: run.prNumber,
     });
-    // Mark taskRun as skipped if it exists
+    // Mark taskRun and task as completed if they exist
     if (taskRunId) {
       try {
         await ctx.runMutation(internal.taskRuns.workerComplete, {
@@ -1066,8 +1066,21 @@ export async function runPreviewJob(
           previewRunId,
           taskRunId,
         });
+        // Also mark the parent task as completed
+        const taskRun = await ctx.runQuery(internal.taskRuns.getById, { id: taskRunId });
+        if (taskRun?.taskId) {
+          await ctx.runMutation(internal.tasks.setCompletedInternal, {
+            taskId: taskRun.taskId,
+            isCompleted: true,
+            crownEvaluationStatus: "succeeded",
+          });
+          console.log("[preview-jobs] Task marked as completed (skipped - no environmentId)", {
+            previewRunId,
+            taskId: taskRun.taskId,
+          });
+        }
       } catch (completeError) {
-        console.error("[preview-jobs] Failed to mark task run as completed", {
+        console.error("[preview-jobs] Failed to mark task run/task as completed", {
           previewRunId,
           taskRunId,
           error: completeError instanceof Error ? completeError.message : String(completeError),
@@ -1076,7 +1089,7 @@ export async function runPreviewJob(
     }
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
-      status: "skipped",
+      status: "completed",
     });
     return;
   }
@@ -1090,7 +1103,7 @@ export async function runPreviewJob(
       previewRunId,
       environmentId: config.environmentId,
     });
-    // Mark taskRun as skipped if it exists
+    // Mark taskRun and task as completed if they exist
     if (taskRunId) {
       try {
         await ctx.runMutation(internal.taskRuns.workerComplete, {
@@ -1101,8 +1114,21 @@ export async function runPreviewJob(
           previewRunId,
           taskRunId,
         });
+        // Also mark the parent task as completed
+        const taskRun = await ctx.runQuery(internal.taskRuns.getById, { id: taskRunId });
+        if (taskRun?.taskId) {
+          await ctx.runMutation(internal.tasks.setCompletedInternal, {
+            taskId: taskRun.taskId,
+            isCompleted: true,
+            crownEvaluationStatus: "succeeded",
+          });
+          console.log("[preview-jobs] Task marked as completed (skipped - environment not found)", {
+            previewRunId,
+            taskId: taskRun.taskId,
+          });
+        }
       } catch (completeError) {
-        console.error("[preview-jobs] Failed to mark task run as completed", {
+        console.error("[preview-jobs] Failed to mark task run/task as completed", {
           previewRunId,
           taskRunId,
           error: completeError instanceof Error ? completeError.message : String(completeError),
@@ -1111,7 +1137,7 @@ export async function runPreviewJob(
     }
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
-      status: "skipped",
+      status: "completed",
     });
     return;
   }
@@ -1121,7 +1147,7 @@ export async function runPreviewJob(
       previewRunId,
       environmentId: environment._id,
     });
-    // Mark taskRun as skipped if it exists
+    // Mark taskRun and task as completed if they exist
     if (taskRunId) {
       try {
         await ctx.runMutation(internal.taskRuns.workerComplete, {
@@ -1132,8 +1158,21 @@ export async function runPreviewJob(
           previewRunId,
           taskRunId,
         });
+        // Also mark the parent task as completed
+        const taskRun = await ctx.runQuery(internal.taskRuns.getById, { id: taskRunId });
+        if (taskRun?.taskId) {
+          await ctx.runMutation(internal.tasks.setCompletedInternal, {
+            taskId: taskRun.taskId,
+            isCompleted: true,
+            crownEvaluationStatus: "succeeded",
+          });
+          console.log("[preview-jobs] Task marked as completed (skipped - no morph snapshot)", {
+            previewRunId,
+            taskId: taskRun.taskId,
+          });
+        }
       } catch (completeError) {
-        console.error("[preview-jobs] Failed to mark task run as completed", {
+        console.error("[preview-jobs] Failed to mark task run/task as completed", {
           previewRunId,
           taskRunId,
           error: completeError instanceof Error ? completeError.message : String(completeError),
@@ -1142,7 +1181,7 @@ export async function runPreviewJob(
     }
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
-      status: "skipped",
+      status: "completed",
     });
     return;
   }
@@ -1990,6 +2029,29 @@ export async function runPreviewJob(
           taskRunId,
           error: completeError instanceof Error ? completeError.message : String(completeError),
         });
+      }
+
+      // Set crown evaluation status to "succeeded" so the green checkmark shows
+      // Preview tasks are single-run, so we skip crown evaluation and mark as succeeded directly
+      // Use setCompletedInternal which doesn't require user authorization
+      if (taskId) {
+        try {
+          await ctx.runMutation(internal.tasks.setCompletedInternal, {
+            taskId,
+            isCompleted: true,
+            crownEvaluationStatus: "succeeded",
+          });
+          console.log("[preview-jobs] Task crown evaluation status set to succeeded", {
+            previewRunId,
+            taskId,
+          });
+        } catch (crownError) {
+          console.error("[preview-jobs] Failed to set crown evaluation status", {
+            previewRunId,
+            taskId,
+            error: crownError instanceof Error ? crownError.message : String(crownError),
+          });
+        }
       }
     }
 
