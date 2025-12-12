@@ -2242,16 +2242,20 @@ async fn get_sandbox_ssh_info(
     client: &Client,
     access_token: &str,
     sandbox_id: &str,
-    team_slug_or_id: &str,
+    team_slug_or_id: Option<&str>,
     base_url: &str,
 ) -> anyhow::Result<SandboxSshInfo> {
     let api_url = base_url;
 
-    // URL-encode the query parameters
-    let query: String = url::form_urlencoded::Serializer::new(String::new())
-        .append_pair("teamSlugOrId", team_slug_or_id)
-        .finish();
-    let ssh_url = format!("{}/api/sandboxes/{}/ssh?{}", api_url, sandbox_id, query);
+    // Build URL with optional team parameter
+    let ssh_url = if let Some(team) = team_slug_or_id {
+        let query: String = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("teamSlugOrId", team)
+            .finish();
+        format!("{}/api/sandboxes/{}/ssh?{}", api_url, sandbox_id, query)
+    } else {
+        format!("{}/api/sandboxes/{}/ssh", api_url, sandbox_id)
+    };
 
     let response = client
         .get(&ssh_url)
@@ -2905,14 +2909,22 @@ async fn handle_onboard() -> anyhow::Result<()> {
 
 /// Handle real SSH to a sandbox (via direct TCP to Morph)
 async fn handle_real_ssh(client: &Client, base_url: &str, args: &SshArgs) -> anyhow::Result<()> {
-    // Get access token and resolve team
+    // Get access token
     eprintln!("Authenticating...");
     let access_token = get_access_token(client).await?;
-    let team = resolve_team(client, &access_token, args.team.as_deref()).await?;
+
+    // For morphvm_ IDs, team is optional (Morph API validates access)
+    // For task-run IDs, team is required
+    let team = if args.id.starts_with("morphvm_") && args.team.is_none() {
+        None
+    } else {
+        Some(resolve_team(client, &access_token, args.team.as_deref()).await?)
+    };
 
     // Get SSH info from the API (includes Morph per-instance SSH token)
     eprintln!("Resolving sandbox {}...", args.id);
-    let ssh_info = get_sandbox_ssh_info(client, &access_token, &args.id, &team, base_url).await?;
+    let ssh_info =
+        get_sandbox_ssh_info(client, &access_token, &args.id, team.as_deref(), base_url).await?;
     eprintln!("Connecting to {}...", ssh_info.morph_instance_id);
 
     // Build SSH command using Morph's per-instance SSH tokens
@@ -2966,12 +2978,20 @@ async fn handle_ssh_exec(
     base_url: &str,
     args: &SshExecArgs,
 ) -> anyhow::Result<()> {
-    // Get access token and resolve team
+    // Get access token
     let access_token = get_access_token(client).await?;
-    let team = resolve_team(client, &access_token, args.team.as_deref()).await?;
+
+    // For morphvm_ IDs, team is optional (Morph API validates access)
+    // For task-run IDs, team is required
+    let team = if args.id.starts_with("morphvm_") && args.team.is_none() {
+        None
+    } else {
+        Some(resolve_team(client, &access_token, args.team.as_deref()).await?)
+    };
 
     // Get SSH info from the API (includes Morph per-instance SSH token)
-    let ssh_info = get_sandbox_ssh_info(client, &access_token, &args.id, &team, base_url).await?;
+    let ssh_info =
+        get_sandbox_ssh_info(client, &access_token, &args.id, team.as_deref(), base_url).await?;
 
     // Build SSH command using Morph's per-instance SSH tokens
     // Use -T to disable pseudo-terminal allocation (non-interactive)

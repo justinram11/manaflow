@@ -420,7 +420,7 @@ export type SetupInstanceBody = {
     instanceId?: string;
     selectedRepos?: Array<string>;
     ttlSeconds?: number;
-    snapshotId?: string | ('snapshot_iieyba7j' | 'snapshot_bhh2yt5q' | 'snapshot_pcmfvjra');
+    snapshotId?: string | ('snapshot_ei2nss67' | 'snapshot_3vhs84q6' | 'snapshot_pcmfvjra');
 };
 
 export type InstanceInfo = {
@@ -2542,8 +2542,8 @@ export type GetApiSandboxesByIdSshData = {
     path: {
         id: string;
     };
-    query: {
-        teamSlugOrId: string;
+    query?: {
+        teamSlugOrId?: string;
     };
     url: '/api/sandboxes/{id}/ssh';
 };

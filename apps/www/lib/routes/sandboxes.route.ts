@@ -896,7 +896,7 @@ sandboxesRouter.openapi(
     request: {
       params: z.object({ id: z.string() }),
       query: z.object({
-        teamSlugOrId: z.string(),
+        teamSlugOrId: z.string().optional(),
       }),
     },
     responses: {
@@ -930,45 +930,57 @@ sandboxesRouter.openapi(
 
       // Check if the id is a Morph instance ID (starts with "morphvm_")
       if (id.startsWith("morphvm_")) {
-        // Direct Morph instance ID - first try to find it in task runs
-        // Note: The getByContainerName query may throw if the team doesn't exist in Convex,
-        // which is fine for direct cloud VMs - we handle this gracefully below
-        let taskRun = null;
-        try {
-          taskRun = await convex.query(api.taskRuns.getByContainerName, {
-            teamSlugOrId,
-            containerName: id,
-          });
-        } catch (convexError) {
-          // Team doesn't exist in Convex or other query error - treat as direct VM access
-          console.log(
-            `[sandboxes.ssh] Convex query failed for ${id}, treating as direct cloud VM:`,
-            convexError,
-          );
-        }
+        // Direct Morph instance ID
+        // For direct VMs, team is optional - we can look it up from instance metadata
+        // or just allow access since Morph API will validate credentials
 
-        if (taskRun) {
-          // Found in task runs - verify team access and that it's a Morph instance
-          await verifyTeamAccess({
-            req: c.req.raw,
-            teamSlugOrId,
-          });
-          if (taskRun.vscode?.provider !== "morph") {
-            return c.text("Sandbox is not a Morph instance", 404);
+        if (teamSlugOrId) {
+          // Team provided - try to find it in task runs for verification
+          let taskRun = null;
+          try {
+            taskRun = await convex.query(api.taskRuns.getByContainerName, {
+              teamSlugOrId,
+              containerName: id,
+            });
+          } catch (convexError) {
+            // Team doesn't exist in Convex or other query error - treat as direct VM access
+            console.log(
+              `[sandboxes.ssh] Convex query failed for ${id}, treating as direct cloud VM:`,
+              convexError,
+            );
+          }
+
+          if (taskRun) {
+            // Found in task runs - verify team access and that it's a Morph instance
+            await verifyTeamAccess({
+              req: c.req.raw,
+              teamSlugOrId,
+            });
+            if (taskRun.vscode?.provider !== "morph") {
+              return c.text("Sandbox is not a Morph instance", 404);
+            }
+          } else {
+            console.log(
+              `[sandboxes.ssh] Direct Morph instance access for ${id} (team: ${teamSlugOrId})`,
+            );
           }
         } else {
-          // Not found in task runs - this could be a direct cloud VM created via CLI
-          // For direct cloud VMs, we skip team verification since:
-          // 1. The VM was created with the user's credentials via dmux vm create
-          // 2. The Morph API will validate access when connecting
+          // No team provided - this is a direct VM access
+          // The Morph API will validate that the caller has access to this instance
+          // via the MORPH_API_KEY (which is our service account)
           console.log(
-            `[sandboxes.ssh] Direct Morph instance access for ${id} (team: ${teamSlugOrId})`,
+            `[sandboxes.ssh] Direct Morph instance access for ${id} (no team specified)`,
           );
         }
 
         morphInstanceId = id;
       } else {
-        // For task-run IDs, verify team access
+        // For task-run IDs, team is required to look up the task run
+        if (!teamSlugOrId) {
+          return c.text("teamSlugOrId is required for task-run IDs", 400);
+        }
+
+        // Verify team access
         const team = await verifyTeamAccess({
           req: c.req.raw,
           teamSlugOrId,

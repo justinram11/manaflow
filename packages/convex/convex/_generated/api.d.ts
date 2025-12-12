@@ -56,7 +56,6 @@ import type * as taskRuns from "../taskRuns.js";
 import type * as taskRuns_http from "../taskRuns_http.js";
 import type * as tasks from "../tasks.js";
 import type * as teams from "../teams.js";
-import type * as userSshKeys from "../userSshKeys.js";
 import type * as users from "../users.js";
 import type * as users_utils_getWorkerAuth from "../users/utils/getWorkerAuth.js";
 import type * as users_utils_index from "../users/utils/index.js";
@@ -118,7 +117,6 @@ declare const fullApi: ApiFromModules<{
   taskRuns_http: typeof taskRuns_http;
   tasks: typeof tasks;
   teams: typeof teams;
-  userSshKeys: typeof userSshKeys;
   users: typeof users;
   "users/utils/getWorkerAuth": typeof users_utils_getWorkerAuth;
   "users/utils/index": typeof users_utils_index;
