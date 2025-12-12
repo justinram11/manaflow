@@ -408,14 +408,6 @@ export type RefreshGitHubAuthBody = {
     teamSlugOrId: string;
 };
 
-export type InjectSshKeysResponse = {
-    injected: number;
-};
-
-export type InjectSshKeysBody = {
-    teamSlugOrId: string;
-};
-
 export type SetupInstanceResponse = {
     instanceId: string;
     vscodeUrl: string;
@@ -580,9 +572,13 @@ export type UpdateSandboxEnvBody = {
 export type SandboxSshResponse = {
     morphInstanceId: string;
     /**
-     * WebSocket URL for SSH-over-HTTPS tunnel
+     * SSH command to connect: ssh {accessToken}@ssh.cloud.morph.so
      */
-    websocketUrl: string;
+    sshCommand: string;
+    /**
+     * Morph per-instance SSH access token
+     */
+    accessToken: string;
     user: string;
 };
 
@@ -754,38 +750,6 @@ export type PreviewRun = {
 
 export type PreviewRunsResponse = {
     runs: Array<PreviewRun>;
-};
-
-export type SshKey = {
-    id: string;
-    name: string;
-    fingerprint: string;
-    source: 'manual' | 'github' | 'local';
-    createdAt: number;
-};
-
-export type ListSshKeysResponse = Array<SshKey>;
-
-export type CreateSshKeyResponse = {
-    id: string;
-    fingerprint: string;
-};
-
-export type CreateSshKeyBody = {
-    publicKey: string;
-    name: string;
-};
-
-export type DeleteSshKeyResponse = {
-    success: true;
-};
-
-export type ImportGithubKeysResponse = {
-    imported: number;
-    keys: Array<{
-        id: string;
-        fingerprint: string;
-    }>;
 };
 
 export type GetApiHealthData = {
@@ -1973,51 +1937,6 @@ export type PostApiMorphTaskRunsByTaskRunIdRefreshGithubAuthResponses = {
 
 export type PostApiMorphTaskRunsByTaskRunIdRefreshGithubAuthResponse = PostApiMorphTaskRunsByTaskRunIdRefreshGithubAuthResponses[keyof PostApiMorphTaskRunsByTaskRunIdRefreshGithubAuthResponses];
 
-export type PostApiMorphTaskRunsByTaskRunIdInjectSshKeysData = {
-    body: InjectSshKeysBody;
-    path: {
-        taskRunId: string;
-    };
-    query?: never;
-    url: '/api/morph/task-runs/{taskRunId}/inject-ssh-keys';
-};
-
-export type PostApiMorphTaskRunsByTaskRunIdInjectSshKeysErrors = {
-    /**
-     * Task run is not backed by a Morph instance
-     */
-    400: unknown;
-    /**
-     * Unauthorized
-     */
-    401: unknown;
-    /**
-     * Forbidden - instance does not belong to this team
-     */
-    403: unknown;
-    /**
-     * Task run not found
-     */
-    404: unknown;
-    /**
-     * Instance is paused - resume it first
-     */
-    409: unknown;
-    /**
-     * Failed to inject SSH keys
-     */
-    500: unknown;
-};
-
-export type PostApiMorphTaskRunsByTaskRunIdInjectSshKeysResponses = {
-    /**
-     * SSH keys injected successfully
-     */
-    200: InjectSshKeysResponse;
-};
-
-export type PostApiMorphTaskRunsByTaskRunIdInjectSshKeysResponse = PostApiMorphTaskRunsByTaskRunIdInjectSshKeysResponses[keyof PostApiMorphTaskRunsByTaskRunIdInjectSshKeysResponses];
-
 export type PostApiMorphSetupInstanceData = {
     body: SetupInstanceBody;
     path?: never;
@@ -2917,136 +2836,6 @@ export type GetApiPreviewConfigsByPreviewConfigIdRunsResponses = {
 };
 
 export type GetApiPreviewConfigsByPreviewConfigIdRunsResponse = GetApiPreviewConfigsByPreviewConfigIdRunsResponses[keyof GetApiPreviewConfigsByPreviewConfigIdRunsResponses];
-
-export type GetApiUserSshKeysData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/api/user/ssh-keys';
-};
-
-export type GetApiUserSshKeysErrors = {
-    /**
-     * Unauthorized
-     */
-    401: unknown;
-    /**
-     * Failed to fetch SSH keys
-     */
-    500: unknown;
-};
-
-export type GetApiUserSshKeysResponses = {
-    /**
-     * List of SSH keys
-     */
-    200: ListSshKeysResponse;
-};
-
-export type GetApiUserSshKeysResponse = GetApiUserSshKeysResponses[keyof GetApiUserSshKeysResponses];
-
-export type PostApiUserSshKeysData = {
-    body: CreateSshKeyBody;
-    path?: never;
-    query?: never;
-    url: '/api/user/ssh-keys';
-};
-
-export type PostApiUserSshKeysErrors = {
-    /**
-     * Invalid SSH key format
-     */
-    400: unknown;
-    /**
-     * Unauthorized
-     */
-    401: unknown;
-    /**
-     * SSH key already exists
-     */
-    409: unknown;
-    /**
-     * Failed to create SSH key
-     */
-    500: unknown;
-};
-
-export type PostApiUserSshKeysResponses = {
-    /**
-     * SSH key created
-     */
-    200: CreateSshKeyResponse;
-};
-
-export type PostApiUserSshKeysResponse = PostApiUserSshKeysResponses[keyof PostApiUserSshKeysResponses];
-
-export type DeleteApiUserSshKeysByIdData = {
-    body?: never;
-    path: {
-        id: string;
-    };
-    query?: never;
-    url: '/api/user/ssh-keys/{id}';
-};
-
-export type DeleteApiUserSshKeysByIdErrors = {
-    /**
-     * Unauthorized
-     */
-    401: unknown;
-    /**
-     * Not authorized to delete this SSH key
-     */
-    403: unknown;
-    /**
-     * SSH key not found
-     */
-    404: unknown;
-    /**
-     * Failed to delete SSH key
-     */
-    500: unknown;
-};
-
-export type DeleteApiUserSshKeysByIdResponses = {
-    /**
-     * SSH key deleted
-     */
-    200: DeleteSshKeyResponse;
-};
-
-export type DeleteApiUserSshKeysByIdResponse = DeleteApiUserSshKeysByIdResponses[keyof DeleteApiUserSshKeysByIdResponses];
-
-export type PostApiUserSshKeysImportGithubData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/api/user/ssh-keys/import-github';
-};
-
-export type PostApiUserSshKeysImportGithubErrors = {
-    /**
-     * GitHub account not connected
-     */
-    400: unknown;
-    /**
-     * Unauthorized
-     */
-    401: unknown;
-    /**
-     * Failed to import GitHub SSH keys
-     */
-    500: unknown;
-};
-
-export type PostApiUserSshKeysImportGithubResponses = {
-    /**
-     * GitHub SSH keys imported
-     */
-    200: ImportGithubKeysResponse;
-};
-
-export type PostApiUserSshKeysImportGithubResponse = PostApiUserSshKeysImportGithubResponses[keyof PostApiUserSshKeysImportGithubResponses];
 
 export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});

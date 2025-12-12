@@ -24,10 +24,6 @@
     "./dataModel": {
       "import": "./convex/_generated/dataModel.d.ts",
       "types": "./convex/_generated/dataModel.d.ts"
-    },
-    "./userSshKeys": {
-      "import": "./convex/userSshKeys.js",
-      "types": "./convex/userSshKeys.ts"
     }
   },
   "dependencies": {

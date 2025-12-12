@@ -74,7 +74,6 @@ CDP_HTTP_PORT = 39381
 XTERM_HTTP_PORT = 39383
 CDP_PROXY_BINARY_NAME = "cmux-cdp-proxy"
 VNC_PROXY_BINARY_NAME = "cmux-vnc-proxy"
-WS_SSH_HTTP_PORT = 22221
 MORPH_SNAPSHOT_MANIFEST_PATH = (
     Path(__file__).resolve().parent.parent / "packages/shared/src/morph-snapshots.json"
 )
@@ -552,7 +551,6 @@ async def _expose_standard_ports(
         XTERM_HTTP_PORT,
         VNC_HTTP_PORT,
         CDP_HTTP_PORT,
-        WS_SSH_HTTP_PORT,
     ]
     console.info("Exposing standard HTTP services...")
 
@@ -955,7 +953,7 @@ async def task_install_base_packages(ctx: TaskContext) -> None:
 @registry.task(
     name="configure-sshd",
     deps=("install-base-packages",),
-    description="Configure OpenSSH server on ports 22 (Morph internal) and 22222 (user SSH)",
+    description="Configure OpenSSH server on port 22 (used by Morph SSH gateway)",
 )
 async def task_configure_sshd(ctx: TaskContext) -> None:
     cmd = textwrap.dedent(
@@ -966,12 +964,9 @@ async def task_configure_sshd(ctx: TaskContext) -> None:
         # Generate host keys if they don't exist
         ssh-keygen -A
 
-        # Configure sshd to ALSO listen on port 22222 (in addition to default port 22)
-        # Port 22 is required for Morph's internal SSH mechanism
-        # Port 22222 is for user SSH access via the SSH gateway
+        # Configure sshd on port 22 (Morph handles SSH access via per-instance tokens)
         cat > /etc/ssh/sshd_config.d/cmux.conf << 'EOF'
 Port 22
-Port 22222
 PermitRootLogin prohibit-password
 PubkeyAuthentication yes
 PasswordAuthentication no
@@ -988,7 +983,7 @@ EOF
         systemctl enable ssh
         systemctl restart ssh
 
-        # Verify sshd is running and listening on both ports
+        # Verify sshd is running on port 22
         sleep 2
         if ! ss -tlnp | grep -q ':22 '; then
             echo "ERROR: sshd not listening on port 22" >&2
@@ -996,93 +991,11 @@ EOF
             journalctl -u ssh --no-pager -n 50 || true
             exit 1
         fi
-        if ! ss -tlnp | grep -q ':22222'; then
-            echo "ERROR: sshd not listening on port 22222" >&2
-            systemctl status ssh --no-pager || true
-            journalctl -u ssh --no-pager -n 50 || true
-            exit 1
-        fi
 
-        echo "sshd configured and running on ports 22 and 22222"
+        echo "sshd configured and running on port 22"
         """
     )
     await ctx.run("configure-sshd", cmd)
-
-
-@registry.task(
-    name="install-ws-ssh-proxy",
-    deps=("apt-bootstrap",),  # Run early, before configure-sshd changes SSH port
-    description="Install ws-ssh-proxy for SSH-over-HTTPS tunneling",
-)
-async def task_install_ws_ssh_proxy(ctx: TaskContext) -> None:
-    # Build ws-ssh-proxy locally for linux/amd64
-    ws_ssh_proxy_src = Path(__file__).resolve().parent / "ws-ssh-proxy"
-    ws_ssh_proxy_dist = ws_ssh_proxy_src / "dist"
-    ws_ssh_proxy_dist.mkdir(exist_ok=True)
-    ws_ssh_proxy_binary = ws_ssh_proxy_dist / "ws-ssh-proxy"
-
-    ctx.console.info("Building ws-ssh-proxy with Go (GOOS=linux, GOARCH=amd64)...")
-    result = subprocess.run(
-        ["go", "build", "-o", str(ws_ssh_proxy_binary), "."],
-        cwd=ws_ssh_proxy_src,
-        env={**os.environ, "GOOS": "linux", "GOARCH": "amd64", "CGO_ENABLED": "0"},
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"Failed to build ws-ssh-proxy: {result.stderr}")
-    ctx.console.info(f"Built ws-ssh-proxy at {ws_ssh_proxy_binary}")
-
-    # Upload to sandbox using instance.aupload, then move to final location
-    await ctx.instance.aupload(str(ws_ssh_proxy_binary), "/tmp/ws-ssh-proxy")
-
-    cmd = textwrap.dedent(
-        """
-        set -eux
-
-        # Move binary to final location and set permissions
-        mv /tmp/ws-ssh-proxy /usr/local/bin/ws-ssh-proxy
-        chmod 755 /usr/local/bin/ws-ssh-proxy
-
-        # Verify installation
-        /usr/local/bin/ws-ssh-proxy --help || echo "Binary installed"
-
-        # Create systemd service for ws-ssh-proxy SSH-over-HTTPS tunnel
-        # This bridges WebSocket connections to local SSH (simple protocol, no chisel complexity)
-        cat > /etc/systemd/system/ws-ssh-proxy.service << 'EOF'
-[Unit]
-Description=WebSocket to SSH proxy for SSH-over-HTTPS tunneling
-After=network.target ssh.service
-Wants=ssh.service
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/ws-ssh-proxy --listen :22221 --ssh localhost:22222
-Restart=always
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-        # Enable and start the service
-        systemctl daemon-reload
-        systemctl enable ws-ssh-proxy.service
-        systemctl start ws-ssh-proxy.service
-
-        # Verify ws-ssh-proxy is running
-        sleep 2
-        if ! ss -tlnp | grep -q ':22221'; then
-            echo "WARNING: ws-ssh-proxy not yet listening on port 22221, checking status..."
-            systemctl status ws-ssh-proxy.service --no-pager || true
-        fi
-
-        echo "ws-ssh-proxy installed and configured for SSH-over-HTTPS on port 22221"
-        """
-    )
-    await ctx.run("install-ws-ssh-proxy", cmd)
 
 
 @registry.task(
@@ -2168,8 +2081,8 @@ async def task_check_envctl(ctx: TaskContext) -> None:
 
 @registry.task(
     name="check-ssh-service",
-    deps=("configure-memory-protection", "cleanup-build-artifacts", "install-ws-ssh-proxy"),
-    description="Verify SSH service is active on port 22222",
+    deps=("configure-memory-protection", "cleanup-build-artifacts"),
+    description="Verify SSH service is active on port 22",
 )
 async def task_check_ssh_service(ctx: TaskContext) -> None:
     cmd = textwrap.dedent(
@@ -2190,14 +2103,14 @@ async def task_check_ssh_service(ctx: TaskContext) -> None:
           exit 1
         fi
 
-        # Verify sshd is listening on port 22222
-        if ! ss -tlnp | grep -q ':22222'; then
-          echo "ERROR: sshd not listening on port 22222" >&2
+        # Verify sshd is listening on port 22
+        if ! ss -tlnp | grep -q ':22 '; then
+          echo "ERROR: sshd not listening on port 22" >&2
           ss -tlnp | grep ssh || true
           cat /etc/ssh/sshd_config.d/cmux.conf || true
           exit 1
         fi
-        echo "sshd is listening on port 22222"
+        echo "sshd is listening on port 22"
         """
     )
     await ctx.run("check-ssh-service", cmd)

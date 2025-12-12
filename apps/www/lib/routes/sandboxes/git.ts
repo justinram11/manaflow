@@ -10,13 +10,6 @@ export type MorphInstance = Awaited<
   ReturnType<MorphCloudClient["instances"]["start"]>
 >;
 
-interface UserSshKey {
-  publicKey: string;
-  name: string;
-  fingerprint: string;
-  source: "manual" | "github" | "local";
-}
-
 export const fetchGitIdentityInputs = (
   convex: ConvexClient,
   githubAccessToken: string
@@ -90,49 +83,4 @@ export const configureGithubAccess = async (
   throw new Error(
     `GitHub authentication failed after ${maxRetries} attempts: ${lastError?.message || "Unknown error"}`
   );
-};
-
-/**
- * Injects the user's registered SSH public keys into a Morph instance.
- * Creates /root/.ssh/authorized_keys with proper permissions.
- *
- * @returns The number of keys injected
- */
-export const injectUserSshKeys = async (
-  instance: MorphInstance,
-  convex: ConvexClient
-): Promise<number> => {
-  const sshKeys = (await convex.query(
-    api.userSshKeys.listByUser,
-    {}
-  )) as unknown as UserSshKey[];
-
-  if (sshKeys.length === 0) {
-    console.log("[sandboxes.start] SSH KEYS: No SSH keys to inject");
-    return 0;
-  }
-
-  const publicKeys = sshKeys.map((key) => key.publicKey.trim()).join("\n");
-
-  // Create .ssh directory with proper permissions and write authorized_keys
-  const setupCmd = await instance.exec(
-    `bash -lc "mkdir -p /root/.ssh && chmod 700 /root/.ssh && cat > /root/.ssh/authorized_keys << 'EOF'
-${publicKeys}
-EOF
-chmod 600 /root/.ssh/authorized_keys && echo 'SSH keys injected: '$(wc -l < /root/.ssh/authorized_keys)"`
-  );
-
-  if (setupCmd.exit_code !== 0) {
-    console.error(
-      `[sandboxes.start] SSH KEYS: Failed to inject SSH keys, exit=${setupCmd.exit_code}, stderr=${setupCmd.stderr || setupCmd.stdout}`
-    );
-    throw new Error(
-      `Failed to inject SSH keys: ${setupCmd.stderr || setupCmd.stdout}`
-    );
-  }
-
-  console.log(
-    `[sandboxes.start] SSH KEYS: Injected ${sshKeys.length} SSH key(s)`
-  );
-  return sshKeys.length;
 };

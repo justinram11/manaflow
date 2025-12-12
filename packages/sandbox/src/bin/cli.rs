@@ -1,4 +1,3 @@
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chrono::SecondsFormat;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use cmux_sandbox::models::{
@@ -19,7 +18,6 @@ use futures::{SinkExt, StreamExt};
 use ignore::WalkBuilder;
 use reqwest::Client;
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
@@ -146,10 +144,6 @@ enum Command {
     /// Generate SSH config for easy sandbox access (e.g., `ssh sandbox-0`)
     SshConfig,
 
-    /// Manage SSH keys for sandbox access
-    #[command(subcommand)]
-    SshKeys(SshKeysCommand),
-
     /// Manage cloud VMs (create, list, etc.)
     #[command(subcommand)]
     Vm(VmCommand),
@@ -192,21 +186,6 @@ enum AuthCommand {
 }
 
 #[derive(Subcommand, Debug)]
-enum SshKeysCommand {
-    /// List registered SSH keys
-    #[command(alias = "ls")]
-    List,
-    /// Add an SSH key
-    Add(SshKeysAddArgs),
-    /// Remove an SSH key by fingerprint or ID
-    #[command(alias = "rm")]
-    Remove {
-        /// Fingerprint (SHA256:...) or key ID to remove
-        fingerprint_or_id: String,
-    },
-}
-
-#[derive(Subcommand, Debug)]
 enum VmCommand {
     /// Create a new cloud VM
     Create(VmCreateArgs),
@@ -242,21 +221,6 @@ struct VmListArgs {
     /// Output format (json or text)
     #[arg(long, default_value = "text")]
     output: String,
-}
-
-#[derive(Args, Debug)]
-struct SshKeysAddArgs {
-    /// Path to the SSH public key file (default: auto-detect ~/.ssh/id_*.pub)
-    #[arg(value_name = "PATH")]
-    path: Option<PathBuf>,
-
-    /// Import keys from connected GitHub account
-    #[arg(long)]
-    from_github: bool,
-
-    /// Name for the key (default: hostname)
-    #[arg(long, short)]
-    name: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -815,17 +779,6 @@ async fn run() -> anyhow::Result<()> {
             let api_url = get_cmux_api_url();
             handle_ssh_config(&client, &api_url).await?;
         }
-        Command::SshKeys(cmd) => match cmd {
-            SshKeysCommand::List => {
-                handle_ssh_keys_list().await?;
-            }
-            SshKeysCommand::Add(args) => {
-                handle_ssh_keys_add(args).await?;
-            }
-            SshKeysCommand::Remove { fingerprint_or_id } => {
-                handle_ssh_keys_remove(&fingerprint_or_id).await?;
-            }
-        },
         Command::Vm(cmd) => match cmd {
             VmCommand::Create(args) => {
                 handle_vm_create(args).await?;
@@ -2101,11 +2054,14 @@ struct StackUserInfo {
 
 /// SSH connection info from the cmux API
 #[derive(serde::Deserialize, Debug)]
+#[allow(dead_code)]
 struct SandboxSshInfo {
     #[serde(rename = "morphInstanceId")]
     morph_instance_id: String,
-    #[serde(rename = "websocketUrl")]
-    websocket_url: String,
+    #[serde(rename = "sshCommand")]
+    ssh_command: String,
+    #[serde(rename = "accessToken")]
+    access_token: String,
     user: String,
 }
 
@@ -2657,426 +2613,6 @@ async fn handle_auth_token() -> anyhow::Result<()> {
     Ok(())
 }
 
-// =============================================================================
-// SSH Keys Management
-// =============================================================================
-
-/// Response type for SSH key listing
-#[derive(serde::Deserialize, Debug)]
-struct SshKeyInfo {
-    id: String,
-    name: String,
-    fingerprint: String,
-    source: String,
-    #[serde(rename = "createdAt")]
-    created_at: i64,
-}
-
-/// Response type for SSH key creation
-#[derive(serde::Deserialize, Debug)]
-struct CreateSshKeyResponse {
-    id: String,
-    fingerprint: String,
-}
-
-/// Response type for GitHub import
-#[derive(serde::Deserialize, Debug)]
-struct ImportGithubKeysResponse {
-    imported: u32,
-    keys: Vec<CreateSshKeyResponse>,
-}
-
-/// Compute SSH key fingerprint from a public key string.
-/// Format: 'SHA256:base64...'
-fn compute_ssh_fingerprint(public_key: &str) -> anyhow::Result<String> {
-    // SSH public key format: "type base64-blob comment"
-    let parts: Vec<&str> = public_key.split_whitespace().collect();
-    if parts.len() < 2 {
-        return Err(anyhow::anyhow!("Invalid SSH public key format"));
-    }
-
-    let key_type = parts[0];
-    let key_blob = parts[1];
-
-    // Validate key type
-    let valid_types = [
-        "ssh-rsa",
-        "ssh-dss",
-        "ssh-ed25519",
-        "ecdsa-sha2-nistp256",
-        "ecdsa-sha2-nistp384",
-        "ecdsa-sha2-nistp521",
-        "sk-ssh-ed25519@openssh.com",
-        "sk-ecdsa-sha2-nistp256@openssh.com",
-    ];
-
-    if !valid_types.contains(&key_type) {
-        return Err(anyhow::anyhow!("Unsupported SSH key type: {}", key_type));
-    }
-
-    // Decode base64 blob and compute SHA256 hash
-    let binary_data = BASE64
-        .decode(key_blob)
-        .map_err(|_| anyhow::anyhow!("Invalid base64 in SSH public key"))?;
-
-    let mut hasher = Sha256::new();
-    hasher.update(&binary_data);
-    let hash = hasher.finalize();
-
-    // Convert to base64 without padding (matches ssh-keygen output)
-    let base64_hash = BASE64.encode(hash);
-    let base64_hash = base64_hash.trim_end_matches('=');
-
-    Ok(format!("SHA256:{}", base64_hash))
-}
-
-/// Find an SSH public key file in the default locations
-fn find_ssh_public_key() -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok()?;
-    let ssh_dir = PathBuf::from(home).join(".ssh");
-
-    // Check common key types in order of preference
-    let key_files = ["id_ed25519.pub", "id_rsa.pub", "id_ecdsa.pub"];
-
-    for key_file in key_files {
-        let path = ssh_dir.join(key_file);
-        if path.exists() {
-            return Some(path);
-        }
-    }
-
-    None
-}
-
-/// Get the hostname for default key name
-fn get_hostname() -> String {
-    std::env::var("HOSTNAME")
-        .or_else(|_| std::env::var("HOST"))
-        .or_else(|_| {
-            std::process::Command::new("hostname")
-                .output()
-                .ok()
-                .and_then(|output| {
-                    if output.status.success() {
-                        String::from_utf8(output.stdout)
-                            .ok()
-                            .map(|s| s.trim().to_string())
-                    } else {
-                        None
-                    }
-                })
-                .ok_or(std::env::VarError::NotPresent)
-        })
-        .unwrap_or_else(|_| "my-laptop".to_string())
-}
-
-/// Format a timestamp as a human-readable relative time
-fn format_relative_time(timestamp_ms: i64) -> String {
-    let now = chrono::Utc::now().timestamp_millis();
-    let diff_secs = (now - timestamp_ms) / 1000;
-
-    if diff_secs < 60 {
-        "just now".to_string()
-    } else if diff_secs < 3600 {
-        let mins = diff_secs / 60;
-        format!("{} minute{} ago", mins, if mins == 1 { "" } else { "s" })
-    } else if diff_secs < 86400 {
-        let hours = diff_secs / 3600;
-        format!("{} hour{} ago", hours, if hours == 1 { "" } else { "s" })
-    } else {
-        let days = diff_secs / 86400;
-        format!("{} day{} ago", days, if days == 1 { "" } else { "s" })
-    }
-}
-
-/// Handle `cmux ssh-keys list` - list registered SSH keys
-async fn handle_ssh_keys_list() -> anyhow::Result<()> {
-    let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
-    let access_token = get_access_token(&client).await?;
-    let api_url = get_cmux_api_url();
-
-    let url = format!("{}/api/user/ssh-keys", api_url);
-    let response = client
-        .get(&url)
-        .header("Authorization", format!("Bearer {}", access_token))
-        .send()
-        .await?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let text = response.text().await.unwrap_or_default();
-        return Err(anyhow::anyhow!(
-            "Failed to list SSH keys: {} - {}",
-            status,
-            text
-        ));
-    }
-
-    let keys: Vec<SshKeyInfo> = response.json().await?;
-
-    if keys.is_empty() {
-        println!("No SSH keys registered.");
-        println!("\nAdd a key with: cmux ssh-keys add");
-        return Ok(());
-    }
-
-    // Print header
-    println!(
-        "{:<20} {:<45} {:<10} CREATED",
-        "NAME", "FINGERPRINT", "SOURCE"
-    );
-    println!("{}", "-".repeat(90));
-
-    // Print keys
-    for key in keys {
-        // Truncate fingerprint for display
-        let fingerprint_display = if key.fingerprint.len() > 43 {
-            format!("{}...", &key.fingerprint[..40])
-        } else {
-            key.fingerprint.clone()
-        };
-
-        println!(
-            "{:<20} {:<45} {:<10} {}",
-            truncate_string(&key.name, 18),
-            fingerprint_display,
-            key.source,
-            format_relative_time(key.created_at)
-        );
-    }
-
-    Ok(())
-}
-
-/// Truncate a string to fit in a column
-fn truncate_string(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max_len.saturating_sub(3)])
-    }
-}
-
-/// Handle `cmux ssh-keys add` - add an SSH key
-async fn handle_ssh_keys_add(args: SshKeysAddArgs) -> anyhow::Result<()> {
-    // Handle --from-github flag
-    if args.from_github {
-        return handle_ssh_keys_import_github().await;
-    }
-
-    // Get the public key file path
-    let key_path = match args.path {
-        Some(path) => {
-            if !path.exists() {
-                return Err(anyhow::anyhow!(
-                    "SSH public key file not found: {}",
-                    path.display()
-                ));
-            }
-            path
-        }
-        None => find_ssh_public_key().ok_or_else(|| {
-            anyhow::anyhow!(
-                "No SSH public key found.\n\
-                     \n\
-                     Looked in ~/.ssh/ for: id_ed25519.pub, id_rsa.pub, id_ecdsa.pub\n\
-                     \n\
-                     Generate a new key with: ssh-keygen -t ed25519\n\
-                     Or specify a path: cmux ssh-keys add /path/to/key.pub"
-            )
-        })?,
-    };
-
-    eprintln!("Found SSH public key at {}", key_path.display());
-
-    // Read the public key
-    let public_key = std::fs::read_to_string(&key_path)
-        .map_err(|e| anyhow::anyhow!("Failed to read SSH key: {}", e))?;
-    let public_key = public_key.trim();
-
-    // Compute fingerprint
-    let fingerprint = compute_ssh_fingerprint(public_key)?;
-    eprintln!("Fingerprint: {}", fingerprint);
-
-    // Get key name
-    let key_name = if let Some(name) = args.name {
-        name
-    } else {
-        let default_name = get_hostname();
-        eprintln!();
-
-        // Use dialoguer for interactive prompt
-        use dialoguer::Input;
-        let name: String = Input::new()
-            .with_prompt("Key name")
-            .default(default_name)
-            .interact_text()?;
-        name
-    };
-
-    // Get access token and make API request
-    let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
-    let access_token = get_access_token(&client).await?;
-    let api_url = get_cmux_api_url();
-
-    let url = format!("{}/api/user/ssh-keys", api_url);
-    let body = serde_json::json!({
-        "publicKey": public_key,
-        "name": key_name
-    });
-
-    let response = client
-        .post(&url)
-        .header("Authorization", format!("Bearer {}", access_token))
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let text = response.text().await.unwrap_or_default();
-        if status.as_u16() == 409 {
-            return Err(anyhow::anyhow!(
-                "SSH key with this fingerprint already exists"
-            ));
-        }
-        return Err(anyhow::anyhow!(
-            "Failed to add SSH key: {} - {}",
-            status,
-            text
-        ));
-    }
-
-    let result: CreateSshKeyResponse = response.json().await?;
-
-    eprintln!("\n\x1b[32m✓ SSH key registered successfully\x1b[0m");
-    eprintln!("  ID: {}", result.id);
-    eprintln!("  Fingerprint: {}", result.fingerprint);
-
-    Ok(())
-}
-
-/// Handle `cmux ssh-keys add --from-github` - import keys from GitHub
-async fn handle_ssh_keys_import_github() -> anyhow::Result<()> {
-    eprintln!("Importing SSH keys from connected GitHub account...");
-
-    let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
-    let access_token = get_access_token(&client).await?;
-    let api_url = get_cmux_api_url();
-
-    let url = format!("{}/api/user/ssh-keys/import-github", api_url);
-    let response = client
-        .post(&url)
-        .header("Authorization", format!("Bearer {}", access_token))
-        .send()
-        .await?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let text = response.text().await.unwrap_or_default();
-        if status.as_u16() == 400 && text.contains("not connected") {
-            return Err(anyhow::anyhow!(
-                "GitHub account not connected.\n\
-                 \n\
-                 Please connect your GitHub account at https://cmux.sh/settings"
-            ));
-        }
-        return Err(anyhow::anyhow!(
-            "Failed to import GitHub keys: {} - {}",
-            status,
-            text
-        ));
-    }
-
-    let result: ImportGithubKeysResponse = response.json().await?;
-
-    if result.imported == 0 {
-        eprintln!("\x1b[33mNo new keys to import.\x1b[0m");
-        eprintln!("Either you have no SSH keys on GitHub or they're already registered.");
-    } else {
-        eprintln!(
-            "\n\x1b[32m✓ Imported {} SSH key{} from GitHub\x1b[0m",
-            result.imported,
-            if result.imported == 1 { "" } else { "s" }
-        );
-        for key in &result.keys {
-            eprintln!("  • {}", key.fingerprint);
-        }
-    }
-
-    Ok(())
-}
-
-/// Handle `cmux ssh-keys remove` - remove an SSH key
-async fn handle_ssh_keys_remove(fingerprint_or_id: &str) -> anyhow::Result<()> {
-    let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
-    let access_token = get_access_token(&client).await?;
-    let api_url = get_cmux_api_url();
-
-    // First, list keys to find the one to delete
-    let list_url = format!("{}/api/user/ssh-keys", api_url);
-    let list_response = client
-        .get(&list_url)
-        .header("Authorization", format!("Bearer {}", access_token))
-        .send()
-        .await?;
-
-    if !list_response.status().is_success() {
-        let status = list_response.status();
-        let text = list_response.text().await.unwrap_or_default();
-        return Err(anyhow::anyhow!(
-            "Failed to list SSH keys: {} - {}",
-            status,
-            text
-        ));
-    }
-
-    let keys: Vec<SshKeyInfo> = list_response.json().await?;
-
-    // Find the key by fingerprint or ID
-    let key_to_delete = keys.iter().find(|k| {
-        k.id == fingerprint_or_id
-            || k.fingerprint == fingerprint_or_id
-            || k.fingerprint.ends_with(fingerprint_or_id)
-    });
-
-    let key = match key_to_delete {
-        Some(k) => k,
-        None => {
-            return Err(anyhow::anyhow!(
-                "SSH key not found: {}\n\
-                 \n\
-                 Use 'cmux ssh-keys list' to see registered keys.",
-                fingerprint_or_id
-            ));
-        }
-    };
-
-    // Delete the key
-    let delete_url = format!("{}/api/user/ssh-keys/{}", api_url, key.id);
-    let delete_response = client
-        .delete(&delete_url)
-        .header("Authorization", format!("Bearer {}", access_token))
-        .send()
-        .await?;
-
-    if !delete_response.status().is_success() {
-        let status = delete_response.status();
-        let text = delete_response.text().await.unwrap_or_default();
-        return Err(anyhow::anyhow!(
-            "Failed to delete SSH key: {} - {}",
-            status,
-            text
-        ));
-    }
-
-    eprintln!("\x1b[32m✓ SSH key removed: {}\x1b[0m", key.name);
-    eprintln!("  Fingerprint: {}", key.fingerprint);
-
-    Ok(())
-}
-
 /// Response from the setup-instance endpoint
 #[derive(serde::Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -3369,33 +2905,18 @@ async fn handle_onboard() -> anyhow::Result<()> {
 
 /// Handle real SSH to a sandbox (via direct TCP to Morph)
 async fn handle_real_ssh(client: &Client, base_url: &str, args: &SshArgs) -> anyhow::Result<()> {
-    // Use the actual path to the current executable, not just "dmux" or "cmux"
-    // This ensures the same binary is used for the _ssh-proxy subprocess
-    let binary_path = std::env::current_exe()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| {
-            if is_dmux() {
-                "dmux".to_string()
-            } else {
-                "cmux".to_string()
-            }
-        });
-
     // Get access token and resolve team
     eprintln!("Authenticating...");
     let access_token = get_access_token(client).await?;
     let team = resolve_team(client, &access_token, args.team.as_deref()).await?;
 
-    // Verify we can get SSH info for this sandbox (validates sandbox exists and is accessible)
+    // Get SSH info from the API (includes Morph per-instance SSH token)
     eprintln!("Resolving sandbox {}...", args.id);
     let ssh_info = get_sandbox_ssh_info(client, &access_token, &args.id, &team, base_url).await?;
-    eprintln!(
-        "Connecting to {} via {}...",
-        ssh_info.morph_instance_id, ssh_info.websocket_url
-    );
+    eprintln!("Connecting to {}...", ssh_info.morph_instance_id);
 
-    // Build SSH command with ProxyCommand using our _ssh-proxy
-    // Pass the team and base_url to the proxy command so it can authenticate
+    // Build SSH command using Morph's per-instance SSH tokens
+    // Connection format: ssh {access_token}@ssh.cloud.morph.so
     let mut ssh_args = vec![
         "-o".to_string(),
         "StrictHostKeyChecking=no".to_string(),
@@ -3403,11 +2924,6 @@ async fn handle_real_ssh(client: &Client, base_url: &str, args: &SshArgs) -> any
         "UserKnownHostsFile=/dev/null".to_string(),
         "-o".to_string(),
         "LogLevel=ERROR".to_string(),
-        "-o".to_string(),
-        format!(
-            "ProxyCommand={} _ssh-proxy {} --team {} --base-url {}",
-            binary_path, args.id, team, base_url
-        ),
     ];
 
     // Add any extra SSH args from user BEFORE the hostname
@@ -3416,14 +2932,10 @@ async fn handle_real_ssh(client: &Client, base_url: &str, args: &SshArgs) -> any
         ssh_args.push(arg.clone());
     }
 
-    // The hostname (doesn't matter since we use ProxyCommand, but SSH requires one)
-    // Must come after all options
-    ssh_args.push(format!(
-        "{}@sandbox-{}",
-        ssh_info.user, ssh_info.morph_instance_id
-    ));
+    // Use Morph's SSH gateway with per-instance token
+    ssh_args.push(format!("{}@ssh.cloud.morph.so", ssh_info.access_token));
 
-    // Execute native SSH with ProxyCommand
+    // Execute native SSH
     // Use exec on Unix to replace process and fully inherit terminal for passphrase prompts
     #[cfg(unix)]
     {
@@ -3454,26 +2966,14 @@ async fn handle_ssh_exec(
     base_url: &str,
     args: &SshExecArgs,
 ) -> anyhow::Result<()> {
-    // Use the actual path to the current executable, not just "dmux" or "cmux"
-    // This ensures the same binary is used for the _ssh-proxy subprocess
-    let binary_path = std::env::current_exe()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| {
-            if is_dmux() {
-                "dmux".to_string()
-            } else {
-                "cmux".to_string()
-            }
-        });
-
     // Get access token and resolve team
     let access_token = get_access_token(client).await?;
     let team = resolve_team(client, &access_token, args.team.as_deref()).await?;
 
-    // Verify we can get SSH info for this sandbox
+    // Get SSH info from the API (includes Morph per-instance SSH token)
     let ssh_info = get_sandbox_ssh_info(client, &access_token, &args.id, &team, base_url).await?;
 
-    // Build SSH command with ProxyCommand using our _ssh-proxy
+    // Build SSH command using Morph's per-instance SSH tokens
     // Use -T to disable pseudo-terminal allocation (non-interactive)
     // Use -o BatchMode=yes to prevent password prompts
     let mut ssh_args = vec![
@@ -3486,18 +2986,10 @@ async fn handle_ssh_exec(
         "UserKnownHostsFile=/dev/null".to_string(),
         "-o".to_string(),
         "LogLevel=ERROR".to_string(),
-        "-o".to_string(),
-        format!(
-            "ProxyCommand={} _ssh-proxy {} --team {} --base-url {}",
-            binary_path, args.id, team, base_url
-        ),
     ];
 
-    // The hostname (doesn't matter since we use ProxyCommand, but SSH requires one)
-    ssh_args.push(format!(
-        "{}@sandbox-{}",
-        ssh_info.user, ssh_info.morph_instance_id
-    ));
+    // Use Morph's SSH gateway with per-instance token
+    ssh_args.push(format!("{}@ssh.cloud.morph.so", ssh_info.access_token));
 
     // Add the command to execute
     // Join command parts into a single string for remote execution
@@ -3518,34 +3010,23 @@ async fn handle_ssh_exec(
 async fn handle_ssh_config(_client: &Client, _base_url: &str) -> anyhow::Result<()> {
     let binary_name = if is_dmux() { "dmux" } else { "cmux" };
 
-    println!("# SSH config for {} sandboxes", binary_name);
-    println!("# Add this to ~/.ssh/config");
-    println!();
-    println!("# NOTE: Set CMUX_TEAM environment variable or the proxy will use your default team");
-    println!("# Example: export CMUX_TEAM=my-team");
-    println!();
-
-    // Generate a wildcard config for sandbox-* pattern using _ssh-proxy
-    println!("# Wildcard config for all sandboxes (works from macOS shell)");
-    println!("Host sandbox-*");
-    println!("    User root");
-    println!("    StrictHostKeyChecking no");
-    println!("    UserKnownHostsFile /dev/null");
-    println!("    LogLevel ERROR");
     println!(
-        "    ProxyCommand {} _ssh-proxy $(echo %n | sed 's/sandbox-//')",
+        "# SSH with {} uses Morph's per-instance SSH tokens",
+        binary_name
+    );
+    println!(
+        "# No SSH config needed - just use the {} ssh command",
         binary_name
     );
     println!();
+    println!(
+        "# The {} ssh command fetches a per-instance access token from Morph",
+        binary_name
+    );
+    println!("# and connects directly via: ssh <access_token>@ssh.cloud.morph.so");
+    println!();
 
-    eprintln!();
     eprintln!("Usage examples:");
-    eprintln!("  ssh sandbox-morphvm_xxx                   # SSH using Morph instance ID");
-    eprintln!("  ssh sandbox-morphvm_xxx -L 8080:localhost:8080  # With port forwarding");
-    eprintln!("  scp sandbox-morphvm_xxx:/workspace/file ./      # Copy files");
-    eprintln!("  rsync -avz sandbox-morphvm_xxx:/workspace/ ./   # Rsync with sandbox");
-    eprintln!();
-    eprintln!("Or use '{}' directly:", binary_name);
     eprintln!(
         "  {} ssh <sandbox-id>                         # Direct SSH (uses default team)",
         binary_name
@@ -3555,92 +3036,31 @@ async fn handle_ssh_config(_client: &Client, _base_url: &str) -> anyhow::Result<
         binary_name
     );
     eprintln!(
-        "  {} ssh <sandbox-id> -L 8080:localhost:8080  # With port forwarding",
+        "  {} ssh <sandbox-id> -- -L 8080:localhost:8080  # With port forwarding",
+        binary_name
+    );
+    eprintln!(
+        "  {} ssh-exec <sandbox-id> -- ls -la          # Execute command non-interactively",
+        binary_name
+    );
+    eprintln!();
+    eprintln!("For scp/rsync, use the ssh-exec command or get the SSH command directly:");
+    eprintln!(
+        "  {} ssh <sandbox-id> 2>&1 | grep -o 'ssh .*@ssh.cloud.morph.so'",
         binary_name
     );
 
     Ok(())
 }
 
-/// Internal SSH proxy command - bridges stdin/stdout through WebSocket to sandbox SSH
-/// This is used as SSH ProxyCommand to tunnel SSH through HTTPS via ws-ssh-proxy
+/// Internal SSH proxy command (DEPRECATED)
+/// This command is no longer needed - SSH now uses Morph's native per-instance tokens
+#[allow(unused_variables)]
 async fn handle_ssh_proxy(id: &str, team: Option<&str>, base_url: &str) -> anyhow::Result<()> {
-    // Create a client for API calls
-    let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
-
-    // Get access token and resolve team
-    let access_token = get_access_token(&client).await?;
-    let team = resolve_team(&client, &access_token, team).await?;
-
-    // Get SSH connection info from the API
-    let ssh_info = get_sandbox_ssh_info(&client, &access_token, id, &team, base_url).await?;
-
-    // Use WebSocket URL from API response (points to ws-ssh-proxy on port 22221)
-    let ws_url = &ssh_info.websocket_url;
-
-    // Connect via WebSocket to the ws-ssh-proxy
-    let (ws_stream, _response) = connect_async(ws_url)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to connect to SSH tunnel {}: {}", ws_url, e))?;
-
-    let (mut ws_write, mut ws_read) = ws_stream.split();
-    let mut stdin = tokio::io::stdin();
-    let mut stdout = tokio::io::stdout();
-
-    // Bridge stdin -> WebSocket
-    let stdin_to_ws = async {
-        let mut buf = [0u8; 16384];
-        loop {
-            match stdin.read(&mut buf).await {
-                Ok(0) => break,
-                Ok(n) => {
-                    if ws_write
-                        .send(Message::Binary(buf[..n].to_vec()))
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-    };
-
-    // Bridge WebSocket -> stdout
-    let ws_to_stdout = async {
-        loop {
-            match ws_read.next().await {
-                Some(Ok(Message::Binary(data))) => {
-                    if stdout.write_all(&data).await.is_err() {
-                        break;
-                    }
-                    if stdout.flush().await.is_err() {
-                        break;
-                    }
-                }
-                Some(Ok(Message::Text(text))) => {
-                    // Also handle text messages (shouldn't happen but be safe)
-                    if stdout.write_all(text.as_bytes()).await.is_err() {
-                        break;
-                    }
-                    if stdout.flush().await.is_err() {
-                        break;
-                    }
-                }
-                Some(Ok(Message::Close(_))) | None => break,
-                Some(Ok(_)) => {} // Ignore ping/pong
-                Some(Err(_)) => break,
-            }
-        }
-    };
-
-    tokio::select! {
-        _ = stdin_to_ws => {}
-        _ = ws_to_stdout => {}
-    }
-
-    Ok(())
+    eprintln!("\x1b[33mWarning: _ssh-proxy is deprecated.\x1b[0m");
+    eprintln!("SSH now uses Morph's native per-instance tokens directly.");
+    eprintln!("Use 'cmux ssh <sandbox-id>' instead.");
+    std::process::exit(1);
 }
 
 const ESCTEST2_REPO: &str = "https://github.com/ThomasDickey/esctest2.git";

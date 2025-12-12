@@ -878,7 +878,8 @@ sandboxesRouter.openapi(
 const SandboxSshResponse = z
   .object({
     morphInstanceId: z.string(),
-    websocketUrl: z.string().describe("WebSocket URL for SSH-over-HTTPS tunnel"),
+    sshCommand: z.string().describe("SSH command to connect: ssh {accessToken}@ssh.cloud.morph.so"),
+    accessToken: z.string().describe("Morph per-instance SSH access token"),
     user: z.string(),
   })
   .openapi("SandboxSshResponse");
@@ -891,7 +892,7 @@ sandboxesRouter.openapi(
     tags: ["Sandboxes"],
     summary: "Get SSH connection details for a sandbox",
     description:
-      "Returns SSH connection info for a sandbox. The id can be either a Morph instance ID (morphvm_xxx) or a task-run ID. If a task-run ID is provided, it resolves to the most recent active sandbox for that run.",
+      "Returns SSH connection info for a sandbox using Morph's per-instance SSH tokens. Simply run: ssh {accessToken}@ssh.cloud.morph.so. The id can be either a Morph instance ID (morphvm_xxx) or a task-run ID.",
     request: {
       params: z.object({ id: z.string() }),
       query: z.object({
@@ -1022,14 +1023,42 @@ sandboxesRouter.openapi(
         return c.text("Could not resolve sandbox instance", 404);
       }
 
-      // Return SSH connection info via WebSocket tunnel
-      // The ws-ssh-proxy service listens on port 22221 inside the VM and is exposed via HTTPS
-      // Convert morphvm_abc123 to morphvm-abc123 for the URL
-      const instanceIdForUrl = morphInstanceId.replace("_", "-");
-      const websocketUrl = `wss://port-22221-${instanceIdForUrl}.http.cloud.morph.so`;
+      // Get SSH access token from Morph API
+      const sshKeyResponse = await fetch(
+        `https://cloud.morph.so/api/instance/${morphInstanceId}/ssh/key`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${env.MORPH_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      if (!sshKeyResponse.ok) {
+        console.error(
+          `[sandboxes.ssh] Morph API returned ${sshKeyResponse.status}: ${await sshKeyResponse.text()}`
+        );
+        return c.text("Failed to get SSH credentials from provider", 500);
+      }
+
+      const sshKeyData = (await sshKeyResponse.json()) as {
+        private_key: string;
+        public_key: string;
+        password: string;
+        access_token: string;
+      };
+
+      if (!sshKeyData.access_token) {
+        console.error("[sandboxes.ssh] Morph API did not return access_token");
+        return c.text("Failed to get SSH credentials from provider", 500);
+      }
+
+      const sshCommand = `ssh ${sshKeyData.access_token}@ssh.cloud.morph.so`;
       return c.json({
         morphInstanceId,
-        websocketUrl,
+        sshCommand,
+        accessToken: sshKeyData.access_token,
         user: "root",
       });
     } catch (error) {
