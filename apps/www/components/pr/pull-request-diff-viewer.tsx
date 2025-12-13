@@ -626,6 +626,10 @@ export function PullRequestDiffViewer({
         prNumber: String(prNumber),
       });
       params.set(HEATMAP_MODEL_QUERY_KEY, model);
+      // Add browser language for localized review comments
+      if (typeof navigator !== "undefined" && navigator.language) {
+        params.set("lang", navigator.language);
+      }
 
       (async () => {
         try {

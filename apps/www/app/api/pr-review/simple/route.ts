@@ -4,6 +4,7 @@ import { stackServerApp } from "@/lib/utils/stack";
 import { runSimpleAnthropicReviewStream } from "@/lib/services/code-review/run-simple-anthropic-review";
 import { isRepoPublic } from "@/lib/github/check-repo-visibility";
 import { parseModelConfigFromUrlSearchParams } from "@/lib/services/code-review/model-config";
+import { parseAcceptLanguage } from "@/lib/services/code-review/heatmap-shared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,6 +43,10 @@ export async function GET(request: NextRequest) {
     const repoFullName = parseRepoFullName(searchParams.get("repoFullName"));
     const prNumber = parsePrNumber(searchParams.get("prNumber"));
     const modelConfig = parseModelConfigFromUrlSearchParams(searchParams);
+    // Get language from query param (preferred) or Accept-Language header
+    const languageParam = searchParams.get("lang") ?? searchParams.get("language");
+    const acceptLanguageHeader = request.headers.get("Accept-Language");
+    const language = languageParam ?? parseAcceptLanguage(acceptLanguageHeader);
 
     if (!repoFullName || prNumber === null) {
       return NextResponse.json(
@@ -116,6 +121,7 @@ export async function GET(request: NextRequest) {
             prIdentifier,
             githubToken: normalizedGithubToken,
             modelConfig,
+            language,
             signal: abortController.signal,
             onEvent: async (event) => {
               switch (event.type) {

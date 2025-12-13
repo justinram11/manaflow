@@ -125,6 +125,8 @@ export type SimpleReviewStreamOptions = {
   prIdentifier: string;
   githubToken?: string | null;
   modelConfig?: ModelConfig;
+  /** BCP-47 language tag for review comments (e.g., "ja", "zh-CN"). If not set, defaults to English. */
+  language?: string | null;
   onChunk?: (chunk: string) => void | Promise<void>;
   onEvent?: (event: SimpleReviewParsedEvent) => void | Promise<void>;
   signal?: AbortSignal;
@@ -293,6 +295,7 @@ export async function runSimpleAnthropicReviewStream(
     prIdentifier,
     githubToken: providedGithubToken = null,
     modelConfig,
+    language,
     onChunk,
     signal,
   } = options;
@@ -386,7 +389,7 @@ export async function runSimpleAnthropicReviewStream(
           signal.addEventListener("abort", handleAbort);
         }
 
-        const prompt = buildFilePrompt(prLabel, file.filePath, file.diffText);
+        const prompt = buildFilePrompt(prLabel, file.filePath, file.diffText, language);
 
         try {
           const modelInstance =
@@ -593,9 +596,15 @@ function createSemaphore(limit: number) {
 function buildFilePrompt(
   prLabel: string,
   filePath: string,
-  diffText: string
+  diffText: string,
+  language?: string | null
 ): string {
   const strippedDiff = stripLeadingTrailingCodeFences(diffText);
+  // Add language instruction if specified (non-English)
+  const languageInstruction = language && language.toLowerCase() !== "en"
+    ? `\n\nIMPORTANT: Write all comments (the "<comment>" part) in ${language} language.`
+    : "";
+
   return `You are reviewing a GitHub diff for ${prLabel}
 File path: ${filePath}
 
@@ -604,7 +613,7 @@ ${SIMPLE_REVIEW_GUIDANCE}
 Diff:
 ${strippedDiff}
 
-${SIMPLE_REVIEW_INSTRUCTIONS}`;
+${SIMPLE_REVIEW_INSTRUCTIONS}${languageInstruction}`;
 }
 
 function buildTextPreview(text: string, maxLength = 400): string {
