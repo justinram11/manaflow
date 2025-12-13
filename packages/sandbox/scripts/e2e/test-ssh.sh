@@ -188,7 +188,7 @@ log_info "CLOUD SANDBOX TESTS"
 log_info "=========================================="
 
 # Check if www server is running (required for cloud VM operations)
-if ! curl -sf "http://localhost:9779/healthz" >/dev/null 2>&1; then
+if ! curl -sf "http://localhost:9779/api" >/dev/null 2>&1; then
     log_error "FAIL: www server not running on localhost:9779"
     log_error "Start with: ./scripts/dev.sh"
     exit 1
