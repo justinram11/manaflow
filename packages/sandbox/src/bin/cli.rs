@@ -217,6 +217,9 @@ struct VmCreateArgs {
     /// Output format (json or text)
     #[arg(long, default_value = "text")]
     output: String,
+    /// SSH into the VM immediately after creation
+    #[arg(long)]
+    ssh: bool,
 }
 
 #[derive(Args, Debug)]
@@ -312,7 +315,7 @@ enum SandboxCommand {
     /// Create a new sandbox
     Create(CreateArgs),
     /// Create a new sandbox and attach to it immediately
-    New(NewArgs),
+    New(LocalNewArgs),
     /// Inspect a sandbox
     Show { id: String },
     /// Execute a command inside a sandbox
@@ -321,6 +324,13 @@ enum SandboxCommand {
     Ssh { id: String },
     /// Tear down a sandbox
     Delete { id: String },
+}
+
+#[derive(Args, Debug)]
+struct LocalNewArgs {
+    /// Path to the project directory to upload (defaults to current directory)
+    #[arg(default_value = ".")]
+    path: PathBuf,
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -378,9 +388,28 @@ struct ExecArgs {
 
 #[derive(Args, Debug)]
 struct NewArgs {
-    /// Path to the project directory to upload (defaults to current directory)
-    #[arg(default_value = ".")]
-    path: PathBuf,
+    /// Path to the project directory to upload (optional)
+    path: Option<PathBuf>,
+
+    /// Create a local sandbox instead of a cloud VM
+    #[arg(long)]
+    local: bool,
+
+    /// Team slug or ID (uses default team if not specified)
+    #[arg(long, short = 't', env = "CMUX_TEAM")]
+    team: Option<String>,
+
+    /// Time-to-live in seconds before VM auto-pauses (default: 30 minutes)
+    #[arg(long, default_value_t = 1800)]
+    ttl: u64,
+
+    /// Snapshot preset to use (e.g., "4vcpu_16gb_48gb", "8vcpu_32gb_48gb")
+    #[arg(long)]
+    preset: Option<String>,
+
+    /// GitHub repositories to clone (format: owner/repo)
+    #[arg(long = "repo", short = 'r')]
+    repos: Vec<String>,
 }
 
 /// Check if we're running as "dmux" (debug/dev binary)
@@ -513,128 +542,240 @@ async fn run() -> anyhow::Result<()> {
             print_json(&value)?;
         }
         Command::New(args) => {
-            check_server_reachable(&client, &cli.base_url).await?;
+            if args.local {
+                // Local sandbox mode
+                check_server_reachable(&client, &cli.base_url).await?;
 
-            // OPTIMIZATION: Pre-build the sync files tar while waiting for sandbox creation
-            // This overlaps CPU work (tar creation) with network I/O (sandbox creation)
-            let sync_tar_handle = tokio::task::spawn_blocking(prebuild_sync_files_tar);
+                // Use current directory if no path specified
+                let path = args.path.clone().unwrap_or_else(|| PathBuf::from("."));
 
-            // OPTIMIZATION: Start building the workspace tar archive BEFORE sandbox creation
-            // The stream_directory function spawns a blocking task that starts immediately
-            let workspace_body = stream_directory(args.path.clone());
+                // OPTIMIZATION: Pre-build the sync files tar while waiting for sandbox creation
+                // This overlaps CPU work (tar creation) with network I/O (sandbox creation)
+                let sync_tar_handle = tokio::task::spawn_blocking(prebuild_sync_files_tar);
 
-            let body = CreateSandboxRequest {
-                name: Some("interactive".into()),
-                workspace: None,
-                tab_id: Some(Uuid::new_v4().to_string()),
-                read_only_paths: vec![],
-                tmpfs: vec![],
-                env: build_default_env_vars(),
-            };
-            let url = format!("{}/sandboxes", cli.base_url.trim_end_matches('/'));
-            let response = client.post(url).json(&body).send().await?;
-            let summary: SandboxSummary = parse_response(response).await?;
-            eprintln!("Created sandbox {}", summary.id);
+                // OPTIMIZATION: Start building the workspace tar archive BEFORE sandbox creation
+                // The stream_directory function spawns a blocking task that starts immediately
+                let workspace_body = stream_directory(path.clone());
 
-            // OPTIMIZATION: Start uploads in background, attach to shell IMMEDIATELY
-            // User gets a shell while files are still uploading in the background
-            let sandbox_id_for_upload = summary.id.to_string();
-            let base_url_for_upload = cli.base_url.clone();
-            let client_for_upload = client.clone();
-            let path_display = args.path.display().to_string();
+                let body = CreateSandboxRequest {
+                    name: Some("interactive".into()),
+                    workspace: None,
+                    tab_id: Some(Uuid::new_v4().to_string()),
+                    read_only_paths: vec![],
+                    tmpfs: vec![],
+                    env: build_default_env_vars(),
+                };
+                let url = format!("{}/sandboxes", cli.base_url.trim_end_matches('/'));
+                let response = client.post(url).json(&body).send().await?;
+                let summary: SandboxSummary = parse_response(response).await?;
+                eprintln!("Created local sandbox {}", summary.id);
 
-            eprintln!("Uploading {} in background...", path_display);
+                // OPTIMIZATION: Start uploads in background, attach to shell IMMEDIATELY
+                // User gets a shell while files are still uploading in the background
+                let sandbox_id_for_upload = summary.id.to_string();
+                let base_url_for_upload = cli.base_url.clone();
+                let client_for_upload = client.clone();
+                let path_display = path.display().to_string();
 
-            // Spawn workspace upload task - starts immediately to drain the stream
-            let upload_url = format!(
-                "{}/sandboxes/{}/files",
-                base_url_for_upload.trim_end_matches('/'),
-                sandbox_id_for_upload
-            );
-            let client_for_workspace = client_for_upload.clone();
-            let workspace_upload_handle = tokio::spawn(async move {
-                let response = client_for_workspace
-                    .post(&upload_url)
-                    .body(workspace_body)
-                    .send()
-                    .await;
-                match response {
-                    Ok(resp) if resp.status().is_success() => {
-                        eprintln!("\r\x1b[K\x1b[32m✓\x1b[0m Files uploaded.");
+                eprintln!("Uploading {} in background...", path_display);
+
+                // Spawn workspace upload task - starts immediately to drain the stream
+                let upload_url = format!(
+                    "{}/sandboxes/{}/files",
+                    base_url_for_upload.trim_end_matches('/'),
+                    sandbox_id_for_upload
+                );
+                let client_for_workspace = client_for_upload.clone();
+                let workspace_upload_handle = tokio::spawn(async move {
+                    let response = client_for_workspace
+                        .post(&upload_url)
+                        .body(workspace_body)
+                        .send()
+                        .await;
+                    match response {
+                        Ok(resp) if resp.status().is_success() => {
+                            eprintln!("\r\x1b[K\x1b[32m✓\x1b[0m Files uploaded.");
+                        }
+                        Ok(resp) => {
+                            eprintln!(
+                                "\r\x1b[K\x1b[31m✗\x1b[0m Failed to upload files: {}",
+                                resp.status()
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("\r\x1b[K\x1b[31m✗\x1b[0m Failed to upload files: {}", e);
+                        }
                     }
-                    Ok(resp) => {
+                });
+
+                // Spawn auth upload task - waits for tar to be ready first
+                let auth_upload_handle = tokio::spawn(async move {
+                    let sync_tar_result = match sync_tar_handle.await {
+                        Ok(result) => result,
+                        Err(e) => {
+                            eprintln!(
+                                "\r\x1b[K\x1b[33m!\x1b[0m Warning: Failed to build auth files tar: {}",
+                                e
+                            );
+                            return;
+                        }
+                    };
+                    let tar_data = match sync_tar_result {
+                        Ok(Some(data)) => data,
+                        Ok(None) => return, // No files to sync
+                        Err(e) => {
+                            eprintln!(
+                                "\r\x1b[K\x1b[33m!\x1b[0m Warning: Failed to build auth files tar: {}",
+                                e
+                            );
+                            return;
+                        }
+                    };
+                    if let Err(e) = upload_prebuilt_sync_files(
+                        &client_for_upload,
+                        &base_url_for_upload,
+                        &sandbox_id_for_upload,
+                        tar_data,
+                        false,
+                    )
+                    .await
+                    {
                         eprintln!(
-                            "\r\x1b[K\x1b[31m✗\x1b[0m Failed to upload files: {}",
-                            resp.status()
-                        );
-                    }
-                    Err(e) => {
-                        eprintln!("\r\x1b[K\x1b[31m✗\x1b[0m Failed to upload files: {}", e);
-                    }
-                }
-            });
-
-            // Spawn auth upload task - waits for tar to be ready first
-            let auth_upload_handle = tokio::spawn(async move {
-                let sync_tar_result = match sync_tar_handle.await {
-                    Ok(result) => result,
-                    Err(e) => {
-                        eprintln!(
-                            "\r\x1b[K\x1b[33m!\x1b[0m Warning: Failed to build auth files tar: {}",
+                            "\r\x1b[K\x1b[33m!\x1b[0m Warning: Failed to upload auth files: {}",
                             e
                         );
-                        return;
                     }
-                };
-                let tar_data = match sync_tar_result {
-                    Ok(Some(data)) => data,
-                    Ok(None) => return, // No files to sync
-                    Err(e) => {
-                        eprintln!(
-                            "\r\x1b[K\x1b[33m!\x1b[0m Warning: Failed to build auth files tar: {}",
-                            e
-                        );
-                        return;
-                    }
-                };
-                if let Err(e) = upload_prebuilt_sync_files(
-                    &client_for_upload,
-                    &base_url_for_upload,
-                    &sandbox_id_for_upload,
-                    tar_data,
-                    false,
-                )
-                .await
-                {
+                });
+
+                save_last_sandbox(&summary.id.to_string());
+                if should_attach() {
+                    // Run SSH session, but ensure uploads complete even if SSH exits quickly
+                    let ssh_result = handle_ssh(&cli.base_url, &summary.id.to_string()).await;
+                    // Wait for background uploads to complete before exiting
+                    // (otherwise the runtime shuts down and cancels the background tasks)
+                    let _ = tokio::join!(workspace_upload_handle, auth_upload_handle);
+                    ssh_result?;
+                } else {
+                    // In non-interactive mode, wait for uploads to complete before exiting
+                    let _ = tokio::join!(workspace_upload_handle, auth_upload_handle);
                     eprintln!(
-                        "\r\x1b[K\x1b[33m!\x1b[0m Warning: Failed to upload auth files: {}",
-                        e
+                        "Skipping interactive shell attach (non-interactive environment detected)."
                     );
                 }
-            });
-
-            save_last_sandbox(&summary.id.to_string());
-            if should_attach() {
-                // Run SSH session, but ensure uploads complete even if SSH exits quickly
-                let ssh_result = handle_ssh(&cli.base_url, &summary.id.to_string()).await;
-                // Wait for background uploads to complete before exiting
-                // (otherwise the runtime shuts down and cancels the background tasks)
-                let _ = tokio::join!(workspace_upload_handle, auth_upload_handle);
-                ssh_result?;
             } else {
-                // In non-interactive mode, wait for uploads to complete before exiting
-                let _ = tokio::join!(workspace_upload_handle, auth_upload_handle);
-                eprintln!(
-                    "Skipping interactive shell attach (non-interactive environment detected)."
-                );
+                // Cloud VM mode (default)
+                let long_client = Client::builder()
+                    .timeout(Duration::from_secs(120))
+                    .build()?;
+                let access_token = get_access_token(&long_client).await?;
+                let api_url = get_cmux_api_url();
+
+                eprintln!("Creating cloud VM...");
+
+                let result = create_cloud_vm(
+                    &long_client,
+                    &access_token,
+                    &api_url,
+                    CreateVmOptions {
+                        team: args.team.clone(),
+                        ttl: args.ttl,
+                        preset: args.preset.clone(),
+                        repos: args.repos.clone(),
+                    },
+                )
+                .await?;
+
+                let ssh_id = format!("c_{}", result.instance_id);
+
+                eprintln!("\x1b[32m✓ VM created: {}\x1b[0m", result.instance_id);
+
+                // SSH into the VM
+                let ssh_args = SshArgs {
+                    id: ssh_id,
+                    team: args.team,
+                    ssh_args: vec![],
+                };
+                handle_real_ssh(&long_client, &api_url, "", &ssh_args).await?;
             }
         }
         Command::Ls => {
-            check_server_reachable(&client, &cli.base_url).await?;
-            let url = format!("{}/sandboxes", cli.base_url.trim_end_matches('/'));
-            let response = client.get(url).send().await?;
-            let sandboxes: Vec<SandboxSummary> = parse_response(response).await?;
-            print_json(&sandboxes)?;
+            // Unified listing of both cloud and local sandboxes
+            let mut entries: Vec<(String, String, String, String)> = vec![];
+
+            // Try to list local sandboxes (might fail if daemon not running)
+            let local_sandboxes: Vec<SandboxSummary> =
+                if let Ok(()) = check_server_reachable(&client, &cli.base_url).await {
+                    let url = format!("{}/sandboxes", cli.base_url.trim_end_matches('/'));
+                    match client.get(url).send().await {
+                        Ok(response) => parse_response(response).await.unwrap_or_default(),
+                        Err(_) => vec![],
+                    }
+                } else {
+                    vec![]
+                };
+
+            for sandbox in local_sandboxes {
+                let id = format!("l_{}", &sandbox.id.to_string()[..8]);
+                let status = format!("{:?}", sandbox.status).to_lowercase();
+                let created = sandbox.created_at.format("%Y-%m-%d %H:%M").to_string();
+                entries.push((id, "local".to_string(), status, created));
+            }
+
+            // Try to list cloud VMs (might fail if not authenticated)
+            let api_url = get_cmux_api_url();
+            if let Ok(access_token) = get_access_token(&client).await {
+                let url = format!("{}/api/morph/instances", api_url);
+                if let Ok(response) = client
+                    .get(&url)
+                    .header("Authorization", format!("Bearer {}", access_token))
+                    .send()
+                    .await
+                {
+                    if response.status().is_success() {
+                        if let Ok(instances) = response.json::<serde_json::Value>().await {
+                            let empty_vec = vec![];
+                            let instances_arr = instances.as_array().unwrap_or(&empty_vec);
+                            for instance in instances_arr {
+                                let raw_id = instance["id"].as_str().unwrap_or("unknown");
+                                let display_id = raw_id.strip_prefix("morphvm_").unwrap_or(raw_id);
+                                let id = format!("c_{}", display_id);
+                                let status =
+                                    instance["status"].as_str().unwrap_or("unknown").to_string();
+                                let created = instance["createdAt"]
+                                    .as_i64()
+                                    .map(|ts| {
+                                        // Parse Unix timestamp and format nicely
+                                        chrono::DateTime::from_timestamp(ts, 0)
+                                            .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+                                            .unwrap_or_else(|| ts.to_string())
+                                    })
+                                    .unwrap_or_else(|| "unknown".to_string());
+                                entries.push((id, "cloud".to_string(), status, created));
+                            }
+                        }
+                    }
+                }
+            }
+
+            if entries.is_empty() {
+                println!("No sandboxes found.");
+                println!("\nCreate a cloud VM with: cmux new");
+                println!("Create a local sandbox with: cmux new --local");
+            } else {
+                // Print header
+                println!(
+                    "{:<16} {:<8} {:<12} {:<20}",
+                    "ID", "TYPE", "STATUS", "CREATED"
+                );
+                println!("{}", "-".repeat(60));
+
+                for (id, sandbox_type, status, created) in entries {
+                    println!(
+                        "{:<16} {:<8} {:<12} {:<20}",
+                        id, sandbox_type, status, created
+                    );
+                }
+            }
         }
         Command::Attach { id } => {
             let target_id = if let Some(id) = id {
@@ -2743,6 +2884,7 @@ async fn handle_auth_token() -> anyhow::Result<()> {
 /// Response from the setup-instance endpoint
 #[derive(serde::Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct SetupInstanceResponse {
     instance_id: String,
     vscode_url: String,
@@ -2750,32 +2892,47 @@ struct SetupInstanceResponse {
     removed_repos: Vec<String>,
 }
 
-/// Handle `cmux vm create` - create a new cloud VM
-async fn handle_vm_create(args: VmCreateArgs) -> anyhow::Result<()> {
-    let client = Client::builder()
-        .timeout(Duration::from_secs(120))
-        .build()?;
-    let access_token = get_access_token(&client).await?;
-    let api_url = get_cmux_api_url();
+/// Options for creating a cloud VM
+struct CreateVmOptions {
+    team: Option<String>,
+    ttl: u64,
+    preset: Option<String>,
+    repos: Vec<String>,
+}
 
-    // Resolve team from args, default, or auto-detect
-    let team = resolve_team(&client, &access_token, args.team.as_deref()).await?;
+/// Result of creating a cloud VM
+struct CreateVmResult {
+    /// Instance ID (without morphvm_ prefix)
+    instance_id: String,
+    /// Full instance ID (with morphvm_ prefix if present)
+    full_instance_id: String,
+    vscode_url: String,
+    cloned_repos: Vec<String>,
+}
+
+/// Create a cloud VM and return the result
+async fn create_cloud_vm(
+    client: &Client,
+    access_token: &str,
+    api_url: &str,
+    options: CreateVmOptions,
+) -> anyhow::Result<CreateVmResult> {
+    // Resolve team from options, default, or auto-detect
+    let team = resolve_team(client, access_token, options.team.as_deref()).await?;
 
     // Build the request body
     let mut body = serde_json::json!({
-        "ttlSeconds": args.ttl,
+        "ttlSeconds": options.ttl,
         "teamSlugOrId": team,
     });
 
-    if let Some(preset) = &args.preset {
+    if let Some(preset) = &options.preset {
         body["presetId"] = serde_json::json!(preset);
     }
 
-    if !args.repos.is_empty() {
-        body["repos"] = serde_json::json!(args.repos);
+    if !options.repos.is_empty() {
+        body["repos"] = serde_json::json!(options.repos);
     }
-
-    eprintln!("Creating cloud VM...");
 
     let url = format!("{}/api/morph/setup-instance", api_url);
     let response = client
@@ -2798,27 +2955,59 @@ async fn handle_vm_create(args: VmCreateArgs) -> anyhow::Result<()> {
 
     let result: SetupInstanceResponse = response.json().await?;
 
+    // Strip morphvm_ prefix for display
+    let display_id = result
+        .instance_id
+        .strip_prefix("morphvm_")
+        .unwrap_or(&result.instance_id)
+        .to_string();
+
+    Ok(CreateVmResult {
+        instance_id: display_id,
+        full_instance_id: result.instance_id,
+        vscode_url: result.vscode_url,
+        cloned_repos: result.cloned_repos,
+    })
+}
+
+/// Handle `cmux vm create` - create a new cloud VM
+async fn handle_vm_create(args: VmCreateArgs) -> anyhow::Result<()> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()?;
+    let access_token = get_access_token(&client).await?;
+    let api_url = get_cmux_api_url();
+
+    eprintln!("Creating cloud VM...");
+
+    let result = create_cloud_vm(
+        &client,
+        &access_token,
+        &api_url,
+        CreateVmOptions {
+            team: args.team.clone(),
+            ttl: args.ttl,
+            preset: args.preset.clone(),
+            repos: args.repos.clone(),
+        },
+    )
+    .await?;
+
+    let ssh_id = format!("c_{}", result.instance_id);
+
     if args.output == "json" {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
-                "instanceId": result.instance_id,
+                "instanceId": result.full_instance_id,
                 "vscodeUrl": result.vscode_url,
                 "clonedRepos": result.cloned_repos,
-                "removedRepos": result.removed_repos,
             }))?
         );
     } else {
-        // Strip morphvm_ prefix for display
-        let display_id = result
-            .instance_id
-            .strip_prefix("morphvm_")
-            .unwrap_or(&result.instance_id);
-        let ssh_id = format!("c_{}", display_id);
-
         eprintln!("\x1b[32m✓ VM created successfully!\x1b[0m");
         eprintln!();
-        eprintln!("  Instance ID: {}", display_id);
+        eprintln!("  Instance ID: {}", result.instance_id);
         eprintln!("  VS Code URL: {}", result.vscode_url);
         if !result.cloned_repos.is_empty() {
             eprintln!("  Cloned repos: {}", result.cloned_repos.join(", "));
@@ -2826,6 +3015,16 @@ async fn handle_vm_create(args: VmCreateArgs) -> anyhow::Result<()> {
         eprintln!();
         eprintln!("Connect via SSH:");
         eprintln!("  cmux ssh {}", ssh_id);
+    }
+
+    // If --ssh flag is set, SSH into the VM
+    if args.ssh {
+        let ssh_args = SshArgs {
+            id: ssh_id,
+            team: args.team,
+            ssh_args: vec![],
+        };
+        handle_real_ssh(&client, &api_url, "", &ssh_args).await?;
     }
 
     Ok(())
