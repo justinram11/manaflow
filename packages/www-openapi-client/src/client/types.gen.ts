@@ -590,6 +590,30 @@ export type SandboxResumeResponse = {
     resumed: true;
 };
 
+export type Team = {
+    /**
+     * Team ID
+     */
+    id: string;
+    /**
+     * Display name
+     */
+    displayName: string;
+    /**
+     * URL slug
+     */
+    slug: string | null;
+};
+
+export type ListTeamsResponse = {
+    teams: Array<Team>;
+};
+
+export type CreateTeamErrorResponse = {
+    code: number;
+    message: string;
+};
+
 export type CreateTeamResponse = {
     /**
      * Stack team ID
@@ -607,11 +631,6 @@ export type CreateTeamResponse = {
      * Number of invite emails sent
      */
     invitesSent: number;
-};
-
-export type CreateTeamErrorResponse = {
-    code: number;
-    message: string;
 };
 
 export type CreateTeamRequest = {
@@ -2622,6 +2641,31 @@ export type PostApiSandboxesByIdResumeResponses = {
 };
 
 export type PostApiSandboxesByIdResumeResponse = PostApiSandboxesByIdResumeResponses[keyof PostApiSandboxesByIdResumeResponses];
+
+export type GetApiTeamsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/teams';
+};
+
+export type GetApiTeamsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: CreateTeamErrorResponse;
+};
+
+export type GetApiTeamsError = GetApiTeamsErrors[keyof GetApiTeamsErrors];
+
+export type GetApiTeamsResponses = {
+    /**
+     * List of teams
+     */
+    200: ListTeamsResponse;
+};
+
+export type GetApiTeamsResponse = GetApiTeamsResponses[keyof GetApiTeamsResponses];
 
 export type PostApiTeamsData = {
     body: CreateTeamRequest;

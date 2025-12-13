@@ -197,30 +197,14 @@ if ! curl -sf "http://localhost:9779/api" >/dev/null 2>&1; then
 fi
 log_info "www server is running"
 
-# Set API URL to local dev server (must be set before vm list)
+# Set API URL to local dev server
 export CMUX_API_URL="http://localhost:9779"
 
-# Get team - use CMUX_TEAM env var or detect from existing VMs
-if [[ -n "${CMUX_TEAM:-}" ]]; then
-    TEAM="${CMUX_TEAM}"
-else
-    # Try to get team ID from existing VMs
-    log_info "Detecting team from existing VMs..."
-    VM_LIST=$("${DMUX}" vm list --output json 2>&1) || true
-    TEAM=$(echo "${VM_LIST}" | jq -r '.[0].metadata.teamId // empty' 2>/dev/null || true)
-    if [[ -z "${TEAM}" ]]; then
-        log_error "FAIL: CMUX_TEAM not set and no existing VMs found to detect team"
-        log_error "VM list output: ${VM_LIST}"
-        log_error "Set CMUX_TEAM=<your-team-id> and try again"
-        exit 1
-    fi
-fi
-log_info "Using team: ${TEAM}"
-
 # Create a cloud sandbox with short TTL (2 minutes)
+# Note: --team is optional - CLI auto-detects from default team or single team
 log_test "Creating cloud sandbox (TTL=120s)..."
 start_timer
-VM_OUTPUT=$("${DMUX}" vm create --team "${TEAM}" --ttl 120 --output json 2>&1) || {
+VM_OUTPUT=$("${DMUX}" vm create --ttl 120 --output json 2>&1) || {
     log_error "FAIL: Failed to create cloud sandbox"
     log_error "Output: ${VM_OUTPUT}"
     log_error "Check authentication with 'dmux auth status'"

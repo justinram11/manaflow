@@ -4,9 +4,10 @@ use cmux_sandbox::models::{
     CreateSandboxRequest, EnvVar, ExecRequest, ExecResponse, NotificationLogEntry, SandboxSummary,
 };
 use cmux_sandbox::{
-    build_default_env_vars, cache_access_token, clear_cached_access_token,
+    build_default_env_vars, cache_access_token, clear_cached_access_token, clear_default_team,
     delete_stack_refresh_token, extract_api_key_from_output, get_cached_access_token,
-    get_stack_refresh_token, store_claude_token, store_stack_refresh_token,
+    get_default_team, get_stack_refresh_token, set_default_team, store_claude_token,
+    store_stack_refresh_token,
     sync_files::{
         prebuild_sync_files_tar, upload_prebuilt_sync_files, upload_sync_files, SYNC_FILES,
     },
@@ -148,6 +149,10 @@ enum Command {
     /// Manage cloud VMs (create, list, etc.)
     #[command(subcommand)]
     Vm(VmCommand),
+
+    /// Manage teams (list, set default)
+    #[command(subcommand)]
+    Team(TeamCommand),
 }
 
 #[derive(Args, Debug)]
@@ -197,9 +202,9 @@ enum VmCommand {
 
 #[derive(Args, Debug)]
 struct VmCreateArgs {
-    /// Team slug or ID (required)
+    /// Team slug or ID (uses default team if not specified)
     #[arg(long, short = 't', env = "CMUX_TEAM")]
-    team: String,
+    team: Option<String>,
     /// Time-to-live in seconds before VM auto-pauses (default: 30 minutes)
     #[arg(long, default_value_t = 1800)]
     ttl: u64,
@@ -222,6 +227,31 @@ struct VmListArgs {
     /// Output format (json or text)
     #[arg(long, default_value = "text")]
     output: String,
+}
+
+#[derive(Subcommand, Debug)]
+enum TeamCommand {
+    /// List your teams
+    #[command(alias = "ls")]
+    List(TeamListArgs),
+    /// Show or set the default team
+    Default(TeamDefaultArgs),
+}
+
+#[derive(Args, Debug)]
+struct TeamListArgs {
+    /// Output format (json or text)
+    #[arg(long, default_value = "text")]
+    output: String,
+}
+
+#[derive(Args, Debug)]
+struct TeamDefaultArgs {
+    /// Team ID or slug to set as default (omit to show current default)
+    team: Option<String>,
+    /// Clear the default team
+    #[arg(long)]
+    clear: bool,
 }
 
 #[derive(Args, Debug)]
@@ -788,6 +818,14 @@ async fn run() -> anyhow::Result<()> {
             }
             VmCommand::List(args) => {
                 handle_vm_list(args).await?;
+            }
+        },
+        Command::Team(cmd) => match cmd {
+            TeamCommand::List(args) => {
+                handle_team_list(args).await?;
+            }
+            TeamCommand::Default(args) => {
+                handle_team_default(args).await?;
             }
         },
         Command::Sandboxes(cmd) => {
@@ -2080,12 +2118,6 @@ struct StackTeam {
     client_metadata: Option<serde_json::Value>,
 }
 
-/// Stack Auth teams list response
-#[derive(serde::Deserialize, Debug)]
-struct StackTeamsResponse {
-    items: Vec<StackTeam>,
-}
-
 /// Custom error type for session expiry
 #[derive(Debug)]
 struct SessionExpiredError;
@@ -2211,18 +2243,13 @@ async fn refresh_access_token_with_retry(
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Failed to refresh token after retries")))
 }
 
-/// Get the user's teams from Stack Auth
+/// Get the user's teams from our API
 async fn get_user_teams(client: &Client, access_token: &str) -> anyhow::Result<Vec<StackTeam>> {
-    let api_url = get_auth_api_url();
-    let project_id = get_auth_project_id();
-    let publishable_key = get_auth_publishable_key();
+    let api_url = get_cmux_api_url();
+    let teams_url = format!("{}/api/teams", api_url);
 
-    let teams_url = format!("{}/api/v1/users/me/teams", api_url);
     let response = client
         .get(&teams_url)
-        .header("x-stack-project-id", &project_id)
-        .header("x-stack-publishable-client-key", &publishable_key)
-        .header("x-stack-access-type", "client")
         .header("Authorization", format!("Bearer {}", access_token))
         .send()
         .await?;
@@ -2237,8 +2264,24 @@ async fn get_user_teams(client: &Client, access_token: &str) -> anyhow::Result<V
         ));
     }
 
-    let teams_response: StackTeamsResponse = response.json().await?;
-    Ok(teams_response.items)
+    // Response format: { "teams": [ { "id": "...", "displayName": "...", "slug": "..." } ] }
+    let json: serde_json::Value = response.json().await?;
+    let teams_arr = json["teams"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("Invalid teams response"))?;
+
+    let teams: Vec<StackTeam> = teams_arr
+        .iter()
+        .map(|t| StackTeam {
+            id: t["id"].as_str().unwrap_or_default().to_string(),
+            display_name: t["displayName"].as_str().map(String::from),
+            client_metadata: t["slug"]
+                .as_str()
+                .map(|s| serde_json::json!({ "slug": s })),
+        })
+        .collect();
+
+    Ok(teams)
 }
 
 /// Get SSH connection info for a sandbox from the cmux API
@@ -2351,18 +2394,23 @@ async fn resume_sandbox(
     Ok(())
 }
 
-/// Resolve the team to use - from explicit flag, env var, or first available team
+/// Resolve the team to use - from explicit flag, default config, or auto-detect
 async fn resolve_team(
     client: &Client,
     access_token: &str,
     explicit_team: Option<&str>,
 ) -> anyhow::Result<String> {
-    // If explicitly provided, use that
+    // 1. If explicitly provided, use that
     if let Some(team) = explicit_team {
         return Ok(team.to_string());
     }
 
-    // Try to get the user's teams and use the first one
+    // 2. Check for default team in config
+    if let Some(default) = get_default_team() {
+        return Ok(default);
+    }
+
+    // 3. Try to get the user's teams and auto-detect
     let teams = get_user_teams(client, access_token).await?;
 
     if teams.is_empty() {
@@ -2371,17 +2419,20 @@ async fn resolve_team(
         ));
     }
 
-    // Prefer teams with a slug in metadata
-    for team in &teams {
-        if let Some(metadata) = &team.client_metadata {
-            if let Some(slug) = metadata.get("slug").and_then(|v| v.as_str()) {
-                return Ok(slug.to_string());
-            }
+    // If only one team, auto-set as default
+    if teams.len() == 1 {
+        let team_id = &teams[0].id;
+        if set_default_team(team_id).is_ok() {
+            let name = teams[0].display_name.as_deref().unwrap_or(team_id);
+            eprintln!("Auto-set default team to: {}", name);
         }
+        return Ok(team_id.clone());
     }
 
-    // Fall back to the first team's ID
-    Ok(teams[0].id.clone())
+    // Multiple teams - require explicit selection
+    Err(anyhow::anyhow!(
+        "Multiple teams found. Specify with --team or set a default with 'dmux team default <team-id>'"
+    ))
 }
 
 /// Handle `cmux auth login` - browser-based Stack Auth flow
@@ -2709,10 +2760,13 @@ async fn handle_vm_create(args: VmCreateArgs) -> anyhow::Result<()> {
     let access_token = get_access_token(&client).await?;
     let api_url = get_cmux_api_url();
 
+    // Resolve team from args, default, or auto-detect
+    let team = resolve_team(&client, &access_token, args.team.as_deref()).await?;
+
     // Build the request body
     let mut body = serde_json::json!({
         "ttlSeconds": args.ttl,
-        "teamSlugOrId": args.team,
+        "teamSlugOrId": team,
     });
 
     if let Some(preset) = &args.preset {
@@ -2823,6 +2877,140 @@ async fn handle_vm_list(args: VmListArgs) -> anyhow::Result<()> {
             let status = instance["status"].as_str().unwrap_or("unknown");
             let created = instance["createdAt"].as_str().unwrap_or("unknown");
             println!("{:<20} {:<12} {:<40}", id, status, created);
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle `cmux team list` - list user's teams
+async fn handle_team_list(args: TeamListArgs) -> anyhow::Result<()> {
+    let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
+    let access_token = get_access_token(&client).await?;
+    let api_url = get_cmux_api_url();
+
+    let url = format!("{}/api/teams", api_url);
+    let response = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!(
+            "Failed to list teams: {} - {}",
+            status,
+            text
+        ));
+    }
+
+    let result: serde_json::Value = response.json().await?;
+    let teams = result["teams"].as_array();
+
+    // Auto-set default if user has exactly one team and no default is set
+    if let Some(teams_arr) = teams {
+        if teams_arr.len() == 1 && get_default_team().is_none() {
+            if let Some(team_id) = teams_arr[0]["id"].as_str() {
+                if set_default_team(team_id).is_ok() {
+                    eprintln!(
+                        "Auto-set default team to: {}",
+                        teams_arr[0]["displayName"].as_str().unwrap_or(team_id)
+                    );
+                }
+            }
+        }
+    }
+
+    if args.output == "json" {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        let default_team = get_default_team();
+        let empty_vec = vec![];
+        let teams_arr = teams.unwrap_or(&empty_vec);
+
+        if teams_arr.is_empty() {
+            println!("No teams found.");
+            return Ok(());
+        }
+
+        // Print header
+        println!("{:<40} {:<30} {:<10}", "ID", "NAME", "DEFAULT");
+        println!("{}", "-".repeat(80));
+
+        for team in teams_arr {
+            let id = team["id"].as_str().unwrap_or("unknown");
+            let name = team["displayName"].as_str().unwrap_or("unknown");
+            let is_default = default_team.as_deref() == Some(id);
+            let default_marker = if is_default { "✓" } else { "" };
+            println!("{:<40} {:<30} {:<10}", id, name, default_marker);
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle `cmux team default` - show or set default team
+async fn handle_team_default(args: TeamDefaultArgs) -> anyhow::Result<()> {
+    if args.clear {
+        clear_default_team()?;
+        println!("Default team cleared.");
+        return Ok(());
+    }
+
+    if let Some(team_id) = args.team {
+        // Verify team exists by listing teams
+        let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
+        let access_token = get_access_token(&client).await?;
+        let api_url = get_cmux_api_url();
+
+        let url = format!("{}/api/teams", api_url);
+        let response = client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", access_token))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!(
+                "Failed to list teams: {} - {}",
+                status,
+                text
+            ));
+        }
+
+        let result: serde_json::Value = response.json().await?;
+        let teams = result["teams"].as_array();
+
+        // Find the team by ID or slug
+        let found_team = teams.and_then(|arr| {
+            arr.iter().find(|t| {
+                t["id"].as_str() == Some(&team_id) || t["slug"].as_str() == Some(&team_id)
+            })
+        });
+
+        if let Some(team) = found_team {
+            let actual_id = team["id"].as_str().unwrap_or(&team_id);
+            let name = team["displayName"].as_str().unwrap_or("unknown");
+            set_default_team(actual_id)?;
+            println!("Default team set to: {} ({})", name, actual_id);
+        } else {
+            return Err(anyhow::anyhow!(
+                "Team '{}' not found. Use 'dmux team list' to see available teams.",
+                team_id
+            ));
+        }
+    } else {
+        // Show current default
+        if let Some(team_id) = get_default_team() {
+            println!("Default team: {}", team_id);
+        } else {
+            println!("No default team set.");
+            println!("\nUse 'dmux team list' to see available teams.");
+            println!("Use 'dmux team default <team-id>' to set a default.");
         }
     }
 

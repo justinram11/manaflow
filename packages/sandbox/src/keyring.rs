@@ -496,3 +496,91 @@ fn delete_cached_access_token_file() -> std::io::Result<()> {
     }
     Ok(())
 }
+
+// =============================================================================
+// Default Team Configuration
+// =============================================================================
+
+/// Get the path to the config file
+fn get_config_path() -> Option<std::path::PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    // Use separate config files for dev and prod
+    #[cfg(debug_assertions)]
+    let config_filename = "config_dev.json";
+    #[cfg(not(debug_assertions))]
+    let config_filename = "config.json";
+    Some(
+        std::path::PathBuf::from(home)
+            .join(".config")
+            .join("cmux")
+            .join(config_filename),
+    )
+}
+
+/// Get the default team ID from config
+pub fn get_default_team() -> Option<String> {
+    let path = get_config_path()?;
+    let content = std::fs::read_to_string(&path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+    json.get("default_team")?.as_str().map(String::from)
+}
+
+/// Set the default team ID in config
+pub fn set_default_team(team_id: &str) -> std::io::Result<()> {
+    let path = get_config_path()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "HOME not set"))?;
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    // Read existing config or start fresh
+    let mut config: serde_json::Value = if path.exists() {
+        let content = std::fs::read_to_string(&path)?;
+        serde_json::from_str(&content).unwrap_or(serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+
+    config["default_team"] = serde_json::json!(team_id);
+
+    std::fs::write(&path, serde_json::to_string_pretty(&config)?)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    }
+
+    Ok(())
+}
+
+/// Clear the default team from config
+pub fn clear_default_team() -> std::io::Result<()> {
+    let path = match get_config_path() {
+        Some(p) => p,
+        None => return Ok(()),
+    };
+
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let content = std::fs::read_to_string(&path)?;
+    let mut config: serde_json::Value =
+        serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+
+    if let Some(obj) = config.as_object_mut() {
+        obj.remove("default_team");
+    }
+
+    std::fs::write(&path, serde_json::to_string_pretty(&config)?)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    }
+
+    Ok(())
+}
