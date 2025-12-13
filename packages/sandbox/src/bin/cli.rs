@@ -1767,8 +1767,6 @@ async fn handle_browser_unified(
                 .arg("UserKnownHostsFile=/dev/null")
                 .arg("-o")
                 .arg("LogLevel=ERROR")
-                .arg("-o")
-                .arg("ExitOnForwardFailure=yes")
                 .arg(format!("{}@ssh.cloud.morph.so", ssh_info.access_token))
                 .kill_on_drop(true)
                 .spawn()?;
@@ -1790,6 +1788,9 @@ async fn handle_browser_unified(
             }
 
             // Launch Chrome with SOCKS proxy
+            // Use --proxy-bypass-list="" to force localhost through the proxy
+            // When Chrome connects to "localhost:8000" through SOCKS, the cloud VM
+            // resolves "localhost" as its own localhost, giving access to all ports
             #[cfg(target_os = "macos")]
             let chrome_bin = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
             #[cfg(target_os = "linux")]
@@ -1801,10 +1802,12 @@ async fn handle_browser_unified(
             let _ = std::fs::create_dir_all(&user_data);
 
             eprintln!("Launching Chrome with SOCKS proxy...");
-            eprintln!("  Browse to http://localhost:<port> to access services in the sandbox");
+            eprintln!("  All ports forwarded - browse to http://127.0.0.1:<any-port>");
 
             let mut chrome_child = match tokio::process::Command::new(chrome_bin)
                 .arg(format!("--proxy-server=socks5://127.0.0.1:{}", socks_port))
+                .arg("--proxy-bypass-list=") // Empty = don't bypass anything, including localhost
+                .arg("--host-resolver-rules=MAP localhost 127.0.0.1") // Force IPv4 for localhost
                 .arg(format!("--user-data-dir={}", user_data.display()))
                 .arg("--no-first-run")
                 .arg("http://localhost:8000")
