@@ -1,4 +1,7 @@
-import { getAccessTokenFromRequest } from "@/lib/utils/auth";
+import {
+  getAccessTokenFromRequest,
+  getUserFromRequest,
+} from "@/lib/utils/auth";
 import { getConvex } from "@/lib/utils/get-convex";
 import { selectGitIdentity } from "@/lib/utils/gitIdentity";
 import { stackServerAppJs } from "@/lib/utils/stack";
@@ -961,7 +964,11 @@ sandboxesRouter.openapi(
     },
   }),
   async (c) => {
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) {
+      return c.text("Unauthorized", 401);
+    }
+    const { accessToken } = await user.getAuthJson();
     if (!accessToken) {
       return c.text("Unauthorized", 401);
     }
@@ -976,12 +983,11 @@ sandboxesRouter.openapi(
 
       // Check if the id is a Morph instance ID (starts with "morphvm_")
       if (id.startsWith("morphvm_")) {
-        // Direct Morph instance ID
-        // For direct VMs, team is optional - we can look it up from instance metadata
-        // or just allow access since Morph API will validate credentials
+        // Direct Morph instance ID - verify ownership via instance metadata
+        const morphClient = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
 
+        // First try to find in task runs if team is provided
         if (teamSlugOrId) {
-          // Team provided - try to find it in task runs for verification
           let taskRun = null;
           try {
             taskRun = await convex.query(api.taskRuns.getByContainerName, {
@@ -989,9 +995,8 @@ sandboxesRouter.openapi(
               containerName: id,
             });
           } catch (convexError) {
-            // Team doesn't exist in Convex or other query error - treat as direct VM access
             console.log(
-              `[sandboxes.ssh] Convex query failed for ${id}, treating as direct cloud VM:`,
+              `[sandboxes.ssh] Convex query failed for ${id}:`,
               convexError,
             );
           }
@@ -1005,21 +1010,54 @@ sandboxesRouter.openapi(
             if (taskRun.vscode?.provider !== "morph") {
               return c.text("Sandbox type not supported for SSH", 404);
             }
-          } else {
-            console.log(
-              `[sandboxes.ssh] Direct Morph instance access for ${id} (team: ${teamSlugOrId})`,
-            );
+            morphInstanceId = id;
           }
-        } else {
-          // No team provided - this is a direct VM access
-          // The Morph API will validate that the caller has access to this instance
-          // via the MORPH_API_KEY (which is our service account)
-          console.log(
-            `[sandboxes.ssh] Direct Morph instance access for ${id} (no team specified)`,
-          );
         }
 
-        morphInstanceId = id;
+        // If not found via task run, verify ownership via instance metadata
+        if (!morphInstanceId) {
+          // Fetch instance to verify ownership
+          let instance;
+          try {
+            instance = await morphClient.instances.get({ instanceId: id });
+          } catch {
+            return c.text("Instance not found", 404);
+          }
+
+          const meta = instance.metadata as
+            | { app?: string; userId?: string; teamId?: string }
+            | undefined;
+
+          // Verify the instance belongs to cmux (accepts cmux, cmux-dev, cmux-preview, etc.)
+          if (!meta?.app?.startsWith("cmux")) {
+            return c.text("Instance not found", 404);
+          }
+
+          // Verify user ownership: either direct user match or team membership
+          const isOwner = meta.userId === user.id;
+          let isTeamMember = false;
+
+          if (meta.teamId && !isOwner) {
+            // Check if user is a member of the team that owns this instance
+            try {
+              const memberships = await convex.query(
+                api.teams.listTeamMemberships,
+                {},
+              );
+              isTeamMember = memberships.some(
+                (m) => m.team.teamId === meta.teamId,
+              );
+            } catch {
+              // Failed to check team membership
+            }
+          }
+
+          if (!isOwner && !isTeamMember) {
+            return c.text("Forbidden - not authorized to access this instance", 403);
+          }
+
+          morphInstanceId = id;
+        }
       } else {
         // For task-run IDs, team is required to look up the task run
         if (!teamSlugOrId) {
@@ -1176,7 +1214,11 @@ sandboxesRouter.openapi(
     },
   }),
   async (c) => {
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) {
+      return c.text("Unauthorized", 401);
+    }
+    const { accessToken } = await user.getAuthJson();
     if (!accessToken) {
       return c.text("Unauthorized", 401);
     }
@@ -1190,26 +1232,80 @@ sandboxesRouter.openapi(
 
       // Check if the id is a direct VM ID
       if (id.startsWith("morphvm_")) {
-        morphInstanceId = id;
+        // Direct Morph instance ID - verify ownership via instance metadata
+        const morphClient = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
 
+        // First try to find in task runs if team is provided
         if (teamSlugOrId) {
-          // Team provided - try to find it in task runs for verification
           let taskRun = null;
           try {
             taskRun = await convex.query(api.taskRuns.getByContainerName, {
               teamSlugOrId,
               containerName: id,
             });
-          } catch {
-            // Team doesn't exist in Convex - treat as direct VM access
+          } catch (convexError) {
+            console.log(
+              `[sandboxes.resume] Convex query failed for ${id}:`,
+              convexError,
+            );
           }
 
           if (taskRun) {
+            // Found in task runs - verify team access
             await verifyTeamAccess({
               req: c.req.raw,
               teamSlugOrId,
             });
+            morphInstanceId = id;
           }
+        }
+
+        // If not found via task run, verify ownership via instance metadata
+        if (!morphInstanceId) {
+          // Fetch instance to verify ownership
+          let instance;
+          try {
+            instance = await morphClient.instances.get({ instanceId: id });
+          } catch {
+            return c.text("Instance not found", 404);
+          }
+
+          const meta = instance.metadata as
+            | { app?: string; userId?: string; teamId?: string }
+            | undefined;
+
+          // Verify the instance belongs to cmux (accepts cmux, cmux-dev, cmux-preview, etc.)
+          if (!meta?.app?.startsWith("cmux")) {
+            return c.text("Instance not found", 404);
+          }
+
+          // Verify user ownership: either direct user match or team membership
+          const isOwner = meta.userId === user.id;
+          let isTeamMember = false;
+
+          if (meta.teamId && !isOwner) {
+            // Check if user is a member of the team that owns this instance
+            try {
+              const memberships = await convex.query(
+                api.teams.listTeamMemberships,
+                {},
+              );
+              isTeamMember = memberships.some(
+                (m) => m.team.teamId === meta.teamId,
+              );
+            } catch {
+              // Failed to check team membership
+            }
+          }
+
+          if (!isOwner && !isTeamMember) {
+            return c.text(
+              "Forbidden - not authorized to access this instance",
+              403,
+            );
+          }
+
+          morphInstanceId = id;
         }
       } else {
         // Task-run ID - team is required
