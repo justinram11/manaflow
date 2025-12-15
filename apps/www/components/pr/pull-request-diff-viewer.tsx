@@ -1064,13 +1064,18 @@ export function PullRequestDiffViewer({
   // Skip Convex queries on 0github.com since teamSlugOrId is the GitHub owner, not a real team.
   // Also skip when is0Github is null (unknown during SSR/hydration) to avoid premature queries.
   // The streaming heatmap review works independently of these queries.
+  // Also skip when language is not default - the cache only has English data since the streaming
+  // API doesn't persist results. Non-English users will only see streamed results.
+  const shouldSkipCache = tooltipLanguagePreference !== DEFAULT_TOOLTIP_LANGUAGE;
+
   const prQueryArgs = useMemo(
     () =>
       is0Github === null ||
       is0Github === true ||
       normalizedJobType !== "pull_request" ||
       prNumber === null ||
-      prNumber === undefined
+      prNumber === undefined ||
+      shouldSkipCache
         ? ("skip" as const)
         : {
             teamSlugOrId,
@@ -1087,6 +1092,7 @@ export function PullRequestDiffViewer({
       repoFullName,
       prNumber,
       tooltipLanguagePreference,
+      shouldSkipCache,
       commitRef,
       baseCommitRef,
     ]
@@ -1097,7 +1103,8 @@ export function PullRequestDiffViewer({
       is0Github === null ||
       is0Github === true ||
       normalizedJobType !== "comparison" ||
-      !comparisonSlug
+      !comparisonSlug ||
+      shouldSkipCache
         ? ("skip" as const)
         : {
             teamSlugOrId,
@@ -1114,6 +1121,7 @@ export function PullRequestDiffViewer({
       repoFullName,
       comparisonSlug,
       tooltipLanguagePreference,
+      shouldSkipCache,
       commitRef,
       baseCommitRef,
     ]
