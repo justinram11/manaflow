@@ -463,6 +463,9 @@ const convexSchema = defineSchema({
     sandboxInstanceId: v.optional(v.string()),
     filePath: v.string(),
     codexReviewOutput: v.any(),
+    // Language used for tooltip/comment generation (e.g., "en", "zh-Hant", "ja")
+    // Optional for backward compatibility with existing records
+    tooltipLanguage: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -475,11 +478,25 @@ const convexSchema = defineSchema({
       "commitRef",
       "createdAt",
     ])
+    .index("by_team_repo_pr_lang", [
+      "teamId",
+      "repoFullName",
+      "prNumber",
+      "tooltipLanguage",
+      "createdAt",
+    ])
     .index("by_team_repo_comparison_commit", [
       "teamId",
       "repoFullName",
       "comparisonSlug",
       "commitRef",
+      "createdAt",
+    ])
+    .index("by_team_repo_comparison_lang", [
+      "teamId",
+      "repoFullName",
+      "comparisonSlug",
+      "tooltipLanguage",
       "createdAt",
     ]),
 

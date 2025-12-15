@@ -100,7 +100,9 @@ import {
   HEATMAP_MODEL_QUERY_KEY,
   HEATMAP_LANGUAGE_QUERY_KEY,
   TOOLTIP_LANGUAGE_OPTIONS,
+  DEFAULT_TOOLTIP_LANGUAGE,
   detectBrowserLanguage,
+  normalizeTooltipLanguage,
   type HeatmapModelQueryValue,
   type TooltipLanguageValue,
 } from "@/lib/services/code-review/model-config";
@@ -429,8 +431,8 @@ function mergeHeatmapLines(
   }
 
   return Array.from(lineMap.values()).sort((a, b) => {
-    const aLine = a.lineNumber ?? Number.MAX_SAFE_INTEGER;
-    const bLine = b.lineNumber ?? Number.MAX_SAFE_INTEGER;
+    const aLine = a.lineNumber ?? -1;
+    const bLine = b.lineNumber ?? -1;
     if (aLine !== bLine) {
       return aLine - bLine;
     }
@@ -568,6 +570,17 @@ function CopyButton({ text }: { text: string }) {
 
 const DEBUG_LOG = false;
 
+// Check if we're on 0github.com - in that case, teamSlugOrId is actually the GitHub owner
+// and we should skip Convex queries that require real team membership.
+// Returns null during SSR/hydration to signal "unknown" - callers should skip queries when null.
+function useIs0GithubDomain(): boolean | null {
+  const [is0Github, setIs0Github] = useState<boolean | null>(null);
+  useEffect(() => {
+    setIs0Github(window.location.hostname === "0github.com");
+  }, []);
+  return is0Github;
+}
+
 export function PullRequestDiffViewer({
   files,
   teamSlugOrId,
@@ -580,6 +593,7 @@ export function PullRequestDiffViewer({
   pullRequestTitle,
   pullRequestUrl,
 }: PullRequestDiffViewerProps) {
+  const is0Github = useIs0GithubDomain();
   const normalizedJobType: "pull_request" | "comparison" =
     jobType ?? (comparisonSlug ? "comparison" : "pull_request");
   const [heatmapModelPreference, setHeatmapModelPreference] =
@@ -590,8 +604,27 @@ export function PullRequestDiffViewer({
   const [tooltipLanguagePreference, setTooltipLanguagePreference] =
     useLocalStorage<TooltipLanguageValue>({
       key: "cmux-tooltip-language",
-      defaultValue: detectBrowserLanguage(),
+      defaultValue: DEFAULT_TOOLTIP_LANGUAGE,
     });
+  // Detect browser language only on first visit (when no stored preference exists)
+  const hasInitializedLanguageRef = useRef(false);
+  useEffect(() => {
+    if (hasInitializedLanguageRef.current) {
+      return;
+    }
+    hasInitializedLanguageRef.current = true;
+    const STORAGE_KEY = "cmux-tooltip-language";
+    try {
+      const stored = window.localStorage.getItem(STORAGE_KEY);
+      if (stored === null) {
+        // First visit: detect browser language and persist it
+        const detected = detectBrowserLanguage();
+        setTooltipLanguagePreference(detected);
+      }
+    } catch (error) {
+      console.error("[tooltip-language] Failed to check storage", error);
+    }
+  }, [setTooltipLanguagePreference]);
   const heatmapModelPreferenceRef = useRef<HeatmapModelOptionValue>(
     heatmapModelPreference
   );
@@ -622,8 +655,34 @@ export function PullRequestDiffViewer({
       }
 
       const model = options?.modelOverride ?? heatmapModelPreferenceRef.current;
-      const language =
-        options?.languageOverride ?? tooltipLanguagePreferenceRef.current;
+      // Read language directly from localStorage to avoid race conditions on initial mount.
+      // Fall back to browser detection if no stored value, then to ref, then to default.
+      let language = options?.languageOverride;
+      if (!language) {
+        try {
+          const stored = window.localStorage.getItem("cmux-tooltip-language");
+          if (stored) {
+            // Validate it's a known language value
+            const normalized = normalizeTooltipLanguage(stored);
+            language = normalized;
+          } else {
+            // First visit: detect from browser
+            language = detectBrowserLanguage();
+          }
+        } catch {
+          language =
+            tooltipLanguagePreferenceRef.current ?? DEFAULT_TOOLTIP_LANGUAGE;
+        }
+      }
+
+      console.info("[simple-review][frontend] Starting fetch", {
+        repoFullName,
+        prNumber,
+        model,
+        language,
+        rawStoredLanguage: window.localStorage.getItem("cmux-tooltip-language"),
+        languageOverride: options?.languageOverride,
+      });
       const existingController = activeReviewControllerRef.current;
       const hasActiveMatchingRequest =
         existingController &&
@@ -1002,24 +1061,38 @@ export function PullRequestDiffViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Skip Convex queries on 0github.com since teamSlugOrId is the GitHub owner, not a real team.
+  // Also skip when is0Github is null (unknown during SSR/hydration) to avoid premature queries.
+  // The streaming heatmap review works independently of these queries.
+  // Also skip when language is not default - the cache only has English data since the streaming
+  // API doesn't persist results. Non-English users will only see streamed results.
+  const shouldSkipCache = tooltipLanguagePreference !== DEFAULT_TOOLTIP_LANGUAGE;
+
   const prQueryArgs = useMemo(
     () =>
+      is0Github === null ||
+      is0Github === true ||
       normalizedJobType !== "pull_request" ||
       prNumber === null ||
-      prNumber === undefined
+      prNumber === undefined ||
+      shouldSkipCache
         ? ("skip" as const)
         : {
             teamSlugOrId,
             repoFullName,
             prNumber,
+            tooltipLanguage: tooltipLanguagePreference,
             ...(commitRef ? { commitRef } : {}),
             ...(baseCommitRef ? { baseCommitRef } : {}),
           },
     [
+      is0Github,
       normalizedJobType,
       teamSlugOrId,
       repoFullName,
       prNumber,
+      tooltipLanguagePreference,
+      shouldSkipCache,
       commitRef,
       baseCommitRef,
     ]
@@ -1027,20 +1100,28 @@ export function PullRequestDiffViewer({
 
   const comparisonQueryArgs = useMemo(
     () =>
-      normalizedJobType !== "comparison" || !comparisonSlug
+      is0Github === null ||
+      is0Github === true ||
+      normalizedJobType !== "comparison" ||
+      !comparisonSlug ||
+      shouldSkipCache
         ? ("skip" as const)
         : {
             teamSlugOrId,
             repoFullName,
             comparisonSlug,
+            tooltipLanguage: tooltipLanguagePreference,
             ...(commitRef ? { commitRef } : {}),
             ...(baseCommitRef ? { baseCommitRef } : {}),
           },
     [
+      is0Github,
       normalizedJobType,
       teamSlugOrId,
       repoFullName,
       comparisonSlug,
+      tooltipLanguagePreference,
+      shouldSkipCache,
       commitRef,
       baseCommitRef,
     ]
@@ -1443,6 +1524,7 @@ export function PullRequestDiffViewer({
       const review = fileOutputIndex.get(entry.file.filename) ?? null;
       const streamState = streamStateByFile.get(entry.file.filename) ?? null;
       const streamedHeatmap = streamState?.lines ?? [];
+      // Convex query now filters by tooltipLanguage, so cached data matches the selected language
       const reviewHeatmapFromCodex = review
         ? parseReviewHeatmap(review.codexReviewOutput)
         : [];
