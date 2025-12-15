@@ -509,6 +509,9 @@ fn save_last_sandbox(id: &str) {
 
 #[tokio::main]
 async fn main() {
+    // Install panic hook to restore terminal state on panic
+    cmux_sandbox::terminal_guard::install_panic_hook();
+
     let _ = rustls::crypto::ring::default_provider().install_default();
     if let Err(e) = run().await {
         eprintln!("Error: {e:?}");
