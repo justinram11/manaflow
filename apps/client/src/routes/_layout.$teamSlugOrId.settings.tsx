@@ -20,6 +20,42 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/settings")({
   component: SettingsComponent,
 });
 
+interface ProviderInfo {
+  url?: string;
+  helpText?: string;
+}
+
+const PROVIDER_INFO: Record<string, ProviderInfo> = {
+  CLAUDE_CODE_OAUTH_TOKEN: {
+    helpText:
+      "Run `claude setup-token` in your terminal and paste the output here. Preferred over API key.",
+  },
+  ANTHROPIC_API_KEY: {
+    url: "https://console.anthropic.com/settings/keys",
+  },
+  OPENAI_API_KEY: {
+    url: "https://platform.openai.com/api-keys",
+  },
+  OPENROUTER_API_KEY: {
+    url: "https://openrouter.ai/keys",
+  },
+  GEMINI_API_KEY: {
+    url: "https://console.cloud.google.com/apis/credentials",
+  },
+  MODEL_STUDIO_API_KEY: {
+    url: "https://modelstudio.console.alibabacloud.com/?tab=playground#/api-key",
+  },
+  AMP_API_KEY: {
+    url: "https://ampcode.com/settings",
+  },
+  CURSOR_API_KEY: {
+    url: "https://cursor.com/dashboard?tab=integrations",
+  },
+  XAI_API_KEY: {
+    url: "https://console.x.ai/",
+  },
+};
+
 function SettingsComponent() {
   const { teamSlugOrId } = Route.useParams();
   const { resolvedTheme, setTheme } = useTheme();
@@ -747,52 +783,7 @@ function SettingsComponent() {
 
                       {/* Group API keys by provider for better organization */}
                       {apiKeys.map((key) => {
-                        const getProviderInfo = (envVar: string) => {
-                          switch (envVar) {
-                            case "CLAUDE_CODE_OAUTH_TOKEN":
-                              return {
-                                // No URL - instructions provided in description
-                                helpText:
-                                  "Run `claude setup-token` in your terminal and paste the output here. Preferred over API key.",
-                              };
-                            case "ANTHROPIC_API_KEY":
-                              return {
-                                url: "https://console.anthropic.com/settings/keys",
-                              };
-                            case "OPENAI_API_KEY":
-                              return {
-                                url: "https://platform.openai.com/api-keys",
-                              };
-                            case "OPENROUTER_API_KEY":
-                              return {
-                                url: "https://openrouter.ai/keys",
-                              };
-                            case "GEMINI_API_KEY":
-                              return {
-                                url: "https://console.cloud.google.com/apis/credentials",
-                              };
-                            case "MODEL_STUDIO_API_KEY":
-                              return {
-                                url: "https://modelstudio.console.alibabacloud.com/?tab=playground#/api-key",
-                              };
-                            case "AMP_API_KEY":
-                              return {
-                                url: "https://ampcode.com/settings",
-                              };
-                            case "CURSOR_API_KEY":
-                              return {
-                                url: "https://cursor.com/dashboard?tab=integrations",
-                              };
-                            case "XAI_API_KEY":
-                              return {
-                                url: "https://console.x.ai/",
-                              };
-                            default:
-                              return null;
-                          }
-                        };
-
-                        const providerInfo = getProviderInfo(key.envVar);
+                        const providerInfo = PROVIDER_INFO[key.envVar];
                         const usedModels = apiKeyModelsByEnv[key.envVar] ?? [];
 
                         return (
@@ -855,14 +846,12 @@ function SettingsComponent() {
                                     </div>
                                   )}
                                 </div>
-                                {"helpText" in (providerInfo ?? {}) &&
-                                  providerInfo?.helpText && (
-                                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-                                      {providerInfo.helpText}
-                                    </p>
-                                  )}
-                                {"url" in (providerInfo ?? {}) &&
-                                  providerInfo?.url && (
+                                {providerInfo?.helpText && (
+                                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                                    {providerInfo.helpText}
+                                  </p>
+                                )}
+                                {providerInfo?.url && (
                                   <a
                                     href={providerInfo.url}
                                     target="_blank"
