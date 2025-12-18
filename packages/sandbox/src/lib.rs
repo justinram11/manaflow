@@ -8,9 +8,11 @@ pub mod models;
 pub mod mux;
 pub mod notifications;
 pub mod palette;
+pub mod sandbox_handle;
 pub mod service;
 pub mod settings;
 pub mod sync_files;
+pub mod terminal_guard;
 pub mod timing;
 
 pub use acp_client::{
@@ -20,9 +22,13 @@ pub use acp_client::{
 pub use api::build_router;
 pub use bubblewrap::BubblewrapService;
 pub use keyring::{
-    build_default_env_vars, extract_api_key_from_output, get_claude_token, store_claude_token,
+    build_default_env_vars, cache_access_token, clear_cached_access_token, clear_default_team,
+    delete_stack_refresh_token, extract_api_key_from_output, get_cached_access_token,
+    get_claude_token, get_default_team, get_stack_refresh_token, set_default_team,
+    store_claude_token, store_stack_refresh_token,
 };
 pub use mux::run_mux_tui;
+pub use sandbox_handle::{ExecOutput, SandboxBuilder, SandboxHandle, SandboxPool};
 
 pub const DEFAULT_HTTP_PORT: u16 = 46831;
 pub const DEFAULT_WS_PORT: u16 = 46832;

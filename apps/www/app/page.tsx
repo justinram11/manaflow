@@ -4,6 +4,7 @@ import {
   ArrowRight,
   Cloud,
   GitPullRequest,
+  Globe,
   Layers,
   Settings,
   Terminal,
@@ -216,10 +217,19 @@ export default async function LandingPage() {
                 </div>
               </div>
               <div className="flex flex-col gap-3 sm:flex-row">
+                <a
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/20 bg-white px-4 py-3 text-sm font-semibold text-black shadow-xl transition hover:bg-neutral-100"
+                  href="https://cmux.sh"
+                  rel="noopener noreferrer"
+                  target="_blank"
+                >
+                  <Globe className="h-4 w-4" aria-hidden />
+                  Try Web version
+                </a>
                 <MacDownloadLink
                   autoDetect
                   fallbackUrl={fallbackUrl}
-                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/20 bg-white px-4 py-3 text-sm font-semibold text-black shadow-xl transition hover:bg-neutral-100"
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-neutral-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-neutral-800"
                   title={
                     latestVersion
                       ? `Download cmux ${latestVersion} for macOS`
