@@ -15,6 +15,7 @@ import type * as codeReviewActions from "../codeReviewActions.js";
 import type * as codeReview_http from "../codeReview_http.js";
 import type * as comments from "../comments.js";
 import type * as containerSettings from "../containerSettings.js";
+import type * as crons from "../crons.js";
 import type * as crown from "../crown.js";
 import type * as crown_actions from "../crown/actions.js";
 import type * as crown_http from "../crown_http.js";
@@ -39,6 +40,7 @@ import type * as hostScreenshotCollector_http from "../hostScreenshotCollector_h
 import type * as http from "../http.js";
 import type * as localWorkspaces from "../localWorkspaces.js";
 import type * as migrations from "../migrations.js";
+import type * as morphInstanceMaintenance from "../morphInstanceMaintenance.js";
 import type * as previewConfigs from "../previewConfigs.js";
 import type * as previewRuns from "../previewRuns.js";
 import type * as previewScreenshots from "../previewScreenshots.js";
@@ -79,6 +81,7 @@ declare const fullApi: ApiFromModules<{
   codeReview_http: typeof codeReview_http;
   comments: typeof comments;
   containerSettings: typeof containerSettings;
+  crons: typeof crons;
   crown: typeof crown;
   "crown/actions": typeof crown_actions;
   crown_http: typeof crown_http;
@@ -103,6 +106,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   localWorkspaces: typeof localWorkspaces;
   migrations: typeof migrations;
+  morphInstanceMaintenance: typeof morphInstanceMaintenance;
   previewConfigs: typeof previewConfigs;
   previewRuns: typeof previewRuns;
   previewScreenshots: typeof previewScreenshots;

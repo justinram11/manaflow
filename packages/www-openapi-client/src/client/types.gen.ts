@@ -719,6 +719,12 @@ export type CodeReviewStartBody = {
             label: string;
         };
     };
+    fileDiffs?: Array<{
+        filePath: string;
+        diffText: string;
+    }>;
+    heatmapModel?: string;
+    tooltipLanguage?: string;
 };
 
 export type WorkspaceConfigResponse = {

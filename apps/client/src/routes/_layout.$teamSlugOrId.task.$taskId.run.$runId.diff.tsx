@@ -1,450 +1,74 @@
 import { FloatingPane } from "@/components/floating-pane";
-import { type GitDiffViewerProps } from "@/components/git-diff-viewer";
-import { RunDiffSection } from "@/components/RunDiffSection";
+import { RunDiffHeatmapReviewSection } from "@/components/RunDiffHeatmapReviewSection";
+import type { DiffViewerControls } from "@/components/heatmap-diff-viewer";
 import { RunScreenshotGallery } from "@/components/RunScreenshotGallery";
 import { TaskDetailHeader } from "@/components/task-detail-header";
-import { useTheme } from "@/components/theme/use-theme";
-import { Button } from "@/components/ui/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
-import { cn } from "@/lib/utils";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { api } from "@cmux/convex/api";
-import type { Doc, Id } from "@cmux/convex/dataModel";
-import type { TaskAcknowledged, TaskStarted, TaskError, CreateLocalWorkspaceResponse } from "@cmux/shared";
-import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
+import type { CreateLocalWorkspaceResponse, ReplaceDiffEntry } from "@cmux/shared";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
-import { Switch } from "@heroui/react";
-import { useQuery as useRQ } from "@tanstack/react-query";
+import { useQuery as useRQ, useMutation as useRQMutation } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
-import { Command } from "lucide-react";
 import {
   Suspense,
-  memo,
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
-  type FormEvent,
 } from "react";
 import { toast } from "sonner";
-import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListeners";
 import z from "zod";
-import type { EditorApi } from "@/components/dashboard/DashboardInput";
-import LexicalEditor from "@/components/lexical/LexicalEditor";
+import {
+  DEFAULT_HEATMAP_MODEL,
+  DEFAULT_TOOLTIP_LANGUAGE,
+  normalizeHeatmapColors,
+  normalizeHeatmapModel,
+  normalizeTooltipLanguage,
+  type HeatmapModelOptionValue,
+  type TooltipLanguageValue,
+} from "@/lib/heatmap-settings";
+import type { HeatmapColorSettings } from "@/components/heatmap-diff-viewer/heatmap-gradient";
 import { useCombinedWorkflowData, WorkflowRunsSection } from "@/components/WorkflowRunsSection";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { postApiCodeReviewStartMutation } from "@cmux/www-openapi-client/react-query";
+
+/** Convert ReplaceDiffEntry[] to the format expected by heatmap API */
+function convertDiffsToFileDiffs(
+  diffs: ReplaceDiffEntry[]
+): Array<{ filePath: string; diffText: string }> {
+  return diffs
+    .filter((entry) => entry.patch && !entry.isBinary)
+    .map((entry) => ({
+      filePath: entry.filePath,
+      diffText: entry.patch!,
+    }));
+}
 
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
   runId: typedZid("taskRuns"),
 });
 
-const gitDiffViewerClassNames: GitDiffViewerProps["classNames"] = {
-  fileDiffRow: {
-    button: "top-[96px] md:top-[56px]",
-  },
-};
+const workspaceSettingsSchema = z
+  .object({
+    heatmapThreshold: z.number().optional(),
+    heatmapModel: z.string().optional(),
+    heatmapTooltipLanguage: z.string().optional(),
+    heatmapColors: z
+      .object({
+        line: z.object({ start: z.string(), end: z.string() }),
+        token: z.object({ start: z.string(), end: z.string() }),
+      })
+      .optional(),
+  })
+  .nullish();
 
-type DiffControls = Parameters<
-  NonNullable<GitDiffViewerProps["onControlsChange"]>
->[0];
-
-type RunEnvironmentSummary = Pick<
-  Doc<"environments">,
-  "_id" | "name" | "selectedRepos"
->;
-
-type TaskRunWithChildren = Doc<"taskRuns"> & {
-  children: TaskRunWithChildren[];
-  environment: RunEnvironmentSummary | null;
-};
-
-const AVAILABLE_AGENT_NAMES = new Set(AGENT_CONFIGS.map((agent) => agent.name));
-
-interface RestartTaskFormProps {
-  task: Doc<"tasks"> | null | undefined;
-  teamSlugOrId: string;
-  restartAgents: string[];
-  restartIsCloudMode: boolean;
-  persistenceKey: string;
-}
-
-const RestartTaskForm = memo(function RestartTaskForm({
-  task,
-  teamSlugOrId,
-  restartAgents,
-  restartIsCloudMode,
-  persistenceKey,
-}: RestartTaskFormProps) {
-  const { socket } = useSocket();
-  const { theme } = useTheme();
-  const { addTaskToExpand } = useExpandTasks();
-  const createTask = useMutation(api.tasks.create);
-  const navigate = useNavigate();
-  const editorApiRef = useRef<EditorApi | null>(null);
-  const [followUpText, setFollowUpText] = useState("");
-  const [isRestartingTask, setIsRestartingTask] = useState(false);
-  const [overridePrompt, setOverridePrompt] = useState(false);
-
-  const focusTask = useCallback(
-    (taskIdToFocus: Id<"tasks">) => {
-      void navigate({
-        to: "/$teamSlugOrId/task/$taskId",
-        params: { teamSlugOrId, taskId: taskIdToFocus },
-        search: { runId: undefined },
-      });
-    },
-    [navigate, teamSlugOrId],
-  );
-
-  const handleRestartTask = useCallback(async () => {
-    if (!task) {
-      toast.error("Task data is still loading. Try again in a moment.");
-      return;
-    }
-    if (!socket) {
-      toast.error("Socket not connected. Refresh or try again later.");
-      return;
-    }
-
-    const editorContent = editorApiRef.current?.getContent();
-    const followUp = (editorContent?.text ?? followUpText).trim();
-
-    if (!followUp && overridePrompt) {
-      toast.error("Add new instructions when overriding the prompt.");
-      return;
-    }
-    if (!followUp && !task.text) {
-      toast.error("Add follow-up context before restarting.");
-      return;
-    }
-
-    if (restartAgents.length === 0) {
-      toast.error(
-        "No previous agents found for this task. Start a new run from the dashboard.",
-      );
-      return;
-    }
-
-    const originalPrompt = task.text ?? "";
-    const combinedPrompt = overridePrompt
-      ? followUp
-      : originalPrompt
-        ? followUp
-          ? `${originalPrompt}\n\n${followUp}`
-          : originalPrompt
-        : followUp;
-
-    const projectFullNameForSocket =
-      task.projectFullName ??
-      (task.environmentId ? `env:${task.environmentId}` : undefined);
-
-    if (!projectFullNameForSocket) {
-      toast.error("Missing repository or environment for this task.");
-      return;
-    }
-
-    setIsRestartingTask(true);
-
-    try {
-      const existingImages =
-        task.images && task.images.length > 0
-          ? task.images.map((image) => ({
-            storageId: image.storageId,
-            fileName: image.fileName,
-            altText: image.altText,
-          }))
-          : [];
-
-      const newImages = (editorContent?.images && editorContent.images.length > 0
-        ? editorContent.images.filter((img) => "storageId" in img)
-        : []) as {
-          storageId: Id<"_storage">;
-          fileName: string | undefined;
-          altText: string;
-        }[];
-
-      const imagesPayload =
-        [...existingImages, ...newImages].length > 0
-          ? [...existingImages, ...newImages]
-          : undefined;
-
-      const { taskId: newTaskId, taskRunIds } = await createTask({
-        teamSlugOrId,
-        text: combinedPrompt,
-        projectFullName: task.projectFullName ?? undefined,
-        baseBranch: task.baseBranch ?? undefined,
-        images: imagesPayload,
-        environmentId: task.environmentId ?? undefined,
-        selectedAgents: [...restartAgents],
-      });
-
-      addTaskToExpand(newTaskId);
-
-      const isEnvTask = projectFullNameForSocket.startsWith("env:");
-      const repoUrl = !isEnvTask
-        ? `https://github.com/${projectFullNameForSocket}.git`
-        : undefined;
-
-      const handleRestartAck = (response: TaskAcknowledged | TaskStarted | TaskError) => {
-        if ("error" in response) {
-          toast.error(`Task restart error: ${response.error}`);
-          return;
-        }
-
-        attachTaskLifecycleListeners(socket, response.taskId, {
-          onFailed: (payload) => {
-            toast.error(`Follow-up task failed to start: ${payload.error}`);
-          },
-        });
-
-        editorApiRef.current?.clear();
-        setFollowUpText("");
-      };
-
-      socket.emit(
-        "start-task",
-        {
-          ...(repoUrl ? { repoUrl } : {}),
-          ...(task.baseBranch ? { branch: task.baseBranch } : {}),
-          taskDescription: combinedPrompt,
-          projectFullName: projectFullNameForSocket,
-          taskId: newTaskId,
-          taskRunIds,
-          selectedAgents: [...restartAgents],
-          isCloudMode: restartIsCloudMode,
-          ...(task.environmentId ? { environmentId: task.environmentId } : {}),
-          theme,
-        },
-        handleRestartAck,
-      );
-
-      toast.success("Started follow-up task", {
-        action: {
-          label: "Focus task",
-          onClick: () => focusTask(newTaskId),
-        },
-      });
-    } catch (error) {
-      console.error("Failed to restart task", error);
-      toast.error("Failed to start follow-up task");
-    } finally {
-      setIsRestartingTask(false);
-    }
-  }, [
-    addTaskToExpand,
-    createTask,
-    followUpText,
-    overridePrompt,
-    restartAgents,
-    restartIsCloudMode,
-    socket,
-    task,
-    teamSlugOrId,
-    theme,
-    focusTask,
-  ]);
-
-  const handleFormSubmit = useCallback(
-    (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
-      void handleRestartTask();
-    },
-    [handleRestartTask],
-  );
-
-  const trimmedFollowUp = followUpText.trim();
-  const isRestartDisabled =
-    isRestartingTask ||
-    (overridePrompt ? !trimmedFollowUp : !trimmedFollowUp && !task?.text) ||
-    !socket ||
-    !task;
-  const isMac =
-    typeof navigator !== "undefined" &&
-    navigator.userAgent.toUpperCase().includes("MAC");
-  const restartDisabledReason = useMemo(() => {
-    if (isRestartingTask) {
-      return "Starting follow-up...";
-    }
-    if (!task) {
-      return "Task data loading...";
-    }
-    if (!socket) {
-      return "Socket not connected";
-    }
-    if (overridePrompt && !trimmedFollowUp) {
-      return "Add new instructions";
-    }
-    if (!trimmedFollowUp && !task?.text) {
-      return "Add follow-up context";
-    }
-    return undefined;
-  }, [isRestartingTask, overridePrompt, socket, task, trimmedFollowUp]);
-
-  return (
-    <div className="fixed bottom-0 left-0 right-0 z-[var(--z-popover)] border-t border-transparent px-3.5 pb-3.5 pt-2 pointer-events-none">
-      <form
-        onSubmit={handleFormSubmit}
-        className="mx-auto w-full max-w-2xl overflow-hidden rounded-2xl border border-neutral-500/15 bg-white dark:border-neutral-500/15 dark:bg-neutral-950 pointer-events-auto"
-      >
-        <div className="px-3.5 pt-3.5">
-          <LexicalEditor
-            key={persistenceKey}
-            placeholder={
-              overridePrompt
-                ? "Edit original task instructions..."
-                : "Add updated instructions or context..."
-            }
-            onChange={setFollowUpText}
-            onSubmit={() => void handleRestartTask()}
-            repoUrl={
-              task?.projectFullName
-                ? `https://github.com/${task.projectFullName}.git`
-                : undefined
-            }
-            branch={task?.baseBranch ?? undefined}
-            environmentId={task?.environmentId ?? undefined}
-            persistenceKey={persistenceKey}
-            maxHeight="300px"
-            minHeight="30px"
-            onEditorReady={(api) => {
-              editorApiRef.current = api;
-            }}
-            contentEditableClassName="text-[15px] text-neutral-900 dark:text-neutral-100 focus:outline-none"
-            padding={{
-              paddingLeft: "0px",
-              paddingRight: "0px",
-              paddingTop: "0px",
-            }}
-          />
-        </div>
-        <div className="flex items-center justify-between gap-2 px-3.5 pb-3 pt-2">
-          <div className="flex items-center gap-2.5">
-            <Switch
-              isSelected={overridePrompt}
-              onValueChange={(value) => {
-                setOverridePrompt(value);
-                if (value) {
-                  if (!task?.text) {
-                    return;
-                  }
-                  const promptText = task.text;
-                  const currentContent = editorApiRef.current?.getContent();
-                  const currentText = currentContent?.text ?? "";
-                  if (!currentText) {
-                    editorApiRef.current?.insertText?.(promptText);
-                  } else if (!currentText.includes(promptText)) {
-                    editorApiRef.current?.insertText?.(promptText);
-                  }
-                } else {
-                  editorApiRef.current?.clear();
-                }
-              }}
-              size="sm"
-              aria-label="Override prompt"
-              classNames={{
-                wrapper: cn(
-                  "group-data-[selected=true]:bg-neutral-600",
-                  "group-data-[selected=true]:border-neutral-600",
-                  "dark:group-data-[selected=true]:bg-neutral-500",
-                  "dark:group-data-[selected=true]:border-neutral-500",
-                ),
-              }}
-            />
-            <span className="text-xs leading-tight text-neutral-500 dark:text-neutral-400">
-              {overridePrompt
-                ? "Override initial prompt"
-                : task?.text
-                  ? "Original prompt included"
-                  : "New task prompt"}
-            </span>
-          </div>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span tabIndex={0} className="inline-flex">
-                <Button
-                  type="submit"
-                  size="sm"
-                  variant="default"
-                  className="!h-7"
-                  disabled={isRestartDisabled}
-                >
-                  {isRestartingTask ? "Starting..." : "Restart task"}
-                </Button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent
-              side="bottom"
-              className="flex items-center gap-1 border-black bg-black text-white [&>*:last-child]:bg-black [&>*:last-child]:fill-black"
-            >
-              {restartDisabledReason ? (
-                <span className="text-xs">{restartDisabledReason}</span>
-              ) : (
-                <>
-                  {isMac ? (
-                    <>
-                      <Command className="size-3.5 opacity-80" />
-                      <span className="text-xs leading-tight">+ Enter</span>
-                    </>
-                  ) : (
-                    <span className="text-xs leading-tight">Ctrl + Enter</span>
-                  )}
-                </>
-              )}
-            </TooltipContent>
-          </Tooltip>
-        </div>
-      </form>
-    </div>
-  );
-});
-
-RestartTaskForm.displayName = "RestartTaskForm";
-
-function collectAgentNamesFromRuns(
-  runs: TaskRunWithChildren[] | undefined,
-): string[] {
-  if (!runs) return [];
-
-  // Top-level runs mirror the user's original agent selection, including duplicates.
-  const rootAgents = runs
-    .map((run) => run.agentName?.trim())
-    .filter((name): name is string => {
-      if (!name) {
-        return false;
-      }
-      return AVAILABLE_AGENT_NAMES.has(name);
-    });
-
-  if (rootAgents.length > 0) {
-    return rootAgents;
-  }
-
-  const ordered: string[] = [];
-  const traverse = (items: TaskRunWithChildren[]) => {
-    for (const run of items) {
-      const trimmed = run.agentName?.trim();
-      if (trimmed && AVAILABLE_AGENT_NAMES.has(trimmed)) {
-        ordered.push(trimmed);
-      }
-      if (run.children.length > 0) {
-        traverse(run.children);
-      }
-    }
-  };
-
-  traverse(runs);
-  return ordered;
-}
+type DiffControls = DiffViewerControls;
 
 function WorkflowRunsWrapper({
   teamSlugOrId,
@@ -529,7 +153,7 @@ export const Route = createFileRoute(
           return;
         }
 
-        const { task, taskRuns, branchMetadataByRepo } = context;
+        const { task, taskRuns } = context;
 
         if (task) {
           opts.context.queryClient.setQueryData(
@@ -578,27 +202,17 @@ export const Route = createFileRoute(
           return;
         }
 
-        const metadataForPrimaryRepo = trimmedProjectFullName
-          ? branchMetadataByRepo?.[trimmedProjectFullName]
-          : undefined;
-        const baseBranchMeta = metadataForPrimaryRepo?.find(
-          (branch) => branch.name === task.baseBranch,
-        );
-
+        // NOTE: We intentionally do NOT pass lastKnownBaseSha or lastKnownMergeCommitSha for task run diffs.
+        // These merge hints are designed for finding already-merged PRs, not for comparing open feature branches.
+        // Passing stale hints from the base branch (e.g., main) can cause the diff to use the wrong comparison
+        // base, resulting in extra unrelated files appearing in the diff.
         const prefetches = Array.from(targetRepos).map(async (repoFullName) => {
-          const metadata =
-            trimmedProjectFullName && repoFullName === trimmedProjectFullName
-              ? baseBranchMeta
-              : undefined;
-
           return opts.context.queryClient
             .ensureQueryData(
               gitDiffQueryOptions({
                 baseRef: baseRefForDiff,
                 headRef: headRefForDiff,
                 repoFullName,
-                lastKnownBaseSha: metadata?.lastKnownBaseSha,
-                lastKnownMergeCommitSha: metadata?.lastKnownMergeCommitSha,
               }),
             )
             .catch(() => undefined);
@@ -627,6 +241,126 @@ function RunDiffPage() {
   const selectedRun = useMemo(() => {
     return taskRuns?.find((run) => run._id === runId);
   }, [runId, taskRuns]);
+
+  // Heatmap review state - automatically fetched via streaming Convex subscription
+  const [comparisonSlug, setComparisonSlug] = useState<string | null>(null);
+
+  // Query workspace settings for heatmap configuration
+  const workspaceSettingsQuery = useRQ({
+    ...convexQuery(api.workspaceSettings.get, { teamSlugOrId }),
+    enabled: Boolean(teamSlugOrId),
+  });
+  const workspaceSettings = useMemo(() => {
+    const parsed = workspaceSettingsSchema.safeParse(workspaceSettingsQuery.data);
+    return parsed.success ? parsed.data ?? null : null;
+  }, [workspaceSettingsQuery.data]);
+  const updateWorkspaceSettings = useMutation(api.workspaceSettings.update);
+  const [heatmapThreshold, setHeatmapThreshold] = useState<number>(0);
+  const [heatmapColors, setHeatmapColors] = useState<HeatmapColorSettings>(
+    normalizeHeatmapColors(undefined)
+  );
+  const [heatmapModel, setHeatmapModel] = useState<HeatmapModelOptionValue>(
+    DEFAULT_HEATMAP_MODEL
+  );
+  const [heatmapTooltipLanguage, setHeatmapTooltipLanguage] =
+    useState<TooltipLanguageValue>(DEFAULT_TOOLTIP_LANGUAGE);
+
+  useEffect(() => {
+    if (!workspaceSettings) {
+      return;
+    }
+    setHeatmapThreshold(workspaceSettings.heatmapThreshold ?? 0);
+    setHeatmapColors(normalizeHeatmapColors(workspaceSettings.heatmapColors));
+    setHeatmapModel(normalizeHeatmapModel(workspaceSettings.heatmapModel ?? null));
+    setHeatmapTooltipLanguage(
+      normalizeTooltipLanguage(workspaceSettings.heatmapTooltipLanguage ?? null)
+    );
+  }, [workspaceSettings]);
+
+  const handleHeatmapThresholdChange = useCallback(
+    (next: number) => {
+      if (next === heatmapThreshold) {
+        return;
+      }
+      setHeatmapThreshold(next);
+      void updateWorkspaceSettings({
+        teamSlugOrId,
+        heatmapThreshold: next,
+      }).catch((error) => {
+        console.error("Failed to update heatmap threshold:", error);
+      });
+    },
+    [heatmapThreshold, teamSlugOrId, updateWorkspaceSettings]
+  );
+
+  const handleHeatmapColorsChange = useCallback(
+    (next: HeatmapColorSettings) => {
+      setHeatmapColors(next);
+      void updateWorkspaceSettings({
+        teamSlugOrId,
+        heatmapColors: next,
+      }).catch((error) => {
+        console.error("Failed to update heatmap colors:", error);
+      });
+    },
+    [teamSlugOrId, updateWorkspaceSettings]
+  );
+
+  const handleHeatmapModelChange = useCallback(
+    (next: HeatmapModelOptionValue) => {
+      if (next === heatmapModel) {
+        return;
+      }
+      setHeatmapModel(next);
+      void updateWorkspaceSettings({
+        teamSlugOrId,
+        heatmapModel: next,
+      }).catch((error) => {
+        console.error("Failed to update heatmap model:", error);
+      });
+    },
+    [heatmapModel, teamSlugOrId, updateWorkspaceSettings]
+  );
+
+  const handleHeatmapTooltipLanguageChange = useCallback(
+    (next: TooltipLanguageValue) => {
+      if (next === heatmapTooltipLanguage) {
+        return;
+      }
+      setHeatmapTooltipLanguage(next);
+      void updateWorkspaceSettings({
+        teamSlugOrId,
+        heatmapTooltipLanguage: next,
+      }).catch((error) => {
+        console.error("Failed to update heatmap tooltip language:", error);
+      });
+    },
+    [heatmapTooltipLanguage, teamSlugOrId, updateWorkspaceSettings]
+  );
+
+  // Code review mutation to start the heatmap job
+  const codeReviewMutation = useRQMutation({
+    ...postApiCodeReviewStartMutation(),
+    onSuccess: (data) => {
+      console.log("[heatmap] Mutation success", {
+        jobId: data.job?.jobId,
+        state: data.job?.state,
+        comparisonSlug: data.job?.comparisonSlug,
+      });
+
+      // Store comparison slug for subscription (if not already set)
+      if (data.job?.comparisonSlug) {
+        setComparisonSlug(data.job.comparisonSlug);
+      }
+    },
+    onError: (error) => {
+      console.error("[heatmap] Mutation failed:", error);
+    },
+  });
+
+  // Use ref to avoid mutation object in dependency arrays (prevents infinite loops)
+  const codeReviewMutationRef = useRef(codeReviewMutation);
+  codeReviewMutationRef.current = codeReviewMutation;
 
   const runDiffContextQuery = useRQ({
     ...convexQuery(api.taskRuns.getRunDiffContext, {
@@ -668,21 +402,7 @@ function RunDiffPage() {
     }
     setChecksExpandedByRepo(newState);
   }, [pullRequests]);
-  const restartProvider = selectedRun?.vscode?.provider;
-  const restartRunEnvironmentId = selectedRun?.environmentId;
-  const taskEnvironmentId = task?.environmentId;
-  const restartIsCloudMode = useMemo(() => {
-    if (restartProvider === "docker") {
-      return false;
-    }
-    if (restartProvider) {
-      return true;
-    }
-    if (restartRunEnvironmentId || taskEnvironmentId) {
-      return true;
-    }
-    return false;
-  }, [restartProvider, restartRunEnvironmentId, taskEnvironmentId]);
+
   const environmentRepos = useMemo(() => {
     const repos = selectedRun?.environment?.selectedRepos ?? [];
     const trimmed = repos
@@ -700,54 +420,56 @@ function RunDiffPage() {
 
   const [primaryRepo, ...additionalRepos] = repoFullNames;
 
-  const branchMetadataQuery = useRQ({
-    ...convexQuery(api.github.getBranchesByRepo, {
-      teamSlugOrId,
-      repo: primaryRepo ?? "",
+  // NOTE: We intentionally do NOT pass lastKnownBaseSha or lastKnownMergeCommitSha for task run diffs.
+  // These merge hints are designed for finding already-merged PRs, not for comparing open feature branches.
+  // Passing stale hints from the base branch (e.g., main) can cause the diff to use the wrong comparison
+  // base, resulting in extra unrelated files appearing in the diff.
+
+  // Fetch diffs for heatmap review (this reuses the cached data from RunDiffSection)
+  const baseRefForHeatmap = normalizeGitRef(task?.baseBranch || "main");
+  const headRefForHeatmap = normalizeGitRef(selectedRun?.newBranch);
+  const diffQueryEnabled = Boolean(primaryRepo) && Boolean(baseRefForHeatmap) && Boolean(headRefForHeatmap);
+  const diffQuery = useRQ({
+    ...gitDiffQueryOptions({
+      repoFullName: primaryRepo ?? "",
+      baseRef: baseRefForHeatmap,
+      headRef: headRefForHeatmap ?? "",
+      // Do not pass merge hints - let the native diff code compute the correct merge-base
     }),
-    enabled: Boolean(primaryRepo),
+    enabled: diffQueryEnabled,
   });
 
-  const branchMetadata = branchMetadataQuery.data as
-    | Doc<"branches">[]
-    | undefined;
+  // Convert diffs to the format expected by the heatmap API
+  const fileDiffsForHeatmap = useMemo(() => {
+    if (!diffQuery.data) return undefined;
+    return convertDiffsToFileDiffs(diffQuery.data);
+  }, [diffQuery.data]);
 
-  const baseBranchMetadata = useMemo(() => {
-    if (!task?.baseBranch) {
-      return undefined;
-    }
-    return branchMetadata?.find((branch) => branch.name === task.baseBranch);
-  }, [branchMetadata, task?.baseBranch]);
-
-  const metadataByRepo = useMemo(() => {
-    if (!primaryRepo) return undefined;
-    if (!baseBranchMetadata) return undefined;
-    const { lastKnownBaseSha, lastKnownMergeCommitSha } = baseBranchMetadata;
-    if (!lastKnownBaseSha && !lastKnownMergeCommitSha) {
-      return undefined;
-    }
-    return {
-      [primaryRepo]: {
-        lastKnownBaseSha: lastKnownBaseSha ?? undefined,
-        lastKnownMergeCommitSha: lastKnownMergeCommitSha ?? undefined,
-      },
-    };
-  }, [primaryRepo, baseBranchMetadata]);
-
-  const restartAgents = useMemo(() => {
-    const previousAgents = collectAgentNamesFromRuns(taskRuns);
-    if (previousAgents.length > 0) {
-      return previousAgents;
-    }
-    const fallback = selectedRun?.agentName?.trim();
-    if (fallback && AVAILABLE_AGENT_NAMES.has(fallback)) {
-      return [fallback];
-    }
-    return [];
-  }, [selectedRun?.agentName, taskRuns]);
+  // Subscribe to streaming file outputs from Convex
+  // IMPORTANT: Use useMemo for query args to prevent new object reference on every render
+  // (which would cause Convex to re-subscribe and trigger infinite loops)
+  const fileOutputsQueryArgs = useMemo(
+    () => {
+      if (!comparisonSlug || !primaryRepo) {
+        return "skip" as const;
+      }
+      return {
+        teamSlugOrId,
+        repoFullName: primaryRepo,
+        comparisonSlug,
+        ...(heatmapTooltipLanguage
+          ? { tooltipLanguage: heatmapTooltipLanguage }
+          : {}),
+      };
+    },
+    [teamSlugOrId, primaryRepo, comparisonSlug, heatmapTooltipLanguage]
+  );
+  const fileOutputs = useQuery(
+    api.codeReview.listFileOutputsForComparison,
+    fileOutputsQueryArgs
+  );
 
   const taskRunId = selectedRun?._id ?? runId;
-  const restartTaskPersistenceKey = `restart-task-${taskId}-${runId}`;
 
   const navigate = useNavigate();
 
@@ -803,6 +525,135 @@ function RunDiffPage() {
       }
     );
   }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, navigate, taskId]);
+
+  // Handler to trigger heatmap review
+  const triggerHeatmapReview = useCallback((
+    force = false,
+    diffs?: Array<{ filePath: string; diffText: string }>,
+    model?: string,
+    language?: string
+  ) => {
+    if (!primaryRepo || !selectedRun?.newBranch) {
+      console.warn("[heatmap] Cannot trigger: missing primaryRepo or newBranch", {
+        primaryRepo,
+        newBranch: selectedRun?.newBranch,
+      });
+      return;
+    }
+
+    // Get the repo owner for comparison context
+    const [repoOwner, repoName] = primaryRepo.split("/");
+    if (!repoOwner || !repoName) {
+      console.warn("[heatmap] Cannot trigger: invalid repo format", { primaryRepo });
+      return;
+    }
+
+    // Use task.baseBranch or default to "main"
+    const baseBranch = task?.baseBranch || "main";
+    const githubLink = `https://github.com/${primaryRepo}`;
+    const comparisonSlugValue = `${baseBranch}...${selectedRun.newBranch}`;
+
+    console.log("[heatmap] Triggering heatmap review", {
+      primaryRepo,
+      baseBranch,
+      headBranch: selectedRun.newBranch,
+      comparisonSlug: comparisonSlugValue,
+      force,
+      fileDiffsCount: diffs?.length ?? 0,
+      heatmapModel: model,
+      tooltipLanguage: language,
+    });
+
+    // Set comparisonSlug immediately to start subscription
+    setComparisonSlug(comparisonSlugValue);
+
+    codeReviewMutationRef.current.mutate({
+      body: {
+        teamSlugOrId,
+        githubLink,
+        headCommitRef: selectedRun.newBranch,
+        baseCommitRef: baseBranch,
+        force,
+        comparison: {
+          slug: comparisonSlugValue,
+          base: {
+            owner: repoOwner,
+            repo: repoName,
+            ref: baseBranch,
+            label: `${repoOwner}:${baseBranch}`,
+          },
+          head: {
+            owner: repoOwner,
+            repo: repoName,
+            ref: selectedRun.newBranch,
+            label: `${repoOwner}:${selectedRun.newBranch}`,
+          },
+        },
+        // Pass pre-fetched diffs to avoid re-fetching from GitHub API
+        fileDiffs: diffs,
+        // Pass heatmap settings from workspace settings
+        heatmapModel: model,
+        tooltipLanguage: language,
+      },
+    });
+  }, [primaryRepo, selectedRun?.newBranch, task?.baseBranch, teamSlugOrId]);
+
+  // Track if we've already auto-triggered the heatmap review
+  const hasAutoTriggeredRef = useRef(false);
+  // Track the last triggered comparison/settings to detect changes and re-trigger
+  const lastTriggeredComparisonRef = useRef<string | null>(null);
+  const lastTriggeredSettingsRef = useRef<string | null>(null);
+
+  // Auto-trigger heatmap review when all required data is available (including diffs and settings)
+  // Also re-triggers when the comparison or heatmap settings change
+  // The backend handles caching - if results already exist, it returns them immediately
+  useEffect(() => {
+    // Wait for all required data to be ready (including diffs)
+    if (!primaryRepo || !selectedRun?.newBranch) {
+      return;
+    }
+    // Wait for diff query to complete (or fail) before triggering
+    // This ensures we can pass the pre-fetched diffs to the backend
+    if (diffQuery.isLoading) {
+      return;
+    }
+    // Wait for workspace settings to load (to get model and language preferences)
+    if (workspaceSettingsQuery.isLoading) {
+      return;
+    }
+
+    // Build a key that represents the current state (branch + base)
+    const baseBranch = task?.baseBranch || "main";
+    const comparisonKey = `${primaryRepo}:${baseBranch}...${selectedRun.newBranch}`;
+    const settingsKey = `${heatmapModel ?? "default"}|${heatmapTooltipLanguage ?? "default"}`;
+
+    // Check if we need to re-trigger (first time, comparison change, or settings change)
+    const shouldTrigger =
+      !hasAutoTriggeredRef.current ||
+      lastTriggeredComparisonRef.current !== comparisonKey ||
+      lastTriggeredSettingsRef.current !== settingsKey;
+    if (!shouldTrigger) {
+      return;
+    }
+
+    const shouldForce =
+      hasAutoTriggeredRef.current &&
+      lastTriggeredComparisonRef.current === comparisonKey &&
+      lastTriggeredSettingsRef.current !== settingsKey;
+
+    // Mark as triggered and store the current key
+    hasAutoTriggeredRef.current = true;
+    lastTriggeredComparisonRef.current = comparisonKey;
+    lastTriggeredSettingsRef.current = settingsKey;
+
+    // Compute the comparison slug to start the subscription immediately
+    const comparisonSlugValue = `${baseBranch}...${selectedRun.newBranch}`;
+    setComparisonSlug(comparisonSlugValue);
+
+    // Trigger the review with pre-fetched diffs and settings (backend will return cached results if available)
+    // Force re-run if the branch changed (lastTriggeredBranchRef was different)
+    triggerHeatmapReview(shouldForce, fileDiffsForHeatmap, heatmapModel, heatmapTooltipLanguage);
+  }, [primaryRepo, selectedRun?.newBranch, task?.baseBranch, triggerHeatmapReview, diffQuery.isLoading, fileDiffsForHeatmap, workspaceSettingsQuery.isLoading, heatmapModel, heatmapTooltipLanguage]);
 
   // 404 if selected run is missing
   if (!selectedRun) {
@@ -874,43 +725,43 @@ function RunDiffPage() {
                 highlightedSetId={selectedRun?.latestScreenshotSetId ?? null}
               />
             )}
-            <div className="flex-1 min-h-0 flex flex-col">
-              <div className="flex-1 min-h-0">
-                <Suspense
-                  fallback={
-                    <div className="flex h-full items-center justify-center">
-                      <div className="text-neutral-500 dark:text-neutral-400 text-sm select-none">
-                        Loading diffs...
-                      </div>
+            <div
+              className="flex-1 min-h-0"
+              style={{ "--cmux-diff-header-offset": "56px" } as React.CSSProperties}
+            >
+              <Suspense
+                fallback={
+                  <div className="flex h-full items-center justify-center">
+                    <div className="text-neutral-500 dark:text-neutral-400 text-sm select-none">
+                      Loading diffs...
                     </div>
-                  }
-                >
-                  {hasDiffSources ? (
-                    <RunDiffSection
-                      repoFullName={primaryRepo as string}
-                      additionalRepoFullNames={additionalRepos}
-                      withRepoPrefix={shouldPrefixDiffs}
-                      ref1={baseRef}
-                      ref2={headRef}
-                      onControlsChange={setDiffControls}
-                      classNames={gitDiffViewerClassNames}
-                      metadataByRepo={metadataByRepo}
-                    />
-                  ) : (
-                    <div className="flex h-full items-center justify-center p-6 text-sm text-neutral-600 dark:text-neutral-300">
-                      Missing repo or branches to show diff.
-                    </div>
-                  )}
-                </Suspense>
-              </div>
-              <RestartTaskForm
-                key={restartTaskPersistenceKey}
-                task={task}
-                teamSlugOrId={teamSlugOrId}
-                restartAgents={restartAgents}
-                restartIsCloudMode={restartIsCloudMode}
-                persistenceKey={restartTaskPersistenceKey}
-              />
+                  </div>
+                }
+              >
+                {hasDiffSources ? (
+                  <RunDiffHeatmapReviewSection
+                    repoFullName={primaryRepo as string}
+                    additionalRepoFullNames={additionalRepos}
+                    withRepoPrefix={shouldPrefixDiffs}
+                    ref1={baseRef}
+                    ref2={headRef}
+                    onControlsChange={setDiffControls}
+                    fileOutputs={fileOutputs}
+                    heatmapThreshold={heatmapThreshold}
+                    heatmapColors={heatmapColors}
+                    heatmapModel={heatmapModel}
+                    heatmapTooltipLanguage={heatmapTooltipLanguage}
+                    onHeatmapThresholdChange={handleHeatmapThresholdChange}
+                    onHeatmapColorsChange={handleHeatmapColorsChange}
+                    onHeatmapModelChange={handleHeatmapModelChange}
+                    onHeatmapTooltipLanguageChange={handleHeatmapTooltipLanguageChange}
+                  />
+                ) : (
+                  <div className="flex h-full items-center justify-center p-6 text-sm text-neutral-600 dark:text-neutral-300">
+                    Missing repo or branches to show diff.
+                  </div>
+                )}
+              </Suspense>
             </div>
           </div>
         </div>

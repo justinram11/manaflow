@@ -34,6 +34,11 @@ const CodeReviewJobSchema = z.object({
   codeReviewOutput: z.record(z.string(), z.any()).nullable(),
 });
 
+const FileDiffSchema = z.object({
+  filePath: z.string(),
+  diffText: z.string(),
+});
+
 const StartBodySchema = z
   .object({
     teamSlugOrId: z.string().optional(),
@@ -60,6 +65,12 @@ const StartBodySchema = z
         }),
       })
       .optional(),
+    /** Pre-fetched diffs from the client to avoid re-fetching from GitHub API */
+    fileDiffs: z.array(FileDiffSchema).optional(),
+    /** Model selection for heatmap review (e.g., "anthropic-opus-4-5", "cmux-heatmap-2") */
+    heatmapModel: z.string().optional(),
+    /** Language for tooltip text (e.g., "en", "zh-Hant", "ja") */
+    tooltipLanguage: z.string().optional(),
   })
   .openapi("CodeReviewStartBody");
 
@@ -175,6 +186,9 @@ codeReviewRouter.openapi(
               head: body.comparison.head,
             }
           : undefined,
+        fileDiffs: body.fileDiffs,
+        heatmapModel: body.heatmapModel,
+        tooltipLanguage: body.tooltipLanguage,
       },
       request: c.req.raw,
     });

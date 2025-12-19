@@ -634,14 +634,34 @@ function TaskDetailPage() {
     };
   }, [selectedRun, taskRuns?.length]);
 
-  const currentLayout = useMemo(
-    () => getCurrentLayoutPanels(panelConfig),
-    [panelConfig]
-  );
-  const availablePanels = useMemo(
-    () => getAvailablePanels(panelConfig),
-    [panelConfig]
-  );
+  // Determine if this is a workspace-only task (local or cloud workspace)
+  const isWorkspaceOnlyTask = task?.isLocalWorkspace || task?.isCloudWorkspace;
+
+  const currentLayout = useMemo(() => {
+    const layout = getCurrentLayoutPanels(panelConfig);
+
+    // For local/cloud workspaces, hide gitDiff and browser panels since they're not applicable
+    if (isWorkspaceOnlyTask) {
+      return {
+        topLeft: layout.topLeft === "gitDiff" || layout.topLeft === "browser" ? null : layout.topLeft,
+        topRight: layout.topRight === "gitDiff" || layout.topRight === "browser" ? null : layout.topRight,
+        bottomLeft: layout.bottomLeft === "gitDiff" || layout.bottomLeft === "browser" ? null : layout.bottomLeft,
+        bottomRight: layout.bottomRight === "gitDiff" || layout.bottomRight === "browser" ? null : layout.bottomRight,
+      };
+    }
+
+    return layout;
+  }, [panelConfig, isWorkspaceOnlyTask]);
+  const availablePanels = useMemo(() => {
+    const panels = getAvailablePanels(panelConfig);
+
+    // For local/cloud workspaces, exclude gitDiff and browser from available panels
+    if (isWorkspaceOnlyTask) {
+      return panels.filter((p) => p !== "gitDiff" && p !== "browser");
+    }
+
+    return panels;
+  }, [panelConfig, isWorkspaceOnlyTask]);
   const activePanelPositions = useMemo(
     () => getActivePanelPositions(panelConfig.layoutMode),
     [panelConfig.layoutMode]

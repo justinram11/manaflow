@@ -571,6 +571,16 @@ const convexSchema = defineSchema({
     // Crown evaluator settings
     crownModel: v.optional(v.string()), // Model to use for crown evaluation (e.g., "gpt-5-mini", "claude-sonnet-4")
     crownSystemPrompt: v.optional(v.string()), // Custom system prompt for crown evaluation
+    // Heatmap review settings
+    heatmapModel: v.optional(v.string()), // Model to use for heatmap review (e.g., "anthropic-opus-4-5", "cmux-heatmap-2")
+    heatmapThreshold: v.optional(v.number()), // Score threshold for filtering (0-1, default: 0)
+    heatmapTooltipLanguage: v.optional(v.string()), // Language for tooltip text (e.g., "en", "zh-Hant", "ja")
+    heatmapColors: v.optional(
+      v.object({
+        line: v.object({ start: v.string(), end: v.string() }), // Line background gradient colors
+        token: v.object({ start: v.string(), end: v.string() }), // Token highlight gradient colors
+      })
+    ),
     createdAt: v.number(),
     updatedAt: v.number(),
     userId: v.string(),

@@ -102,6 +102,50 @@ function SettingsComponent() {
   const [originalContainerSettingsData, setOriginalContainerSettingsData] =
     useState<typeof containerSettingsData>(null);
 
+  // Heatmap settings state
+  const [heatmapModel, setHeatmapModel] = useState<string>("anthropic-opus-4-5");
+  const [originalHeatmapModel, setOriginalHeatmapModel] = useState<string>("anthropic-opus-4-5");
+  const [heatmapThreshold, setHeatmapThreshold] = useState<number>(0);
+  const [originalHeatmapThreshold, setOriginalHeatmapThreshold] = useState<number>(0);
+  const [heatmapTooltipLanguage, setHeatmapTooltipLanguage] = useState<string>("en");
+  const [originalHeatmapTooltipLanguage, setOriginalHeatmapTooltipLanguage] = useState<string>("en");
+  const [heatmapColors, setHeatmapColors] = useState<{
+    line: { start: string; end: string };
+    token: { start: string; end: string };
+  }>({
+    line: { start: "#fefce8", end: "#f8e1c9" },
+    token: { start: "#fde047", end: "#ffa270" },
+  });
+  const [originalHeatmapColors, setOriginalHeatmapColors] = useState<typeof heatmapColors>({
+    line: { start: "#fefce8", end: "#f8e1c9" },
+    token: { start: "#fde047", end: "#ffa270" },
+  });
+
+  // Heatmap model options from model-config.ts
+  const HEATMAP_MODEL_OPTIONS = [
+    { value: "anthropic-opus-4-5", label: "Claude Opus 4.5 (Most Accurate)", description: "Best quality reviews, slower" },
+    { value: "anthropic", label: "Claude Opus 4.1", description: "High quality, balanced speed" },
+    { value: "cmux-heatmap-2", label: "cmux-heatmap-2 (GPT-4.1 Fine-tuned)", description: "Fast, cost-effective" },
+    { value: "cmux-heatmap-1", label: "cmux-heatmap-1 (GPT-4.1 Mini)", description: "Fastest, most cost-effective" },
+  ];
+
+  // Tooltip language options
+  const TOOLTIP_LANGUAGE_OPTIONS = [
+    { value: "en", label: "English" },
+    { value: "zh-Hant", label: "繁體中文" },
+    { value: "zh-Hans", label: "简体中文" },
+    { value: "ja", label: "日本語" },
+    { value: "ko", label: "한국어" },
+    { value: "es", label: "Español" },
+    { value: "fr", label: "Français" },
+    { value: "de", label: "Deutsch" },
+    { value: "pt", label: "Português" },
+    { value: "ru", label: "Русский" },
+    { value: "vi", label: "Tiếng Việt" },
+    { value: "th", label: "ไทย" },
+    { value: "id", label: "Bahasa Indonesia" },
+  ];
+
   // Get all required API keys from agent configs
   const apiKeys = Array.from(
     new Map(
@@ -176,7 +220,7 @@ function SettingsComponent() {
     return "";
   };
 
-  // Initialize worktree path and crown settings when data loads
+  // Initialize worktree path, crown settings, and heatmap settings when data loads
   useEffect(() => {
     if (workspaceSettings !== undefined) {
       setWorktreePath(workspaceSettings?.worktreePath || "");
@@ -187,15 +231,41 @@ function SettingsComponent() {
       const effective = enabled === undefined ? false : Boolean(enabled);
       setAutoPrEnabled(effective);
       setOriginalAutoPrEnabled(effective);
+
       // Crown settings
       const settings = workspaceSettings as unknown as {
         crownModel?: string;
         crownSystemPrompt?: string;
+        heatmapModel?: string;
+        heatmapThreshold?: number;
+        heatmapTooltipLanguage?: string;
+        heatmapColors?: {
+          line: { start: string; end: string };
+          token: { start: string; end: string };
+        };
       };
       setCrownModel(settings?.crownModel || "");
       setOriginalCrownModel(settings?.crownModel || "");
       setCrownSystemPrompt(settings?.crownSystemPrompt || "");
       setOriginalCrownSystemPrompt(settings?.crownSystemPrompt || "");
+
+      // Initialize heatmap settings
+      if (settings?.heatmapModel) {
+        setHeatmapModel(settings.heatmapModel);
+        setOriginalHeatmapModel(settings.heatmapModel);
+      }
+      if (settings?.heatmapThreshold !== undefined) {
+        setHeatmapThreshold(settings.heatmapThreshold);
+        setOriginalHeatmapThreshold(settings.heatmapThreshold);
+      }
+      if (settings?.heatmapTooltipLanguage) {
+        setHeatmapTooltipLanguage(settings.heatmapTooltipLanguage);
+        setOriginalHeatmapTooltipLanguage(settings.heatmapTooltipLanguage);
+      }
+      if (settings?.heatmapColors) {
+        setHeatmapColors(settings.heatmapColors);
+        setOriginalHeatmapColors(settings.heatmapColors);
+      }
     }
   }, [workspaceSettings]);
 
@@ -300,13 +370,24 @@ function SettingsComponent() {
     const crownSystemPromptChanged =
       crownSystemPrompt !== originalCrownSystemPrompt;
 
+    // Heatmap settings changes
+    const heatmapModelChanged = heatmapModel !== originalHeatmapModel;
+    const heatmapThresholdChanged = heatmapThreshold !== originalHeatmapThreshold;
+    const heatmapTooltipLanguageChanged = heatmapTooltipLanguage !== originalHeatmapTooltipLanguage;
+    const heatmapColorsChanged =
+      JSON.stringify(heatmapColors) !== JSON.stringify(originalHeatmapColors);
+
     return (
       worktreePathChanged ||
       autoPrChanged ||
       apiKeysChanged ||
       containerSettingsChanged ||
       crownModelChanged ||
-      crownSystemPromptChanged
+      crownSystemPromptChanged ||
+      heatmapModelChanged ||
+      heatmapThresholdChanged ||
+      heatmapTooltipLanguageChanged ||
+      heatmapColorsChanged
     );
   };
 
@@ -317,24 +398,37 @@ function SettingsComponent() {
       let savedCount = 0;
       let deletedCount = 0;
 
-      // Save worktree path / auto PR / crown settings if changed
-      if (
+      // Save worktree path / auto PR / crown / heatmap settings if changed
+      const workspaceSettingsChanged =
         worktreePath !== originalWorktreePath ||
         autoPrEnabled !== originalAutoPrEnabled ||
         crownModel !== originalCrownModel ||
-        crownSystemPrompt !== originalCrownSystemPrompt
-      ) {
+        crownSystemPrompt !== originalCrownSystemPrompt ||
+        heatmapModel !== originalHeatmapModel ||
+        heatmapThreshold !== originalHeatmapThreshold ||
+        heatmapTooltipLanguage !== originalHeatmapTooltipLanguage ||
+        JSON.stringify(heatmapColors) !== JSON.stringify(originalHeatmapColors);
+
+      if (workspaceSettingsChanged) {
         await convex.mutation(api.workspaceSettings.update, {
           teamSlugOrId,
           worktreePath: worktreePath || undefined,
           autoPrEnabled,
           crownModel: crownModel || undefined,
           crownSystemPrompt: crownSystemPrompt || undefined,
+          heatmapModel,
+          heatmapThreshold,
+          heatmapTooltipLanguage,
+          heatmapColors,
         });
         setOriginalWorktreePath(worktreePath);
         setOriginalAutoPrEnabled(autoPrEnabled);
         setOriginalCrownModel(crownModel);
         setOriginalCrownSystemPrompt(crownSystemPrompt);
+        setOriginalHeatmapModel(heatmapModel);
+        setOriginalHeatmapThreshold(heatmapThreshold);
+        setOriginalHeatmapTooltipLanguage(heatmapTooltipLanguage);
+        setOriginalHeatmapColors(heatmapColors);
       }
 
       // Save container settings if changed
@@ -762,6 +856,219 @@ function SettingsComponent() {
                   <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-2">
                     Default: "You select the best implementation from structured diff inputs and explain briefly why."
                   </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Heatmap Review Settings */}
+            <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800 flex items-center justify-between">
+                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  Diff Heatmap Review
+                </h2>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const config = {
+                        heatmapModel,
+                        heatmapThreshold,
+                        heatmapTooltipLanguage,
+                        heatmapColors,
+                      };
+                      navigator.clipboard.writeText(JSON.stringify(config, null, 2));
+                      toast.success("Config copied to clipboard");
+                    }}
+                    className="px-2 py-1 text-xs rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
+                  >
+                    Copy Config
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const text = await navigator.clipboard.readText();
+                        const config = JSON.parse(text) as {
+                          heatmapModel?: string;
+                          heatmapThreshold?: number;
+                          heatmapTooltipLanguage?: string;
+                          heatmapColors?: typeof heatmapColors;
+                        };
+                        if (config.heatmapModel) setHeatmapModel(config.heatmapModel);
+                        if (config.heatmapThreshold !== undefined) setHeatmapThreshold(config.heatmapThreshold);
+                        if (config.heatmapTooltipLanguage) setHeatmapTooltipLanguage(config.heatmapTooltipLanguage);
+                        if (config.heatmapColors) setHeatmapColors(config.heatmapColors);
+                        toast.success("Config loaded from clipboard");
+                      } catch (error) {
+                        console.error("Failed to load config:", error);
+                        toast.error("Failed to load config - make sure you copied a valid config");
+                      }
+                    }}
+                    className="px-2 py-1 text-xs rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
+                  >
+                    Load Config
+                  </button>
+                </div>
+              </div>
+              <div className="p-4 space-y-6">
+                {/* Model Selector */}
+                <div>
+                  <label
+                    htmlFor="heatmapModel"
+                    className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2"
+                  >
+                    Review Model
+                  </label>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+                    Select the AI model used to analyze diffs and highlight areas that need attention.
+                  </p>
+                  <select
+                    id="heatmapModel"
+                    value={heatmapModel}
+                    onChange={(e) => setHeatmapModel(e.target.value)}
+                    className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-sm"
+                  >
+                    {HEATMAP_MODEL_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  {HEATMAP_MODEL_OPTIONS.find((opt) => opt.value === heatmapModel)?.description && (
+                    <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                      {HEATMAP_MODEL_OPTIONS.find((opt) => opt.value === heatmapModel)?.description}
+                    </p>
+                  )}
+                </div>
+
+                {/* Tooltip Language Selector */}
+                <div>
+                  <label
+                    htmlFor="heatmapTooltipLanguage"
+                    className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2"
+                  >
+                    Tooltip Language
+                  </label>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+                    Language for the review comments shown in heatmap tooltips.
+                  </p>
+                  <select
+                    id="heatmapTooltipLanguage"
+                    value={heatmapTooltipLanguage}
+                    onChange={(e) => setHeatmapTooltipLanguage(e.target.value)}
+                    className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-sm"
+                  >
+                    {TOOLTIP_LANGUAGE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Threshold Slider */}
+                <div>
+                  <label
+                    htmlFor="heatmapThreshold"
+                    className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2"
+                  >
+                    Visibility Threshold: {Math.round(heatmapThreshold * 100)}%
+                  </label>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+                    Only show highlights for lines with a review score above this threshold.
+                  </p>
+                  <input
+                    type="range"
+                    id="heatmapThreshold"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={heatmapThreshold}
+                    onChange={(e) => setHeatmapThreshold(Number.parseFloat(e.target.value))}
+                    className="w-full h-2 bg-neutral-200 dark:bg-neutral-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                  />
+                </div>
+
+                {/* Color Settings */}
+                <div>
+                  <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">
+                    Heatmap Colors
+                  </label>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+                    Customize the gradient colors for line and token highlighting.
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* Line Background Colors */}
+                    <div className="space-y-2">
+                      <span className="text-xs font-medium text-neutral-600 dark:text-neutral-400">Line Background</span>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-neutral-500 dark:text-neutral-400 w-10">Low</label>
+                        <input
+                          type="color"
+                          value={heatmapColors.line.start}
+                          onChange={(e) => setHeatmapColors((prev) => ({
+                            ...prev,
+                            line: { ...prev.line, start: e.target.value }
+                          }))}
+                          className="w-8 h-8 rounded border border-neutral-300 dark:border-neutral-600 cursor-pointer"
+                        />
+                        <span className="text-xs font-mono text-neutral-500">{heatmapColors.line.start}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-neutral-500 dark:text-neutral-400 w-10">High</label>
+                        <input
+                          type="color"
+                          value={heatmapColors.line.end}
+                          onChange={(e) => setHeatmapColors((prev) => ({
+                            ...prev,
+                            line: { ...prev.line, end: e.target.value }
+                          }))}
+                          className="w-8 h-8 rounded border border-neutral-300 dark:border-neutral-600 cursor-pointer"
+                        />
+                        <span className="text-xs font-mono text-neutral-500">{heatmapColors.line.end}</span>
+                      </div>
+                    </div>
+                    {/* Token Highlight Colors */}
+                    <div className="space-y-2">
+                      <span className="text-xs font-medium text-neutral-600 dark:text-neutral-400">Token Highlight</span>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-neutral-500 dark:text-neutral-400 w-10">Low</label>
+                        <input
+                          type="color"
+                          value={heatmapColors.token.start}
+                          onChange={(e) => setHeatmapColors((prev) => ({
+                            ...prev,
+                            token: { ...prev.token, start: e.target.value }
+                          }))}
+                          className="w-8 h-8 rounded border border-neutral-300 dark:border-neutral-600 cursor-pointer"
+                        />
+                        <span className="text-xs font-mono text-neutral-500">{heatmapColors.token.start}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-neutral-500 dark:text-neutral-400 w-10">High</label>
+                        <input
+                          type="color"
+                          value={heatmapColors.token.end}
+                          onChange={(e) => setHeatmapColors((prev) => ({
+                            ...prev,
+                            token: { ...prev.token, end: e.target.value }
+                          }))}
+                          className="w-8 h-8 rounded border border-neutral-300 dark:border-neutral-600 cursor-pointer"
+                        />
+                        <span className="text-xs font-mono text-neutral-500">{heatmapColors.token.end}</span>
+                      </div>
+                    </div>
+                  </div>
+                  {/* Preview Gradient */}
+                  <div className="mt-4">
+                    <span className="text-xs text-neutral-500 dark:text-neutral-400">Preview</span>
+                    <div
+                      className="mt-1 h-4 rounded"
+                      style={{
+                        background: `linear-gradient(to right, ${heatmapColors.line.start}, ${heatmapColors.line.end})`
+                      }}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
