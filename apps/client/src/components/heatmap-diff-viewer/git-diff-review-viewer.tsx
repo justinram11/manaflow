@@ -1012,7 +1012,6 @@ function FileTreeNavigator({
 type FileDiffCardProps = {
   entry: ParsedFileDiff;
   status: HeatmapFileStatus;
-  isActive: boolean;
   reviewHeatmap: ReviewHeatmapLine[];
   focusedLine: DiffLineLocation | null;
   focusedChangeKey: string | null;
@@ -1027,7 +1026,6 @@ type FileDiffCardProps = {
 const FileDiffCard = memo(function FileDiffCardComponent({
   entry,
   status,
-  isActive,
   reviewHeatmap,
   focusedLine,
   focusedChangeKey,
@@ -1088,7 +1086,7 @@ const FileDiffCard = memo(function FileDiffCardComponent({
         errorMessage={entry.error ?? null}
         defaultCollapsed={isCollapsed}
         onCollapseChange={onCollapseChange}
-        className={cn(isActive ? "ring-1 ring-neutral-400 dark:ring-neutral-600" : "")}
+        className="border border-neutral-200 dark:border-neutral-700"
       />
     </div>
   );
@@ -1931,7 +1929,7 @@ export function GitDiffHeatmapReviewViewer({
           </div>
         </div>
 
-        <div className="flex-1 min-w-0 space-y-3">
+        <div className="flex-1 min-w-0 space-y-3 pr-3">
           {fileEntries.map((fileEntry) => {
             const status = mapStatusToHeatmapStatus(fileEntry.entry.entry.status);
             const isFocusedFile =
