@@ -397,6 +397,9 @@ function SettingsComponent() {
     try {
       let savedCount = 0;
       let deletedCount = 0;
+      const crownModelValue = crownModel.trim();
+      const crownSystemPromptValue =
+        crownSystemPrompt.trim().length > 0 ? crownSystemPrompt : "";
 
       // Save worktree path / auto PR / crown / heatmap settings if changed
       const workspaceSettingsChanged =
@@ -414,8 +417,8 @@ function SettingsComponent() {
           teamSlugOrId,
           worktreePath: worktreePath || undefined,
           autoPrEnabled,
-          crownModel: crownModel || undefined,
-          crownSystemPrompt: crownSystemPrompt || undefined,
+          crownModel: crownModelValue,
+          crownSystemPrompt: crownSystemPromptValue,
           heatmapModel,
           heatmapThreshold,
           heatmapTooltipLanguage,
@@ -423,8 +426,10 @@ function SettingsComponent() {
         });
         setOriginalWorktreePath(worktreePath);
         setOriginalAutoPrEnabled(autoPrEnabled);
-        setOriginalCrownModel(crownModel);
-        setOriginalCrownSystemPrompt(crownSystemPrompt);
+        setCrownModel(crownModelValue);
+        setOriginalCrownModel(crownModelValue);
+        setCrownSystemPrompt(crownSystemPromptValue);
+        setOriginalCrownSystemPrompt(crownSystemPromptValue);
         setOriginalHeatmapModel(heatmapModel);
         setOriginalHeatmapThreshold(heatmapThreshold);
         setOriginalHeatmapTooltipLanguage(heatmapTooltipLanguage);
@@ -816,7 +821,7 @@ function SettingsComponent() {
                     onChange={(e) => setCrownModel(e.target.value)}
                     className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100"
                   >
-                    <option value="">Default (gpt-5-mini or claude-3-5-sonnet)</option>
+                    <option value="">Default (gpt-5-mini or claude-3-5-sonnet-20241022)</option>
                     <optgroup label="OpenAI">
                       <option value="gpt-5-mini">GPT-5 Mini</option>
                       <option value="gpt-5">GPT-5</option>

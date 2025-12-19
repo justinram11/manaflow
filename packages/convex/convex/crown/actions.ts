@@ -49,9 +49,11 @@ function resolveCrownModel(customModel?: string): {
   provider: "openai" | "anthropic";
   model: LanguageModel;
 } {
+  const requestedModel = customModel?.trim();
+
   // If custom model is specified, try to use it
-  if (customModel && MODEL_MAPPING[customModel]) {
-    const mapping = MODEL_MAPPING[customModel];
+  if (requestedModel && MODEL_MAPPING[requestedModel]) {
+    const mapping = MODEL_MAPPING[requestedModel];
     if (mapping.provider === "openai") {
       const openaiKey = env.OPENAI_API_KEY;
       if (openaiKey) {
@@ -70,7 +72,11 @@ function resolveCrownModel(customModel?: string): {
     }
     // If the required API key is not available, fall through to default behavior
     console.warn(
-      `[convex.crown] Custom model ${customModel} requested but API key not available, falling back to default`
+      `[convex.crown] Custom model ${requestedModel} requested but API key not available, falling back to default`
+    );
+  } else if (requestedModel) {
+    console.warn(
+      `[convex.crown] Custom model ${requestedModel} is not supported, falling back to default`
     );
   }
 
@@ -109,7 +115,9 @@ export async function performCrownEvaluation(
   settings?: CrownSettings
 ): Promise<CrownEvaluationResponse> {
   const { model, provider } = resolveCrownModel(settings?.crownModel);
-  const systemPrompt = settings?.crownSystemPrompt || DEFAULT_SYSTEM_PROMPT;
+  const systemPrompt = settings?.crownSystemPrompt?.trim()
+    ? settings.crownSystemPrompt
+    : DEFAULT_SYSTEM_PROMPT;
 
   const normalizedCandidates = candidates.map((candidate, idx) => {
     const resolvedIndex = candidate.index ?? idx;
