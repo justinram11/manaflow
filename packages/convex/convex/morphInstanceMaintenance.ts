@@ -20,6 +20,12 @@ const BATCH_SIZE = 5;
 export const pauseOldMorphInstances = internalAction({
   args: {},
   handler: async () => {
+    // Only run in production to avoid dev crons affecting prod instances
+    if (!env.CONVEX_IS_PRODUCTION) {
+      console.log("[morphInstanceMaintenance] Skipping: not in production");
+      return;
+    }
+
     const morphApiKey = env.MORPH_API_KEY;
     if (!morphApiKey) {
       console.error("[morphInstanceMaintenance] MORPH_API_KEY not configured");
