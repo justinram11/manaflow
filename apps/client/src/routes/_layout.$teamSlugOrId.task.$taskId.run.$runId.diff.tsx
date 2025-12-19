@@ -1,44 +1,74 @@
 import { FloatingPane } from "@/components/floating-pane";
-import { type GitDiffViewerProps } from "@/components/git-diff-viewer";
-import { RunDiffSection } from "@/components/RunDiffSection";
+import { RunDiffHeatmapReviewSection } from "@/components/RunDiffHeatmapReviewSection";
+import type { DiffViewerControls } from "@/components/heatmap-diff-viewer";
 import { RunScreenshotGallery } from "@/components/RunScreenshotGallery";
 import { TaskDetailHeader } from "@/components/task-detail-header";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { api } from "@cmux/convex/api";
-import type { Doc } from "@cmux/convex/dataModel";
-import type { CreateLocalWorkspaceResponse } from "@cmux/shared";
+import type { CreateLocalWorkspaceResponse, ReplaceDiffEntry } from "@cmux/shared";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
-import { useQuery as useRQ } from "@tanstack/react-query";
+import { useQuery as useRQ, useMutation as useRQMutation } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import {
   Suspense,
   useCallback,
+  useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { toast } from "sonner";
 import z from "zod";
+import {
+  DEFAULT_HEATMAP_MODEL,
+  DEFAULT_TOOLTIP_LANGUAGE,
+  normalizeHeatmapColors,
+  normalizeHeatmapModel,
+  normalizeTooltipLanguage,
+  type HeatmapModelOptionValue,
+  type TooltipLanguageValue,
+} from "@/lib/heatmap-settings";
+import type { HeatmapColorSettings } from "@/components/heatmap-diff-viewer/heatmap-gradient";
 import { useCombinedWorkflowData, WorkflowRunsSection } from "@/components/WorkflowRunsSection";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { postApiCodeReviewStartMutation } from "@cmux/www-openapi-client/react-query";
+
+/** Convert ReplaceDiffEntry[] to the format expected by heatmap API */
+function convertDiffsToFileDiffs(
+  diffs: ReplaceDiffEntry[]
+): Array<{ filePath: string; diffText: string }> {
+  return diffs
+    .filter((entry) => entry.patch && !entry.isBinary)
+    .map((entry) => ({
+      filePath: entry.filePath,
+      diffText: entry.patch!,
+    }));
+}
 
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
   runId: typedZid("taskRuns"),
 });
 
-const gitDiffViewerClassNames: GitDiffViewerProps["classNames"] = {
-  fileDiffRow: {
-    button: "top-[96px] md:top-[56px]",
-  },
-};
+const workspaceSettingsSchema = z
+  .object({
+    heatmapThreshold: z.number().optional(),
+    heatmapModel: z.string().optional(),
+    heatmapTooltipLanguage: z.string().optional(),
+    heatmapColors: z
+      .object({
+        line: z.object({ start: z.string(), end: z.string() }),
+        token: z.object({ start: z.string(), end: z.string() }),
+      })
+      .optional(),
+  })
+  .nullish();
 
-type DiffControls = Parameters<
-  NonNullable<GitDiffViewerProps["onControlsChange"]>
->[0];
+type DiffControls = DiffViewerControls;
 
 function WorkflowRunsWrapper({
   teamSlugOrId,
@@ -123,7 +153,7 @@ export const Route = createFileRoute(
           return;
         }
 
-        const { task, taskRuns, branchMetadataByRepo } = context;
+        const { task, taskRuns } = context;
 
         if (task) {
           opts.context.queryClient.setQueryData(
@@ -172,27 +202,17 @@ export const Route = createFileRoute(
           return;
         }
 
-        const metadataForPrimaryRepo = trimmedProjectFullName
-          ? branchMetadataByRepo?.[trimmedProjectFullName]
-          : undefined;
-        const baseBranchMeta = metadataForPrimaryRepo?.find(
-          (branch) => branch.name === task.baseBranch,
-        );
-
+        // NOTE: We intentionally do NOT pass lastKnownBaseSha or lastKnownMergeCommitSha for task run diffs.
+        // These merge hints are designed for finding already-merged PRs, not for comparing open feature branches.
+        // Passing stale hints from the base branch (e.g., main) can cause the diff to use the wrong comparison
+        // base, resulting in extra unrelated files appearing in the diff.
         const prefetches = Array.from(targetRepos).map(async (repoFullName) => {
-          const metadata =
-            trimmedProjectFullName && repoFullName === trimmedProjectFullName
-              ? baseBranchMeta
-              : undefined;
-
           return opts.context.queryClient
             .ensureQueryData(
               gitDiffQueryOptions({
                 baseRef: baseRefForDiff,
                 headRef: headRefForDiff,
                 repoFullName,
-                lastKnownBaseSha: metadata?.lastKnownBaseSha,
-                lastKnownMergeCommitSha: metadata?.lastKnownMergeCommitSha,
               }),
             )
             .catch(() => undefined);
@@ -221,6 +241,126 @@ function RunDiffPage() {
   const selectedRun = useMemo(() => {
     return taskRuns?.find((run) => run._id === runId);
   }, [runId, taskRuns]);
+
+  // Heatmap review state - automatically fetched via streaming Convex subscription
+  const [comparisonSlug, setComparisonSlug] = useState<string | null>(null);
+
+  // Query workspace settings for heatmap configuration
+  const workspaceSettingsQuery = useRQ({
+    ...convexQuery(api.workspaceSettings.get, { teamSlugOrId }),
+    enabled: Boolean(teamSlugOrId),
+  });
+  const workspaceSettings = useMemo(() => {
+    const parsed = workspaceSettingsSchema.safeParse(workspaceSettingsQuery.data);
+    return parsed.success ? parsed.data ?? null : null;
+  }, [workspaceSettingsQuery.data]);
+  const updateWorkspaceSettings = useMutation(api.workspaceSettings.update);
+  const [heatmapThreshold, setHeatmapThreshold] = useState<number>(0);
+  const [heatmapColors, setHeatmapColors] = useState<HeatmapColorSettings>(
+    normalizeHeatmapColors(undefined)
+  );
+  const [heatmapModel, setHeatmapModel] = useState<HeatmapModelOptionValue>(
+    DEFAULT_HEATMAP_MODEL
+  );
+  const [heatmapTooltipLanguage, setHeatmapTooltipLanguage] =
+    useState<TooltipLanguageValue>(DEFAULT_TOOLTIP_LANGUAGE);
+
+  useEffect(() => {
+    if (!workspaceSettings) {
+      return;
+    }
+    setHeatmapThreshold(workspaceSettings.heatmapThreshold ?? 0);
+    setHeatmapColors(normalizeHeatmapColors(workspaceSettings.heatmapColors));
+    setHeatmapModel(normalizeHeatmapModel(workspaceSettings.heatmapModel ?? null));
+    setHeatmapTooltipLanguage(
+      normalizeTooltipLanguage(workspaceSettings.heatmapTooltipLanguage ?? null)
+    );
+  }, [workspaceSettings]);
+
+  const handleHeatmapThresholdChange = useCallback(
+    (next: number) => {
+      if (next === heatmapThreshold) {
+        return;
+      }
+      setHeatmapThreshold(next);
+      void updateWorkspaceSettings({
+        teamSlugOrId,
+        heatmapThreshold: next,
+      }).catch((error) => {
+        console.error("Failed to update heatmap threshold:", error);
+      });
+    },
+    [heatmapThreshold, teamSlugOrId, updateWorkspaceSettings]
+  );
+
+  const handleHeatmapColorsChange = useCallback(
+    (next: HeatmapColorSettings) => {
+      setHeatmapColors(next);
+      void updateWorkspaceSettings({
+        teamSlugOrId,
+        heatmapColors: next,
+      }).catch((error) => {
+        console.error("Failed to update heatmap colors:", error);
+      });
+    },
+    [teamSlugOrId, updateWorkspaceSettings]
+  );
+
+  const handleHeatmapModelChange = useCallback(
+    (next: HeatmapModelOptionValue) => {
+      if (next === heatmapModel) {
+        return;
+      }
+      setHeatmapModel(next);
+      void updateWorkspaceSettings({
+        teamSlugOrId,
+        heatmapModel: next,
+      }).catch((error) => {
+        console.error("Failed to update heatmap model:", error);
+      });
+    },
+    [heatmapModel, teamSlugOrId, updateWorkspaceSettings]
+  );
+
+  const handleHeatmapTooltipLanguageChange = useCallback(
+    (next: TooltipLanguageValue) => {
+      if (next === heatmapTooltipLanguage) {
+        return;
+      }
+      setHeatmapTooltipLanguage(next);
+      void updateWorkspaceSettings({
+        teamSlugOrId,
+        heatmapTooltipLanguage: next,
+      }).catch((error) => {
+        console.error("Failed to update heatmap tooltip language:", error);
+      });
+    },
+    [heatmapTooltipLanguage, teamSlugOrId, updateWorkspaceSettings]
+  );
+
+  // Code review mutation to start the heatmap job
+  const codeReviewMutation = useRQMutation({
+    ...postApiCodeReviewStartMutation(),
+    onSuccess: (data) => {
+      console.log("[heatmap] Mutation success", {
+        jobId: data.job?.jobId,
+        state: data.job?.state,
+        comparisonSlug: data.job?.comparisonSlug,
+      });
+
+      // Store comparison slug for subscription (if not already set)
+      if (data.job?.comparisonSlug) {
+        setComparisonSlug(data.job.comparisonSlug);
+      }
+    },
+    onError: (error) => {
+      console.error("[heatmap] Mutation failed:", error);
+    },
+  });
+
+  // Use ref to avoid mutation object in dependency arrays (prevents infinite loops)
+  const codeReviewMutationRef = useRef(codeReviewMutation);
+  codeReviewMutationRef.current = codeReviewMutation;
 
   const runDiffContextQuery = useRQ({
     ...convexQuery(api.taskRuns.getRunDiffContext, {
@@ -262,6 +402,7 @@ function RunDiffPage() {
     }
     setChecksExpandedByRepo(newState);
   }, [pullRequests]);
+
   const environmentRepos = useMemo(() => {
     const repos = selectedRun?.environment?.selectedRepos ?? [];
     const trimmed = repos
@@ -279,39 +420,54 @@ function RunDiffPage() {
 
   const [primaryRepo, ...additionalRepos] = repoFullNames;
 
-  const branchMetadataQuery = useRQ({
-    ...convexQuery(api.github.getBranchesByRepo, {
-      teamSlugOrId,
-      repo: primaryRepo ?? "",
+  // NOTE: We intentionally do NOT pass lastKnownBaseSha or lastKnownMergeCommitSha for task run diffs.
+  // These merge hints are designed for finding already-merged PRs, not for comparing open feature branches.
+  // Passing stale hints from the base branch (e.g., main) can cause the diff to use the wrong comparison
+  // base, resulting in extra unrelated files appearing in the diff.
+
+  // Fetch diffs for heatmap review (this reuses the cached data from RunDiffSection)
+  const baseRefForHeatmap = normalizeGitRef(task?.baseBranch || "main");
+  const headRefForHeatmap = normalizeGitRef(selectedRun?.newBranch);
+  const diffQueryEnabled = Boolean(primaryRepo) && Boolean(baseRefForHeatmap) && Boolean(headRefForHeatmap);
+  const diffQuery = useRQ({
+    ...gitDiffQueryOptions({
+      repoFullName: primaryRepo ?? "",
+      baseRef: baseRefForHeatmap,
+      headRef: headRefForHeatmap ?? "",
+      // Do not pass merge hints - let the native diff code compute the correct merge-base
     }),
-    enabled: Boolean(primaryRepo),
+    enabled: diffQueryEnabled,
   });
 
-  const branchMetadata = branchMetadataQuery.data as
-    | Doc<"branches">[]
-    | undefined;
+  // Convert diffs to the format expected by the heatmap API
+  const fileDiffsForHeatmap = useMemo(() => {
+    if (!diffQuery.data) return undefined;
+    return convertDiffsToFileDiffs(diffQuery.data);
+  }, [diffQuery.data]);
 
-  const baseBranchMetadata = useMemo(() => {
-    if (!task?.baseBranch) {
-      return undefined;
-    }
-    return branchMetadata?.find((branch) => branch.name === task.baseBranch);
-  }, [branchMetadata, task?.baseBranch]);
-
-  const metadataByRepo = useMemo(() => {
-    if (!primaryRepo) return undefined;
-    if (!baseBranchMetadata) return undefined;
-    const { lastKnownBaseSha, lastKnownMergeCommitSha } = baseBranchMetadata;
-    if (!lastKnownBaseSha && !lastKnownMergeCommitSha) {
-      return undefined;
-    }
-    return {
-      [primaryRepo]: {
-        lastKnownBaseSha: lastKnownBaseSha ?? undefined,
-        lastKnownMergeCommitSha: lastKnownMergeCommitSha ?? undefined,
-      },
-    };
-  }, [primaryRepo, baseBranchMetadata]);
+  // Subscribe to streaming file outputs from Convex
+  // IMPORTANT: Use useMemo for query args to prevent new object reference on every render
+  // (which would cause Convex to re-subscribe and trigger infinite loops)
+  const fileOutputsQueryArgs = useMemo(
+    () => {
+      if (!comparisonSlug || !primaryRepo) {
+        return "skip" as const;
+      }
+      return {
+        teamSlugOrId,
+        repoFullName: primaryRepo,
+        comparisonSlug,
+        ...(heatmapTooltipLanguage
+          ? { tooltipLanguage: heatmapTooltipLanguage }
+          : {}),
+      };
+    },
+    [teamSlugOrId, primaryRepo, comparisonSlug, heatmapTooltipLanguage]
+  );
+  const fileOutputs = useQuery(
+    api.codeReview.listFileOutputsForComparison,
+    fileOutputsQueryArgs
+  );
 
   const taskRunId = selectedRun?._id ?? runId;
 
@@ -369,6 +525,135 @@ function RunDiffPage() {
       }
     );
   }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, navigate, taskId]);
+
+  // Handler to trigger heatmap review
+  const triggerHeatmapReview = useCallback((
+    force = false,
+    diffs?: Array<{ filePath: string; diffText: string }>,
+    model?: string,
+    language?: string
+  ) => {
+    if (!primaryRepo || !selectedRun?.newBranch) {
+      console.warn("[heatmap] Cannot trigger: missing primaryRepo or newBranch", {
+        primaryRepo,
+        newBranch: selectedRun?.newBranch,
+      });
+      return;
+    }
+
+    // Get the repo owner for comparison context
+    const [repoOwner, repoName] = primaryRepo.split("/");
+    if (!repoOwner || !repoName) {
+      console.warn("[heatmap] Cannot trigger: invalid repo format", { primaryRepo });
+      return;
+    }
+
+    // Use task.baseBranch or default to "main"
+    const baseBranch = task?.baseBranch || "main";
+    const githubLink = `https://github.com/${primaryRepo}`;
+    const comparisonSlugValue = `${baseBranch}...${selectedRun.newBranch}`;
+
+    console.log("[heatmap] Triggering heatmap review", {
+      primaryRepo,
+      baseBranch,
+      headBranch: selectedRun.newBranch,
+      comparisonSlug: comparisonSlugValue,
+      force,
+      fileDiffsCount: diffs?.length ?? 0,
+      heatmapModel: model,
+      tooltipLanguage: language,
+    });
+
+    // Set comparisonSlug immediately to start subscription
+    setComparisonSlug(comparisonSlugValue);
+
+    codeReviewMutationRef.current.mutate({
+      body: {
+        teamSlugOrId,
+        githubLink,
+        headCommitRef: selectedRun.newBranch,
+        baseCommitRef: baseBranch,
+        force,
+        comparison: {
+          slug: comparisonSlugValue,
+          base: {
+            owner: repoOwner,
+            repo: repoName,
+            ref: baseBranch,
+            label: `${repoOwner}:${baseBranch}`,
+          },
+          head: {
+            owner: repoOwner,
+            repo: repoName,
+            ref: selectedRun.newBranch,
+            label: `${repoOwner}:${selectedRun.newBranch}`,
+          },
+        },
+        // Pass pre-fetched diffs to avoid re-fetching from GitHub API
+        fileDiffs: diffs,
+        // Pass heatmap settings from workspace settings
+        heatmapModel: model,
+        tooltipLanguage: language,
+      },
+    });
+  }, [primaryRepo, selectedRun?.newBranch, task?.baseBranch, teamSlugOrId]);
+
+  // Track if we've already auto-triggered the heatmap review
+  const hasAutoTriggeredRef = useRef(false);
+  // Track the last triggered comparison/settings to detect changes and re-trigger
+  const lastTriggeredComparisonRef = useRef<string | null>(null);
+  const lastTriggeredSettingsRef = useRef<string | null>(null);
+
+  // Auto-trigger heatmap review when all required data is available (including diffs and settings)
+  // Also re-triggers when the comparison or heatmap settings change
+  // The backend handles caching - if results already exist, it returns them immediately
+  useEffect(() => {
+    // Wait for all required data to be ready (including diffs)
+    if (!primaryRepo || !selectedRun?.newBranch) {
+      return;
+    }
+    // Wait for diff query to complete (or fail) before triggering
+    // This ensures we can pass the pre-fetched diffs to the backend
+    if (diffQuery.isLoading) {
+      return;
+    }
+    // Wait for workspace settings to load (to get model and language preferences)
+    if (workspaceSettingsQuery.isLoading) {
+      return;
+    }
+
+    // Build a key that represents the current state (branch + base)
+    const baseBranch = task?.baseBranch || "main";
+    const comparisonKey = `${primaryRepo}:${baseBranch}...${selectedRun.newBranch}`;
+    const settingsKey = `${heatmapModel ?? "default"}|${heatmapTooltipLanguage ?? "default"}`;
+
+    // Check if we need to re-trigger (first time, comparison change, or settings change)
+    const shouldTrigger =
+      !hasAutoTriggeredRef.current ||
+      lastTriggeredComparisonRef.current !== comparisonKey ||
+      lastTriggeredSettingsRef.current !== settingsKey;
+    if (!shouldTrigger) {
+      return;
+    }
+
+    const shouldForce =
+      hasAutoTriggeredRef.current &&
+      lastTriggeredComparisonRef.current === comparisonKey &&
+      lastTriggeredSettingsRef.current !== settingsKey;
+
+    // Mark as triggered and store the current key
+    hasAutoTriggeredRef.current = true;
+    lastTriggeredComparisonRef.current = comparisonKey;
+    lastTriggeredSettingsRef.current = settingsKey;
+
+    // Compute the comparison slug to start the subscription immediately
+    const comparisonSlugValue = `${baseBranch}...${selectedRun.newBranch}`;
+    setComparisonSlug(comparisonSlugValue);
+
+    // Trigger the review with pre-fetched diffs and settings (backend will return cached results if available)
+    // Force re-run if the branch changed (lastTriggeredBranchRef was different)
+    triggerHeatmapReview(shouldForce, fileDiffsForHeatmap, heatmapModel, heatmapTooltipLanguage);
+  }, [primaryRepo, selectedRun?.newBranch, task?.baseBranch, triggerHeatmapReview, diffQuery.isLoading, fileDiffsForHeatmap, workspaceSettingsQuery.isLoading, heatmapModel, heatmapTooltipLanguage]);
 
   // 404 if selected run is missing
   if (!selectedRun) {
@@ -440,7 +725,10 @@ function RunDiffPage() {
                 highlightedSetId={selectedRun?.latestScreenshotSetId ?? null}
               />
             )}
-            <div className="flex-1 min-h-0">
+            <div
+              className="flex-1 min-h-0"
+              style={{ "--cmux-diff-header-offset": "56px" } as React.CSSProperties}
+            >
               <Suspense
                 fallback={
                   <div className="flex h-full items-center justify-center">
@@ -451,15 +739,22 @@ function RunDiffPage() {
                 }
               >
                 {hasDiffSources ? (
-                  <RunDiffSection
+                  <RunDiffHeatmapReviewSection
                     repoFullName={primaryRepo as string}
                     additionalRepoFullNames={additionalRepos}
                     withRepoPrefix={shouldPrefixDiffs}
                     ref1={baseRef}
                     ref2={headRef}
                     onControlsChange={setDiffControls}
-                    classNames={gitDiffViewerClassNames}
-                    metadataByRepo={metadataByRepo}
+                    fileOutputs={fileOutputs}
+                    heatmapThreshold={heatmapThreshold}
+                    heatmapColors={heatmapColors}
+                    heatmapModel={heatmapModel}
+                    heatmapTooltipLanguage={heatmapTooltipLanguage}
+                    onHeatmapThresholdChange={handleHeatmapThresholdChange}
+                    onHeatmapColorsChange={handleHeatmapColorsChange}
+                    onHeatmapModelChange={handleHeatmapModelChange}
+                    onHeatmapTooltipLanguageChange={handleHeatmapTooltipLanguageChange}
                   />
                 ) : (
                   <div className="flex h-full items-center justify-center p-6 text-sm text-neutral-600 dark:text-neutral-300">

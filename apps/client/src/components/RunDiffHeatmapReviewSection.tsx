@@ -1,17 +1,20 @@
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { useQueries } from "@tanstack/react-query";
-import { useMemo, useRef, type ComponentProps } from "react";
-import { GitDiffViewer, GitDiffViewerWithHeatmap } from "./git-diff-viewer";
-import type { HeatmapColorSettings } from "@/components/heatmap-diff-viewer";
+import { useMemo, useRef } from "react";
 import type { ReplaceDiffEntry } from "@cmux/shared/diff-types";
-import type { ReviewHeatmapLine } from "@/lib/heatmap";
+import { GitDiffHeatmapReviewViewer } from "@/components/heatmap-diff-viewer";
+import type { HeatmapColorSettings } from "@/components/heatmap-diff-viewer/heatmap-gradient";
+import type {
+  HeatmapModelOptionValue,
+  TooltipLanguageValue,
+} from "@/lib/heatmap-settings";
+import type { DiffViewerControls } from "@/components/heatmap-diff-viewer";
 
-export interface RunDiffSectionProps {
+export interface RunDiffHeatmapReviewSectionProps {
   repoFullName: string;
   ref1: string;
   ref2: string;
-  classNames?: ComponentProps<typeof GitDiffViewer>["classNames"];
-  onControlsChange?: ComponentProps<typeof GitDiffViewer>["onControlsChange"];
+  onControlsChange?: (controls: DiffViewerControls) => void;
   additionalRepoFullNames?: string[];
   withRepoPrefix?: boolean;
   metadataByRepo?: Record<
@@ -21,14 +24,18 @@ export interface RunDiffSectionProps {
       lastKnownMergeCommitSha?: string;
     }
   >;
-  /** Use the heatmap-enabled diff viewer (GitHub style) */
-  useHeatmapViewer?: boolean;
-  /** Heatmap data keyed by file path */
-  heatmapByFile?: Map<string, ReviewHeatmapLine[]>;
-  /** Heatmap threshold for filtering entries (0-1) */
-  heatmapThreshold?: number;
-  /** Custom heatmap colors */
-  heatmapColors?: HeatmapColorSettings;
+  heatmapThreshold: number;
+  heatmapColors: HeatmapColorSettings;
+  heatmapModel?: string | null;
+  heatmapTooltipLanguage?: string | null;
+  fileOutputs?: Array<{
+    filePath: string;
+    codexReviewOutput: unknown;
+  }>;
+  onHeatmapThresholdChange?: (next: number) => void;
+  onHeatmapColorsChange?: (next: HeatmapColorSettings) => void;
+  onHeatmapModelChange?: (next: HeatmapModelOptionValue) => void;
+  onHeatmapTooltipLanguageChange?: (next: TooltipLanguageValue) => void;
 }
 
 function applyRepoPrefix(
@@ -48,20 +55,26 @@ function applyRepoPrefix(
   };
 }
 
-export function RunDiffSection(props: RunDiffSectionProps) {
+export function RunDiffHeatmapReviewSection(
+  props: RunDiffHeatmapReviewSectionProps,
+) {
   const {
     repoFullName,
     ref1,
     ref2,
-    classNames,
     onControlsChange,
     additionalRepoFullNames,
     withRepoPrefix,
     metadataByRepo,
-    useHeatmapViewer = true, // Default to heatmap viewer
-    heatmapByFile,
     heatmapThreshold,
     heatmapColors,
+    heatmapModel,
+    heatmapTooltipLanguage,
+    fileOutputs,
+    onHeatmapThresholdChange,
+    onHeatmapColorsChange,
+    onHeatmapModelChange,
+    onHeatmapTooltipLanguageChange,
   } = props;
 
   const repoFullNames = useMemo(() => {
@@ -92,8 +105,6 @@ export function RunDiffSection(props: RunDiffSectionProps) {
     })),
   });
 
-  // IMPORTANT: Refs must be declared before any early returns (React hooks rule)
-  // These refs maintain stable combinedDiffs reference to prevent infinite loops
   const combinedDiffsRef = useRef<ReplaceDiffEntry[]>([]);
   const prevDepsRef = useRef<{
     queryData: Array<ReplaceDiffEntry[] | undefined>;
@@ -139,7 +150,6 @@ export function RunDiffSection(props: RunDiffSectionProps) {
 
   const shouldPrefix = withRepoPrefix ?? repoFullNames.length > 1;
 
-  // Check if any dependencies have actually changed
   const currentQueryData = queries.map((q) => q.data);
   const depsChanged =
     currentQueryData.length !== prevDepsRef.current.queryData.length ||
@@ -173,26 +183,21 @@ export function RunDiffSection(props: RunDiffSectionProps) {
     );
   }
 
-  if (useHeatmapViewer) {
-    return (
-      <GitDiffViewerWithHeatmap
-        key={`heatmap:${repoFullNames.join("|")}:${ref1}:${ref2}`}
-        diffs={combinedDiffs}
-        heatmapByFile={heatmapByFile}
-        heatmapThreshold={heatmapThreshold}
-        heatmapColors={heatmapColors}
-        onControlsChange={onControlsChange}
-        classNames={classNames}
-      />
-    );
-  }
-
   return (
-    <GitDiffViewer
-      key={`${repoFullNames.join("|")}:${ref1}:${ref2}`}
+    <GitDiffHeatmapReviewViewer
       diffs={combinedDiffs}
+      fileOutputs={fileOutputs}
+      primaryRepoFullName={repoFullName}
+      shouldPrefixDiffs={shouldPrefix}
+      heatmapThreshold={heatmapThreshold}
+      heatmapColors={heatmapColors}
+      heatmapModel={heatmapModel}
+      heatmapTooltipLanguage={heatmapTooltipLanguage}
+      onHeatmapThresholdChange={onHeatmapThresholdChange}
+      onHeatmapColorsChange={onHeatmapColorsChange}
+      onHeatmapModelChange={onHeatmapModelChange}
+      onHeatmapTooltipLanguageChange={onHeatmapTooltipLanguageChange}
       onControlsChange={onControlsChange}
-      classNames={classNames}
     />
   );
 }
