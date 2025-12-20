@@ -157,6 +157,16 @@ function SettingsComponent() {
 
   // Global mapping of envVar -> models (from shared)
   const apiKeyModelsByEnv = API_KEY_MODELS_BY_ENV;
+  const hasAnthropicKey =
+    (apiKeyValues["CLAUDE_CODE_OAUTH_TOKEN"] ?? "").trim().length > 0 ||
+    (apiKeyValues["ANTHROPIC_API_KEY"] ?? "").trim().length > 0;
+  const hasOpenAiKey =
+    (apiKeyValues["OPENAI_API_KEY"] ?? "").trim().length > 0;
+  const defaultCrownModelLabel = hasAnthropicKey
+    ? "Default (Claude 3.5 Sonnet)"
+    : hasOpenAiKey
+      ? "Default (GPT-5 Mini)"
+      : "Default (Claude 3.5 Sonnet)";
 
   // Query existing API keys
   const { data: existingKeys } = useQuery(
@@ -813,7 +823,7 @@ function SettingsComponent() {
                   </label>
                   <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
                     Select which model to use for evaluating and comparing agent outputs.
-                    Leave empty to use the default.
+                    Leave empty to use the default model.
                   </p>
                   <select
                     id="crownModel"
@@ -821,7 +831,7 @@ function SettingsComponent() {
                     onChange={(e) => setCrownModel(e.target.value)}
                     className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100"
                   >
-                    <option value="">Default (gpt-5-mini or claude-3-5-sonnet-20241022)</option>
+                    <option value="">{defaultCrownModelLabel}</option>
                     <optgroup label="OpenAI">
                       <option value="gpt-5-mini">GPT-5 Mini</option>
                       <option value="gpt-5">GPT-5</option>

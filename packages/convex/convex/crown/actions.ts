@@ -80,16 +80,7 @@ function resolveCrownModel(customModel?: string): {
     );
   }
 
-  // Default behavior: prefer OpenAI, fallback to Anthropic
-  const openaiKey = env.OPENAI_API_KEY;
-  if (openaiKey) {
-    const openai = createOpenAI({
-      apiKey: openaiKey,
-      baseURL: CLOUDFLARE_OPENAI_BASE_URL,
-    });
-    return { provider: "openai", model: openai(DEFAULT_OPENAI_CROWN_MODEL) };
-  }
-
+  // Default behavior: prefer Anthropic, fallback to OpenAI
   const anthropicKey = env.ANTHROPIC_API_KEY;
   if (anthropicKey) {
     const anthropic = createAnthropic({ apiKey: anthropicKey });
@@ -97,6 +88,15 @@ function resolveCrownModel(customModel?: string): {
       provider: "anthropic",
       model: anthropic(DEFAULT_ANTHROPIC_CROWN_MODEL),
     };
+  }
+
+  const openaiKey = env.OPENAI_API_KEY;
+  if (openaiKey) {
+    const openai = createOpenAI({
+      apiKey: openaiKey,
+      baseURL: CLOUDFLARE_OPENAI_BASE_URL,
+    });
+    return { provider: "openai", model: openai(DEFAULT_OPENAI_CROWN_MODEL) };
   }
 
   throw new ConvexError(
