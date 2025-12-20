@@ -240,7 +240,7 @@ export function WorkspaceCreationButtons({
             {isCreatingCloud ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
             ) : (
-              <Cloud className="w-3.5 h-3.5" />
+              <Cloud className="w-4 h-4" />
             )}
             <span>Create Cloud Workspace</span>
           </button>

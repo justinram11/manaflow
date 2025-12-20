@@ -1600,7 +1600,7 @@ export function CommandBar({
         execute: () => handleSelect("cloud-workspaces"),
         renderContent: () => (
           <>
-            <Cloud className="h-4 w-4 text-neutral-500" />
+            <Cloud className="h-[18px] w-[18px] text-neutral-500" />
             <span className="text-sm">New Cloud Workspace</span>
           </>
         ),

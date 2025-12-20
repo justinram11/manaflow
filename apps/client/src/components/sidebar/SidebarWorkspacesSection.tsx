@@ -76,7 +76,7 @@ export function SidebarWorkspacesSection({
                 onClick={handleCloudWorkspace}
                 className="flex items-center gap-2"
               >
-                <Cloud className="w-3.5 h-3.5 text-neutral-500 dark:text-neutral-400" />
+                <Cloud className="w-4 h-4 text-neutral-500 dark:text-neutral-400" />
                 <span>Cloud Workspace</span>
               </Dropdown.Item>
             </Dropdown.Popup>
