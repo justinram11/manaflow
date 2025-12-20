@@ -4,6 +4,7 @@ import { FloatingPane } from "@/components/floating-pane";
 import { ProviderStatusSettings } from "@/components/provider-status-settings";
 import { useTheme } from "@/components/theme/use-theme";
 import { TitleBar } from "@/components/TitleBar";
+import { ChevronDown } from "lucide-react";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
 import { AGENT_CONFIGS, type AgentConfig } from "@cmux/shared/agentConfig";
@@ -836,18 +837,24 @@ function SettingsComponent() {
                   <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
                     Select the AI model used to analyze diffs and highlight areas that need attention.
                   </p>
-                  <select
-                    id="heatmapModel"
-                    value={heatmapModel}
-                    onChange={(e) => setHeatmapModel(e.target.value)}
-                    className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-sm"
-                  >
-                    {HEATMAP_MODEL_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="relative">
+                    <select
+                      id="heatmapModel"
+                      value={heatmapModel}
+                      onChange={(e) => setHeatmapModel(e.target.value)}
+                      className="w-full appearance-none px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-sm"
+                    >
+                      {HEATMAP_MODEL_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown
+                      className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500 dark:text-neutral-400"
+                      aria-hidden
+                    />
+                  </div>
                 </div>
 
                 {/* Tooltip Language Selector */}
@@ -861,18 +868,24 @@ function SettingsComponent() {
                   <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
                     Language for the review comments shown in heatmap tooltips.
                   </p>
-                  <select
-                    id="heatmapTooltipLanguage"
-                    value={heatmapTooltipLanguage}
-                    onChange={(e) => setHeatmapTooltipLanguage(e.target.value)}
-                    className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-sm"
-                  >
-                    {TOOLTIP_LANGUAGE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="relative">
+                    <select
+                      id="heatmapTooltipLanguage"
+                      value={heatmapTooltipLanguage}
+                      onChange={(e) => setHeatmapTooltipLanguage(e.target.value)}
+                      className="w-full appearance-none px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-sm"
+                    >
+                      {TOOLTIP_LANGUAGE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown
+                      className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500 dark:text-neutral-400"
+                      aria-hidden
+                    />
+                  </div>
                 </div>
 
                 {/* Threshold Slider */}

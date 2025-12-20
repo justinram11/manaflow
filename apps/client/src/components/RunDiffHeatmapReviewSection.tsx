@@ -1,17 +1,27 @@
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { useQueries } from "@tanstack/react-query";
-import { useMemo, useRef } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import type { ReplaceDiffEntry } from "@cmux/shared/diff-types";
 import {
   GitDiffHeatmapReviewViewer,
   type StreamFileState,
+  type StreamFileStatus,
 } from "@/components/heatmap-diff-viewer";
 import type { HeatmapColorSettings } from "@/components/heatmap-diff-viewer/heatmap-gradient";
-import type {
-  HeatmapModelOptionValue,
-  TooltipLanguageValue,
+import {
+  DEFAULT_HEATMAP_MODEL,
+  DEFAULT_TOOLTIP_LANGUAGE,
+  normalizeHeatmapModel,
+  normalizeTooltipLanguage,
+  type HeatmapModelOptionValue,
+  type TooltipLanguageValue,
 } from "@/lib/heatmap-settings";
 import type { DiffViewerControls } from "@/components/heatmap-diff-viewer";
+import { cachedGetUser } from "@/lib/cachedGetUser";
+import type { ReviewHeatmapLine } from "@/lib/heatmap";
+import { stackClientApp } from "@/lib/stack";
+import { WWW_ORIGIN } from "@/lib/wwwOrigin";
+import { buildDiffText } from "@/components/heatmap-diff-viewer/git-diff-review-viewer";
 
 export interface RunDiffHeatmapReviewSectionProps {
   repoFullName: string;
@@ -29,13 +39,13 @@ export interface RunDiffHeatmapReviewSectionProps {
   >;
   heatmapThreshold: number;
   heatmapColors: HeatmapColorSettings;
-  heatmapModel?: string | null;
-  heatmapTooltipLanguage?: string | null;
+  heatmapModel: HeatmapModelOptionValue;
+  heatmapTooltipLanguage: TooltipLanguageValue;
+  reviewLabel: string;
   fileOutputs?: Array<{
     filePath: string;
     codexReviewOutput: unknown;
   }>;
-  streamStateByFile?: Map<string, StreamFileState>;
   onHeatmapThresholdChange?: (next: number) => void;
   onHeatmapColorsChange?: (next: HeatmapColorSettings) => void;
   onHeatmapModelChange?: (next: HeatmapModelOptionValue) => void;
@@ -59,6 +69,53 @@ function applyRepoPrefix(
   };
 }
 
+const DIFF_HEADER_PREFIXES = [
+  "diff --git ",
+  "index ",
+  "--- ",
+  "+++ ",
+  "new file mode ",
+  "deleted file mode ",
+  "similarity index ",
+  "rename from ",
+  "rename to ",
+  "old mode ",
+  "new mode ",
+  "copy from ",
+  "copy to ",
+];
+
+function stripDiffHeaders(diffText: string): string {
+  const lines = diffText.split("\n");
+  const filtered = lines.filter(
+    (line) =>
+      !DIFF_HEADER_PREFIXES.some((prefix) => line.startsWith(prefix))
+  );
+  return filtered.join("\n").trimEnd();
+}
+
+function convertDiffsToFileDiffs(
+  diffs: ReplaceDiffEntry[],
+): Array<{ filePath: string; diffText: string }> {
+  return diffs
+    .filter((entry) => !entry.isBinary)
+    .map((entry) => {
+      const diffText = buildDiffText(entry);
+      if (!diffText) {
+        return null;
+      }
+      const stripped = stripDiffHeaders(diffText);
+      if (!stripped) {
+        return null;
+      }
+      return { filePath: entry.filePath, diffText: stripped };
+    })
+    .filter(
+      (entry): entry is { filePath: string; diffText: string } =>
+        entry !== null
+    );
+}
+
 export function RunDiffHeatmapReviewSection(
   props: RunDiffHeatmapReviewSectionProps,
 ) {
@@ -74,13 +131,22 @@ export function RunDiffHeatmapReviewSection(
     heatmapColors,
     heatmapModel,
     heatmapTooltipLanguage,
+    reviewLabel,
     fileOutputs,
-    streamStateByFile,
     onHeatmapThresholdChange,
     onHeatmapColorsChange,
     onHeatmapModelChange,
     onHeatmapTooltipLanguageChange,
   } = props;
+
+  const [streamStateByFile, setStreamStateByFile] = useState<
+    Map<string, StreamFileState>
+  >(() => new Map());
+  const deferredStreamStateByFile = useDeferredValue(streamStateByFile);
+  const streamStateRef = useRef<Map<string, StreamFileState>>(new Map());
+  const streamStateRafRef = useRef<number | null>(null);
+  const activeReviewControllerRef = useRef<AbortController | null>(null);
+  const activeReviewKeyRef = useRef<string | null>(null);
 
   const repoFullNames = useMemo(() => {
     const unique = new Set<string>();
@@ -96,6 +162,50 @@ export function RunDiffHeatmapReviewSection(
 
   const canFetch = repoFullNames.length > 0 && Boolean(ref1) && Boolean(ref2);
 
+  const flushStreamState = useCallback(() => {
+    streamStateRafRef.current = null;
+    setStreamStateByFile(new Map(streamStateRef.current));
+  }, []);
+
+  const scheduleStreamStateUpdate = useCallback(
+    (updater: (draft: Map<string, StreamFileState>) => void) => {
+      updater(streamStateRef.current);
+      if (typeof window === "undefined") {
+        flushStreamState();
+        return;
+      }
+      if (streamStateRafRef.current === null) {
+        streamStateRafRef.current = window.requestAnimationFrame(() => {
+          flushStreamState();
+        });
+      }
+    },
+    [flushStreamState]
+  );
+
+  const resetStreamState = useCallback(() => {
+    if (
+      typeof window !== "undefined" &&
+      streamStateRafRef.current !== null
+    ) {
+      window.cancelAnimationFrame(streamStateRafRef.current);
+      streamStateRafRef.current = null;
+    }
+    streamStateRef.current = new Map();
+    setStreamStateByFile(new Map());
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (
+        typeof window !== "undefined" &&
+        streamStateRafRef.current !== null
+      ) {
+        window.cancelAnimationFrame(streamStateRafRef.current);
+      }
+    };
+  }, []);
+
   const queries = useQueries({
     queries: repoFullNames.map((repo) => ({
       ...gitDiffQueryOptions({
@@ -110,6 +220,18 @@ export function RunDiffHeatmapReviewSection(
     })),
   });
 
+  const effectiveHeatmapModel = useMemo(
+    () => normalizeHeatmapModel(heatmapModel ?? DEFAULT_HEATMAP_MODEL),
+    [heatmapModel]
+  );
+  const effectiveTooltipLanguage = useMemo(
+    () =>
+      normalizeTooltipLanguage(
+        heatmapTooltipLanguage ?? DEFAULT_TOOLTIP_LANGUAGE
+      ),
+    [heatmapTooltipLanguage]
+  );
+
   const combinedDiffsRef = useRef<ReplaceDiffEntry[]>([]);
   const prevDepsRef = useRef<{
     queryData: Array<ReplaceDiffEntry[] | undefined>;
@@ -121,37 +243,6 @@ export function RunDiffHeatmapReviewSection(
     (query) => query.isPending || query.isFetching,
   );
   const firstError = queries.find((query) => query.isError);
-
-  if (!canFetch) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-neutral-500 dark:text-neutral-400 text-sm select-none">
-          Missing repository or branch information for diff.
-        </div>
-      </div>
-    );
-  }
-
-  if (isPending) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-neutral-500 dark:text-neutral-400 text-sm select-none">
-          Loading diffs...
-        </div>
-      </div>
-    );
-  }
-
-  if (firstError) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-red-500 dark:text-red-400 text-sm select-none">
-          Failed to load diffs.
-          <pre>{JSON.stringify(firstError.error)}</pre>
-        </div>
-      </div>
-    );
-  }
 
   const shouldPrefix = withRepoPrefix ?? repoFullNames.length > 1;
 

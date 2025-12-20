@@ -69,6 +69,8 @@ import {
 export type HeatmapDiffViewerProps = {
   /** The raw git diff string */
   diffText: string;
+  /** Pre-parsed diff data (optional, avoids parsing on each render) */
+  parsedDiff?: FileData | null;
   /** The filename being displayed */
   filename: string;
   /** File status: added, removed, modified, renamed, etc. */
@@ -81,6 +83,8 @@ export type HeatmapDiffViewerProps = {
   reviewHeatmap?: ReviewHeatmapLine[];
   /** Threshold for filtering heatmap entries (0-1) */
   heatmapThreshold?: number;
+  /** Precomputed heatmap for this diff (optional, avoids recalculation) */
+  diffHeatmap?: DiffHeatmap | null;
   /** Custom heatmap colors */
   heatmapColors?: HeatmapColorSettings;
   /** Focused line for navigation */
@@ -509,12 +513,14 @@ function HeatmapGutterTooltip({
 
 export const HeatmapDiffViewer = memo(function HeatmapDiffViewerComponent({
   diffText,
+  parsedDiff: providedParsedDiff,
   filename,
   status,
   additions = 0,
   deletions = 0,
   reviewHeatmap = [],
   heatmapThreshold = 0,
+  diffHeatmap: providedDiffHeatmap,
   heatmapColors = DEFAULT_HEATMAP_COLORS,
   focusedLine = null,
   autoTooltipLine = null,
@@ -529,6 +535,9 @@ export const HeatmapDiffViewer = memo(function HeatmapDiffViewerComponent({
 
   // Parse the diff
   const parsedDiff = useMemo<FileData | null>(() => {
+    if (providedParsedDiff !== undefined) {
+      return providedParsedDiff;
+    }
     if (!diffText) {
       return null;
     }
@@ -542,23 +551,29 @@ export const HeatmapDiffViewer = memo(function HeatmapDiffViewerComponent({
       console.error("Failed to parse diff:", error);
       return null;
     }
-  }, [diffText]);
+  }, [diffText, providedParsedDiff]);
 
   // Build heatmap artifacts
   const diffHeatmapArtifacts = useMemo(() => {
+    if (providedDiffHeatmap !== undefined) {
+      return null;
+    }
     if (!parsedDiff || reviewHeatmap.length === 0) {
       return null;
     }
     return prepareDiffHeatmapArtifacts(parsedDiff, reviewHeatmap);
-  }, [parsedDiff, reviewHeatmap]);
+  }, [parsedDiff, providedDiffHeatmap, reviewHeatmap]);
 
   // Render the heatmap with threshold
   const diffHeatmap = useMemo<DiffHeatmap | null>(() => {
+    if (providedDiffHeatmap !== undefined) {
+      return providedDiffHeatmap;
+    }
     if (!diffHeatmapArtifacts) {
       return null;
     }
     return renderDiffHeatmapFromArtifacts(diffHeatmapArtifacts, heatmapThreshold);
-  }, [diffHeatmapArtifacts, heatmapThreshold]);
+  }, [diffHeatmapArtifacts, heatmapThreshold, providedDiffHeatmap]);
 
   // Infer language for syntax highlighting
   const language = useMemo(() => inferLanguage(filename), [filename]);

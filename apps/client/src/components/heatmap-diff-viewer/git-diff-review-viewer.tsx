@@ -413,7 +413,7 @@ function buildUnifiedDiffFromContent(entry: ReplaceDiffEntry): string {
   return [...header, ...hunks].join("\n");
 }
 
-function buildDiffText(entry: ReplaceDiffEntry): string | null {
+export function buildDiffText(entry: ReplaceDiffEntry): string | null {
   const patch = entry.patch ?? buildUnifiedDiffFromContent(entry);
   if (!patch) {
     return null;
@@ -475,11 +475,67 @@ function buildLineKey(side: DiffLineSide, lineNumber: number): string {
   return `${side}:${lineNumber}`;
 }
 
+function findScrollContainer(element: HTMLElement | null): HTMLElement | null {
+  if (typeof window === "undefined" || !element) {
+    return null;
+  }
+
+  let current: HTMLElement | null = element.parentElement;
+  while (current) {
+    if (current === document.body || current === document.documentElement) {
+      return null;
+    }
+    const style = window.getComputedStyle(current);
+    const overflowY = style.overflowY;
+    const overflow = style.overflow;
+    if (
+      overflowY === "auto" ||
+      overflowY === "scroll" ||
+      overflowY === "overlay" ||
+      overflow === "auto" ||
+      overflow === "scroll" ||
+      overflow === "overlay"
+    ) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+
 function scrollElementToViewportCenter(
   element: HTMLElement,
-  { behavior = "auto" }: { behavior?: ScrollBehavior } = {}
+  {
+    behavior = "auto",
+    scrollContainer,
+  }: { behavior?: ScrollBehavior; scrollContainer?: HTMLElement | null } = {}
 ): void {
   if (typeof window === "undefined") {
+    return;
+  }
+
+  if (scrollContainer) {
+    const containerRect = scrollContainer.getBoundingClientRect();
+    const elementRect = element.getBoundingClientRect();
+    const viewportHeight = scrollContainer.clientHeight;
+    if (viewportHeight === 0) {
+      return;
+    }
+    const currentScrollTop = scrollContainer.scrollTop;
+    const currentScrollLeft = scrollContainer.scrollLeft;
+    const scrollHeight = scrollContainer.scrollHeight;
+
+    const elementTop = elementRect.top - containerRect.top + currentScrollTop;
+    const halfViewport = Math.max((viewportHeight - elementRect.height) / 2, 0);
+    const rawTargetTop = elementTop - halfViewport;
+    const maxScrollTop = Math.max(scrollHeight - viewportHeight, 0);
+    const targetTop = Math.max(0, Math.min(rawTargetTop, maxScrollTop));
+
+    scrollContainer.scrollTo({
+      top: targetTop,
+      left: currentScrollLeft,
+      behavior,
+    });
     return;
   }
 
@@ -1081,6 +1137,8 @@ type FileDiffCardProps = {
   entry: ParsedFileDiff;
   status: HeatmapFileStatus;
   reviewHeatmap: ReviewHeatmapLine[];
+  diffHeatmap: DiffHeatmap | null;
+  scrollContainer: HTMLElement | null;
   focusedLine: DiffLineLocation | null;
   focusedChangeKey: string | null;
   autoTooltipLine: DiffLineLocation | null;
@@ -1134,8 +1192,10 @@ function areFileDiffCardPropsEqual(
     prev.isCollapsed === next.isCollapsed &&
     prev.heatmapThreshold === next.heatmapThreshold &&
     prev.heatmapColors === next.heatmapColors &&
+    prev.scrollContainer === next.scrollContainer &&
     areDiffLineLocationsEqual(prev.focusedLine, next.focusedLine) &&
     areDiffLineLocationsEqual(prev.autoTooltipLine, next.autoTooltipLine) &&
+    prev.diffHeatmap === next.diffHeatmap &&
     areReviewHeatmapLinesEqual(prev.reviewHeatmap, next.reviewHeatmap)
   );
 }
@@ -1144,6 +1204,8 @@ const FileDiffCard = memo(function FileDiffCardComponent({
   entry,
   status,
   reviewHeatmap,
+  diffHeatmap,
+  scrollContainer,
   focusedLine,
   focusedChangeKey,
   autoTooltipLine,
@@ -1184,20 +1246,22 @@ const FileDiffCard = memo(function FileDiffCardComponent({
     const scrollTarget =
       targetRow instanceof HTMLElement ? targetRow : targetCell;
     window.requestAnimationFrame(() => {
-      scrollElementToViewportCenter(scrollTarget);
+      scrollElementToViewportCenter(scrollTarget, { scrollContainer });
     });
-  }, [focusedChangeKey]);
+  }, [focusedChangeKey, scrollContainer]);
 
   return (
     <div id={entry.anchorId} ref={cardRef}>
       <HeatmapDiffViewer
         diffText={entry.diffText}
+        parsedDiff={entry.diff}
         filename={entry.entry.filePath}
         status={status}
         additions={entry.entry.additions ?? 0}
         deletions={entry.entry.deletions ?? 0}
         reviewHeatmap={reviewHeatmap}
         heatmapThreshold={heatmapThreshold}
+        diffHeatmap={diffHeatmap}
         heatmapColors={heatmapColors}
         focusedLine={focusedLine}
         autoTooltipLine={autoTooltipLine}
@@ -1227,6 +1291,8 @@ export function GitDiffHeatmapReviewViewer({
   onHeatmapTooltipLanguageChange,
   onControlsChange,
 }: GitDiffHeatmapReviewViewerProps) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [scrollContainer, setScrollContainer] = useState<HTMLElement | null>(null);
   // Use useDeferredValue to defer color changes and prevent blocking renders
   // when color pickers are being used. This matches the 0github implementation.
   const normalizedHeatmapColors = useMemo(
@@ -1248,6 +1314,13 @@ export function GitDiffHeatmapReviewViewer({
     []
   );
   const streamStateMap = streamStateByFile ?? emptyStreamStateMap;
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    setScrollContainer(findScrollContainer(rootRef.current));
+  }, []);
 
   const fileOutputIndex = useMemo(() => {
     const map = new Map<string, HeatmapFileOutput>();
@@ -1759,7 +1832,9 @@ export function GitDiffHeatmapReviewViewer({
           setActiveAnchor(visible[0].id);
         }
       },
+      },
       {
+        root: scrollContainer ?? null,
         rootMargin: "0px 0px -60% 0px",
         threshold: 0,
       }
@@ -1775,7 +1850,7 @@ export function GitDiffHeatmapReviewViewer({
       elements.forEach((element) => observer.unobserve(element));
       observer.disconnect();
     };
-  }, [parsedDiffs]);
+  }, [parsedDiffs, scrollContainer]);
 
   const handleSidebarResizePointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
@@ -1887,23 +1962,33 @@ export function GitDiffHeatmapReviewViewer({
     setSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
   }, [setSidebarWidth]);
 
-  const handleNavigate = useCallback((path: string, options?: NavigateOptions) => {
-    setActivePath(path);
+  const handleNavigate = useCallback(
+    (path: string, options?: NavigateOptions) => {
+      setActivePath(path);
 
-    const shouldUpdateAnchor = options?.updateAnchor ?? true;
-    if (shouldUpdateAnchor) {
-      setActiveAnchor(path);
-    }
+      const shouldUpdateAnchor = options?.updateAnchor ?? true;
+      if (shouldUpdateAnchor) {
+        setActiveAnchor(path);
+      }
 
-    if (typeof window === "undefined") {
-      return;
-    }
+      if (typeof window === "undefined") {
+        return;
+      }
 
-    const shouldUpdateHash = options?.updateHash ?? true;
-    if (shouldUpdateHash) {
-      window.location.hash = encodeURIComponent(path);
-    }
-  }, []);
+      const shouldUpdateHash = options?.updateHash ?? true;
+      if (shouldUpdateHash) {
+        window.location.hash = encodeURIComponent(path);
+      }
+
+      if (scrollContainer) {
+        const target = document.getElementById(path);
+        if (target) {
+          target.scrollIntoView({ behavior: "auto", block: "start" });
+        }
+      }
+    },
+    [scrollContainer]
+  );
 
   const handleFocusPrevious = useCallback(
     (options?: FocusNavigateOptions) => {
@@ -2067,14 +2152,14 @@ export function GitDiffHeatmapReviewViewer({
     const frame = window.requestAnimationFrame(() => {
       const article = document.getElementById(focusedError.anchorId);
       if (article) {
-        scrollElementToViewportCenter(article);
+        scrollElementToViewportCenter(article, { scrollContainer });
       }
     });
 
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [focusedError, handleNavigate]);
+  }, [focusedError, handleNavigate, scrollContainer]);
 
   const totalFileCount = sortedFiles.length;
   const processedFileCount = useMemo(() => {
@@ -2138,7 +2223,7 @@ export function GitDiffHeatmapReviewViewer({
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div ref={rootRef} className="flex flex-col gap-3">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0">
         <aside
           id={sidebarPanelId}
@@ -2269,6 +2354,8 @@ export function GitDiffHeatmapReviewViewer({
                 entry={fileEntry.entry}
                 status={status}
                 reviewHeatmap={fileEntry.reviewHeatmap}
+                diffHeatmap={fileEntry.diffHeatmap}
+                scrollContainer={scrollContainer}
                 focusedLine={focusedLine}
                 focusedChangeKey={focusedChangeKey}
                 autoTooltipLine={autoTooltipLine}
