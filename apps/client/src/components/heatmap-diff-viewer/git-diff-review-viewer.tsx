@@ -2321,8 +2321,8 @@ export function GitDiffHeatmapReviewViewer({
                 onSelectFile={handleNavigate}
               />
             </div>
+            <div className="h-[40px]" />
           </div>
-          <div className="h-[40px]" />
         </aside>
 
         <div className="relative hidden lg:flex lg:flex-none lg:self-stretch lg:px-1 group/resize">

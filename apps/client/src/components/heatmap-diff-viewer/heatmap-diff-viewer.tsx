@@ -857,7 +857,7 @@ export const HeatmapDiffViewer = memo(function HeatmapDiffViewerComponent({
             onClick={handleToggleCollapse}
             className={cn(
               "sticky top-[var(--cmux-diff-header-offset,0px)] z-10 flex w-full items-center gap-0",
-              "border-neutral-200 dark:border-neutral-800",
+              "border-t border-neutral-200 dark:border-neutral-700",
               "bg-neutral-50 dark:bg-neutral-900/95",
               "px-3.5 py-2.5 text-left font-sans font-medium transition",
               "hover:bg-neutral-100 dark:hover:bg-neutral-800/80",
