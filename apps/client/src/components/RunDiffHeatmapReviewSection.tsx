@@ -24,6 +24,7 @@ export interface RunDiffHeatmapReviewSectionProps {
       lastKnownMergeCommitSha?: string;
     }
   >;
+  promptText?: string | null;
   heatmapThreshold: number;
   heatmapColors: HeatmapColorSettings;
   heatmapModel: HeatmapModelOptionValue;
@@ -67,6 +68,7 @@ export function RunDiffHeatmapReviewSection(
     additionalRepoFullNames,
     withRepoPrefix,
     metadataByRepo,
+    promptText,
     heatmapThreshold,
     heatmapColors,
     heatmapModel,
@@ -156,6 +158,7 @@ export function RunDiffHeatmapReviewSection(
       streamStateByFile={streamStateByFile}
       primaryRepoFullName={repoFullName}
       shouldPrefixDiffs={shouldPrefix}
+      promptText={promptText}
       heatmapThreshold={heatmapThreshold}
       heatmapColors={heatmapColors}
       heatmapModel={heatmapModel}

@@ -144,6 +144,7 @@ type GitDiffHeatmapReviewViewerProps = {
   streamStateByFile?: Map<string, StreamFileState>;
   primaryRepoFullName?: string | null;
   shouldPrefixDiffs?: boolean;
+  promptText?: string | null;
   heatmapThreshold?: number;
   heatmapColors?: HeatmapColorSettings;
   heatmapModel?: string | null;
@@ -1292,6 +1293,7 @@ export function GitDiffHeatmapReviewViewer({
   streamStateByFile,
   primaryRepoFullName,
   shouldPrefixDiffs = false,
+  promptText,
   heatmapThreshold = 0,
   heatmapColors,
   heatmapModel,
@@ -2230,6 +2232,14 @@ export function GitDiffHeatmapReviewViewer({
         >
           {/* Fixed at top - does not scroll */}
           <div className="flex-shrink-0 flex flex-col gap-3">
+            {promptText ? (
+              <div className="border border-neutral-200 bg-white px-4 py-3 text-xs text-neutral-600 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
+                <span className="text-neutral-500 dark:text-neutral-400 select-none">
+                  Prompt:{" "}
+                </span>
+                <span className="font-medium">{promptText}</span>
+              </div>
+            ) : null}
             <ReviewProgressIndicator
               totalFileCount={totalFileCount}
               processedFileCount={processedFileCount}
