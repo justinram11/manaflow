@@ -25,6 +25,22 @@ interface ProviderInfo {
   helpText?: string;
 }
 
+type HeatmapColors = {
+  line: { start: string; end: string };
+  token: { start: string; end: string };
+};
+
+const createDefaultHeatmapColors = (): HeatmapColors => ({
+  line: { start: "#fefce8", end: "#f8e1c9" },
+  token: { start: "#fde047", end: "#ffa270" },
+});
+
+const areHeatmapColorsEqual = (a: HeatmapColors, b: HeatmapColors): boolean =>
+  a.line.start === b.line.start &&
+  a.line.end === b.line.end &&
+  a.token.start === b.token.start &&
+  a.token.end === b.token.end;
+
 const PROVIDER_INFO: Record<string, ProviderInfo> = {
   CLAUDE_CODE_OAUTH_TOKEN: {
     helpText:
@@ -103,23 +119,22 @@ function SettingsComponent() {
     useState<typeof containerSettingsData>(null);
 
   // Heatmap settings state
-  const [heatmapModel, setHeatmapModel] = useState<string>("anthropic-opus-4-5");
-  const [originalHeatmapModel, setOriginalHeatmapModel] = useState<string>("anthropic-opus-4-5");
+  const [heatmapModel, setHeatmapModel] =
+    useState<string>("anthropic-opus-4-5");
+  const [originalHeatmapModel, setOriginalHeatmapModel] =
+    useState<string>("anthropic-opus-4-5");
   const [heatmapThreshold, setHeatmapThreshold] = useState<number>(0);
-  const [originalHeatmapThreshold, setOriginalHeatmapThreshold] = useState<number>(0);
-  const [heatmapTooltipLanguage, setHeatmapTooltipLanguage] = useState<string>("en");
-  const [originalHeatmapTooltipLanguage, setOriginalHeatmapTooltipLanguage] = useState<string>("en");
-  const [heatmapColors, setHeatmapColors] = useState<{
-    line: { start: string; end: string };
-    token: { start: string; end: string };
-  }>({
-    line: { start: "#fefce8", end: "#f8e1c9" },
-    token: { start: "#fde047", end: "#ffa270" },
-  });
-  const [originalHeatmapColors, setOriginalHeatmapColors] = useState<typeof heatmapColors>({
-    line: { start: "#fefce8", end: "#f8e1c9" },
-    token: { start: "#fde047", end: "#ffa270" },
-  });
+  const [originalHeatmapThreshold, setOriginalHeatmapThreshold] =
+    useState<number>(0);
+  const [heatmapTooltipLanguage, setHeatmapTooltipLanguage] =
+    useState<string>("en");
+  const [originalHeatmapTooltipLanguage, setOriginalHeatmapTooltipLanguage] =
+    useState<string>("en");
+  const [heatmapColors, setHeatmapColors] = useState<HeatmapColors>(
+    createDefaultHeatmapColors
+  );
+  const [originalHeatmapColors, setOriginalHeatmapColors] =
+    useState<HeatmapColors>(createDefaultHeatmapColors);
 
   // Heatmap model options from model-config.ts
   const HEATMAP_MODEL_OPTIONS = [
@@ -232,50 +247,74 @@ function SettingsComponent() {
 
   // Initialize worktree path, crown settings, and heatmap settings when data loads
   useEffect(() => {
-    if (workspaceSettings !== undefined) {
-      setWorktreePath(workspaceSettings?.worktreePath || "");
-      setOriginalWorktreePath(workspaceSettings?.worktreePath || "");
-      const enabled = (
-        workspaceSettings as unknown as { autoPrEnabled?: boolean }
-      )?.autoPrEnabled;
-      const effective = enabled === undefined ? false : Boolean(enabled);
-      setAutoPrEnabled(effective);
-      setOriginalAutoPrEnabled(effective);
+    if (workspaceSettings === undefined) {
+      return;
+    }
 
-      // Crown settings
-      const settings = workspaceSettings as unknown as {
-        crownModel?: string;
-        crownSystemPrompt?: string;
-        heatmapModel?: string;
-        heatmapThreshold?: number;
-        heatmapTooltipLanguage?: string;
-        heatmapColors?: {
-          line: { start: string; end: string };
-          token: { start: string; end: string };
-        };
-      };
-      setCrownModel(settings?.crownModel || "");
-      setOriginalCrownModel(settings?.crownModel || "");
-      setCrownSystemPrompt(settings?.crownSystemPrompt || "");
-      setOriginalCrownSystemPrompt(settings?.crownSystemPrompt || "");
+    const nextWorktreePath = workspaceSettings?.worktreePath ?? "";
+    setWorktreePath((prev) =>
+      prev === nextWorktreePath ? prev : nextWorktreePath
+    );
+    setOriginalWorktreePath((prev) =>
+      prev === nextWorktreePath ? prev : nextWorktreePath
+    );
 
-      // Initialize heatmap settings
-      if (settings?.heatmapModel) {
-        setHeatmapModel(settings.heatmapModel);
-        setOriginalHeatmapModel(settings.heatmapModel);
-      }
-      if (settings?.heatmapThreshold !== undefined) {
-        setHeatmapThreshold(settings.heatmapThreshold);
-        setOriginalHeatmapThreshold(settings.heatmapThreshold);
-      }
-      if (settings?.heatmapTooltipLanguage) {
-        setHeatmapTooltipLanguage(settings.heatmapTooltipLanguage);
-        setOriginalHeatmapTooltipLanguage(settings.heatmapTooltipLanguage);
-      }
-      if (settings?.heatmapColors) {
-        setHeatmapColors(settings.heatmapColors);
-        setOriginalHeatmapColors(settings.heatmapColors);
-      }
+    const nextAutoPrEnabled = workspaceSettings?.autoPrEnabled ?? false;
+    setAutoPrEnabled((prev) =>
+      prev === nextAutoPrEnabled ? prev : nextAutoPrEnabled
+    );
+    setOriginalAutoPrEnabled((prev) =>
+      prev === nextAutoPrEnabled ? prev : nextAutoPrEnabled
+    );
+
+    // Crown settings
+    const nextCrownModel = workspaceSettings?.crownModel ?? "";
+    setCrownModel((prev) => (prev === nextCrownModel ? prev : nextCrownModel));
+    setOriginalCrownModel((prev) =>
+      prev === nextCrownModel ? prev : nextCrownModel
+    );
+    const nextCrownSystemPrompt = workspaceSettings?.crownSystemPrompt ?? "";
+    setCrownSystemPrompt((prev) =>
+      prev === nextCrownSystemPrompt ? prev : nextCrownSystemPrompt
+    );
+    setOriginalCrownSystemPrompt((prev) =>
+      prev === nextCrownSystemPrompt ? prev : nextCrownSystemPrompt
+    );
+
+    // Heatmap settings
+    if (workspaceSettings?.heatmapModel) {
+      const nextModel = workspaceSettings.heatmapModel;
+      setHeatmapModel((prev) => (prev === nextModel ? prev : nextModel));
+      setOriginalHeatmapModel((prev) =>
+        prev === nextModel ? prev : nextModel
+      );
+    }
+    if (workspaceSettings?.heatmapThreshold !== undefined) {
+      const nextThreshold = workspaceSettings.heatmapThreshold;
+      setHeatmapThreshold((prev) =>
+        prev === nextThreshold ? prev : nextThreshold
+      );
+      setOriginalHeatmapThreshold((prev) =>
+        prev === nextThreshold ? prev : nextThreshold
+      );
+    }
+    if (workspaceSettings?.heatmapTooltipLanguage) {
+      const nextLanguage = workspaceSettings.heatmapTooltipLanguage;
+      setHeatmapTooltipLanguage((prev) =>
+        prev === nextLanguage ? prev : nextLanguage
+      );
+      setOriginalHeatmapTooltipLanguage((prev) =>
+        prev === nextLanguage ? prev : nextLanguage
+      );
+    }
+    if (workspaceSettings?.heatmapColors) {
+      const nextColors = workspaceSettings.heatmapColors;
+      setHeatmapColors((prev) =>
+        areHeatmapColorsEqual(prev, nextColors) ? prev : nextColors
+      );
+      setOriginalHeatmapColors((prev) =>
+        areHeatmapColorsEqual(prev, nextColors) ? prev : nextColors
+      );
     }
   }, [workspaceSettings]);
 
