@@ -161,6 +161,19 @@ impl SandboxService for MockService {
         }
         Ok(None)
     }
+
+    async fn prune_orphaned(
+        &self,
+        request: cmux_sandbox::models::PruneRequest,
+    ) -> cmux_sandbox::errors::SandboxResult<cmux_sandbox::models::PruneResponse> {
+        self.record("prune_orphaned").await;
+        Ok(cmux_sandbox::models::PruneResponse {
+            deleted_count: 0,
+            failed_count: 0,
+            items: vec![],
+            dry_run: request.dry_run,
+        })
+    }
 }
 
 #[tokio::test]
