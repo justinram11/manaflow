@@ -3,7 +3,6 @@
  *
  * Full-page form for initial environment configuration including:
  * - Repository selection (supports multiple repos - cmux style)
- * - Framework preset selection
  * - Maintenance & dev scripts
  * - Environment variables
  *
@@ -12,26 +11,8 @@
 
 import { GitHubIcon } from "@/components/icons/github";
 import { parseEnvBlock } from "@/lib/parseEnvBlock";
-import type {
-  EnvVar,
-  FrameworkPreset,
-  PackageManager,
-} from "@cmux/shared/components/environment";
-import {
-  getFrameworkPresetConfig,
-  getFrameworkDisplayName,
-  FRAMEWORK_PRESET_OPTIONS,
-  MASKED_ENV_VALUE,
-  AngularLogo,
-  NextLogo,
-  NuxtLogo,
-  ReactLogo,
-  RemixLogo,
-  SvelteLogo,
-  ViteLogo,
-  VueLogo,
-  SparklesIcon,
-} from "@cmux/shared/components/environment";
+import type { EnvVar } from "@cmux/shared/components/environment";
+import { MASKED_ENV_VALUE } from "@cmux/shared/components/environment";
 import clsx from "clsx";
 import {
   ArrowLeft,
@@ -41,14 +22,8 @@ import {
   EyeOff,
   Minus,
   Plus,
-  Check,
 } from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface EnvironmentInitialSetupProps {
   selectedRepos: string[];
@@ -56,14 +31,10 @@ interface EnvironmentInitialSetupProps {
   maintenanceScript: string;
   devScript: string;
   envVars: EnvVar[];
-  frameworkPreset: FrameworkPreset;
-  detectedPackageManager: PackageManager;
-  isDetectingFramework: boolean;
   onEnvNameChange: (value: string) => void;
   onMaintenanceScriptChange: (value: string) => void;
   onDevScriptChange: (value: string) => void;
   onEnvVarsChange: (updater: (prev: EnvVar[]) => EnvVar[]) => void;
-  onFrameworkPresetChange: (preset: FrameworkPreset) => void;
   onContinue: () => void;
   onBack?: () => void;
   backLabel?: string;
@@ -75,14 +46,10 @@ export function EnvironmentInitialSetup({
   maintenanceScript,
   devScript,
   envVars,
-  frameworkPreset,
-  detectedPackageManager,
-  isDetectingFramework,
   onEnvNameChange,
   onMaintenanceScriptChange,
   onDevScriptChange,
   onEnvVarsChange,
-  onFrameworkPresetChange,
   onContinue,
   onBack,
   backLabel = "Back to repository selection",
@@ -90,7 +57,6 @@ export function EnvironmentInitialSetup({
   const [areEnvValuesHidden, setAreEnvValuesHidden] = useState(true);
   const [activeEnvValueIndex, setActiveEnvValueIndex] = useState<number | null>(null);
   const [pendingFocusIndex, setPendingFocusIndex] = useState<number | null>(null);
-  const [hasUserEditedScripts, setHasUserEditedScripts] = useState(false);
   const keyInputRefs = useRef<Array<HTMLInputElement | null>>([]);
 
   // Handle pending focus after env vars update
@@ -110,41 +76,6 @@ export function EnvironmentInitialSetup({
       }
     }
   }, [pendingFocusIndex, envVars]);
-
-  const handleFrameworkPresetChange = useCallback(
-    (preset: FrameworkPreset) => {
-      onFrameworkPresetChange(preset);
-      // Only auto-fill if user hasn't manually edited the scripts
-      if (!hasUserEditedScripts) {
-        const presetConfig = getFrameworkPresetConfig(preset, detectedPackageManager);
-        onMaintenanceScriptChange(presetConfig.maintenanceScript);
-        onDevScriptChange(presetConfig.devScript);
-      }
-    },
-    [
-      hasUserEditedScripts,
-      detectedPackageManager,
-      onFrameworkPresetChange,
-      onMaintenanceScriptChange,
-      onDevScriptChange,
-    ]
-  );
-
-  const handleMaintenanceScriptChange = useCallback(
-    (value: string) => {
-      onMaintenanceScriptChange(value);
-      setHasUserEditedScripts(true);
-    },
-    [onMaintenanceScriptChange]
-  );
-
-  const handleDevScriptChange = useCallback(
-    (value: string) => {
-      onDevScriptChange(value);
-      setHasUserEditedScripts(true);
-    },
-    [onDevScriptChange]
-  );
 
   const handleEnvVarsPaste = useCallback(
     (e: React.ClipboardEvent<HTMLDivElement>) => {
@@ -213,6 +144,15 @@ export function EnvironmentInitialSetup({
 
       {/* Content */}
       <div className="space-y-6 mt-6">
+          {/* Workspace info */}
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            Workspace root{" "}
+            <code className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200">
+              /root/workspace
+            </code>{" "}
+            contains your repositor{selectedRepos.length > 1 ? "ies" : "y"} as subdirector{selectedRepos.length > 1 ? "ies" : "y"}.
+          </p>
+
           {/* Environment Name */}
           <div>
             <label className="block text-sm font-medium text-neutral-900 dark:text-neutral-100 mb-2">
@@ -230,20 +170,12 @@ export function EnvironmentInitialSetup({
             </p>
           </div>
 
-          {/* Framework Preset */}
-          <FrameworkPresetSelect
-            value={frameworkPreset}
-            onValueChange={handleFrameworkPresetChange}
-            isLoading={isDetectingFramework}
-            repoCount={selectedRepos.length}
-          />
-
           {/* Maintenance and Dev Scripts */}
           <ScriptsSection
             maintenanceScript={maintenanceScript}
             devScript={devScript}
-            onMaintenanceScriptChange={handleMaintenanceScriptChange}
-            onDevScriptChange={handleDevScriptChange}
+            onMaintenanceScriptChange={onMaintenanceScriptChange}
+            onDevScriptChange={onDevScriptChange}
           />
 
           {/* Environment Variables */}
@@ -273,129 +205,6 @@ export function EnvironmentInitialSetup({
           <ArrowRight className="w-4 h-4" />
         </button>
       </div>
-    </div>
-  );
-}
-
-// Map framework presets to their icons
-function getFrameworkIcon(preset: FrameworkPreset, className: string = "h-5 w-5") {
-  switch (preset) {
-    case "next":
-      return <NextLogo className={className} aria-hidden="true" />;
-    case "vite":
-      return <ViteLogo className={className} aria-hidden="true" />;
-    case "remix":
-      return <RemixLogo className={className} aria-hidden="true" />;
-    case "nuxt":
-      return <NuxtLogo className={className} aria-hidden="true" />;
-    case "sveltekit":
-      return <SvelteLogo className={className} aria-hidden="true" />;
-    case "angular":
-      return <AngularLogo className={className} aria-hidden="true" />;
-    case "cra":
-      return <ReactLogo className={className} aria-hidden="true" />;
-    case "vue":
-      return <VueLogo className={className} aria-hidden="true" />;
-    case "other":
-    default:
-      return <SparklesIcon className={className} aria-hidden="true" />;
-  }
-}
-
-// Framework Preset Select Component
-function FrameworkPresetSelect({
-  value,
-  onValueChange,
-  isLoading = false,
-  repoCount,
-}: {
-  value: FrameworkPreset;
-  onValueChange: (value: FrameworkPreset) => void;
-  isLoading?: boolean;
-  repoCount: number;
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-
-  return (
-    <div>
-      <div className="flex items-center gap-2 mb-2">
-        <label className="block text-sm font-medium text-neutral-900 dark:text-neutral-100">
-          Framework Preset
-        </label>
-        {isLoading && (
-          <span className="text-xs text-neutral-500 dark:text-neutral-400 animate-pulse">
-            Detecting...
-          </span>
-        )}
-      </div>
-      <div className="relative">
-        <button
-          type="button"
-          onClick={() => setIsOpen(!isOpen)}
-          className="flex w-full items-center justify-between rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2.5 text-sm text-neutral-900 dark:text-neutral-100"
-        >
-          <span className="flex items-center gap-3">
-            <span className="flex h-8 w-8 items-center justify-center rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-800">
-              {getFrameworkIcon(value)}
-            </span>
-            <span className="text-left">
-              <span className="block font-medium">{getFrameworkDisplayName(value)}</span>
-              <span className="block text-xs text-neutral-500 dark:text-neutral-400">
-                Autofills install and dev scripts
-              </span>
-            </span>
-          </span>
-          <ChevronDown
-            className={clsx(
-              "h-4 w-4 text-neutral-400 transition-transform",
-              isOpen && "rotate-180"
-            )}
-          />
-        </button>
-
-        {isOpen && (
-          <>
-            <div
-              className="fixed inset-0 z-10"
-              onClick={() => setIsOpen(false)}
-            />
-            <div className="absolute top-full left-0 right-0 z-20 mt-1 max-h-64 overflow-y-auto rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-lg">
-              {FRAMEWORK_PRESET_OPTIONS.map((preset) => (
-                <button
-                  key={preset}
-                  type="button"
-                  onClick={() => {
-                    onValueChange(preset);
-                    setIsOpen(false);
-                  }}
-                  className={clsx(
-                    "flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition",
-                    "hover:bg-neutral-100 dark:hover:bg-neutral-900",
-                    value === preset && "bg-neutral-100 dark:bg-neutral-900"
-                  )}
-                >
-                  <span className="flex h-8 w-8 items-center justify-center rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-800">
-                    {getFrameworkIcon(preset)}
-                  </span>
-                  <span className="flex-1 font-medium text-neutral-900 dark:text-neutral-100">
-                    {getFrameworkDisplayName(preset)}
-                  </span>
-                  {value === preset && (
-                    <Check className="h-4 w-4 text-neutral-900 dark:text-neutral-100" />
-                  )}
-                </button>
-              ))}
-            </div>
-          </>
-        )}
-      </div>
-      <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-        Workspace root{" "}
-        <code className="rounded bg-neutral-100 px-1 py-0.5 text-[11px] text-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
-          /root/workspace
-        </code>{" "}
-        contains your repository{repoCount > 1 ? "ies" : ""} as subdirectories.
-      </p>
     </div>
   );
 }

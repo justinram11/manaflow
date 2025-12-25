@@ -841,7 +841,7 @@ export function EnvironmentWorkspaceConfig({
     >
       {/* Left: Configuration Sidebar */}
       <div
-        className="h-full flex flex-col overflow-hidden bg-white dark:bg-black relative shrink-0"
+        className="h-full flex flex-col overflow-hidden bg-white dark:bg-neutral-900 relative shrink-0"
         style={{ width: sidebarWidth }}
       >
         <div className="flex-shrink-0 px-5 pt-4 pb-2">

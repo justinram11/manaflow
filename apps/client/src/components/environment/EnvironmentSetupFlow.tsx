@@ -12,15 +12,12 @@
 
 import type {
   EnvVar,
-  FrameworkPreset,
   LayoutPhase,
-  PackageManager,
 } from "@cmux/shared/components/environment";
 import {
   deriveVncWebsocketUrl,
   deriveVscodeUrl,
   ensureInitialEnvVars,
-  getFrameworkPresetConfig,
 } from "@cmux/shared/components/environment";
 import { formatEnvVarsContent } from "@cmux/shared/utils/format-env-vars-content";
 import { validateExposedPorts } from "@cmux/shared/utils/validate-exposed-ports";
@@ -51,7 +48,6 @@ interface EnvironmentSetupFlowProps {
   initialDevScript?: string;
   initialExposedPorts?: string;
   initialEnvVars?: EnvVar[];
-  initialFrameworkPreset?: FrameworkPreset;
   onEnvironmentSaved?: () => void;
   onBack?: () => void;
 }
@@ -65,7 +61,6 @@ export function EnvironmentSetupFlow({
   initialDevScript = "",
   initialExposedPorts = "",
   initialEnvVars,
-  initialFrameworkPreset = "other",
   onEnvironmentSaved,
   onBack,
 }: EnvironmentSetupFlowProps) {
@@ -82,9 +77,6 @@ export function EnvironmentSetupFlow({
   const [maintenanceScript, setMaintenanceScript] = useState(initialMaintenanceScript);
   const [devScript, setDevScript] = useState(initialDevScript);
   const [exposedPorts] = useState(initialExposedPorts);
-  const [frameworkPreset, setFrameworkPreset] = useState<FrameworkPreset>(initialFrameworkPreset);
-  const [detectedPackageManager, setDetectedPackageManager] = useState<PackageManager>("npm");
-  const [isDetectingFramework, setIsDetectingFramework] = useState(false);
 
   // Error state
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -99,14 +91,13 @@ export function EnvironmentSetupFlow({
     return deriveVncWebsocketUrl(instanceId, vscodeUrl) ?? undefined;
   }, [instanceId, vscodeUrl]);
 
-  // Framework detection (only fetch if we have repos)
+  // Script detection from framework (only fetch if we have repos)
   const hasUserEditedScriptsRef = useRef(false);
 
   useEffect(() => {
     if (selectedRepos.length === 0) return;
 
-    const detectFramework = async () => {
-      setIsDetectingFramework(true);
+    const detectScripts = async () => {
       try {
         // Use the first repo for framework detection
         const repo = selectedRepos[0];
@@ -118,17 +109,12 @@ export function EnvironmentSetupFlow({
           return;
         }
         const data = (await response.json()) as {
-          framework: FrameworkPreset;
-          packageManager: PackageManager;
           maintenanceScript: string;
           devScript: string;
         };
 
-        setDetectedPackageManager(data.packageManager);
-
-        // Only update UI state if user hasn't edited scripts yet
+        // Only update scripts if user hasn't edited them yet
         if (!hasUserEditedScriptsRef.current) {
-          setFrameworkPreset(data.framework);
           if (!initialMaintenanceScript) {
             setMaintenanceScript(data.maintenanceScript);
           }
@@ -138,12 +124,10 @@ export function EnvironmentSetupFlow({
         }
       } catch (error) {
         console.error("Failed to detect framework:", error);
-      } finally {
-        setIsDetectingFramework(false);
       }
     };
 
-    void detectFramework();
+    void detectScripts();
   }, [selectedRepos, initialMaintenanceScript, initialDevScript]);
 
   // Mutations
@@ -225,19 +209,6 @@ export function EnvironmentSetupFlow({
   const handleEnvVarsChange = useCallback((updater: (prev: EnvVar[]) => EnvVar[]) => {
     setEnvVars((prev) => updater(prev));
   }, []);
-
-  const handleFrameworkPresetChange = useCallback(
-    (preset: FrameworkPreset) => {
-      setFrameworkPreset(preset);
-      // Only auto-fill if user hasn't manually edited the scripts
-      if (!hasUserEditedScriptsRef.current) {
-        const presetConfig = getFrameworkPresetConfig(preset, detectedPackageManager);
-        setMaintenanceScript(presetConfig.maintenanceScript);
-        setDevScript(presetConfig.devScript);
-      }
-    },
-    [detectedPackageManager]
-  );
 
   const handleContinueToWorkspaceConfig = useCallback(() => {
     setLayoutPhase("workspace-config");
@@ -351,14 +322,10 @@ export function EnvironmentSetupFlow({
           maintenanceScript={maintenanceScript}
           devScript={devScript}
           envVars={envVars}
-          frameworkPreset={frameworkPreset}
-          detectedPackageManager={detectedPackageManager}
-          isDetectingFramework={isDetectingFramework}
           onEnvNameChange={handleEnvNameChange}
           onMaintenanceScriptChange={handleMaintenanceScriptChange}
           onDevScriptChange={handleDevScriptChange}
           onEnvVarsChange={handleEnvVarsChange}
-          onFrameworkPresetChange={handleFrameworkPresetChange}
           onContinue={handleContinueToWorkspaceConfig}
           onBack={onBack}
           backLabel="Back to repository selection"

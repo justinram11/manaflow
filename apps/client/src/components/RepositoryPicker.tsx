@@ -1,27 +1,12 @@
 import { env } from "@/client-env";
 import { GitHubIcon } from "@/components/icons/github";
-import { GitLabIcon } from "@/components/icons/gitlab";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { api } from "@cmux/convex/api";
 import { DEFAULT_MORPH_SNAPSHOT_ID, type MorphSnapshotId } from "@cmux/shared";
 import { isElectron } from "@/lib/electron";
-import * as Popover from "@radix-ui/react-popover";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
-import { Check, ChevronDown, Loader2, Settings, X } from "lucide-react";
+import { Check, Loader2, X } from "lucide-react";
 import {
   useCallback,
   useDeferredValue,
@@ -32,17 +17,6 @@ import {
   type ReactNode,
 } from "react";
 import { RepositoryAdvancedOptions } from "./RepositoryAdvancedOptions";
-
-function ConnectionIcon({ type }: { type?: string }) {
-  if (type && type.includes("gitlab")) {
-    return (
-      <GitLabIcon className="h-4 w-4 text-neutral-600 dark:text-neutral-300" />
-    );
-  }
-  return (
-    <GitHubIcon className="h-4 w-4 text-neutral-700 dark:text-neutral-200" />
-  );
-}
 
 function formatTimeAgo(input?: string | number): string {
   if (!input) return "";
@@ -598,178 +572,61 @@ function RepositoryConnectionsSection({
     teamSlugOrId,
   ]);
 
-  return (
-    <div className="space-y-2">
-      <label className="block text-sm font-medium text-neutral-800 dark:text-neutral-200">
-        Connection
-      </label>
-      <Popover.Root
-        open={connectionDropdownOpen}
-        onOpenChange={setConnectionDropdownOpen}
-      >
-        <Popover.Trigger asChild>
-          <button className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 h-9 flex items-center justify-between text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition-colors">
-            <div className="flex items-center gap-2 min-w-0">
-              {currentLogin ? (
-                <>
-                  <ConnectionIcon type="github" />
-                  <span className="truncate">{currentLogin}</span>
-                </>
-              ) : (
-                <span className="truncate text-neutral-500">
-                  Select connection
-                </span>
-              )}
-            </div>
-            <ChevronDown className="w-4 h-4 text-neutral-500" />
-          </button>
-        </Popover.Trigger>
-        <Popover.Portal>
-          <Popover.Content
-            className="w-[320px] rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-md outline-none z-[var(--z-popover)]"
-            align="start"
-            sideOffset={4}
-          >
-            <Command shouldFilter={false}>
-              <CommandInput
-                placeholder="Search connections..."
-                value={connectionSearch}
-                onValueChange={setConnectionSearch}
-              />
-              <CommandList>
-                {connections === undefined ? (
-                  <div className="px-3 py-2 text-sm text-neutral-500">
-                    Loading...
-                  </div>
-                ) : activeConnections.length > 0 ? (
-                  <>
-                    {filteredConnections.length > 0 ? (
-                      <CommandGroup>
-                        {filteredConnections.map((c) => {
-                          const name =
-                            c.accountLogin ||
-                            `installation-${c.installationId}`;
-                          const cfgUrl =
-                            c.accountLogin && c.accountType
-                              ? c.accountType === "Organization"
-                                ? `https://github.com/organizations/${c.accountLogin}/settings/installations/${c.installationId}`
-                                : `https://github.com/settings/installations/${c.installationId}`
-                              : null;
-                          const isSelected = currentLogin === c.accountLogin;
-                          return (
-                            <CommandItem
-                              key={`${c.accountLogin}:${c.installationId}`}
-                              value={name}
-                              onSelect={() => {
-                                onSelectedLoginChange(c.accountLogin ?? null);
-                                setConnectionDropdownOpen(false);
-                              }}
-                              className="flex items-center justify-between gap-2"
-                            >
-                              <div className="flex items-center gap-2 min-w-0 flex-1">
-                                <ConnectionIcon type={c.type} />
-                                <span className="truncate">{name}</span>
-                                {isSelected && (
-                                  <Check className="ml-auto h-4 w-4 text-neutral-600 dark:text-neutral-300" />
-                                )}
-                              </div>
-                              {cfgUrl ? (
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <button
-                                      type="button"
-                                      className="p-1 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 relative z-[var(--z-popover-hover)]"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        e.preventDefault();
-                                        openCenteredPopup(
-                                          cfgUrl,
-                                          { name: "github-config" },
-                                          handlePopupClosedRefetch
-                                        );
-                                      }}
-                                    >
-                                      <Settings className="w-3 h-3 text-neutral-600 dark:text-neutral-300" />
-                                    </button>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    Add Repos
-                                  </TooltipContent>
-                                </Tooltip>
-                              ) : null}
-                            </CommandItem>
-                          );
-                        })}
-                      </CommandGroup>
-                    ) : connectionSearch.trim() ? (
-                      <div className="px-3 py-2 text-sm text-neutral-500">
-                        No connections match your search
-                      </div>
-                    ) : null}
-                    {installNewUrl ? (
-                      <>
-                        <div className="h-px bg-neutral-200 dark:bg-neutral-800" />
-                        <CommandGroup forceMount>
-                          <CommandItem
-                            value="add-github-account"
-                            forceMount
-                            onSelect={() => {
-                              void handleInstallApp();
-                              setConnectionDropdownOpen(false);
-                            }}
-                            className="flex items-center gap-2"
-                          >
-                            <GitHubIcon className="h-4 w-4 text-neutral-700 dark:text-neutral-200" />
-                            <span>Install GitHub App</span>
-                          </CommandItem>
-                        </CommandGroup>
-                      </>
-                    ) : null}
-                  </>
-                ) : (
-                  <>
-                    <CommandEmpty>
-                      <div className="px-3 py-2 text-sm text-neutral-500">
-                        No connections yet
-                      </div>
-                    </CommandEmpty>
-                    {installNewUrl ? (
-                      <>
-                        <div className="h-px bg-neutral-200 dark:bg-neutral-800" />
-                        <CommandGroup forceMount>
-                          <CommandItem
-                            value="add-github-account"
-                            forceMount
-                            onSelect={() => {
-                              void handleInstallApp();
-                              setConnectionDropdownOpen(false);
-                            }}
-                            className="flex items-center gap-2"
-                          >
-                            <GitHubIcon className="h-4 w-4 text-neutral-700 dark:text-neutral-200" />
-                            <span>Install GitHub App</span>
-                          </CommandItem>
-                        </CommandGroup>
-                      </>
-                    ) : null}
-                  </>
-                )}
-              </CommandList>
-            </Command>
-          </Popover.Content>
-        </Popover.Portal>
-      </Popover.Root>
+  // Expose the install handler to parent component
+  // Note: We use the functional update form (() => handler) because onInstallHandlerReady
+  // is a setState function. If we pass a function directly, React will CALL it thinking
+  // it's a state updater. Wrapping in () => handler ensures the handler itself is stored.
+  useEffect(() => {
+    if (installNewUrl) {
+      const handler = () => {
+        void handleInstallApp();
+      };
+      onInstallHandlerReady(() => handler);
+    } else {
+      onInstallHandlerReady(() => null);
+    }
+  }, [handleInstallApp, installNewUrl, onInstallHandlerReady]);
 
-    </div>
-  );
+  // This component now only provides data/context without rendering any UI
+  return null;
+}
+
+// Helper to parse GitHub repo URL or owner/repo format
+function parseGitHubRepo(input: string): string | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  // Handle owner/repo format directly
+  if (/^[\w.-]+\/[\w.-]+$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  // Handle GitHub URLs
+  try {
+    const url = new URL(trimmed);
+    if (url.hostname === "github.com" || url.hostname === "www.github.com") {
+      const parts = url.pathname.split("/").filter(Boolean);
+      if (parts.length >= 2) {
+        // Remove .git suffix if present
+        const repoName = parts[1].replace(/\.git$/, "");
+        return `${parts[0]}/${repoName}`;
+      }
+    }
+  } catch {
+    // Not a valid URL, ignore
+  }
+
+  return null;
 }
 
 function RepositoryListSection({
   teamSlugOrId,
-  installationId,
+  installationId: _installationId,
   selectedRepos,
   onToggleRepo,
+  onAddRepo,
   hasConnections,
+  onInstallGitHubApp,
 }: RepositoryListSectionProps) {
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
@@ -800,28 +657,27 @@ function RepositoryListSection({
     return list;
   }, [deferredSearch, allReposQuery]);
 
-  const showReposLoading = allReposQuery === undefined;
+  const showReposLoading = allReposQuery === undefined && hasConnections;
   const showSpinner = false; // No need for spinner with Convex reactive queries
   const selectedSet = useMemo(() => new Set(selectedRepos), [selectedRepos]);
 
-  if (!hasConnections) {
-    return (
-      <div className="rounded-md border border-dashed border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-900 p-4 text-sm text-neutral-600 dark:text-neutral-300">
-        Connect your Git provider above to browse repositories.
-      </div>
-    );
-  }
-
-  if (installationId == null) {
-    return (
-      <div className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 p-4 text-sm text-neutral-600 dark:text-neutral-300">
-        Select an organization to see its repositories.
-      </div>
-    );
-  }
+  // Handle Enter key to add repo from URL/owner-repo format
+  const handleSearchKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter" && search.trim()) {
+        e.preventDefault();
+        const parsed = parseGitHubRepo(search);
+        if (parsed) {
+          onAddRepo(parsed);
+          setSearch("");
+        }
+      }
+    },
+    [search, onAddRepo]
+  );
 
   return (
-    <div className="space-y-2 mt-4">
+    <div className="space-y-2">
       <label className="block text-sm font-medium text-neutral-800 dark:text-neutral-200">
         Repositories
       </label>
@@ -830,7 +686,8 @@ function RepositoryListSection({
           type="text"
           value={search}
           onChange={(event) => setSearch(event.target.value)}
-          placeholder="Search recent repositories"
+          onKeyDown={handleSearchKeyDown}
+          placeholder="Search repositories or paste a GitHub URL..."
           aria-busy={showSpinner}
           className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 pr-8 h-9 text-sm text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
         />
@@ -839,81 +696,95 @@ function RepositoryListSection({
         ) : null}
       </div>
 
-      <div className="mt-2 rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden max-h-[225px] overflow-y-auto">
-        {showReposLoading ? (
-          <div className="divide-y divide-neutral-200 dark:divide-neutral-900">
-            {[...Array(5)].map((_, index) => (
-              <div
-                key={index}
-                className="px-3 h-9 flex items-center justify-between bg-white dark:bg-neutral-950"
-              >
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <Skeleton className="h-4 w-4 rounded-sm" />
-                  <Skeleton className="h-4 w-56 rounded" />
-                </div>
-                <div className="flex items-center gap-2">
-                  <Skeleton className="h-3 w-16 rounded-full" />
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : filteredRepos.length > 0 ? (
-          <div className="divide-y divide-neutral-200 dark:divide-neutral-900">
-            {filteredRepos.map((repo) => {
-              const isSelected = selectedSet.has(repo.full_name);
-              const last = repo.pushed_at ?? repo.updated_at ?? null;
-              const when = last ? formatTimeAgo(last) : "";
-              return (
+      <div className="mt-2 rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden">
+        {/* Repository list */}
+        <div className="max-h-[180px] overflow-y-auto">
+          {showReposLoading ? (
+            <div className="divide-y divide-neutral-200 dark:divide-neutral-900">
+              {[...Array(4)].map((_, index) => (
                 <div
-                  key={repo.full_name}
-                  role="option"
-                  aria-selected={isSelected}
-                  onClick={() => onToggleRepo(repo.full_name)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      onToggleRepo(repo.full_name);
-                    }
-                  }}
-                  tabIndex={0}
-                  className="px-3 h-9 flex items-center justify-between bg-white dark:bg-neutral-950 cursor-default select-none outline-none"
+                  key={index}
+                  className="px-3 h-9 flex items-center justify-between bg-white dark:bg-neutral-950"
                 >
-                  <div className="text-sm flex items-center gap-2 min-w-0 flex-1">
-                    <div
-                      className={`mr-1 h-4 w-4 rounded-sm border grid place-items-center shrink-0 ${
-                        isSelected
-                          ? "border-neutral-700 bg-neutral-800"
-                          : "border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-950"
-                      }`}
-                    >
-                      <Check
-                        className={`w-3 h-3 text-white transition-opacity ${
-                          isSelected ? "opacity-100" : "opacity-0"
-                        }`}
-                      />
-                    </div>
-                    <GitHubIcon className="h-4 w-4 shrink-0 text-neutral-700 dark:text-neutral-200" />
-                    <span className="truncate">{repo.full_name}</span>
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <Skeleton className="h-4 w-4 rounded-sm" />
+                    <Skeleton className="h-4 w-56 rounded" />
                   </div>
-                  {when ? (
-                    <span className="ml-3 text-[10px] text-neutral-500 dark:text-neutral-500">
-                      {when}
-                    </span>
-                  ) : null}
+                  <div className="flex items-center gap-2">
+                    <Skeleton className="h-3 w-16 rounded-full" />
+                  </div>
                 </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="px-3 py-10 h-[180px] text-sm text-neutral-500 dark:text-neutral-400 bg-white dark:bg-neutral-950 flex flex-col items-center justify-center text-center gap-2">
-            {search ? (
-              <div>No recent repositories match your search.</div>
-            ) : (
-              <div>No recent repositories found for this connection.</div>
-            )}
-            <div>Use the connection menu above to refresh GitHub access.</div>
-          </div>
-        )}
+              ))}
+            </div>
+          ) : filteredRepos.length > 0 ? (
+            <div className="divide-y divide-neutral-200 dark:divide-neutral-900">
+              {filteredRepos.map((repo) => {
+                const isSelected = selectedSet.has(repo.full_name);
+                const last = repo.pushed_at ?? repo.updated_at ?? null;
+                const when = last ? formatTimeAgo(last) : "";
+                return (
+                  <div
+                    key={repo.full_name}
+                    role="option"
+                    aria-selected={isSelected}
+                    onClick={() => onToggleRepo(repo.full_name)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        onToggleRepo(repo.full_name);
+                      }
+                    }}
+                    tabIndex={0}
+                    className="px-3 h-9 flex items-center justify-between bg-white dark:bg-neutral-950 cursor-default select-none outline-none"
+                  >
+                    <div className="text-sm flex items-center gap-2 min-w-0 flex-1">
+                      <div
+                        className={`mr-1 h-4 w-4 rounded-sm border grid place-items-center shrink-0 ${
+                          isSelected
+                            ? "border-neutral-700 bg-neutral-800"
+                            : "border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-950"
+                        }`}
+                      >
+                        <Check
+                          className={`w-3 h-3 text-white transition-opacity ${
+                            isSelected ? "opacity-100" : "opacity-0"
+                          }`}
+                        />
+                      </div>
+                      <GitHubIcon className="h-4 w-4 shrink-0 text-neutral-700 dark:text-neutral-200" />
+                      <span className="truncate">{repo.full_name}</span>
+                    </div>
+                    {when ? (
+                      <span className="ml-3 text-[10px] text-neutral-500 dark:text-neutral-500">
+                        {when}
+                      </span>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="px-3 py-6 text-sm text-neutral-500 dark:text-neutral-400 bg-white dark:bg-neutral-950 text-center">
+              {search ? (
+                <span>No repositories match your search.</span>
+              ) : hasConnections ? (
+                <span>No repositories found.</span>
+              ) : (
+                <span>No GitHub connection yet.</span>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Connect GitHub account link */}
+        <button
+          type="button"
+          onClick={onInstallGitHubApp}
+          className="w-full px-3 py-2 flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-900 border-t border-neutral-200 dark:border-neutral-800 transition-colors"
+        >
+          <GitHubIcon className="h-3.5 w-3.5" />
+          <span>Connect another GitHub account</span>
+        </button>
       </div>
     </div>
   );
