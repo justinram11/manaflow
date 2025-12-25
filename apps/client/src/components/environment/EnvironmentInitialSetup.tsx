@@ -144,15 +144,6 @@ export function EnvironmentInitialSetup({
 
       {/* Content */}
       <div className="space-y-6 mt-6">
-          {/* Workspace info */}
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            Workspace root{" "}
-            <code className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200">
-              /root/workspace
-            </code>{" "}
-            contains your repositor{selectedRepos.length > 1 ? "ies" : "y"} as subdirector{selectedRepos.length > 1 ? "ies" : "y"}.
-          </p>
-
           {/* Environment Name */}
           <div>
             <label className="block text-sm font-medium text-neutral-900 dark:text-neutral-100 mb-2">
@@ -174,6 +165,7 @@ export function EnvironmentInitialSetup({
           <ScriptsSection
             maintenanceScript={maintenanceScript}
             devScript={devScript}
+            selectedRepos={selectedRepos}
             onMaintenanceScriptChange={onMaintenanceScriptChange}
             onDevScriptChange={onDevScriptChange}
           />
@@ -213,11 +205,13 @@ export function EnvironmentInitialSetup({
 function ScriptsSection({
   maintenanceScript,
   devScript,
+  selectedRepos,
   onMaintenanceScriptChange,
   onDevScriptChange,
 }: {
   maintenanceScript: string;
   devScript: string;
+  selectedRepos: string[];
   onMaintenanceScriptChange: (value: string) => void;
   onDevScriptChange: (value: string) => void;
 }) {
@@ -235,6 +229,12 @@ function ScriptsSection({
         Maintenance and Dev Scripts
       </summary>
       <div className="mt-4 pl-6 space-y-4">
+        <p className="text-xs text-neutral-500 dark:text-neutral-400">
+          Scripts run from{" "}
+          <code className="font-mono text-neutral-600 dark:text-neutral-300">/root/workspace</code>
+          {" "}which contains your repositor{selectedRepos.length > 1 ? "ies" : "y"} as subdirector{selectedRepos.length > 1 ? "ies" : "y"}.
+        </p>
+
         <div>
           <label className="block text-xs text-neutral-500 dark:text-neutral-400 mb-1.5">
             Maintenance Script
