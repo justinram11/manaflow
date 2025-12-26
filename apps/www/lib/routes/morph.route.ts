@@ -548,38 +548,88 @@ morphRouter.openapi(
         console.log(
           `Creating new Morph instance (snapshot: ${selectedSnapshotId})`
         );
-        instance = await Sentry.startSpan(
-          { name: "client.instances.start", op: "morph" },
-          () =>
-            client.instances.start({
-              snapshotId: selectedSnapshotId,
-              ttlSeconds,
-              ttlAction: "pause",
-              metadata: {
-                app: "cmux-dev",
-                userId: user.id,
-                teamId: team.uuid,
-              },
-            })
-        );
-        instanceId = instance.id;
+
+        // Retry logic for instance start to handle connection timeouts
+        const maxRetries = 3;
+        let lastError: Error | undefined;
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            instance = await Sentry.startSpan(
+              { name: "client.instances.start", op: "morph", attributes: { attempt } },
+              () =>
+                client.instances.start({
+                  snapshotId: selectedSnapshotId,
+                  ttlSeconds,
+                  ttlAction: "pause",
+                  metadata: {
+                    app: "cmux-dev",
+                    userId: user.id,
+                    teamId: team.uuid,
+                  },
+                })
+            );
+            break; // Success, exit retry loop
+          } catch (error) {
+            lastError = error instanceof Error ? error : new Error(String(error));
+            const isConnectTimeout =
+              lastError.message.includes("fetch failed") ||
+              lastError.message.includes("ConnectTimeoutError") ||
+              (lastError.cause instanceof Error &&
+                (lastError.cause.message.includes("Connect Timeout") ||
+                  (lastError.cause as NodeJS.ErrnoException).code === "UND_ERR_CONNECT_TIMEOUT"));
+
+            if (!isConnectTimeout || attempt === maxRetries) {
+              throw lastError;
+            }
+
+            console.log(
+              `[morph.setup-instance] Connection timeout on attempt ${attempt}/${maxRetries}, retrying in ${attempt * 2}s...`
+            );
+            await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+          }
+        }
+        instanceId = instance!.id;
         void Sentry.startSpan(
           { name: "instance.setWakeOn", op: "morph" },
           () => instance.setWakeOn(true, true)
         );
+        instance = instance!;
       } else {
         console.log(`Using existing Morph instance: ${instanceId}`);
 
-        const [team, inst] = await Promise.all([
-          verifyTeamPromise,
-          Sentry.startSpan({ name: "client.instances.get", op: "morph" }, () =>
-            client.instances.get({ instanceId: instanceId! })
-          ),
-        ]);
+        const team = await verifyTeamPromise;
 
-        instance = inst;
+        // Retry logic for instance get to handle connection timeouts
+        const maxRetries = 3;
+        let lastError: Error | undefined;
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            instance = await Sentry.startSpan(
+              { name: "client.instances.get", op: "morph", attributes: { attempt } },
+              () => client.instances.get({ instanceId: instanceId! })
+            );
+            break; // Success, exit retry loop
+          } catch (error) {
+            lastError = error instanceof Error ? error : new Error(String(error));
+            const isConnectTimeout =
+              lastError.message.includes("fetch failed") ||
+              lastError.message.includes("ConnectTimeoutError") ||
+              (lastError.cause instanceof Error &&
+                (lastError.cause.message.includes("Connect Timeout") ||
+                  (lastError.cause as NodeJS.ErrnoException).code === "UND_ERR_CONNECT_TIMEOUT"));
 
-        const meta = instance.metadata;
+            if (!isConnectTimeout || attempt === maxRetries) {
+              throw lastError;
+            }
+
+            console.log(
+              `[morph.setup-instance] Connection timeout on get attempt ${attempt}/${maxRetries}, retrying in ${attempt * 2}s...`
+            );
+            await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+          }
+        }
+
+        const meta = instance!.metadata;
         const instanceTeamId = meta?.teamId;
         if (!instanceTeamId || instanceTeamId !== team.uuid) {
           return c.text(
@@ -587,6 +637,7 @@ morphRouter.openapi(
             403
           );
         }
+        instance = instance!;
       }
 
       const vscodeUrl = instance.networking.httpServices.find(
