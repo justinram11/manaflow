@@ -56,7 +56,6 @@
     "@ai-sdk/google": "^2.0.8",
     "@ai-sdk/openai": "^2.0.19",
     "@cmux/convex": "workspace:*",
-    "@cmux/sandbox-client": "workspace:*",
     "@cmux/shared": "workspace:*",
     "@cmux/www-openapi-client": "workspace:*",
     "@daytonaio/sdk": "^0.22.1",
