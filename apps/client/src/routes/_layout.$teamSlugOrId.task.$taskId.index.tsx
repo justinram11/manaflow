@@ -639,14 +639,15 @@ function TaskDetailPage() {
     };
   }, [selectedRun, taskRuns?.length]);
 
-  // Determine if this is a workspace-only task (local or cloud workspace)
-  const isWorkspaceOnlyTask = task?.isLocalWorkspace || task?.isCloudWorkspace;
+  // Determine if this is a local workspace task (no browser/gitDiff panels)
+  const isLocalWorkspaceTask = task?.isLocalWorkspace;
 
   const currentLayout = useMemo(() => {
     const layout = getCurrentLayoutPanels(panelConfig);
 
-    // For local/cloud workspaces, hide gitDiff and browser panels since they're not applicable
-    if (isWorkspaceOnlyTask) {
+    // For local workspaces only, hide gitDiff and browser panels since they're not applicable
+    // Cloud workspaces DO have browser and gitDiff panels available
+    if (isLocalWorkspaceTask) {
       return {
         topLeft: layout.topLeft === "gitDiff" || layout.topLeft === "browser" ? null : layout.topLeft,
         topRight: layout.topRight === "gitDiff" || layout.topRight === "browser" ? null : layout.topRight,
@@ -656,17 +657,18 @@ function TaskDetailPage() {
     }
 
     return layout;
-  }, [panelConfig, isWorkspaceOnlyTask]);
+  }, [panelConfig, isLocalWorkspaceTask]);
   const availablePanels = useMemo(() => {
     const panels = getAvailablePanels(panelConfig);
 
-    // For local/cloud workspaces, exclude gitDiff and browser from available panels
-    if (isWorkspaceOnlyTask) {
+    // For local workspaces only, exclude gitDiff and browser from available panels
+    // Cloud workspaces DO have browser and gitDiff panels available
+    if (isLocalWorkspaceTask) {
       return panels.filter((p) => p !== "gitDiff" && p !== "browser");
     }
 
     return panels;
-  }, [panelConfig, isWorkspaceOnlyTask]);
+  }, [panelConfig, isLocalWorkspaceTask]);
   const activePanelPositions = useMemo(
     () => getActivePanelPositions(panelConfig.layoutMode),
     [panelConfig.layoutMode]
