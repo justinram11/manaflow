@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import type { RequestCookie } from "next/dist/compiled/@edge-runtime/cookies";
 
 import { env } from "@/lib/utils/www-env";
+import { stackServerApp } from "@/lib/utils/stack";
 import { OpenCmuxClient } from "./OpenCmuxClient";
 import { CheckSessionStorageRedirect } from "./CheckSessionStorageRedirect";
 
@@ -13,6 +14,7 @@ export const dynamic = "force-dynamic";
  * Stack Auth uses different cookie naming conventions:
  * - Local HTTP: `stack-refresh-{projectId}` / `stack-access`
  * - Production HTTPS: `__Host-stack-refresh-{projectId}` / `__Host-stack-access`
+ * - Production Secure: `__Secure-stack-refresh-{projectId}` / `__Secure-stack-access`
  * - With branch: `__Host-stack-refresh-{projectId}--default` / `__Host-stack-access--default`
  */
 function findStackCookie(
@@ -24,8 +26,10 @@ function findStackCookie(
   // Priority order: most specific first
   // 1. __Host- prefixed with branch suffix (--default, --main, etc.)
   // 2. __Host- prefixed without suffix
-  // 3. Plain name with branch suffix
-  // 4. Plain name
+  // 3. __Secure- prefixed with branch suffix
+  // 4. __Secure- prefixed without suffix
+  // 5. Plain name with branch suffix
+  // 6. Plain name
 
   // First, try to find __Host- prefixed cookies (production HTTPS)
   const hostPrefixedWithBranch = allCookies.find(
@@ -40,6 +44,20 @@ function findStackCookie(
   );
   if (hostPrefixed) {
     return hostPrefixed.value;
+  }
+
+  const securePrefixedWithBranch = allCookies.find(
+    (c) => c.name.startsWith(`__Secure-${baseName}--`) && c.value
+  );
+  if (securePrefixedWithBranch) {
+    return securePrefixedWithBranch.value;
+  }
+
+  const securePrefixed = allCookies.find(
+    (c) => c.name === `__Secure-${baseName}` && c.value
+  );
+  if (securePrefixed) {
+    return securePrefixed.value;
   }
 
   // Then try plain name with branch suffix
@@ -57,6 +75,35 @@ function findStackCookie(
   }
 
   return undefined;
+}
+
+type ParsedStackAccessCookie = {
+  refreshToken?: string;
+  accessToken?: string;
+};
+
+function parseStackAccessCookie(value: string | undefined): ParsedStackAccessCookie {
+  if (!value) {
+    return {};
+  }
+
+  if (!value.startsWith("[")) {
+    return { accessToken: value };
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (Array.isArray(parsed)) {
+      const [refreshToken, accessToken] = parsed;
+      if (typeof refreshToken === "string" && typeof accessToken === "string") {
+        return { refreshToken, accessToken };
+      }
+    }
+  } catch (error) {
+    console.error("[After Sign In] Failed to parse stack-access cookie", error);
+  }
+
+  return {};
 }
 
 type AfterSignInPageProps = {
@@ -104,8 +151,8 @@ function getSafeRedirectPath(target: string): string | null {
   return null;
 }
 
-function buildCmuxHref(baseHref: string | null, stackRefreshToken: string | undefined, stackAccessToken: string | undefined): string | null {
-  if (!stackRefreshToken || !stackAccessToken) {
+function buildCmuxHref(baseHref: string | null, stackRefreshToken: string | undefined, stackAccessCookie: string | undefined): string | null {
+  if (!stackRefreshToken || !stackAccessCookie) {
     return baseHref;
   }
 
@@ -114,10 +161,10 @@ function buildCmuxHref(baseHref: string | null, stackRefreshToken: string | unde
   try {
     const url = new URL(pairedHref);
     url.searchParams.set("stack_refresh", stackRefreshToken);
-    url.searchParams.set("stack_access", stackAccessToken);
+    url.searchParams.set("stack_access", stackAccessCookie);
     return url.toString();
   } catch {
-    return `${CMUX_SCHEME}auth-callback?stack_refresh=${encodeURIComponent(stackRefreshToken)}&stack_access=${encodeURIComponent(stackAccessToken)}`;
+    return `${CMUX_SCHEME}auth-callback?stack_refresh=${encodeURIComponent(stackRefreshToken)}&stack_access=${encodeURIComponent(stackAccessCookie)}`;
   }
 }
 
@@ -129,17 +176,43 @@ export default async function AfterSignInPage({ searchParams: searchParamsPromis
   // - Local: stack-refresh-{projectId}, stack-access
   // - Production HTTPS: __Host-stack-refresh-{projectId}--default, __Host-stack-access--default
   const refreshCookieBaseName = `stack-refresh-${env.NEXT_PUBLIC_STACK_PROJECT_ID}`;
-  const stackRefreshToken = findStackCookie(stackCookies, refreshCookieBaseName);
-  const stackAccessToken = findStackCookie(stackCookies, "stack-access");
+  const stackRefreshCookieValue = findStackCookie(stackCookies, refreshCookieBaseName);
+  const stackAccessCookieValue = findStackCookie(stackCookies, "stack-access");
+  const parsedAccessCookie = parseStackAccessCookie(stackAccessCookieValue);
+
+  let stackRefreshToken = stackRefreshCookieValue ?? parsedAccessCookie.refreshToken;
+  let stackAccessCookie = stackAccessCookieValue;
+  let accessToken = parsedAccessCookie.accessToken;
+
+  if (!stackRefreshToken || !stackAccessCookie) {
+    try {
+      const user = await stackServerApp.getUser({ or: "return-null" });
+      if (user) {
+        const authJson = await user.getAuthJson();
+        if (!stackRefreshToken && authJson.refreshToken) {
+          stackRefreshToken = authJson.refreshToken;
+        }
+        if (!accessToken && authJson.accessToken) {
+          accessToken = authJson.accessToken;
+        }
+      }
+    } catch (error) {
+      console.error("[After Sign In] Failed to hydrate Stack tokens", error);
+    }
+  }
+
+  if (!stackAccessCookie && stackRefreshToken && accessToken) {
+    stackAccessCookie = JSON.stringify([stackRefreshToken, accessToken]);
+  }
 
   // Debug logging for production troubleshooting
-  if (!stackRefreshToken || !stackAccessToken) {
+  if (!stackRefreshToken || !stackAccessCookie) {
     const allCookieNames = stackCookies.getAll().map((c) => c.name);
     console.log("[After Sign In] Cookie search debug:", {
       refreshCookieBaseName,
       allCookieNames,
       foundRefresh: !!stackRefreshToken,
-      foundAccess: !!stackAccessToken,
+      foundAccess: !!stackAccessCookie,
     });
   }
 
@@ -149,21 +222,21 @@ export default async function AfterSignInPage({ searchParams: searchParamsPromis
   console.log("[After Sign In] Processing redirect:", {
     afterAuthReturnTo: afterAuthReturnToRaw,
     hasRefreshToken: !!stackRefreshToken,
-    hasAccessToken: !!stackAccessToken,
+    hasAccessToken: !!stackAccessCookie,
   });
 
   // If no return URL in query params, check sessionStorage first (for OAuth popup flow),
   // then fall back to Electron deep link (default for desktop users)
   if (!afterAuthReturnToRaw) {
     // Return a client component that checks sessionStorage, with electron deeplink as fallback
-    const electronFallbackHref = buildCmuxHref(null, stackRefreshToken, stackAccessToken);
+    const electronFallbackHref = buildCmuxHref(null, stackRefreshToken, stackAccessCookie);
     return <CheckSessionStorageRedirect fallbackPath="/" electronFallbackHref={electronFallbackHref} />;
   }
 
   // Handle Electron deep link redirects
   if (afterAuthReturnToRaw?.startsWith(CMUX_SCHEME)) {
     console.log("[After Sign In] Opening Electron app with deep link");
-    const cmuxHref = buildCmuxHref(afterAuthReturnToRaw, stackRefreshToken, stackAccessToken);
+    const cmuxHref = buildCmuxHref(afterAuthReturnToRaw, stackRefreshToken, stackAccessCookie);
     if (cmuxHref) {
       return <OpenCmuxClient href={cmuxHref} />;
     }
@@ -182,7 +255,7 @@ export default async function AfterSignInPage({ searchParams: searchParamsPromis
 
   // Fallback: try to open Electron app
   console.log("[After Sign In] No return path, using fallback");
-  const fallbackHref = buildCmuxHref(null, stackRefreshToken, stackAccessToken);
+  const fallbackHref = buildCmuxHref(null, stackRefreshToken, stackAccessCookie);
   if (fallbackHref) {
     return <OpenCmuxClient href={fallbackHref} />;
   }
