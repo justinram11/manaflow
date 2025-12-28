@@ -1,11 +1,63 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import type { RequestCookie } from "next/dist/compiled/@edge-runtime/cookies";
 
 import { env } from "@/lib/utils/www-env";
 import { OpenCmuxClient } from "./OpenCmuxClient";
 import { CheckSessionStorageRedirect } from "./CheckSessionStorageRedirect";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * Find a Stack Auth cookie by checking multiple naming patterns.
+ * Stack Auth uses different cookie naming conventions:
+ * - Local HTTP: `stack-refresh-{projectId}` / `stack-access`
+ * - Production HTTPS: `__Host-stack-refresh-{projectId}` / `__Host-stack-access`
+ * - With branch: `__Host-stack-refresh-{projectId}--default` / `__Host-stack-access--default`
+ */
+function findStackCookie(
+  cookieStore: { getAll: () => RequestCookie[] },
+  baseName: string
+): string | undefined {
+  const allCookies = cookieStore.getAll();
+
+  // Priority order: most specific first
+  // 1. __Host- prefixed with branch suffix (--default, --main, etc.)
+  // 2. __Host- prefixed without suffix
+  // 3. Plain name with branch suffix
+  // 4. Plain name
+
+  // First, try to find __Host- prefixed cookies (production HTTPS)
+  const hostPrefixedWithBranch = allCookies.find(
+    (c) => c.name.startsWith(`__Host-${baseName}--`) && c.value
+  );
+  if (hostPrefixedWithBranch) {
+    return hostPrefixedWithBranch.value;
+  }
+
+  const hostPrefixed = allCookies.find(
+    (c) => c.name === `__Host-${baseName}` && c.value
+  );
+  if (hostPrefixed) {
+    return hostPrefixed.value;
+  }
+
+  // Then try plain name with branch suffix
+  const plainWithBranch = allCookies.find(
+    (c) => c.name.startsWith(`${baseName}--`) && c.value
+  );
+  if (plainWithBranch) {
+    return plainWithBranch.value;
+  }
+
+  // Finally, try plain name
+  const plain = allCookies.find((c) => c.name === baseName && c.value);
+  if (plain) {
+    return plain.value;
+  }
+
+  return undefined;
+}
 
 type AfterSignInPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
@@ -71,14 +123,25 @@ function buildCmuxHref(baseHref: string | null, stackRefreshToken: string | unde
 
 export default async function AfterSignInPage({ searchParams: searchParamsPromise }: AfterSignInPageProps) {
   const stackCookies = await cookies();
-  // Stack Auth uses __Host- prefix in production (HTTPS) for security
-  const refreshCookieName = `stack-refresh-${env.NEXT_PUBLIC_STACK_PROJECT_ID}`;
-  const stackRefreshToken =
-    stackCookies.get(`__Host-${refreshCookieName}`)?.value ??
-    stackCookies.get(refreshCookieName)?.value;
-  const stackAccessToken =
-    stackCookies.get("__Host-stack-access")?.value ??
-    stackCookies.get("stack-access")?.value;
+
+  // Find Stack Auth cookies using flexible matching for different environments
+  // Stack Auth uses different naming conventions:
+  // - Local: stack-refresh-{projectId}, stack-access
+  // - Production HTTPS: __Host-stack-refresh-{projectId}--default, __Host-stack-access--default
+  const refreshCookieBaseName = `stack-refresh-${env.NEXT_PUBLIC_STACK_PROJECT_ID}`;
+  const stackRefreshToken = findStackCookie(stackCookies, refreshCookieBaseName);
+  const stackAccessToken = findStackCookie(stackCookies, "stack-access");
+
+  // Debug logging for production troubleshooting
+  if (!stackRefreshToken || !stackAccessToken) {
+    const allCookieNames = stackCookies.getAll().map((c) => c.name);
+    console.log("[After Sign In] Cookie search debug:", {
+      refreshCookieBaseName,
+      allCookieNames,
+      foundRefresh: !!stackRefreshToken,
+      foundAccess: !!stackAccessToken,
+    });
+  }
 
   const searchParams = await searchParamsPromise;
   const afterAuthReturnToRaw = getSingleValue(searchParams?.after_auth_return_to ?? undefined);
