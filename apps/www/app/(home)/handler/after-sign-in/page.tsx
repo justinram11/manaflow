@@ -232,25 +232,38 @@ export default async function AfterSignInPage({ searchParams: searchParamsPromis
   const parsedAccessCookie = parseStackAccessCookie(stackAccessCookieValue);
   const parsedRefreshCookie = parseStackRefreshCookie(stackRefreshCookieValue);
 
+  // Start with tokens from cookies as fallback
   let stackRefreshToken = parsedAccessCookie.refreshToken ?? parsedRefreshCookie.refreshToken;
   let stackAccessCookie = normalizeCookieValue(stackAccessCookieValue);
   let accessToken = parsedAccessCookie.accessToken;
 
-  if (!stackRefreshToken || !stackAccessCookie) {
-    try {
-      const user = await stackServerApp.getUser({ or: "return-null" });
-      if (user) {
-        const authJson = await user.getAuthJson();
-        if (!stackRefreshToken && authJson.refreshToken) {
-          stackRefreshToken = authJson.refreshToken;
-        }
-        if (!accessToken && authJson.accessToken) {
-          accessToken = authJson.accessToken;
-        }
+  // ALWAYS create a fresh session and get new tokens for Electron deeplinks.
+  // This is critical because:
+  // 1. When a user is already logged in on cmux.dev and initiates sign-in from Electron,
+  //    the existing session's refresh token may have been rotated/invalidated
+  // 2. getAuthJson() returns the current session's tokens which may be stale
+  // 3. Creating a new session via createSession() generates fresh, valid tokens
+  // Without this, Electron would receive stale tokens causing "REFRESH_TOKEN_NOT_FOUND_OR_INVALID" errors.
+  try {
+    const user = await stackServerApp.getUser({ or: "return-null" });
+    if (user) {
+      // Create a fresh session with new tokens (30 day expiry for Electron)
+      // This ensures we always get valid tokens, even if the current session is stale
+      const freshSession = await user.createSession({ expiresInMillis: 30 * 24 * 60 * 60 * 1000 });
+      const freshTokens = await freshSession.getTokens();
+
+      if (freshTokens.refreshToken) {
+        stackRefreshToken = freshTokens.refreshToken;
+        console.log("[After Sign In] Got fresh refresh token from new session");
       }
-    } catch (error) {
-      console.error("[After Sign In] Failed to hydrate Stack tokens", error);
+      if (freshTokens.accessToken) {
+        accessToken = freshTokens.accessToken;
+        console.log("[After Sign In] Got fresh access token from new session");
+      }
     }
+  } catch (error) {
+    console.error("[After Sign In] Failed to create fresh session", error);
+    // Fall back to cookie-based tokens (already set above)
   }
 
   // ALWAYS reconstruct the access cookie JSON to ensure the refresh token matches
