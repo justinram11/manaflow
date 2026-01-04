@@ -4,6 +4,7 @@ import { stackServerApp } from "@/lib/utils/stack";
 import {
   getTeamDisplayName,
   getTeamSlugOrId,
+  getTeamSlug,
   type StackTeam,
 } from "@/lib/team-utils";
 import { PreviewTestDashboard } from "@/components/preview/preview-test-dashboard";
@@ -21,6 +22,7 @@ type PageProps = {
 
 type TeamOption = {
   slugOrId: string;
+  slug: string | null;
   displayName: string;
 };
 
@@ -60,6 +62,7 @@ export default async function PreviewTestPage({ searchParams }: PageProps) {
   const selectedTeamSlugOrId = selectedTeam ? getTeamSlugOrId(selectedTeam) : "";
   const teamOptions: TeamOption[] = teams.map((team) => ({
     slugOrId: getTeamSlugOrId(team),
+    slug: getTeamSlug(team),
     displayName: getTeamDisplayName(team),
   }));
 

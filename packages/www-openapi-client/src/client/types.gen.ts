@@ -3048,6 +3048,7 @@ export type GetApiPreviewTestJobsResponses = {
             headSha: string;
             status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
             stateReason?: string | null;
+            taskId?: string | null;
             taskRunId?: string | null;
             createdAt: number;
             updatedAt: number;
@@ -3216,6 +3217,7 @@ export type GetApiPreviewTestJobsByPreviewRunIdResponses = {
         headSha: string;
         status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
         stateReason?: string | null;
+        taskId?: string | null;
         taskRunId?: string | null;
         createdAt: number;
         updatedAt: number;
@@ -3240,7 +3242,6 @@ export type GetApiPreviewTestJobsByPreviewRunIdResponses = {
         prDescription?: string | null;
         baseSha?: string | null;
         headRef?: string | null;
-        taskId?: string | null;
         environmentId?: string | null;
     };
 };

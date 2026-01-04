@@ -346,6 +346,7 @@ const PreviewTestRunSchema = z.object({
   headSha: z.string(),
   status: z.enum(["pending", "running", "completed", "failed", "skipped"]),
   stateReason: z.string().optional().nullable(),
+  taskId: z.string().optional().nullable(),
   taskRunId: z.string().optional().nullable(),
   createdAt: z.number(),
   updatedAt: z.number(),

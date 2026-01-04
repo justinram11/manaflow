@@ -420,6 +420,13 @@ export const listTestRuns = authQuery({
       testRuns.map(async (run) => {
         const config = await ctx.db.get(run.previewConfigId);
 
+        // Get taskRun to extract taskId
+        let taskId: Id<"tasks"> | undefined;
+        if (run.taskRunId) {
+          const taskRun = await ctx.db.get(run.taskRunId);
+          taskId = taskRun?.taskId;
+        }
+
         let screenshotSet: Doc<"taskRunScreenshotSets"> | null = null;
         if (run.screenshotSetId) {
           screenshotSet = await ctx.db.get(run.screenshotSetId);
@@ -458,6 +465,7 @@ export const listTestRuns = authQuery({
           headSha: run.headSha,
           status: run.status,
           stateReason: run.stateReason,
+          taskId,
           taskRunId: run.taskRunId,
           createdAt: run.createdAt,
           updatedAt: run.updatedAt,

@@ -156,6 +156,14 @@ export const triggerGithubComment = internalAction({
 
     const { run: previewRun } = run;
 
+    // Skip GitHub comments for test preview runs
+    if (previewRun.stateReason === "Test preview run") {
+      console.log("[previewScreenshots] Skipping GitHub comment for test run", {
+        previewRunId: args.previewRunId,
+      });
+      return;
+    }
+
     if (!previewRun.screenshotSetId) {
       console.warn("[previewScreenshots] No screenshot set for run", {
         previewRunId: args.previewRunId,

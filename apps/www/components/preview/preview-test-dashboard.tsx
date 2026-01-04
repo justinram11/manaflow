@@ -15,9 +15,10 @@ import {
   CheckCircle2,
   Clock,
   FileText,
+  Code,
+  Globe,
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import clsx from "clsx";
 import {
   QueryClient,
@@ -39,6 +40,7 @@ import {
 
 type TeamOption = {
   slugOrId: string;
+  slug: string | null;
   displayName: string;
 };
 
@@ -119,7 +121,6 @@ function PreviewTestDashboardInner({
   selectedTeamSlugOrId,
   teamOptions,
 }: PreviewTestDashboardProps) {
-  const router = useRouter();
   const [prUrls, setPrUrls] = useState("");
   const [selectedTeam, setSelectedTeam] = useState(selectedTeamSlugOrId);
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
@@ -127,6 +128,19 @@ function PreviewTestDashboardInner({
   const [accessWarning, setAccessWarning] = useState<AccessCheckResult | null>(null);
   const [showConfiguredRepos, setShowConfiguredRepos] = useState(false);
   const qc = useQueryClient();
+
+  // Get the team slug for URL construction (prefer slug over ID)
+  const selectedTeamSlug = (() => {
+    const team = teamOptions.find((t) => t.slugOrId === selectedTeam);
+    return team?.slug ?? selectedTeam;
+  })();
+
+  // Client app base URL for workspace/browser links
+  // In development, the client app runs on port 5173
+  // In production, both apps share the same domain (www.cmux.sh)
+  const clientBaseUrl = typeof window !== "undefined" && window.location.hostname === "localhost"
+    ? "http://localhost:5173"
+    : "";
 
   // Fetch test jobs
   const { data: jobsData, isLoading: isLoadingJobs } = useQuery({
@@ -340,15 +354,10 @@ function PreviewTestDashboardInner({
 
   const handleJobClick = useCallback(
     (job: TestJob) => {
-      // If the job has a trajectory, navigate to it
-      if (job.taskId && job.taskRunId) {
-        router.push(`/${selectedTeam}/task/${job.taskId}/run/${job.taskRunId}`);
-      } else {
-        // Otherwise just toggle expanded state
-        toggleJobExpanded(job._id);
-      }
+      // Always just toggle expanded state - use dedicated icon links for navigation
+      toggleJobExpanded(job._id);
     },
-    [router, selectedTeam, toggleJobExpanded]
+    [toggleJobExpanded]
   );
 
   const getStatusIcon = (status: TestJob["status"]) => {
@@ -522,7 +531,7 @@ function PreviewTestDashboardInner({
               {accessWarning.errorCode === "no_installation" ||
               accessWarning.errorCode === "installation_inactive" ? (
                 <Link
-                  href={`/${selectedTeam}/settings`}
+                  href={`/${selectedTeamSlug}/settings`}
                   className="mt-2 inline-block text-amber-300 underline hover:text-amber-200"
                 >
                   Go to Team Settings
@@ -689,9 +698,22 @@ function PreviewTestDashboardInner({
                     {getStatusText(job.status)}
                   </span>
                   {job.taskId && job.taskRunId && (
-                    <span className="text-xs text-neutral-500">
-                      Click to view trajectory
-                    </span>
+                    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                      <a
+                        href={`${clientBaseUrl}/${selectedTeamSlug}/task/${job.taskId}`}
+                        className="rounded p-1.5 text-neutral-400 hover:bg-neutral-700 hover:text-white"
+                        title="View Workspace"
+                      >
+                        <Code className="h-4 w-4" />
+                      </a>
+                      <a
+                        href={`${clientBaseUrl}/${selectedTeamSlug}/task/${job.taskId}/run/${job.taskRunId}/browser`}
+                        className="rounded p-1.5 text-neutral-400 hover:bg-neutral-700 hover:text-white"
+                        title="View Browser"
+                      >
+                        <Globe className="h-4 w-4" />
+                      </a>
+                    </div>
                   )}
                   <div
                     className="flex items-center gap-1"
@@ -777,17 +799,33 @@ function PreviewTestDashboardInner({
                       </div>
                     </div>
 
-                    {/* Trajectory link */}
+                    {/* Workspace, Browser, and Trajectory links */}
                     {job.taskId && job.taskRunId && (
-                      <div className="mb-4">
-                        <Link
-                          href={`/${selectedTeam}/task/${job.taskId}/run/${job.taskRunId}`}
+                      <div className="mb-4 flex flex-wrap items-center gap-2">
+                        <a
+                          href={`${clientBaseUrl}/${selectedTeamSlug}/task/${job.taskId}`}
+                          className="inline-flex items-center gap-2 rounded-md bg-neutral-800 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-700 hover:text-white"
+                        >
+                          <Code className="h-4 w-4" />
+                          Workspace
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                        <a
+                          href={`${clientBaseUrl}/${selectedTeamSlug}/task/${job.taskId}/run/${job.taskRunId}/browser`}
+                          className="inline-flex items-center gap-2 rounded-md bg-neutral-800 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-700 hover:text-white"
+                        >
+                          <Globe className="h-4 w-4" />
+                          Browser
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                        <a
+                          href={`${clientBaseUrl}/${selectedTeamSlug}/task/${job.taskId}/run/${job.taskRunId}`}
                           className="inline-flex items-center gap-2 rounded-md bg-neutral-800 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-700 hover:text-white"
                         >
                           <FileText className="h-4 w-4" />
-                          View Trajectory
+                          Trajectory
                           <ExternalLink className="h-3 w-3" />
-                        </Link>
+                        </a>
                       </div>
                     )}
 
