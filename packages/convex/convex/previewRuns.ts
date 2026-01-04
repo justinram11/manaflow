@@ -1,3 +1,4 @@
+import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
 import { getTeamId } from "../_shared/team";
 import { internal } from "./_generated/api";
@@ -508,6 +509,63 @@ export const listByTeam = authQuery({
     }
 
     return enrichedRuns;
+  },
+});
+
+// Paginated query for preview runs (infinite scroll)
+export const listByTeamPaginated = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+
+    // Query preview runs with pagination
+    const paginatedResult = await ctx.db
+      .query("previewRuns")
+      .withIndex("by_team_created", (q) => q.eq("teamId", teamId))
+      .order("desc")
+      .paginate(args.paginationOpts);
+
+    // Enrich with config repo name and taskId from linked taskRun
+    // Also filter out runs whose linked task is archived
+    const enrichedPage: Array<
+      (typeof paginatedResult.page)[number] & {
+        configRepoFullName?: string;
+        taskId?: Id<"tasks">;
+      }
+    > = [];
+
+    for (const run of paginatedResult.page) {
+      const config = await ctx.db.get(run.previewConfigId);
+      let taskId = undefined;
+      let isTaskArchived = false;
+
+      if (run.taskRunId) {
+        const taskRun = await ctx.db.get(run.taskRunId);
+        if (taskRun) {
+          taskId = taskRun.taskId;
+          // Check if the linked task is archived
+          const task = await ctx.db.get(taskRun.taskId);
+          isTaskArchived = task?.isArchived === true;
+        }
+      }
+
+      // Skip runs whose linked task is archived
+      if (isTaskArchived) continue;
+
+      enrichedPage.push({
+        ...run,
+        configRepoFullName: config?.repoFullName,
+        taskId,
+      });
+    }
+
+    return {
+      ...paginatedResult,
+      page: enrichedPage,
+    };
   },
 });
 
