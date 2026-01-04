@@ -85,6 +85,27 @@ export const createTestRun = authMutation({
       );
     }
 
+    // Verify the GitHub installation is still active
+    const installation = await ctx.db
+      .query("providerConnections")
+      .withIndex("by_installationId", (q) =>
+        q.eq("installationId", config.repoInstallationId)
+      )
+      .first();
+
+    if (!installation) {
+      throw new Error(
+        `GitHub App installation not found. Please reconnect your GitHub App in Team Settings.`
+      );
+    }
+
+    if (installation.isActive === false) {
+      throw new Error(
+        `GitHub App installation for ${installation.accountLogin ?? "this account"} is no longer active. ` +
+          `Please reconnect the GitHub App in your GitHub settings or Team Settings.`
+      );
+    }
+
     // Fetch PR metadata from GitHub (without posting anything)
     // For test runs, we'll use placeholder values if we can't fetch
     const headSha = `test-${Date.now()}`;
@@ -402,6 +423,119 @@ export const getTestRunDetails = authQuery({
             images: imagesWithUrls,
           }
         : null,
+    };
+  },
+});
+
+/**
+ * Check if a team has GitHub access to a repository.
+ * This validates that:
+ * 1. A preview config exists for the repo
+ * 2. The associated GitHub installation is active
+ * Returns access status and helpful error messages for the UI.
+ */
+export const checkRepoAccess = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    prUrl: v.string(),
+  },
+  handler: async (ctx, args): Promise<{
+    hasAccess: boolean;
+    hasConfig: boolean;
+    hasActiveInstallation: boolean;
+    repoFullName: string | null;
+    errorCode: "invalid_url" | "no_config" | "no_installation" | "installation_inactive" | null;
+    errorMessage: string | null;
+    suggestedAction: string | null;
+  }> => {
+    // Parse PR URL
+    const parsed = parsePrUrl(args.prUrl);
+    if (!parsed) {
+      return {
+        hasAccess: false,
+        hasConfig: false,
+        hasActiveInstallation: false,
+        repoFullName: null,
+        errorCode: "invalid_url",
+        errorMessage: "Invalid PR URL format",
+        suggestedAction: "Enter a valid GitHub PR URL (e.g., https://github.com/owner/repo/pull/123)",
+      };
+    }
+
+    const { repoFullName } = parsed;
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+
+    // Check if preview config exists for this repo
+    const config = await ctx.db
+      .query("previewConfigs")
+      .withIndex("by_team_repo", (q) =>
+        q.eq("teamId", teamId).eq("repoFullName", repoFullName)
+      )
+      .first();
+
+    if (!config) {
+      // No config - check if team has ANY GitHub installation
+      const installations = await ctx.db
+        .query("providerConnections")
+        .withIndex("by_team", (q) => q.eq("teamId", teamId))
+        .collect();
+
+      const hasAnyInstallation = installations.some((i) => i.isActive !== false);
+
+      return {
+        hasAccess: false,
+        hasConfig: false,
+        hasActiveInstallation: hasAnyInstallation,
+        repoFullName,
+        errorCode: "no_config",
+        errorMessage: `No preview configuration found for ${repoFullName}`,
+        suggestedAction: hasAnyInstallation
+          ? `Add a preview configuration for ${repoFullName} in the Preview settings`
+          : "Connect your GitHub account to this team first, then add a preview configuration",
+      };
+    }
+
+    // Config exists - check if the installation is active
+    const installation = await ctx.db
+      .query("providerConnections")
+      .withIndex("by_installationId", (q) =>
+        q.eq("installationId", config.repoInstallationId)
+      )
+      .first();
+
+    if (!installation) {
+      return {
+        hasAccess: false,
+        hasConfig: true,
+        hasActiveInstallation: false,
+        repoFullName,
+        errorCode: "no_installation",
+        errorMessage: "GitHub App installation not found",
+        suggestedAction: "Reconnect your GitHub App installation in Team Settings",
+      };
+    }
+
+    if (installation.isActive === false) {
+      return {
+        hasAccess: false,
+        hasConfig: true,
+        hasActiveInstallation: false,
+        repoFullName,
+        errorCode: "installation_inactive",
+        errorMessage: `GitHub App installation for ${installation.accountLogin ?? "this account"} is no longer active`,
+        suggestedAction: "Reconnect the GitHub App in your GitHub settings or Team Settings",
+      };
+    }
+
+    // All checks passed
+    return {
+      hasAccess: true,
+      hasConfig: true,
+      hasActiveInstallation: true,
+      repoFullName,
+      errorCode: null,
+      errorMessage: null,
+      suggestedAction: null,
     };
   },
 });

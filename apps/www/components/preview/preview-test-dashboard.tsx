@@ -31,6 +31,8 @@ import {
   postApiPreviewTestJobs,
   postApiPreviewTestJobsByPreviewRunIdDispatch,
   deleteApiPreviewTestJobsByPreviewRunId,
+  getApiPreviewTestCheckAccess,
+  getApiPreviewConfigs,
 } from "@cmux/www-openapi-client";
 
 type TeamOption = {
@@ -75,6 +77,28 @@ type TestJob = {
   taskId?: string | null;
 };
 
+type PreviewConfig = {
+  id: string;
+  repoFullName: string;
+  environmentId?: string | null;
+  repoInstallationId: number;
+  repoDefaultBranch?: string | null;
+  status: "active" | "paused" | "disabled";
+  lastRunAt?: number | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+type AccessCheckResult = {
+  hasAccess: boolean;
+  hasConfig: boolean;
+  hasActiveInstallation: boolean;
+  repoFullName: string | null;
+  errorCode: "invalid_url" | "no_config" | "no_installation" | "installation_inactive" | null;
+  errorMessage: string | null;
+  suggestedAction: string | null;
+};
+
 type PreviewTestDashboardProps = {
   selectedTeamSlugOrId: string;
   teamOptions: TeamOption[];
@@ -97,6 +121,8 @@ function PreviewTestDashboardInner({
   const [selectedTeam, setSelectedTeam] = useState(selectedTeamSlugOrId);
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  const [accessWarning, setAccessWarning] = useState<AccessCheckResult | null>(null);
+  const [showConfiguredRepos, setShowConfiguredRepos] = useState(false);
   const qc = useQueryClient();
 
   // Fetch test jobs
@@ -114,7 +140,24 @@ function PreviewTestDashboardInner({
     enabled: Boolean(selectedTeam),
   });
 
+  // Fetch configured preview repos for this team
+  const { data: configsData, isLoading: isLoadingConfigs } = useQuery({
+    queryKey: ["preview-configs", selectedTeam],
+    queryFn: async () => {
+      const response = await getApiPreviewConfigs({
+        query: { teamSlugOrId: selectedTeam },
+      });
+      if (response.error) {
+        throw new Error("Failed to fetch preview configs");
+      }
+      return response.data;
+    },
+    enabled: Boolean(selectedTeam),
+  });
+
   const jobs = (jobsData?.jobs ?? []) as TestJob[];
+  const configs = (configsData?.configs ?? []) as PreviewConfig[];
+  const activeConfigs = configs.filter((c) => c.status === "active");
 
   // Create test job mutation
   const createJobMutation = useMutation({
@@ -182,21 +225,51 @@ function PreviewTestDashboardInner({
 
   const handleCreateJobs = useCallback(async () => {
     setError(null);
+    setAccessWarning(null);
+
+    // Support single URL or multiple URLs separated by spaces/newlines/commas
     const urls = prUrls
-      .split("\n")
+      .split(/[\s,]+/)
       .map((url) => url.trim())
-      .filter((url) => url.length > 0);
+      .filter((url) => url.length > 0 && url.startsWith("http"));
 
     if (urls.length === 0) {
-      setError("Please enter at least one PR URL");
+      setError("Please enter a valid PR URL");
       return;
     }
 
+    // Check access for each URL before creating jobs
+    for (const url of urls) {
+      try {
+        const accessCheck = await getApiPreviewTestCheckAccess({
+          query: { teamSlugOrId: selectedTeam, prUrl: url },
+        });
+
+        if (accessCheck.error || !accessCheck.data?.hasAccess) {
+          const result = accessCheck.data as AccessCheckResult | undefined;
+          if (result) {
+            setAccessWarning(result);
+            // Show configured repos if the issue is no config
+            if (result.errorCode === "no_config") {
+              setShowConfiguredRepos(true);
+            }
+          } else {
+            setError("Failed to validate repository access");
+          }
+          return; // Stop on first access issue
+        }
+      } catch (err) {
+        console.error("Access check failed:", err);
+        // Continue anyway - the server will catch the error
+      }
+    }
+
+    // All access checks passed, create jobs
     for (const url of urls) {
       await createJobMutation.mutateAsync(url);
     }
     setPrUrls("");
-  }, [prUrls, createJobMutation]);
+  }, [prUrls, createJobMutation, selectedTeam]);
 
   const handleDispatchJob = useCallback(
     async (previewRunId: string) => {
@@ -302,64 +375,78 @@ function PreviewTestDashboardInner({
 
       {/* PR URL input */}
       <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-4">
-        <label className="mb-2 block text-sm font-medium text-white">
-          PR URLs (one per line)
-        </label>
-        <textarea
-          value={prUrls}
-          onChange={(e) => setPrUrls(e.target.value)}
-          placeholder="https://github.com/owner/repo/pull/123&#10;https://github.com/owner/repo/pull/456"
-          className="h-32 w-full rounded-md border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-        />
-        <div className="mt-3 flex items-center gap-3">
-          <Button
-            onClick={handleCreateJobs}
-            disabled={createJobMutation.isPending || !prUrls.trim()}
-            className="gap-2"
+        <div className="mb-3 flex items-center justify-between">
+          <label className="text-sm font-medium text-neutral-300">
+            PR URLs (one per line)
+          </label>
+          <button
+            onClick={() => setShowConfiguredRepos(!showConfiguredRepos)}
+            className="text-xs text-neutral-400 hover:text-neutral-200"
           >
-            {createJobMutation.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+            {activeConfigs.length > 0 ? (
+              <span className="flex items-center gap-1">
+                <CheckCircle2 className="h-3 w-3 text-green-400" />
+                {activeConfigs.length} repo{activeConfigs.length !== 1 ? "s" : ""} configured
+              </span>
             ) : (
-              <Plus className="h-4 w-4" />
+              <span className="flex items-center gap-1">
+                <AlertCircle className="h-3 w-3 text-amber-400" />
+                No repos configured
+              </span>
             )}
-            Add Jobs
-          </Button>
-          {jobs.some((job) => job.status === "pending") && (
+          </button>
+        </div>
+        <div className="flex items-start gap-3">
+          <div className="relative flex-1">
+            <textarea
+              value={prUrls}
+              onChange={(e) => setPrUrls(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey && prUrls.trim()) {
+                  e.preventDefault();
+                  handleCreateJobs();
+                }
+              }}
+              placeholder="https://github.com/owner/repo/pull/123 https://github.com/owner/repo/pull/456"
+              rows={3}
+              className="w-full rounded-md border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
+            />
+          </div>
+          <div className="flex flex-col gap-2">
             <Button
-              onClick={handleDispatchAll}
-              disabled={dispatchJobMutation.isPending}
-              variant="outline"
+              onClick={handleCreateJobs}
+              disabled={createJobMutation.isPending || !prUrls.trim()}
               className="gap-2"
             >
-              {dispatchJobMutation.isPending ? (
+              {createJobMutation.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <Play className="h-4 w-4" />
+                <Plus className="h-4 w-4" />
               )}
-              Start All Pending
+              Add Jobs
             </Button>
-          )}
-          <Button
-            onClick={() =>
-              qc.invalidateQueries({
-                queryKey: ["preview-test-jobs", selectedTeam],
-              })
-            }
-            variant="ghost"
-            size="icon"
-            className="ml-auto"
-          >
-            <RefreshCw
-              className={clsx("h-4 w-4", isLoadingJobs && "animate-spin")}
-            />
-          </Button>
+            <Button
+              onClick={() =>
+                qc.invalidateQueries({
+                  queryKey: ["preview-test-jobs", selectedTeam],
+                })
+              }
+              variant="ghost"
+              size="icon"
+              className="self-center"
+            >
+              <RefreshCw
+                className={clsx("h-4 w-4", isLoadingJobs && "animate-spin")}
+              />
+            </Button>
+          </div>
         </div>
       </div>
 
       {/* Error display */}
       {error && (
         <div className="flex items-center gap-2 rounded-lg border border-red-800 bg-red-900/20 px-4 py-3 text-sm text-red-300">
-          <AlertCircle className="h-4 w-4" />
+          <AlertCircle className="h-4 w-4 shrink-0" />
           {error}
           <button
             onClick={() => setError(null)}
@@ -370,11 +457,129 @@ function PreviewTestDashboardInner({
         </div>
       )}
 
+      {/* Access warning display */}
+      {accessWarning && !accessWarning.hasAccess && (
+        <div className="rounded-lg border border-amber-800 bg-amber-900/20 px-4 py-3 text-sm">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-medium text-amber-300">
+                {accessWarning.errorMessage}
+              </p>
+              {accessWarning.suggestedAction && (
+                <p className="mt-1 text-amber-400/80">
+                  {accessWarning.suggestedAction}
+                </p>
+              )}
+              {accessWarning.errorCode === "no_config" && activeConfigs.length > 0 && (
+                <button
+                  onClick={() => setShowConfiguredRepos(!showConfiguredRepos)}
+                  className="mt-2 text-amber-300 underline hover:text-amber-200"
+                >
+                  {showConfiguredRepos ? "Hide" : "Show"} configured repositories
+                </button>
+              )}
+              {accessWarning.errorCode === "no_installation" ||
+              accessWarning.errorCode === "installation_inactive" ? (
+                <Link
+                  href={`/${selectedTeam}/settings`}
+                  className="mt-2 inline-block text-amber-300 underline hover:text-amber-200"
+                >
+                  Go to Team Settings
+                </Link>
+              ) : null}
+            </div>
+            <button
+              onClick={() => setAccessWarning(null)}
+              className="text-amber-400 hover:text-amber-200"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Configured repositories panel */}
+      {showConfiguredRepos && (
+        <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-medium text-white">
+              Configured Repositories ({activeConfigs.length})
+            </h3>
+            <button
+              onClick={() => setShowConfiguredRepos(false)}
+              className="text-neutral-400 hover:text-white"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          {isLoadingConfigs ? (
+            <div className="flex items-center justify-center py-4">
+              <Loader2 className="h-5 w-5 animate-spin text-neutral-400" />
+            </div>
+          ) : activeConfigs.length === 0 ? (
+            <div className="py-4 text-center">
+              <p className="text-neutral-400">No repositories configured for preview.new</p>
+              <Link
+                href="/preview"
+                className="mt-2 inline-block text-blue-400 hover:text-blue-300"
+              >
+                Configure a repository
+              </Link>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {activeConfigs.map((config) => (
+                <div
+                  key={config.id}
+                  className="flex items-center justify-between rounded-md bg-neutral-800/50 px-3 py-2"
+                >
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-green-400" />
+                    <span className="font-mono text-sm text-neutral-200">
+                      {config.repoFullName}
+                    </span>
+                  </div>
+                  <span className="text-xs text-neutral-500">
+                    {config.repoDefaultBranch ?? "main"}
+                  </span>
+                </div>
+              ))}
+              <p className="mt-2 text-xs text-neutral-500">
+                Only PRs from these repositories can be tested. To add a new repository,{" "}
+                <Link href="/preview" className="text-blue-400 hover:text-blue-300">
+                  configure it in Preview settings
+                </Link>
+                .
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Jobs list */}
       <div className="space-y-3">
-        <h2 className="text-lg font-semibold text-white">
-          Test Jobs ({jobs.length})
-        </h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-white">
+            Test Jobs ({jobs.length})
+          </h2>
+          {jobs.some((job) => job.status === "pending") && (
+            <Button
+              onClick={handleDispatchAll}
+              disabled={dispatchJobMutation.isPending}
+              variant="outline"
+              size="sm"
+              className="gap-2"
+            >
+              {dispatchJobMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Play className="h-4 w-4" />
+              )}
+              Start All Pending
+            </Button>
+          )}
+        </div>
 
         {isLoadingJobs ? (
           <div className="flex items-center justify-center py-12">
