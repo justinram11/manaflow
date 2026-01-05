@@ -322,7 +322,7 @@ export const updateStatus = internalMutation({
     const now = Date.now();
     const patch: Record<string, unknown> = {
       status: args.status,
-      screenshotSetId: args.screenshotSetId,
+      screenshotSetId: args.screenshotSetId ?? run.screenshotSetId,
       githubCommentUrl: args.githubCommentUrl ?? run.githubCommentUrl,
       githubCommentId: args.githubCommentId ?? run.githubCommentId,
       updatedAt: now,

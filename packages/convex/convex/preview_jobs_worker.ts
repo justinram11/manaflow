@@ -1267,7 +1267,9 @@ export async function runPreviewJob(
 
   // Post initial GitHub comment early with diff heatmap link
   // This gives users immediate feedback while screenshots are being captured
-  if (run.repoInstallationId) {
+  // Skip for test preview runs (stateReason === "Test preview run") - they shouldn't post to GitHub
+  const isTestRun = run.stateReason === "Test preview run";
+  if (run.repoInstallationId && !isTestRun) {
     try {
       const initialCommentResult = await ctx.runAction(
         internal.github_pr_comments.postInitialPreviewComment,
@@ -1992,14 +1994,20 @@ export async function runPreviewJob(
             previewRunId,
           });
 
-          // Trigger GitHub comment update
-          await ctx.runAction(internal.previewScreenshots.triggerGithubComment, {
-            previewRunId,
-          });
+          // Trigger GitHub comment update (skip for test runs)
+          if (!isTestRun) {
+            await ctx.runAction(internal.previewScreenshots.triggerGithubComment, {
+              previewRunId,
+            });
 
-          console.log("[preview-jobs] GitHub comment update triggered", {
-            previewRunId,
-          });
+            console.log("[preview-jobs] GitHub comment update triggered", {
+              previewRunId,
+            });
+          } else {
+            console.log("[preview-jobs] Skipping GitHub comment for test run", {
+              previewRunId,
+            });
+          }
         } catch (screenshotSetError) {
           console.error("[preview-jobs] Failed to create screenshot set or update GitHub comment", {
             previewRunId,
