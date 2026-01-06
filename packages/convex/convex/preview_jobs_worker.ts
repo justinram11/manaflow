@@ -86,21 +86,68 @@ async function fetchScreenshotCollectorRelease({
 
 /**
  * Get changed files in the PR via Morph exec
+ *
+ * Strategy:
+ * 1. If baseSha is provided, try diffing against it directly (most reliable for PRs)
+ * 2. Fall back to merge-base with origin/baseBranch
+ * 3. Fall back to direct diff against origin/baseBranch
+ * 4. Return empty array if all approaches fail (graceful degradation)
  */
 async function getChangedFiles({
   morphClient,
   instanceId,
   repoDir,
   baseBranch,
+  baseSha,
   previewRunId,
 }: {
   morphClient: ReturnType<typeof createMorphCloudClient>;
   instanceId: string;
   repoDir: string;
   baseBranch: string;
+  baseSha?: string;
   previewRunId: Id<"previewRuns">;
 }): Promise<string[]> {
-  // Get the merge base first
+  // Strategy 1: Use baseSha directly if available (most reliable for PRs)
+  if (baseSha) {
+    console.log("[preview-jobs] Attempting to get changed files using baseSha", {
+      previewRunId,
+      baseSha,
+    });
+
+    const baseShaResponse = await execInstanceInstanceIdExecPost({
+      client: morphClient,
+      path: { instance_id: instanceId },
+      body: {
+        command: ["git", "-C", repoDir, "diff", "--name-only", `${baseSha}..HEAD`],
+      },
+    });
+
+    if (!baseShaResponse.error && baseShaResponse.data?.exit_code === 0) {
+      const changedFiles = (baseShaResponse.data?.stdout || "")
+        .split("\n")
+        .map((f) => f.trim())
+        .filter((f) => f.length > 0);
+
+      console.log("[preview-jobs] Got changed files using baseSha", {
+        previewRunId,
+        baseSha,
+        fileCount: changedFiles.length,
+        files: changedFiles.slice(0, 10),
+      });
+
+      return changedFiles;
+    }
+
+    console.warn("[preview-jobs] Failed to diff against baseSha, trying merge-base approach", {
+      previewRunId,
+      baseSha,
+      exitCode: baseShaResponse.data?.exit_code,
+      stderr: sliceOutput(baseShaResponse.data?.stderr),
+    });
+  }
+
+  // Strategy 2: Get the merge base with origin/baseBranch
   const mergeBaseResponse = await execInstanceInstanceIdExecPost({
     client: morphClient,
     path: { instance_id: instanceId },
@@ -109,65 +156,84 @@ async function getChangedFiles({
     },
   });
 
-  if (mergeBaseResponse.error || mergeBaseResponse.data?.exit_code !== 0) {
-    console.warn("[preview-jobs] Failed to get merge base, falling back to origin diff", {
+  if (!mergeBaseResponse.error && mergeBaseResponse.data?.exit_code === 0) {
+    const mergeBase = mergeBaseResponse.data?.stdout?.trim();
+    if (mergeBase) {
+      // Get changed files between merge base and HEAD
+      const diffResponse = await execInstanceInstanceIdExecPost({
+        client: morphClient,
+        path: { instance_id: instanceId },
+        body: {
+          command: ["git", "-C", repoDir, "diff", "--name-only", `${mergeBase}..HEAD`],
+        },
+      });
+
+      if (!diffResponse.error && diffResponse.data?.exit_code === 0) {
+        const changedFiles = (diffResponse.data?.stdout || "")
+          .split("\n")
+          .map((f) => f.trim())
+          .filter((f) => f.length > 0);
+
+        console.log("[preview-jobs] Got changed files using merge-base", {
+          previewRunId,
+          mergeBase,
+          fileCount: changedFiles.length,
+          files: changedFiles.slice(0, 10),
+        });
+
+        return changedFiles;
+      }
+
+      console.warn("[preview-jobs] Failed to diff against merge-base", {
+        previewRunId,
+        mergeBase,
+        exitCode: diffResponse.data?.exit_code,
+        stderr: sliceOutput(diffResponse.data?.stderr),
+      });
+    }
+  } else {
+    console.warn("[preview-jobs] Failed to get merge base, trying direct origin diff", {
       previewRunId,
       exitCode: mergeBaseResponse.data?.exit_code,
       stderr: sliceOutput(mergeBaseResponse.data?.stderr),
     });
-
-    // Fallback: diff against origin/baseBranch directly
-    const fallbackResponse = await execInstanceInstanceIdExecPost({
-      client: morphClient,
-      path: { instance_id: instanceId },
-      body: {
-        command: ["git", "-C", repoDir, "diff", "--name-only", `origin/${baseBranch}`],
-      },
-    });
-
-    if (fallbackResponse.error || fallbackResponse.data?.exit_code !== 0) {
-      throw new Error("Failed to get changed files");
-    }
-
-    return (fallbackResponse.data?.stdout || "")
-      .split("\n")
-      .map((f) => f.trim())
-      .filter((f) => f.length > 0);
   }
 
-  const mergeBase = mergeBaseResponse.data?.stdout?.trim();
-  if (!mergeBase) {
-    throw new Error("Empty merge base result");
-  }
-
-  // Get changed files between merge base and HEAD
-  const diffResponse = await execInstanceInstanceIdExecPost({
+  // Strategy 3: Fallback - diff against origin/baseBranch directly
+  const fallbackResponse = await execInstanceInstanceIdExecPost({
     client: morphClient,
     path: { instance_id: instanceId },
     body: {
-      command: ["git", "-C", repoDir, "diff", "--name-only", `${mergeBase}..HEAD`],
+      command: ["git", "-C", repoDir, "diff", "--name-only", `origin/${baseBranch}`],
     },
   });
 
-  if (diffResponse.error || diffResponse.data?.exit_code !== 0) {
-    throw new Error(
-      `Failed to get changed files: ${diffResponse.data?.stderr || diffResponse.error}`
-    );
+  if (!fallbackResponse.error && fallbackResponse.data?.exit_code === 0) {
+    const changedFiles = (fallbackResponse.data?.stdout || "")
+      .split("\n")
+      .map((f) => f.trim())
+      .filter((f) => f.length > 0);
+
+    console.log("[preview-jobs] Got changed files using direct origin diff", {
+      previewRunId,
+      baseBranch,
+      fileCount: changedFiles.length,
+      files: changedFiles.slice(0, 10),
+    });
+
+    return changedFiles;
   }
 
-  const changedFiles = (diffResponse.data?.stdout || "")
-    .split("\n")
-    .map((f) => f.trim())
-    .filter((f) => f.length > 0);
-
-  console.log("[preview-jobs] Got changed files", {
+  // Strategy 4: All approaches failed - return empty array for graceful degradation
+  console.warn("[preview-jobs] All changed file detection strategies failed, returning empty array", {
     previewRunId,
-    mergeBase,
-    fileCount: changedFiles.length,
-    files: changedFiles.slice(0, 10), // Log first 10 files
+    baseSha,
+    baseBranch,
+    lastExitCode: fallbackResponse.data?.exit_code,
+    lastStderr: sliceOutput(fallbackResponse.data?.stderr),
   });
 
-  return changedFiles;
+  return [];
 }
 
 interface ScreenshotCollectorOptions {
@@ -1850,11 +1916,14 @@ export async function runPreviewJob(
       });
 
       // Get changed files via Morph exec
+      // Pass baseSha from the PR webhook for more reliable diffing (especially for repos
+      // where origin/main might not exist, e.g., forks or repos with different default branches)
       const changedFiles = await getChangedFiles({
         morphClient,
         instanceId: instance.id,
         repoDir,
         baseBranch: defaultBranch,
+        baseSha: run.baseSha,
         previewRunId,
       });
 
