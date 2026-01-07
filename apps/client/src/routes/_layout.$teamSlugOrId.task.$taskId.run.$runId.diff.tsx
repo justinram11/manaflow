@@ -14,6 +14,7 @@ import type { ReviewHeatmapLine } from "@/lib/heatmap";
 import { stackClientApp } from "@/lib/stack";
 import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
+import { cn } from "@/lib/utils";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { api } from "@cmux/convex/api";
 import type { CreateLocalWorkspaceResponse, ReplaceDiffEntry } from "@cmux/shared";
@@ -1090,14 +1091,14 @@ function RunDiffPage() {
               <div className="border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50/60 dark:bg-neutral-950/40 px-3.5 py-3 text-sm text-neutral-500 dark:text-neutral-400">
                 Loading screenshots...
               </div>
-            ) : (
+            ) : screenshotSets.length > 0 ? (
               <RunScreenshotGallery
                 screenshotSets={screenshotSets}
                 highlightedSetId={selectedRun?.latestScreenshotSetId ?? null}
               />
-            )}
+            ) : null}
             <div
-              className="flex-1 min-h-0 mt-6"
+              className={cn("flex-1 min-h-0", screenshotSets.length > 0 && "mt-6")}
               style={{ "--cmux-diff-header-offset": "56px" } as React.CSSProperties}
             >
               <Suspense
