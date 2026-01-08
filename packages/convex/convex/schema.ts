@@ -683,6 +683,25 @@ const convexSchema = defineSchema({
     teamId: v.string(),
   }).index("by_team_user", ["teamId", "userId"]),
 
+  // User-uploaded editor settings (VS Code, Cursor, Windsurf)
+  // For cmux.sh web users who can't auto-detect local settings
+  userEditorSettings: defineTable({
+    teamId: v.string(),
+    userId: v.string(),
+    settingsJson: v.optional(v.string()), // settings.json content
+    keybindingsJson: v.optional(v.string()), // keybindings.json content
+    snippets: v.optional(
+      v.array(
+        v.object({
+          name: v.string(), // filename e.g. "javascript.json"
+          content: v.string(), // snippet file content
+        })
+      )
+    ),
+    extensions: v.optional(v.string()), // newline-separated extension IDs
+    updatedAt: v.number(),
+  }).index("by_team_user", ["teamId", "userId"]),
+
   // System and user comments attached to a task
   taskComments: defineTable({
     taskId: v.id("tasks"),

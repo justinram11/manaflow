@@ -1,5 +1,6 @@
 import { env } from "@/client-env";
 import { ContainerSettings } from "@/components/ContainerSettings";
+import { EditorSettingsSection } from "@/components/EditorSettingsSection";
 import { FloatingPane } from "@/components/floating-pane";
 import { ProviderStatusSettings } from "@/components/provider-status-settings";
 import { useTheme } from "@/components/theme/use-theme";
@@ -1382,6 +1383,11 @@ function SettingsComponent() {
                   />
                 </div>
               </div>
+            )}
+
+            {/* Editor Settings Sync - web mode only */}
+            {env.NEXT_PUBLIC_WEB_MODE && (
+              <EditorSettingsSection teamSlugOrId={teamSlugOrId} />
             )}
 
             {/* Notifications */}

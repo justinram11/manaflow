@@ -25,7 +25,10 @@ import {
   getAuthToken,
   runWithAuth,
 } from "./utils/requestContext";
-import { getEditorSettingsUpload } from "./utils/editorSettings";
+import {
+  getEditorSettingsUpload,
+  type UserUploadedEditorSettings,
+} from "./utils/editorSettings";
 import { env } from "./utils/server-env";
 import { getWwwClient } from "./utils/wwwClient";
 import { getWwwOpenApiModule } from "./utils/wwwOpenApiModule";
@@ -351,7 +354,30 @@ export async function spawnAgent(
       }
     }
 
-    const editorSettings = await getEditorSettingsUpload();
+    // Fetch user-uploaded editor settings from Convex (for web mode users)
+    let userUploadedSettings: UserUploadedEditorSettings | null = null;
+    try {
+      const userEditorSettingsFromDb = await getConvex().query(
+        api.userEditorSettings.get,
+        { teamSlugOrId }
+      );
+      if (userEditorSettingsFromDb) {
+        userUploadedSettings = {
+          settingsJson: userEditorSettingsFromDb.settingsJson ?? undefined,
+          keybindingsJson: userEditorSettingsFromDb.keybindingsJson ?? undefined,
+          snippets: userEditorSettingsFromDb.snippets ?? undefined,
+          extensions: userEditorSettingsFromDb.extensions ?? undefined,
+        };
+      }
+    } catch (error) {
+      serverLogger.warn(
+        "[AgentSpawner] Failed to fetch user editor settings from Convex",
+        error
+      );
+    }
+
+    // Get editor settings (user-uploaded overrides auto-detected)
+    const editorSettings = await getEditorSettingsUpload(userUploadedSettings);
     if (editorSettings) {
       if (editorSettings.authFiles.length > 0) {
         authFiles = [...authFiles, ...editorSettings.authFiles];

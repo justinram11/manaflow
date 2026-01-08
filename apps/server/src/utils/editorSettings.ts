@@ -40,6 +40,14 @@ export interface EditorSettingsUpload {
   settingsPath?: string;
 }
 
+// User-uploaded settings from Convex (web UI)
+export interface UserUploadedEditorSettings {
+  settingsJson?: string;
+  keybindingsJson?: string;
+  snippets?: Array<{ name: string; content: string }>;
+  extensions?: string; // newline-separated extension IDs
+}
+
 const homeDir = os.homedir();
 const posix = path.posix;
 
@@ -431,6 +439,171 @@ function buildExtensionInstallCommand(listPath: string): string {
   ].join("\n");
 }
 
+/**
+ * Build EditorSettingsUpload from user-uploaded settings (web UI)
+ * This converts user-provided JSON strings into authFiles for the sandbox
+ */
+function buildUploadFromUserSettings(
+  userSettings: UserUploadedEditorSettings
+): EditorSettingsUpload | null {
+  const authFiles: AuthFile[] = [];
+  const startupCommands: string[] = [];
+
+  if (userSettings.settingsJson) {
+    const encodedSettings = encode(userSettings.settingsJson);
+    // Write settings to all IDE provider locations for compatibility
+    const targets = [
+      // cmux-code paths
+      posix.join(IDE_PATHS["cmux-code"].userDir, "settings.json"),
+      posix.join(
+        IDE_PATHS["cmux-code"].profileDir ?? IDE_PATHS["cmux-code"].userDir,
+        "settings.json"
+      ),
+      posix.join(IDE_PATHS["cmux-code"].machineDir, "settings.json"),
+      // OpenVSCode paths
+      posix.join(IDE_PATHS.openvscode.userDir, "settings.json"),
+      posix.join(
+        IDE_PATHS.openvscode.profileDir ?? IDE_PATHS.openvscode.userDir,
+        "settings.json"
+      ),
+      posix.join(IDE_PATHS.openvscode.machineDir, "settings.json"),
+      // Coder paths
+      posix.join(IDE_PATHS.coder.userDir, "settings.json"),
+      posix.join(IDE_PATHS.coder.machineDir, "settings.json"),
+    ];
+    for (const destinationPath of targets) {
+      authFiles.push({
+        destinationPath,
+        contentBase64: encodedSettings,
+        mode: "644",
+      });
+    }
+  }
+
+  if (userSettings.keybindingsJson) {
+    const encodedKeybindings = encode(userSettings.keybindingsJson);
+    // Write keybindings to all IDE provider locations
+    authFiles.push({
+      destinationPath: posix.join(IDE_PATHS["cmux-code"].userDir, "keybindings.json"),
+      contentBase64: encodedKeybindings,
+      mode: "644",
+    });
+    authFiles.push({
+      destinationPath: posix.join(IDE_PATHS.openvscode.userDir, "keybindings.json"),
+      contentBase64: encodedKeybindings,
+      mode: "644",
+    });
+    authFiles.push({
+      destinationPath: posix.join(IDE_PATHS.coder.userDir, "keybindings.json"),
+      contentBase64: encodedKeybindings,
+      mode: "644",
+    });
+  }
+
+  if (userSettings.snippets && userSettings.snippets.length > 0) {
+    for (const snippet of userSettings.snippets) {
+      if (!snippet.name || !snippet.content) continue;
+      // Sanitize filename to prevent path traversal attacks
+      const sanitizedName = posix.basename(snippet.name);
+      if (!sanitizedName) continue;
+      const encodedSnippet = encode(snippet.content);
+      // Write snippets to all IDE provider locations
+      authFiles.push({
+        destinationPath: posix.join(IDE_PATHS["cmux-code"].snippetsDir, sanitizedName),
+        contentBase64: encodedSnippet,
+        mode: "644",
+      });
+      authFiles.push({
+        destinationPath: posix.join(IDE_PATHS.openvscode.snippetsDir, sanitizedName),
+        contentBase64: encodedSnippet,
+        mode: "644",
+      });
+      authFiles.push({
+        destinationPath: posix.join(IDE_PATHS.coder.snippetsDir, sanitizedName),
+        contentBase64: encodedSnippet,
+        mode: "644",
+      });
+    }
+  }
+
+  if (userSettings.extensions) {
+    const extensionList = userSettings.extensions
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (extensionList.length > 0) {
+      const uniqueExtensions = Array.from(new Set(extensionList)).sort();
+      const extensionContent = `${uniqueExtensions.join("\n")}\n`;
+      authFiles.push({
+        destinationPath: EXTENSION_LIST_PATH,
+        contentBase64: encode(extensionContent),
+        mode: "644",
+      });
+
+      // Create background installation script that auto-executes on shell startup
+      const installScriptPath = "/root/.cmux/install-extensions-background.sh";
+      const installScript = buildExtensionInstallCommand(EXTENSION_LIST_PATH);
+
+      // Create self-contained background installer with lock mechanism
+      const backgroundWrapper = `#!/bin/bash
+# Background extension installer - runs once per container
+
+LOCK_FILE="/root/.cmux/extensions-install.lock"
+DONE_FILE="/root/.cmux/extensions-installed"
+
+# Skip if already done
+[ -f "$DONE_FILE" ] && exit 0
+
+# Skip if already running
+[ -f "$LOCK_FILE" ] && exit 0
+
+# Create lock file
+touch "$LOCK_FILE"
+
+# Run installation in detached background
+(
+  ${installScript}
+  touch "$DONE_FILE"
+  rm -f "$LOCK_FILE"
+) > /root/.cmux/install-extensions-background.log 2>&1 &
+`;
+
+      authFiles.push({
+        destinationPath: installScriptPath,
+        contentBase64: encode(backgroundWrapper),
+        mode: "755",
+      });
+
+      // Use /etc/profile.d/ for automatic execution on all shell sessions
+      const profileHook = `# cmux: Auto-trigger extension installation in background (non-blocking)
+(
+  if [ -f "${installScriptPath}" ]; then
+    nohup "${installScriptPath}" >/dev/null 2>&1 &
+  fi
+) >/dev/null 2>&1 &
+`;
+
+      authFiles.push({
+        destinationPath: "/etc/profile.d/cmux-extensions.sh",
+        contentBase64: encode(profileHook),
+        mode: "644",
+      });
+    }
+  }
+
+  if (authFiles.length === 0 && startupCommands.length === 0) {
+    return null;
+  }
+
+  return {
+    authFiles,
+    startupCommands,
+    sourceEditor: "vscode" as EditorId, // User-uploaded settings don't have a specific source
+    settingsPath: undefined,
+  };
+}
+
 function buildUpload(editor: EditorExport): EditorSettingsUpload | null {
   const authFiles: AuthFile[] = [];
   const startupCommands: string[] = [];
@@ -616,7 +789,29 @@ async function collectEditorSettings(): Promise<EditorSettingsUpload | null> {
   return upload;
 }
 
-export async function getEditorSettingsUpload(): Promise<EditorSettingsUpload | null> {
+/**
+ * Get editor settings upload.
+ * If userUploadedSettings is provided, it overrides auto-detected settings.
+ * Otherwise, auto-detection is used (with caching).
+ */
+export async function getEditorSettingsUpload(
+  userUploadedSettings?: UserUploadedEditorSettings | null
+): Promise<EditorSettingsUpload | null> {
+  // If user uploaded settings are provided, use them (no caching - they come from DB)
+  if (userUploadedSettings) {
+    const hasAnySettings =
+      userUploadedSettings.settingsJson ||
+      userUploadedSettings.keybindingsJson ||
+      (userUploadedSettings.snippets && userUploadedSettings.snippets.length > 0) ||
+      userUploadedSettings.extensions;
+
+    if (hasAnySettings) {
+      serverLogger.info("[EditorSettings] Using user-uploaded settings from web UI");
+      return buildUploadFromUserSettings(userUploadedSettings);
+    }
+  }
+
+  // Fall back to auto-detection (with caching)
   if (cachedResult && Date.now() - cachedResult.timestamp < CACHE_TTL_MS) {
     return cachedResult.value;
   }
