@@ -840,8 +840,31 @@ chmod +x ${maintenanceScriptPath}`;
         ];
 
     // Build cmux-pty specific command (the actual agent command without tmux/bash wrapper)
-    // For cmux-pty, we want to run the command directly in a shell so env vars expand
-    const ptyCommandString = `${unsetCommand}${commandString}`;
+    // For Codex agents, replace $CMUX_PROMPT with actual prompt value (matching tmux behavior)
+    // This avoids relying on shell expansion which can fail due to timing or env setup issues
+    let ptyCommandString: string;
+    if (agent.name.toLowerCase().includes("codex")) {
+      // For Codex: build command with prompt value directly embedded (like tmuxArgs does)
+      const ptyArgs = actualArgs.map((arg) => {
+        if (arg === "$CMUX_PROMPT") {
+          return processedTaskDescription;
+        }
+        return arg;
+      });
+      // Shell-escape all args with single quotes (no env var expansion needed)
+      const ptyShellEscaped = (s: string) =>
+        `'${s.replace(/'/g, "'\\''")}'`;
+      const ptyCommandStr = [actualCommand, ...ptyArgs]
+        .map(ptyShellEscaped)
+        .join(" ");
+      ptyCommandString = `${unsetCommand}${ptyCommandStr}`;
+      serverLogger.info(
+        `[AgentSpawner] Codex ptyCommand (prompt embedded): ${ptyCommandString.slice(0, 200)}...`
+      );
+    } else {
+      // For other agents: use env var expansion as before
+      ptyCommandString = `${unsetCommand}${commandString}`;
+    }
 
     // Use cmux-pty backend - worker will fall back to tmux if cmux-pty server unavailable
     const terminalCreationCommand: WorkerCreateTerminal = {
