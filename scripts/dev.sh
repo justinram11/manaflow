@@ -245,6 +245,10 @@ while [[ $# -gt 0 ]]; do
 done
 export SKIP_DOCKER_BUILD
 
+# Set the worker image name for local development
+# This overrides the default (docker.io/lawrencecchen/cmux:latest) to use the locally-built image
+export WORKER_IMAGE_NAME="cmux-worker:0.0.1"
+
 # Only clean ports when not in devcontainer (devcontainer handles this)
 if [ "$IS_DEVCONTAINER" = "false" ]; then
     # Check if anything is running on ports 5173, $CONVEX_PORT, 9777, 9778, 9779
