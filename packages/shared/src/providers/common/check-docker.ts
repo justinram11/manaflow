@@ -321,7 +321,7 @@ export async function checkDockerStatus(): Promise<DockerStatus> {
   }
 
   const imageName =
-    process.env.WORKER_IMAGE_NAME ?? "docker.io/lawrencecchen/cmux:latest";
+    process.env.WORKER_IMAGE_NAME ?? "docker.io/manaflow/cmux:latest";
 
   try {
     await execAsync(`docker image inspect "${imageName.replace(/"/g, '\\"')}"`);
