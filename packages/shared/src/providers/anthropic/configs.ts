@@ -1,5 +1,10 @@
 import type { AgentConfig } from "../../agentConfig";
-import { ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN } from "../../apiKeys";
+import {
+  AWS_ACCESS_KEY_ID,
+  AWS_REGION,
+  AWS_SECRET_ACCESS_KEY,
+  AWS_SESSION_TOKEN,
+} from "../../apiKeys";
 import {
   ANTHROPIC_MODEL_HAIKU_45_ENV,
   ANTHROPIC_MODEL_OPUS_45_ENV,
@@ -13,48 +18,44 @@ import {
 } from "./environment";
 
 /**
- * Apply API keys for Claude agents.
+ * Apply API keys for Claude agents using AWS Bedrock.
  *
- * Priority:
- * 1. If CLAUDE_CODE_OAUTH_TOKEN is set, use it and unset ANTHROPIC_API_KEY
- * 2. Otherwise, fall back to ANTHROPIC_API_KEY
- *
- * The OAuth token is preferred because it uses the user's own Claude subscription
- * and bypasses the need for an API key entirely.
+ * Sets up AWS credentials for Claude Code to use AWS Bedrock instead of
+ * Anthropic API directly.
  */
 const applyClaudeApiKeys: NonNullable<AgentConfig["applyApiKeys"]> = async (
   keys,
 ) => {
-  const oauthToken = keys.CLAUDE_CODE_OAUTH_TOKEN;
-  const anthropicKey = keys.ANTHROPIC_API_KEY;
-
-  // Always unset these to prevent conflicts
+  // Always unset Anthropic-specific env vars to prevent conflicts
   const unsetEnv = [...CLAUDE_KEY_ENV_VARS_TO_UNSET];
 
-  // If OAuth token is set, ensure ANTHROPIC_API_KEY is also unset
-  if (oauthToken && oauthToken.trim().length > 0) {
-    // Ensure ANTHROPIC_API_KEY is in the unset list (it already should be from CLAUDE_KEY_ENV_VARS_TO_UNSET)
-    if (!unsetEnv.includes("ANTHROPIC_API_KEY")) {
-      unsetEnv.push("ANTHROPIC_API_KEY");
-    }
-    return {
-      env: {
-        CLAUDE_CODE_OAUTH_TOKEN: oauthToken,
-      },
-      unsetEnv,
-    };
+  const env: Record<string, string> = {
+    // Enable AWS Bedrock mode in Claude Code
+    CLAUDE_CODE_USE_BEDROCK: "1",
+  };
+
+  // Set AWS credentials if provided
+  if (keys.AWS_ACCESS_KEY_ID && keys.AWS_ACCESS_KEY_ID.trim().length > 0) {
+    env.AWS_ACCESS_KEY_ID = keys.AWS_ACCESS_KEY_ID;
   }
 
-  // Fall back to ANTHROPIC_API_KEY if no OAuth token
-  if (anthropicKey && anthropicKey.trim().length > 0) {
-    // Note: We still unset ANTHROPIC_API_KEY here because getClaudeEnvironment
-    // handles the key via settings.json (anthropicApiKey) instead of env var
-    return {
-      unsetEnv,
-    };
+  if (
+    keys.AWS_SECRET_ACCESS_KEY &&
+    keys.AWS_SECRET_ACCESS_KEY.trim().length > 0
+  ) {
+    env.AWS_SECRET_ACCESS_KEY = keys.AWS_SECRET_ACCESS_KEY;
+  }
+
+  if (keys.AWS_SESSION_TOKEN && keys.AWS_SESSION_TOKEN.trim().length > 0) {
+    env.AWS_SESSION_TOKEN = keys.AWS_SESSION_TOKEN;
+  }
+
+  if (keys.AWS_REGION && keys.AWS_REGION.trim().length > 0) {
+    env.AWS_REGION = keys.AWS_REGION;
   }
 
   return {
+    env,
     unsetEnv,
   };
 };
@@ -73,7 +74,7 @@ export const CLAUDE_OPUS_4_5_CONFIG: AgentConfig = {
   ],
   environment: getClaudeEnvironment,
   checkRequirements: checkClaudeRequirements,
-  apiKeys: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY],
+  apiKeys: [AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, AWS_REGION],
   applyApiKeys: applyClaudeApiKeys,
   completionDetector: startClaudeCompletionDetector,
 };
@@ -92,7 +93,7 @@ export const CLAUDE_SONNET_4_5_CONFIG: AgentConfig = {
   ],
   environment: getClaudeEnvironment,
   checkRequirements: checkClaudeRequirements,
-  apiKeys: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY],
+  apiKeys: [AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, AWS_REGION],
   applyApiKeys: applyClaudeApiKeys,
   completionDetector: startClaudeCompletionDetector,
 };
@@ -111,7 +112,7 @@ export const CLAUDE_HAIKU_4_5_CONFIG: AgentConfig = {
   ],
   environment: getClaudeEnvironment,
   checkRequirements: checkClaudeRequirements,
-  apiKeys: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY],
+  apiKeys: [AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, AWS_REGION],
   applyApiKeys: applyClaudeApiKeys,
   completionDetector: startClaudeCompletionDetector,
 };
