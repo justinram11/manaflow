@@ -48,6 +48,13 @@ export interface UserUploadedEditorSettings {
   extensions?: string; // newline-separated extension IDs
 }
 
+export interface LocalVSCodeSettingsSnapshot {
+  settingsJson?: string;
+  keybindingsJson?: string;
+  snippets: Array<{ name: string; content: string }>;
+  settingsPath?: string;
+}
+
 const homeDir = os.homedir();
 const posix = path.posix;
 
@@ -833,4 +840,43 @@ export async function getEditorSettingsUpload(
       });
   }
   return inflightPromise;
+}
+
+export async function getLocalVSCodeSettingsSnapshot(): Promise<LocalVSCodeSettingsSnapshot | null> {
+  const vscodeDef = editors.find((editor) => editor.id === "vscode");
+  if (!vscodeDef) {
+    return null;
+  }
+
+  const exported = await exportEditor(vscodeDef);
+  if (!exported) {
+    return null;
+  }
+
+  const snippets = exported.snippets
+    .map((snippet) => {
+      const name = path.basename(snippet.path);
+      if (!name) {
+        return null;
+      }
+      return { name, content: snippet.content };
+    })
+    .filter(
+      (snippet): snippet is { name: string; content: string } =>
+        snippet !== null
+    );
+
+  const settingsJson = exported.settings?.content;
+  const keybindingsJson = exported.keybindings?.content;
+
+  if (!settingsJson && !keybindingsJson && snippets.length === 0) {
+    return null;
+  }
+
+  return {
+    settingsJson,
+    keybindingsJson,
+    snippets,
+    settingsPath: exported.settings?.path,
+  };
 }
