@@ -401,11 +401,26 @@ export async function spawnAgent(
     }
 
     // Replace $PROMPT placeholders in args with $CMUX_PROMPT token for shell-time expansion
+    // Also substitute $ANTHROPIC_MODEL_* env vars with actual values from server environment
     const processedArgs = agent.args.map((arg) => {
-      if (arg.includes("$PROMPT")) {
-        return arg.replace(/\$PROMPT/g, "$CMUX_PROMPT");
+      let result = arg;
+      if (result.includes("$PROMPT")) {
+        result = result.replace(/\$PROMPT/g, "$CMUX_PROMPT");
       }
-      return arg;
+      // Substitute ANTHROPIC_MODEL_* env vars with their actual values
+      const modelEnvMatch = result.match(/\$ANTHROPIC_MODEL_\w+/);
+      if (modelEnvMatch) {
+        const envVarName = modelEnvMatch[0].slice(1); // Remove leading $
+        const envValue = process.env[envVarName];
+        if (envValue) {
+          result = result.replace(modelEnvMatch[0], envValue);
+        } else {
+          serverLogger.warn(
+            `[AgentSpawner] Environment variable ${envVarName} is not set`
+          );
+        }
+      }
+      return result;
     });
 
     const usesDangerousPermissions = processedArgs.includes(
