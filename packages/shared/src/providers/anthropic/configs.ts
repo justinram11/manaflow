@@ -1,16 +1,10 @@
 import type { AgentConfig } from "../../agentConfig";
-import { ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN } from "../../apiKeys";
 import { checkClaudeRequirements } from "./check-requirements";
 import { startClaudeCompletionDetector } from "./completion-detector";
 import {
   CLAUDE_KEY_ENV_VARS_TO_UNSET,
   getClaudeEnvironment,
 } from "./environment";
-
-// Flag to enable user-provided API keys (OAuth token and ANTHROPIC_API_KEY)
-// When false, always use platform-provided AWS Bedrock credentials
-// Set to false for testing Bedrock integration
-const ENABLE_USER_API_KEYS = false;
 
 // Bedrock model IDs from environment variables (required at runtime, not load time)
 // These are read lazily to avoid breaking Convex module analysis
@@ -23,17 +17,10 @@ function getBedrockModelId(envVar: string): string {
 }
 
 /**
- * Create applyApiKeys function for a specific Bedrock model.
+ * Create applyApiKeys function for AWS Bedrock.
  *
- * Priority order (when ENABLE_USER_API_KEYS is true):
- * 1. CLAUDE_CODE_OAUTH_TOKEN - user's OAuth token (user pays via subscription)
- * 2. ANTHROPIC_API_KEY - user's own API key
- * 3. AWS Bedrock - platform-provided credentials (fallback)
- *
- * When ENABLE_USER_API_KEYS is false:
- * - Always use AWS Bedrock with platform-provided credentials
- *
- * Note: Claude Code with Bedrock requires the model to be set via the ANTHROPIC_MODEL
+ * Uses platform-provided AWS Bedrock credentials.
+ * Claude Code with Bedrock requires the model to be set via the ANTHROPIC_MODEL
  * environment variable (not via --model CLI flag).
  */
 function createApplyClaudeApiKeys(
@@ -45,32 +32,6 @@ function createApplyClaudeApiKeys(
     // Base env vars to unset (prevent conflicts)
     const unsetEnv = [...CLAUDE_KEY_ENV_VARS_TO_UNSET];
 
-    if (ENABLE_USER_API_KEYS) {
-      // Priority 1: OAuth token (user pays via their subscription)
-      const oauthToken = keys.CLAUDE_CODE_OAUTH_TOKEN;
-      if (oauthToken && oauthToken.trim().length > 0) {
-        return {
-          env: {
-            CLAUDE_CODE_OAUTH_TOKEN: oauthToken,
-          },
-          unsetEnv,
-        };
-      }
-
-      // Priority 2: User's own ANTHROPIC_API_KEY
-      const userApiKey = keys.ANTHROPIC_API_KEY;
-      if (userApiKey && userApiKey.trim().length > 0) {
-        return {
-          env: {
-            ANTHROPIC_API_KEY: userApiKey,
-          },
-          // Don't unset ANTHROPIC_API_KEY since we're using it
-          unsetEnv: unsetEnv.filter((v) => v !== "ANTHROPIC_API_KEY"),
-        };
-      }
-    }
-
-    // Priority 3 (or only option when ENABLE_USER_API_KEYS is false):
     // AWS Bedrock with platform-provided credentials
     const env: Record<string, string> = {
       // Enable AWS Bedrock mode in Claude Code
@@ -94,12 +55,6 @@ function createApplyClaudeApiKeys(
   };
 }
 
-// API keys shown in UI for user configuration
-// Only show user API key options if enabled
-const claudeApiKeys = ENABLE_USER_API_KEYS
-  ? [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY]
-  : [];
-
 export const CLAUDE_OPUS_4_5_CONFIG: AgentConfig = {
   name: "claude/opus-4.5",
   command: "bunx",
@@ -112,7 +67,6 @@ export const CLAUDE_OPUS_4_5_CONFIG: AgentConfig = {
   ],
   environment: getClaudeEnvironment,
   checkRequirements: checkClaudeRequirements,
-  apiKeys: claudeApiKeys,
   applyApiKeys: createApplyClaudeApiKeys("ANTHROPIC_MODEL_OPUS_45"),
   completionDetector: startClaudeCompletionDetector,
 };
@@ -129,9 +83,11 @@ export const CLAUDE_SONNET_4_5_CONFIG: AgentConfig = {
   ],
   environment: getClaudeEnvironment,
   checkRequirements: checkClaudeRequirements,
-  apiKeys: claudeApiKeys,
   applyApiKeys: createApplyClaudeApiKeys("ANTHROPIC_MODEL_SONNET_45"),
   completionDetector: startClaudeCompletionDetector,
+  // Sonnet 4.5 not available on AWS Bedrock
+  disabled: true,
+  disabledReason: "Claude Sonnet 4.5 is not available on AWS Bedrock",
 };
 
 export const CLAUDE_HAIKU_4_5_CONFIG: AgentConfig = {
@@ -146,7 +102,6 @@ export const CLAUDE_HAIKU_4_5_CONFIG: AgentConfig = {
   ],
   environment: getClaudeEnvironment,
   checkRequirements: checkClaudeRequirements,
-  apiKeys: claudeApiKeys,
   applyApiKeys: createApplyClaudeApiKeys("ANTHROPIC_MODEL_HAIKU_45"),
   completionDetector: startClaudeCompletionDetector,
 };

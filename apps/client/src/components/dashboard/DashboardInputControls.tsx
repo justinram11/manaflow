@@ -47,7 +47,7 @@ interface DashboardInputControlsProps {
   providerStatus?: ProviderStatusResponse | null;
 }
 
-type AgentOption = SelectOptionObject & { displayLabel: string };
+type AgentOption = SelectOptionObject & { displayLabel: string; isDisabled?: boolean };
 
 type AgentSelectionInstance = {
   agent: string;
@@ -112,40 +112,63 @@ export const DashboardInputControls = memo(function DashboardInputControls({
       const status = providerStatusMap.get(agent.name);
       const missingRequirements = status?.missingRequirements ?? [];
       const isAvailable = status?.isAvailable ?? true;
+
+      // Check if agent is disabled at config level (e.g., not available on Bedrock)
+      const isDisabledByConfig = agent.disabled === true;
+      const isUnavailable = !isAvailable || isDisabledByConfig;
+
+      // Determine warning tooltip content
+      let warningConfig: AgentOption["warning"] = undefined;
+      if (isDisabledByConfig) {
+        warningConfig = {
+          tooltip: (
+            <div className="space-y-1">
+              <p className="text-xs font-semibold text-amber-500">
+                Not available
+              </p>
+              <p className="text-xs text-neutral-300">
+                {agent.disabledReason ?? "This agent is currently disabled."}
+              </p>
+            </div>
+          ),
+        };
+      } else if (!isAvailable) {
+        warningConfig = {
+          tooltip: (
+            <div className="space-y-1">
+              <p className="text-xs font-semibold text-red-500">
+                Setup required
+              </p>
+              <p className="text-xs text-neutral-300">
+                {env.NEXT_PUBLIC_WEB_MODE
+                  ? "Add your API key for this agent in Settings."
+                  : "Add credentials for this agent in Settings."}
+              </p>
+              {missingRequirements.length > 0 ? (
+                <ul className="list-disc pl-4 text-xs text-neutral-400">
+                  {missingRequirements.map((req) => (
+                    <li key={req}>{req}</li>
+                  ))}
+                </ul>
+              ) : null}
+              <p className="text-[10px] tracking-wide text-neutral-500 pt-1 border-t border-neutral-700">
+                Click to open settings
+              </p>
+            </div>
+          ),
+          onClick: handleOpenSettings,
+        };
+      }
+
       return {
         label: agent.name,
         displayLabel: shortName(agent.name),
         value: agent.name,
         icon: <AgentLogo agentName={agent.name} className="w-4 h-4" />,
         iconKey: vendorKey(agent.name),
-        isUnavailable: !isAvailable,
-        warning: !isAvailable
-          ? {
-            tooltip: (
-              <div className="space-y-1">
-                <p className="text-xs font-semibold text-red-500">
-                  Setup required
-                </p>
-                <p className="text-xs text-neutral-300">
-                  {env.NEXT_PUBLIC_WEB_MODE
-                    ? "Add your API key for this agent in Settings."
-                    : "Add credentials for this agent in Settings."}
-                </p>
-                {missingRequirements.length > 0 ? (
-                  <ul className="list-disc pl-4 text-xs text-neutral-400">
-                    {missingRequirements.map((req) => (
-                      <li key={req}>{req}</li>
-                    ))}
-                  </ul>
-                ) : null}
-                <p className="text-[10px] tracking-wide text-neutral-500 pt-1 border-t border-neutral-700">
-                  Click to open settings
-                </p>
-              </div>
-            ),
-            onClick: handleOpenSettings,
-          }
-          : undefined,
+        isUnavailable,
+        isDisabled: isDisabledByConfig,
+        warning: warningConfig,
       } satisfies AgentOption;
     });
   }, [handleOpenSettings, providerStatusMap]);

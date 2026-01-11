@@ -107,6 +107,8 @@ export interface AgentConfig {
     context?: ProviderRequirementsContext,
   ) => Promise<string[]>; // Returns list of missing requirements
   completionDetector?: (taskRunId: string) => Promise<void>;
+  disabled?: boolean; // When true, agent is shown in UI but not selectable
+  disabledReason?: string; // Reason shown in tooltip when disabled
 }
 
 export const AGENT_CONFIGS: AgentConfig[] = [

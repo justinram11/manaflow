@@ -68,14 +68,20 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/dashboard")({
 // Default agents (not persisted to localStorage)
 const DEFAULT_AGENTS = ["claude/opus-4.5"];
 const KNOWN_AGENT_NAMES = new Set(AGENT_CONFIGS.map((agent) => agent.name));
-const DEFAULT_AGENT_SELECTION = DEFAULT_AGENTS.filter((agent) =>
-  KNOWN_AGENT_NAMES.has(agent)
+const DISABLED_AGENT_NAMES = new Set(
+  AGENT_CONFIGS.filter((agent) => agent.disabled).map((agent) => agent.name)
+);
+const DEFAULT_AGENT_SELECTION = DEFAULT_AGENTS.filter(
+  (agent) => KNOWN_AGENT_NAMES.has(agent) && !DISABLED_AGENT_NAMES.has(agent)
 );
 
 const AGENT_SELECTION_SCHEMA = z.array(z.string());
 
+// Filter to known agents and exclude disabled ones
 const filterKnownAgents = (agents: string[]): string[] =>
-  agents.filter((agent) => KNOWN_AGENT_NAMES.has(agent));
+  agents.filter(
+    (agent) => KNOWN_AGENT_NAMES.has(agent) && !DISABLED_AGENT_NAMES.has(agent)
+  );
 
 const parseStoredAgentSelection = (stored: string | null): string[] => {
   if (!stored) {
