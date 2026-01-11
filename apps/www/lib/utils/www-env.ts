@@ -20,7 +20,6 @@ export const env = createEnv({
     // AWS Bedrock for Claude 4.5 models
     AWS_BEARER_TOKEN_BEDROCK: z.string().min(1),
     AWS_REGION: z.string().min(1),
-    ANTHROPIC_MODEL_SONNET_45: z.string().min(1),
     ANTHROPIC_MODEL_OPUS_45: z.string().min(1),
     ANTHROPIC_MODEL_HAIKU_45: z.string().min(1),
   },

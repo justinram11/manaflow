@@ -83,7 +83,6 @@ export const CLAUDE_SONNET_4_5_CONFIG: AgentConfig = {
   ],
   environment: getClaudeEnvironment,
   checkRequirements: checkClaudeRequirements,
-  applyApiKeys: createApplyClaudeApiKeys("ANTHROPIC_MODEL_SONNET_45"),
   completionDetector: startClaudeCompletionDetector,
   // Sonnet 4.5 not available on AWS Bedrock
   disabled: true,
