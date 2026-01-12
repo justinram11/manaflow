@@ -1,5 +1,5 @@
+import { ANTHROPIC_MODEL_OPUS_45 } from "@cmux/shared/utils/anthropic";
 import type { ModelConfig } from "./run-simple-anthropic-review";
-import { env } from "../../utils/www-env";
 
 type SearchParamsRecord = {
   [key: string]: string | string[] | undefined;
@@ -214,15 +214,9 @@ function createFineTunedDenseV2OpenAiConfig(): ModelConfig {
 }
 
 function createAnthropicOpus45Config(): ModelConfig {
-  const modelId = env.ANTHROPIC_MODEL_OPUS_45;
-  if (!modelId) {
-    throw new Error(
-      "ANTHROPIC_MODEL_OPUS_45 environment variable is not configured"
-    );
-  }
   return {
     provider: "anthropic",
-    model: modelId,
+    model: ANTHROPIC_MODEL_OPUS_45,
   };
 }
 

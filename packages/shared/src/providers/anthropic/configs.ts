@@ -1,27 +1,14 @@
 import type { AgentConfig } from "../../agentConfig";
+import {
+  ANTHROPIC_MODEL_HAIKU_45,
+  ANTHROPIC_MODEL_OPUS_45,
+} from "../../utils/anthropic";
 import { checkClaudeRequirements } from "./check-requirements";
 import { startClaudeCompletionDetector } from "./completion-detector";
 import {
   CLAUDE_KEY_ENV_VARS_TO_UNSET,
   getClaudeEnvironment,
 } from "./environment";
-
-// Bedrock model IDs from environment variables or keys parameter (required at runtime, not load time)
-// These are read lazily to avoid breaking Convex module analysis
-// Accepts optional keys parameter to allow passing model IDs through the apiKeys mechanism
-function getBedrockModelId(envVar: string, keys?: Record<string, string>): string {
-  // First check the keys parameter (passed from agentSpawner)
-  const valueFromKeys = keys?.[envVar];
-  if (valueFromKeys) {
-    return valueFromKeys;
-  }
-  // Fall back to process.env (for local development)
-  const valueFromEnv = process.env[envVar];
-  if (valueFromEnv) {
-    return valueFromEnv;
-  }
-  throw new Error(`Missing required environment variable: ${envVar}`);
-}
 
 /**
  * Create applyApiKeys function for AWS Bedrock.
@@ -31,12 +18,9 @@ function getBedrockModelId(envVar: string, keys?: Record<string, string>): strin
  * environment variable (not via --model CLI flag).
  */
 function createApplyClaudeApiKeys(
-  bedrockModelEnvVar: string,
+  bedrockModelId: string,
 ): NonNullable<AgentConfig["applyApiKeys"]> {
   return async (keys) => {
-    // Read model ID lazily at runtime (not at module load time)
-    // Pass keys to allow model ID to come from apiKeys mechanism (for web mode)
-    const bedrockModelId = getBedrockModelId(bedrockModelEnvVar, keys);
     // Base env vars to unset (prevent conflicts)
     const unsetEnv = [...CLAUDE_KEY_ENV_VARS_TO_UNSET];
 
@@ -75,7 +59,7 @@ export const CLAUDE_OPUS_4_5_CONFIG: AgentConfig = {
   ],
   environment: getClaudeEnvironment,
   checkRequirements: checkClaudeRequirements,
-  applyApiKeys: createApplyClaudeApiKeys("ANTHROPIC_MODEL_OPUS_45"),
+  applyApiKeys: createApplyClaudeApiKeys(ANTHROPIC_MODEL_OPUS_45),
   completionDetector: startClaudeCompletionDetector,
 };
 
@@ -109,6 +93,6 @@ export const CLAUDE_HAIKU_4_5_CONFIG: AgentConfig = {
   ],
   environment: getClaudeEnvironment,
   checkRequirements: checkClaudeRequirements,
-  applyApiKeys: createApplyClaudeApiKeys("ANTHROPIC_MODEL_HAIKU_45"),
+  applyApiKeys: createApplyClaudeApiKeys(ANTHROPIC_MODEL_HAIKU_45),
   completionDetector: startClaudeCompletionDetector,
 };
