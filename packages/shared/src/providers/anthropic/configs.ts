@@ -49,16 +49,8 @@ function createApplyClaudeApiKeys(): NonNullable<AgentConfig["applyApiKeys"]> {
 
     // Priority 3: Platform proxy endpoint (fallback)
     // Sandbox calls server endpoint which adds API key and forwards to Cloudflare AI Gateway
-    // API key never leaves the server - we use a placeholder so Claude Code doesn't complain
-    const baseUrl = keys.ANTHROPIC_BASE_URL;
-    if (!baseUrl) {
-      throw new Error(
-        "ANTHROPIC_BASE_URL is required for platform proxy fallback",
-      );
-    }
     return {
       env: {
-        ANTHROPIC_BASE_URL: baseUrl,
         ANTHROPIC_API_KEY: "sk_placeholder_cmux_anthropic_api_key",
       },
       unsetEnv,

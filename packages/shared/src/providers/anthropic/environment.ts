@@ -210,18 +210,8 @@ exit 0`;
   // When only API key is present, we route through cmux proxy for tracking/rate limiting
   const settingsConfig: Record<string, unknown> = {
     alwaysThinkingEnabled: true,
-    // Configure helper to avoid env-var based prompting (only when not using OAuth)
+    // Always use apiKeyHelper when not using OAuth (helper outputs correct key based on user config)
     ...(hasOAuthToken ? {} : { apiKeyHelper: claudeApiKeyHelperPath }),
-    // Set the API key for Claude Code:
-    // - If user provided their own ANTHROPIC_API_KEY, use that
-    // - Otherwise, use a placeholder (our proxy uses service account credentials)
-    ...(!hasOAuthToken
-      ? {
-        anthropicApiKey: hasAnthropicApiKey
-          ? ctx.apiKeys?.ANTHROPIC_API_KEY
-          : CMUX_ANTHROPIC_PROXY_PLACEHOLDER_API_KEY,
-      }
-      : {}),
     hooks: {
       Stop: [
         {
@@ -269,9 +259,12 @@ exit 0`;
     mode: "644",
   });
 
-  // Add apiKey helper script to read key from file
+  // Add apiKey helper script - outputs user's API key if provided, otherwise placeholder
+  const apiKeyToOutput = hasAnthropicApiKey
+    ? ctx.apiKeys?.ANTHROPIC_API_KEY
+    : CMUX_ANTHROPIC_PROXY_PLACEHOLDER_API_KEY;
   const helperScript = `#!/bin/sh
-echo ${ctx.taskRunJwt}`;
+echo ${apiKeyToOutput}`;
   files.push({
     destinationPath: claudeApiKeyHelperPath,
     contentBase64: Buffer.from(helperScript).toString("base64"),
