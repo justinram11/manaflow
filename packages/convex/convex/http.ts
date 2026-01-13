@@ -26,6 +26,7 @@ import {
   syncRelease as syncHostScreenshotCollectorRelease,
   getLatest as getLatestHostScreenshotCollector,
 } from "./hostScreenshotCollector_http";
+import { anthropicProxy } from "./anthropic_http";
 
 const http = httpRouter();
 
@@ -147,6 +148,12 @@ http.route({
   path: "/api/host-screenshot-collector/latest",
   method: "GET",
   handler: getLatestHostScreenshotCollector,
+});
+
+http.route({
+  path: "/api/anthropic/v1/messages",
+  method: "POST",
+  handler: anthropicProxy,
 });
 
 export default http;

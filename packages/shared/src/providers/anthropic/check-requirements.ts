@@ -1,37 +1,5 @@
 import type { ProviderRequirementsContext } from "../../agentConfig";
 
-/**
- * Check requirements for Claude Sonnet 4.5.
- *
- * Sonnet 4.5 is NOT available on AWS Bedrock, so it requires either:
- * - OAuth token (user's Claude subscription)
- * - Anthropic API key (user-provided)
- *
- * Unlike other Claude models, there is NO Bedrock fallback.
- */
-export async function checkClaudeSonnetRequirements(
-  context?: ProviderRequirementsContext,
-): Promise<string[]> {
-  const missing: string[] = [];
-
-  // Check if user has provided OAuth token or API key in settings
-  const hasOAuthToken =
-    context?.apiKeys?.CLAUDE_CODE_OAUTH_TOKEN &&
-    context.apiKeys.CLAUDE_CODE_OAUTH_TOKEN.trim() !== "";
-  const hasApiKey =
-    context?.apiKeys?.ANTHROPIC_API_KEY &&
-    context.apiKeys.ANTHROPIC_API_KEY.trim() !== "";
-
-  // Sonnet 4.5 requires OAuth or API key - no Bedrock fallback
-  if (!hasOAuthToken && !hasApiKey) {
-    missing.push(
-      "Claude Sonnet 4.5 requires OAuth token or API key (not available on Bedrock)",
-    );
-  }
-
-  return missing;
-}
-
 export async function checkClaudeRequirements(
   context?: ProviderRequirementsContext
 ): Promise<string[]> {
