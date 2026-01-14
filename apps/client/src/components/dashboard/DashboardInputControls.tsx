@@ -69,8 +69,8 @@ function watchPopupClosed(win: Window | null, onClose: () => void): void {
         window.clearInterval(timer);
         onClose();
       }
-    } catch {
-      /* noop */
+    } catch (_error) {
+      void 0;
     }
   }, 600);
 }
