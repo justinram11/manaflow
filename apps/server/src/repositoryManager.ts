@@ -793,7 +793,7 @@ export class RepositoryManager {
           : "";
 
     // Use authenticated URL if provided to support private repos
-    const fetchSource = this.getFetchSource;
+    const fetchSource = await this.getFetchSource(repoPath, authenticatedUrl);
 
     try {
       // Clear any stale shallow.lock before invoking a pull (pull may fetch)
