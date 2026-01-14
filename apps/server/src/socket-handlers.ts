@@ -1942,23 +1942,18 @@ export function setupSocketHandlers(
           }
 
           // Pass clean URL as remoteUrl to avoid persisting OAuth token in .git/config
+          // If branchOverride is undefined, ensureRepository auto-detects and fetches default branch
           await repoManager.ensureRepository(
             authenticatedRepoUrl,
             projectPaths.originPath,
-            undefined, // branch
+            branchOverride,
             targetRepoUrl // clean URL for remote storage
           );
 
+          // Get the branch name for worktree path (either override or detected default)
           const baseBranch =
             branchOverride ||
             (await repoManager.getDefaultBranch(projectPaths.originPath));
-
-          await repoManager.ensureRepository(
-            authenticatedRepoUrl,
-            projectPaths.originPath,
-            baseBranch,
-            targetRepoUrl // clean URL for remote storage
-          );
 
           const worktreeInfo = {
             ...projectPaths,
