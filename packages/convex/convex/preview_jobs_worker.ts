@@ -260,6 +260,7 @@ interface ScreenshotCollectorOptions {
   headBranch: string;
   outputDir: string;
   pathToClaudeCodeExecutable?: string;
+  setupScript?: string;
   installCommand?: string;
   devCommand?: string;
   convexSiteUrl?: string;
@@ -1972,6 +1973,12 @@ export async function runPreviewJob(
         });
       } else {
         // Build screenshot collector options
+        const setupScript = [
+          environment.maintenanceScript?.trim(),
+          environment.devScript?.trim(),
+        ]
+          .filter((value): value is string => Boolean(value))
+          .join("\n\n");
         const screenshotOptions: ScreenshotCollectorOptions = {
           workspaceDir: repoDir,
           changedFiles,
@@ -1981,6 +1988,7 @@ export async function runPreviewJob(
           headBranch: run.headRef || run.headSha,
           outputDir: `/root/screenshots/${Date.now()}-pr-${run.prNumber}`,
           pathToClaudeCodeExecutable: "/root/.bun/bin/claude",
+          setupScript: setupScript.length > 0 ? setupScript : undefined,
           installCommand: environment.maintenanceScript ?? undefined,
           devCommand: environment.devScript ?? undefined,
           convexSiteUrl: convexUrl,

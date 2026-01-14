@@ -89,6 +89,8 @@ type BranchBaseOptions = {
   prDescription: string;
   outputDir: string;
   pathToClaudeCodeExecutable?: string;
+  /** Combined setup script (maintenance + dev), if provided */
+  setupScript?: string;
   /** Command to install dependencies (e.g., "bun install", "npm install") */
   installCommand?: string;
   /** Command to start the dev server (e.g., "bun run dev", "npm run dev") */
@@ -161,6 +163,7 @@ export async function captureScreenshotsForBranch(
     branch,
     outputDir: requestedOutputDir,
     auth,
+    setupScript,
     installCommand,
     devCommand,
     convexSiteUrl,
@@ -170,6 +173,20 @@ export async function captureScreenshotsForBranch(
   const providedApiKey = !useTaskRunJwt ? auth.anthropicApiKey : undefined;
 
   const devInstructions = (() => {
+    const normalizedSetupScript = setupScript?.trim() ?? "";
+    const fallbackSetupScript = [installCommand?.trim(), devCommand?.trim()]
+      .filter(Boolean)
+      .join("\n\n");
+    const resolvedSetupScript = normalizedSetupScript || fallbackSetupScript;
+
+    if (resolvedSetupScript) {
+      return `
+The user provided the following setup script (maintenance + dev combined). If no dev server is running, use this script to start it:
+<setup_script>
+${resolvedSetupScript}
+</setup_script>`;
+    }
+
     if (!installCommand && !devCommand) {
       return `
 The user did not provide installation or dev commands. You will need to discover them by reading README.md, package.json, .devcontainer.json, or other configuration files.`;
@@ -236,6 +253,7 @@ If UI changes exist, capture screenshots:
 1. FIRST, check if the dev server is ALREADY RUNNING:
    - Run \`tmux list-windows\` and \`tmux capture-pane -p -t <window>\` to see running processes and their logs
    - Check if there's a dev server process starting up or already running in any tmux window
+   - For cloud tasks, also inspect cmux-pty output/logs (tmux may not be used). Look for active dev server commands there.
    - The dev server is typically started automatically in this environment - BE PATIENT and monitor the logs
    - If you see the server is starting/compiling, WAIT for it to finish - do NOT kill it or restart it
    - Use \`ss -tlnp | grep LISTEN\` to see what ports have servers listening
@@ -611,31 +629,33 @@ export async function claudeCodeCapturePRScreenshots(
       const beforeScreenshots = await captureScreenshotsForBranch(
         isTaskRunJwtAuth(auth)
           ? {
-            workspaceDir,
-            changedFiles,
-            prTitle,
-            prDescription,
-            branch: baseBranch,
-            outputDir,
-            auth: { taskRunJwt: auth.taskRunJwt },
-            pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
-            installCommand: options.installCommand,
-            devCommand: options.devCommand,
-            convexSiteUrl: options.convexSiteUrl,
-          }
-          : {
-            workspaceDir,
-            changedFiles,
-            prTitle,
-            prDescription,
-            branch: baseBranch,
-            outputDir,
-            auth: { anthropicApiKey: auth.anthropicApiKey },
-            pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
-            installCommand: options.installCommand,
-            devCommand: options.devCommand,
-            convexSiteUrl: options.convexSiteUrl,
-          }
+          workspaceDir,
+          changedFiles,
+          prTitle,
+          prDescription,
+          branch: baseBranch,
+          outputDir,
+          auth: { taskRunJwt: auth.taskRunJwt },
+          pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
+          setupScript: options.setupScript,
+          installCommand: options.installCommand,
+          devCommand: options.devCommand,
+          convexSiteUrl: options.convexSiteUrl,
+        }
+        : {
+          workspaceDir,
+          changedFiles,
+          prTitle,
+          prDescription,
+          branch: baseBranch,
+          outputDir,
+          auth: { anthropicApiKey: auth.anthropicApiKey },
+          pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
+          setupScript: options.setupScript,
+          installCommand: options.installCommand,
+          devCommand: options.devCommand,
+          convexSiteUrl: options.convexSiteUrl,
+        }
       );
       allScreenshots.push(...beforeScreenshots.screenshots);
       if (beforeScreenshots.hasUiChanges !== undefined) {
@@ -661,6 +681,7 @@ export async function claudeCodeCapturePRScreenshots(
           outputDir,
           auth: { taskRunJwt: auth.taskRunJwt },
           pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
+          setupScript: options.setupScript,
           installCommand: options.installCommand,
           devCommand: options.devCommand,
           convexSiteUrl: options.convexSiteUrl,
@@ -674,6 +695,7 @@ export async function claudeCodeCapturePRScreenshots(
           outputDir,
           auth: { anthropicApiKey: auth.anthropicApiKey },
           pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
+          setupScript: options.setupScript,
           installCommand: options.installCommand,
           devCommand: options.devCommand,
           convexSiteUrl: options.convexSiteUrl,
@@ -719,18 +741,19 @@ export { logToScreenshotCollector } from "./logger";
 export { formatClaudeMessage } from "./claudeMessageFormatter";
 
 // CLI entry point - runs when executed directly
-const cliOptionsSchema = z.object({
-  workspaceDir: z.string(),
-  changedFiles: z.array(z.string()),
-  prTitle: z.string(),
-  prDescription: z.string(),
-  baseBranch: z.string(),
-  headBranch: z.string(),
-  outputDir: z.string(),
-  pathToClaudeCodeExecutable: z.string().optional(),
-  installCommand: z.string().optional(),
-  devCommand: z.string().optional(),
-  convexSiteUrl: z.string().optional(),
+  const cliOptionsSchema = z.object({
+    workspaceDir: z.string(),
+    changedFiles: z.array(z.string()),
+    prTitle: z.string(),
+    prDescription: z.string(),
+    baseBranch: z.string(),
+    headBranch: z.string(),
+    outputDir: z.string(),
+    pathToClaudeCodeExecutable: z.string().optional(),
+    setupScript: z.string().optional(),
+    installCommand: z.string().optional(),
+    devCommand: z.string().optional(),
+    convexSiteUrl: z.string().optional(),
   auth: z.union([
     z.object({ taskRunJwt: z.string() }),
     z.object({ anthropicApiKey: z.string() }),
