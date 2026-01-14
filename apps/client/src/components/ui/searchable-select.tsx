@@ -474,9 +474,10 @@ const SearchableSelect = forwardRef<
     }
     const el = listRef.current;
     if (!el) return;
-    const threshold = 120;
+    const threshold = 80;
     const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (remaining > threshold && el.scrollHeight > el.clientHeight + 2) {
+    // Trigger load more when near bottom OR when content doesn't overflow
+    if (remaining > threshold && el.scrollHeight > el.clientHeight + 10) {
       return;
     }
     loadMoreLockRef.current = true;

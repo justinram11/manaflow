@@ -383,7 +383,7 @@ export type GithubBranchesResponse = {
     branches: Array<GithubBranch>;
     defaultBranch: string | null;
     error: string | null;
-    nextCursor: string | null;
+    nextOffset: number | null;
     hasMore: boolean;
 };
 
@@ -1861,9 +1861,9 @@ export type GetApiIntegrationsGithubBranchesData = {
          */
         limit?: number;
         /**
-         * Cursor for pagination (from previous response)
+         * Offset for pagination (number of branches to skip)
          */
-        cursor?: string;
+        offset?: number | null;
     };
     url: '/api/integrations/github/branches';
 };

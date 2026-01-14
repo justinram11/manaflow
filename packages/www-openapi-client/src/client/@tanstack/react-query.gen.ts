@@ -737,14 +737,14 @@ export const getApiIntegrationsGithubBranchesInfiniteQueryKey = (options: Option
  * List branches for a repository with optional search filter
  */
 export const getApiIntegrationsGithubBranchesInfiniteOptions = (options: Options<GetApiIntegrationsGithubBranchesData>) => {
-    return infiniteQueryOptions<GetApiIntegrationsGithubBranchesResponse, DefaultError, InfiniteData<GetApiIntegrationsGithubBranchesResponse>, QueryKey<Options<GetApiIntegrationsGithubBranchesData>>, string | Pick<QueryKey<Options<GetApiIntegrationsGithubBranchesData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+    return infiniteQueryOptions<GetApiIntegrationsGithubBranchesResponse, DefaultError, InfiniteData<GetApiIntegrationsGithubBranchesResponse>, QueryKey<Options<GetApiIntegrationsGithubBranchesData>>, number | null | Pick<QueryKey<Options<GetApiIntegrationsGithubBranchesData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
     // @ts-ignore
     {
         queryFn: async ({ pageParam, queryKey, signal }) => {
             // @ts-ignore
             const page: Pick<QueryKey<Options<GetApiIntegrationsGithubBranchesData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
                 query: {
-                    cursor: pageParam
+                    offset: pageParam
                 }
             };
             const params = createInfiniteParams(queryKey, page);

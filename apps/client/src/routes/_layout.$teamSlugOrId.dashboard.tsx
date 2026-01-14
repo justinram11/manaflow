@@ -37,7 +37,6 @@ import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import type { GithubBranchesResponse } from "@cmux/www-openapi-client";
 import { convexQuery } from "@convex-dev/react-query";
 import {
-  keepPreviousData,
   useInfiniteQuery,
   useQuery,
   type InfiniteData,
@@ -219,29 +218,33 @@ function DashboardComponent() {
 
   // Branches query - infinite scroll with server-side ordering by recent commits
   // Each search term is cached separately by React Query
-  const branchPageSize = 30;
+  const branchPageSize = 10;
+  // Track previous repo to detect repo changes
+  const prevRepoRef = useRef<string | null>(null);
+  const currentRepo = selectedProject[0] ?? "";
+
   const branchesQuery = useInfiniteQuery<
     GithubBranchesResponse,
     Error,
-    InfiniteData<GithubBranchesResponse, string | null>,
+    InfiniteData<GithubBranchesResponse, number | null>,
     Array<string | number>,
-    string | null
+    number | null
   >({
     queryKey: [
       "github-branches",
-      selectedProject[0] ?? "",
+      currentRepo,
       effectiveBranchSearch,
       branchPageSize,
     ],
-    initialPageParam: null,
+    initialPageParam: 0,
     queryFn: async ({ pageParam, signal }) => {
-      const cursor = typeof pageParam === "string" ? pageParam : undefined;
+      const offset = typeof pageParam === "number" ? pageParam : 0;
       const { data } = await getApiIntegrationsGithubBranches({
         query: {
-          repo: selectedProject[0] || "",
+          repo: currentRepo,
           limit: branchPageSize,
           search: effectiveBranchSearch || undefined,
-          cursor,
+          offset,
         },
         signal,
         throwOnError: true,
@@ -249,17 +252,31 @@ function DashboardComponent() {
       return data;
     },
     getNextPageParam: (lastPage) => {
+      console.log("[branches] getNextPageParam", { hasMore: lastPage.hasMore, nextOffset: lastPage.nextOffset });
       if (!lastPage.hasMore) {
         return undefined;
       }
-      return lastPage.nextCursor ?? undefined;
+      return lastPage.nextOffset ?? undefined;
     },
     staleTime: 30_000,
-    enabled: !!selectedProject[0] && !isEnvSelected,
+    enabled: !!currentRepo && !isEnvSelected,
     // Keep previous data visible while fetching new search results
-    // This prevents "No options" flash and button skeleton during search
-    placeholderData: keepPreviousData,
+    // BUT only if the repo hasn't changed - otherwise show loading state
+    placeholderData: (previousData, previousQuery) => {
+      // Don't use placeholder data if repo changed
+      const prevRepo = previousQuery?.queryKey?.[1];
+      if (prevRepo !== currentRepo) {
+        return undefined;
+      }
+      // For same repo, keep previous data during search
+      return previousData;
+    },
   });
+
+  // Update previous repo ref after render
+  useEffect(() => {
+    prevRepoRef.current = currentRepo;
+  }, [currentRepo]);
 
   // Show loading in search input when search is pending or fetching
   const isBranchSearchLoading =

@@ -188,9 +188,8 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   }, [agentOptions]);
 
   const branchFooter = isLoadingMoreBranches ? (
-    <div className="flex items-center gap-2 px-3 py-2 text-[11px] text-neutral-500 dark:text-neutral-400">
-      <Loader2 className="h-3 w-3 animate-spin" />
-      Loading more branches...
+    <div className="flex items-center justify-center py-1.5">
+      <Loader2 className="h-3.5 w-3.5 animate-spin text-neutral-400" />
     </div>
   ) : null;
 

@@ -103,10 +103,12 @@ const BranchesQuery = z
       .default(30)
       .optional()
       .openapi({ description: "Max branches to return (default 30, max 100)" }),
-    cursor: z
-      .string()
+    offset: z.coerce
+      .number()
+      .min(0)
+      .default(0)
       .optional()
-      .openapi({ description: "Cursor for pagination (from previous response)" }),
+      .openapi({ description: "Offset for pagination (number of branches to skip)" }),
   })
   .openapi("GithubBranchesQuery");
 
@@ -115,7 +117,7 @@ const BranchesResponse = z
     branches: z.array(GithubBranch),
     defaultBranch: z.string().nullable(),
     error: z.string().nullable(),
-    nextCursor: z.string().nullable(),
+    nextOffset: z.number().nullable(),
     hasMore: z.boolean(),
   })
   .openapi("GithubBranchesResponse");
@@ -145,7 +147,7 @@ githubBranchesRouter.openapi(
       return c.text("Unauthorized", 401);
     }
 
-    const { repo, search, limit = 30, cursor } = c.req.valid("query");
+    const { repo, search, limit = 30, offset = 0 } = c.req.valid("query");
 
     try {
       const githubAccount = await user.getConnectedAccount("github");
@@ -154,7 +156,7 @@ githubBranchesRouter.openapi(
           branches: [],
           defaultBranch: null,
           error: "GitHub account not connected",
-          nextCursor: null,
+          nextOffset: null,
           hasMore: false,
         }, 200);
       }
@@ -165,7 +167,7 @@ githubBranchesRouter.openapi(
           branches: [],
           defaultBranch: null,
           error: "GitHub access token not found",
-          nextCursor: null,
+          nextOffset: null,
           hasMore: false,
         }, 200);
       }
@@ -177,14 +179,13 @@ githubBranchesRouter.openapi(
           branches: [],
           defaultBranch: null,
           error: "Invalid repository format",
-          nextCursor: null,
+          nextOffset: null,
           hasMore: false,
         }, 200);
       }
 
       const normalizedSearch = search?.trim().toLowerCase() ?? "";
       const shouldFilter = normalizedSearch.length > 0;
-      const pageSize = shouldFilter ? 100 : limit;
 
       const graphqlResponse = z.object({
         repository: z
@@ -214,13 +215,16 @@ githubBranchesRouter.openapi(
           .nullable(),
       });
 
+      // Note: TAG_COMMIT_DATE only works for tag refs. For branch refs (refs/heads/),
+      // it defaults to alphabetical ordering. We fetch without explicit ordering
+      // and sort by commit date ourselves after fetching.
       const query = `
         query($owner: String!, $repo: String!, $first: Int!, $after: String) {
           repository(owner: $owner, name: $repo) {
             defaultBranchRef {
               name
             }
-            refs(refPrefix: "refs/heads/", first: $first, after: $after, orderBy: { field: TAG_COMMIT_DATE, direction: DESC }) {
+            refs(refPrefix: "refs/heads/", first: $first, after: $after) {
               edges {
                 cursor
                 node {
@@ -242,17 +246,25 @@ githubBranchesRouter.openapi(
         }
       `;
 
-      const branches: Array<z.infer<typeof GithubBranch>> = [];
-      let defaultBranchName: string | null = null;
-      let nextCursor: string | null = null;
-      let hasMore = false;
-      let afterCursor: string | null = cursor ?? null;
+      // For sorting by commit date, we fetch branches and sort client-side.
+      // We need to fetch at least (offset + limit) branches to return the requested page.
+      const targetCount = offset + limit;
+      const fetchSize = Math.max(targetCount, 50);
 
-      while (branches.length < limit) {
+      const allBranches: Array<z.infer<typeof GithubBranch>> = [];
+      let defaultBranchName: string | null = null;
+      let afterCursor: string | null = null;
+      let githubHasMore = true;
+
+      // For search, cap at 200 branches max to keep it fast
+      const maxBranchesToFetch = shouldFilter ? 200 : Math.max(fetchSize, 100);
+      let totalFetched = 0;
+
+      while (allBranches.length < targetCount && githubHasMore && totalFetched < maxBranchesToFetch) {
         const rawResponse: unknown = await octokit.graphql(query, {
           owner,
           repo: repoName,
-          first: pageSize,
+          first: fetchSize,
           after: afterCursor ?? null,
         });
 
@@ -263,7 +275,7 @@ githubBranchesRouter.openapi(
             branches: [],
             defaultBranch: null,
             error: "Repository not found",
-            nextCursor: null,
+            nextOffset: null,
             hasMore: false,
           }, 200);
         }
@@ -273,51 +285,63 @@ githubBranchesRouter.openapi(
         }
 
         const edges = repoData.refs.edges;
-        for (let i = 0; i < edges.length; i++) {
-          const edge = edges[i];
+        for (const edge of edges) {
           const name = edge.node.name;
           if (shouldFilter && !name.toLowerCase().includes(normalizedSearch)) {
             continue;
           }
 
-          branches.push({
+          allBranches.push({
             name,
             lastCommitSha: edge.node.target.oid,
             lastCommitDate: edge.node.target.committedDate,
             isDefault: name === defaultBranchName,
           });
-
-          if (branches.length >= limit) {
-            nextCursor = edge.cursor;
-            hasMore = i < edges.length - 1 || repoData.refs.pageInfo.hasNextPage;
-            break;
-          }
         }
 
-        if (branches.length >= limit) {
+        totalFetched += edges.length;
+        githubHasMore = repoData.refs.pageInfo.hasNextPage;
+        const endCursor = repoData.refs.pageInfo.endCursor;
+
+        if (!githubHasMore || !endCursor) {
           break;
         }
 
-        if (!repoData.refs.pageInfo.hasNextPage) {
-          hasMore = false;
-          nextCursor = null;
-          break;
-        }
-
-        if (!repoData.refs.pageInfo.endCursor) {
-          hasMore = false;
-          nextCursor = null;
-          break;
-        }
-
-        afterCursor = repoData.refs.pageInfo.endCursor;
+        afterCursor = endCursor;
       }
+
+      // Sort branches by commit date (most recent first)
+      allBranches.sort((a, b) => {
+        // Put branches without commit date at the end
+        if (!a.lastCommitDate && !b.lastCommitDate) return 0;
+        if (!a.lastCommitDate) return 1;
+        if (!b.lastCommitDate) return -1;
+        // Sort by date descending (most recent first)
+        return new Date(b.lastCommitDate).getTime() - new Date(a.lastCommitDate).getTime();
+      });
+
+      // Return the requested slice (offset to offset+limit)
+      const branches = allBranches.slice(offset, offset + limit);
+
+      // Determine if there are more branches to load
+      const hasMore = allBranches.length > offset + limit || githubHasMore;
+      const nextOffset = hasMore ? offset + limit : null;
+
+      console.log("[github.branches]", {
+        offset,
+        limit,
+        allBranchesCount: allBranches.length,
+        returnedCount: branches.length,
+        hasMore,
+        nextOffset,
+        githubHasMore,
+      });
 
       return c.json({
         branches,
         defaultBranch: defaultBranchName,
         error: null,
-        nextCursor,
+        nextOffset,
         hasMore,
       }, 200);
     } catch (error) {
@@ -326,7 +350,7 @@ githubBranchesRouter.openapi(
         branches: [],
         defaultBranch: null,
         error: error instanceof Error ? error.message : "Failed to fetch branches",
-        nextCursor: null,
+        nextOffset: null,
         hasMore: false,
       }, 200);
     }
