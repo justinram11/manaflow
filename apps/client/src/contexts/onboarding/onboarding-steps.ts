@@ -50,7 +50,7 @@ export const ONBOARDING_STEPS: OnboardingStep[] = [
     description:
       "Toggle between cloud and local execution. Cloud mode runs agents on our servers, while local mode uses Docker on your machine for full control.",
     targetSelector: "[data-onboarding='cloud-toggle']",
-    placement: "top",
+    placement: "bottom",
     highlightPadding: 8,
   },
   {
@@ -59,7 +59,7 @@ export const ONBOARDING_STEPS: OnboardingStep[] = [
     description:
       "Once you've configured everything, click this button to launch your agents. They'll start working immediately!",
     targetSelector: "[data-onboarding='start-button']",
-    placement: "top",
+    placement: "bottom",
     highlightPadding: 4,
   },
   {

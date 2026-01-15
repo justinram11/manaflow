@@ -19,9 +19,10 @@ interface OnboardingTooltipProps {
   isFirstStep: boolean;
 }
 
-const TOOLTIP_WIDTH = 340;
-const TOOLTIP_OFFSET = 16;
-const ARROW_SIZE = 8;
+const TOOLTIP_WIDTH = 280;
+const TOOLTIP_HEIGHT = 160; // Approximate height for collision detection
+const TOOLTIP_OFFSET = 12;
+const ARROW_SIZE = 6;
 
 export function OnboardingTooltip({
   step,
@@ -64,48 +65,75 @@ export function OnboardingTooltip({
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
 
-    let top = 0;
-    let left = 0;
-    let arrowPosition: TooltipPosition["arrowPosition"];
+    // Highlighted element bounds (with padding)
+    const highlightTop = rect.top - padding;
+    const highlightBottom = rect.bottom + padding;
+    const highlightLeft = rect.left - padding;
+    const highlightRight = rect.right + padding;
 
-    switch (step.placement) {
-      case "bottom":
-        top = rect.bottom + padding + TOOLTIP_OFFSET;
-        left = rect.left + rect.width / 2 - TOOLTIP_WIDTH / 2;
-        arrowPosition = "top";
-        break;
-      case "top":
-        top = rect.top - padding - TOOLTIP_OFFSET - 200; // Estimate tooltip height
-        left = rect.left + rect.width / 2 - TOOLTIP_WIDTH / 2;
-        arrowPosition = "bottom";
-        break;
-      case "left":
-        top = rect.top + rect.height / 2 - 100;
-        left = rect.left - padding - TOOLTIP_OFFSET - TOOLTIP_WIDTH;
-        arrowPosition = "right";
-        break;
-      case "right":
-        top = rect.top + rect.height / 2 - 100;
-        left = rect.right + padding + TOOLTIP_OFFSET;
-        arrowPosition = "left";
-        break;
-      default:
-        top = rect.bottom + padding + TOOLTIP_OFFSET;
-        left = rect.left + rect.width / 2 - TOOLTIP_WIDTH / 2;
-        arrowPosition = "top";
+    // Try placements in order of preference, starting with the specified one
+    const placements: Array<"top" | "bottom" | "left" | "right"> =
+      step.placement === "top" ? ["top", "bottom", "left", "right"] :
+      step.placement === "bottom" ? ["bottom", "top", "left", "right"] :
+      step.placement === "left" ? ["left", "right", "top", "bottom"] :
+      step.placement === "right" ? ["right", "left", "top", "bottom"] :
+      ["bottom", "top", "right", "left"];
+
+    for (const placement of placements) {
+      let top = 0;
+      let left = 0;
+      let arrowPosition: TooltipPosition["arrowPosition"];
+
+      switch (placement) {
+        case "bottom":
+          top = highlightBottom + TOOLTIP_OFFSET;
+          left = rect.left + rect.width / 2 - TOOLTIP_WIDTH / 2;
+          arrowPosition = "top";
+          break;
+        case "top":
+          top = highlightTop - TOOLTIP_OFFSET - TOOLTIP_HEIGHT;
+          left = rect.left + rect.width / 2 - TOOLTIP_WIDTH / 2;
+          arrowPosition = "bottom";
+          break;
+        case "left":
+          top = rect.top + rect.height / 2 - TOOLTIP_HEIGHT / 2;
+          left = highlightLeft - TOOLTIP_OFFSET - TOOLTIP_WIDTH;
+          arrowPosition = "right";
+          break;
+        case "right":
+          top = rect.top + rect.height / 2 - TOOLTIP_HEIGHT / 2;
+          left = highlightRight + TOOLTIP_OFFSET;
+          arrowPosition = "left";
+          break;
+      }
+
+      // Clamp to viewport
+      left = Math.max(8, Math.min(left, viewportWidth - TOOLTIP_WIDTH - 8));
+      top = Math.max(8, Math.min(top, viewportHeight - TOOLTIP_HEIGHT - 8));
+
+      // Check if tooltip overlaps with highlighted element
+      const tooltipBottom = top + TOOLTIP_HEIGHT;
+      const tooltipRight = left + TOOLTIP_WIDTH;
+      const overlaps = !(
+        tooltipBottom < highlightTop ||
+        top > highlightBottom ||
+        tooltipRight < highlightLeft ||
+        left > highlightRight
+      );
+
+      if (!overlaps) {
+        setPosition({ top, left, arrowPosition });
+        return;
+      }
     }
 
-    // Ensure tooltip stays within viewport
-    if (left < 16) left = 16;
-    if (left + TOOLTIP_WIDTH > viewportWidth - 16) {
-      left = viewportWidth - TOOLTIP_WIDTH - 16;
-    }
-    if (top < 16) top = 16;
-    if (top > viewportHeight - 250) {
-      top = viewportHeight - 250;
-    }
-
-    setPosition({ top, left, arrowPosition });
+    // Fallback: place below and accept overlap
+    const top = highlightBottom + TOOLTIP_OFFSET;
+    const left = Math.max(8, Math.min(
+      rect.left + rect.width / 2 - TOOLTIP_WIDTH / 2,
+      viewportWidth - TOOLTIP_WIDTH - 8
+    ));
+    setPosition({ top, left, arrowPosition: "top" });
   }, [step]);
 
   useEffect(() => {
@@ -185,7 +213,7 @@ export function OnboardingTooltip({
 
   return (
     <div style={tooltipStyle}>
-      <div className="relative bg-white dark:bg-neutral-800 rounded-xl shadow-2xl border border-neutral-200 dark:border-neutral-700 overflow-hidden">
+      <div className="relative bg-white dark:bg-neutral-900 rounded-lg shadow-xl border border-neutral-200 dark:border-neutral-800">
         {/* Arrow */}
         {position.arrowPosition && step.placement !== "center" && (
           <div
@@ -204,73 +232,57 @@ export function OnboardingTooltip({
                 borderLeftColor: "var(--tooltip-bg, white)",
               }),
             }}
-            className="[--tooltip-bg:theme(colors.white)] dark:[--tooltip-bg:theme(colors.neutral.800)]"
+            className="[--tooltip-bg:theme(colors.white)] dark:[--tooltip-bg:theme(colors.neutral.900)]"
           />
         )}
 
         {/* Header */}
-        <div className="flex items-center justify-between px-4 pt-4 pb-2">
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-500 text-white text-xs font-semibold">
-              {currentIndex + 1}
-            </span>
-            <span className="text-xs text-neutral-500 dark:text-neutral-400">
-              of {totalSteps}
-            </span>
-          </div>
+        <div className="flex items-center justify-between px-3 pt-3">
+          <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">
+            {currentIndex + 1} / {totalSteps}
+          </span>
           <button
             onClick={onSkip}
-            className="p-1 rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-700 text-neutral-500 dark:text-neutral-400 transition-colors"
-            aria-label="Skip tour"
+            className="-m-1 p-1 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-400 hover:text-neutral-700 dark:hover:text-white transition-colors"
+            aria-label="Close"
           >
-            <X className="w-4 h-4" />
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
 
         {/* Content */}
-        <div className="px-4 pb-3">
-          <h3 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100 mb-2">
+        <div className="px-3 pt-1 pb-3">
+          <h3 className="text-sm font-medium text-neutral-900 dark:text-white mb-0.5">
             {step.title}
           </h3>
-          <p className="text-sm text-neutral-600 dark:text-neutral-300 leading-relaxed">
+          <p className="text-xs text-neutral-600 dark:text-neutral-400 leading-relaxed">
             {step.description}
           </p>
         </div>
 
-        {/* Progress bar */}
-        <div className="px-4 pb-3">
-          <div className="h-1 bg-neutral-200 dark:bg-neutral-700 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-blue-500 transition-all duration-300 ease-out"
-              style={{ width: `${((currentIndex + 1) / totalSteps) * 100}%` }}
-            />
-          </div>
-        </div>
-
         {/* Footer */}
-        <div className="flex items-center justify-between px-4 py-3 bg-neutral-50 dark:bg-neutral-900/50 border-t border-neutral-200 dark:border-neutral-700">
+        <div className="flex items-center justify-between p-3 border-t border-neutral-200 dark:border-neutral-800">
           <button
             onClick={onPrevious}
             disabled={isFirstStep}
-            className="flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="flex items-center gap-0.5 text-xs text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
-            <ChevronLeft className="w-4 h-4" />
+            <ChevronLeft className="w-3 h-3" />
             Back
           </button>
-
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <button
               onClick={onSkip}
-              className="px-3 py-1.5 text-sm font-medium text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 transition-colors"
+              className="text-xs text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 transition-colors"
             >
-              Skip tour
+              Skip
             </button>
             <button
               onClick={onNext}
-              className="flex items-center gap-1 px-4 py-1.5 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors"
+              className="flex items-center gap-0.5 px-2 py-1 text-xs font-medium rounded bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 transition-colors"
             >
-              {isLastStep ? "Get started" : "Next"}
-              {!isLastStep && <ChevronRight className="w-4 h-4" />}
+              {isLastStep ? "Done" : "Next"}
+              {!isLastStep && <ChevronRight className="w-3 h-3" />}
             </button>
           </div>
         </div>

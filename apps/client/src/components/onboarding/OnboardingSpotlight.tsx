@@ -33,12 +33,30 @@ export function OnboardingSpotlight({
     }
 
     const domRect = element.getBoundingClientRect();
-    setRect({
-      top: domRect.top - padding,
-      left: domRect.left - padding,
-      width: domRect.width + padding * 2,
-      height: domRect.height + padding * 2,
-    });
+
+    // Calculate desired rect with padding
+    let top = domRect.top - padding;
+    let left = domRect.left - padding;
+    let width = domRect.width + padding * 2;
+    let height = domRect.height + padding * 2;
+
+    // Clamp to viewport bounds
+    if (left < 0) {
+      width += left; // Reduce width by the amount we're off-screen
+      left = 0;
+    }
+    if (top < 0) {
+      height += top; // Reduce height by the amount we're off-screen
+      top = 0;
+    }
+    if (left + width > window.innerWidth) {
+      width = window.innerWidth - left;
+    }
+    if (top + height > window.innerHeight) {
+      height = window.innerHeight - top;
+    }
+
+    setRect({ top, left, width, height });
   }, [targetSelector, padding, isActive]);
 
   useEffect(() => {
@@ -107,8 +125,8 @@ export function OnboardingSpotlight({
     left: rect.left,
     width: rect.width,
     height: rect.height,
-    borderRadius: "12px",
-    boxShadow: "0 0 0 4px rgba(59, 130, 246, 0.5), 0 0 24px rgba(59, 130, 246, 0.3)",
+    borderRadius: "8px",
+    border: "2px solid rgba(59, 130, 246, 0.7)",
     zIndex: 9999,
     pointerEvents: "none",
     transition: "all 0.3s ease-out",

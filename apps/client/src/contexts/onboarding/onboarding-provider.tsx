@@ -154,6 +154,23 @@ export function OnboardingProvider({ children }: OnboardingProviderProps) {
     }
   }, [completedSteps, hasCompletedOnboarding]);
 
+  // Cmd+K to restart onboarding (debug shortcut)
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        // Reset and restart onboarding
+        setCompletedSteps(new Set());
+        setHasCompletedOnboarding(false);
+        setCurrentStepIndex(0);
+        saveStoredState({ completed: false, completedSteps: [], skipped: false });
+        setIsOnboardingActive(true);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   const contextValue: OnboardingContextValue = useMemo(
     () => ({
       isOnboardingActive,
