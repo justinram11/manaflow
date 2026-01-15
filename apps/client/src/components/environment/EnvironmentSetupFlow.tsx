@@ -37,6 +37,7 @@ import {
 } from "react";
 import {
   updateEnvironmentDraftConfig,
+  updateEnvironmentDraftConfigStep,
   updateEnvironmentDraftLayoutPhase,
 } from "@/state/environment-draft-store";
 import { toast } from "sonner";
@@ -54,6 +55,8 @@ interface EnvironmentSetupFlowProps {
   initialEnvVars?: EnvVar[];
   /** Initial layout phase restored from draft - determines whether to show config form or VS Code/browser */
   initialLayoutPhase?: LayoutPhase;
+  /** Initial config step restored from draft - determines which panel (vscode/browser) is shown */
+  initialConfigStep?: import("@cmux/shared/components/environment").ConfigStep;
   onEnvironmentSaved?: () => void;
   onBack?: () => void;
 }
@@ -68,6 +71,7 @@ export function EnvironmentSetupFlow({
   initialExposedPorts = "",
   initialEnvVars,
   initialLayoutPhase,
+  initialConfigStep,
   onEnvironmentSaved,
   onBack,
 }: EnvironmentSetupFlowProps) {
@@ -306,6 +310,14 @@ export function EnvironmentSetupFlow({
     updateEnvironmentDraftLayoutPhase(teamSlugOrId, "initial-setup");
   }, [teamSlugOrId]);
 
+  const handleConfigStepChange = useCallback(
+    (step: import("@cmux/shared/components/environment").ConfigStep) => {
+      // Persist configStep to draft so it survives navigation
+      updateEnvironmentDraftConfigStep(teamSlugOrId, step);
+    },
+    [teamSlugOrId]
+  );
+
   const handleSaveEnvironment = useCallback(async () => {
     if (!instanceId) {
       console.error("Missing instanceId for save");
@@ -439,9 +451,11 @@ export function EnvironmentSetupFlow({
       vncWebsocketUrl={vncWebsocketUrl}
       isSaving={createEnvironmentMutation.isPending}
       errorMessage={errorMessage}
+      initialConfigStep={initialConfigStep}
       onMaintenanceScriptChange={handleMaintenanceScriptChange}
       onDevScriptChange={handleDevScriptChange}
       onEnvVarsChange={handleEnvVarsChange}
+      onConfigStepChange={handleConfigStepChange}
       onSave={handleSaveEnvironment}
       onBack={handleBackToInitialSetup}
     />

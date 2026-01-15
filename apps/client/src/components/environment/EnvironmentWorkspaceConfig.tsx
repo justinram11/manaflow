@@ -61,9 +61,11 @@ interface EnvironmentWorkspaceConfigProps {
   vncWebsocketUrl?: string;
   isSaving: boolean;
   errorMessage?: string | null;
+  initialConfigStep?: ConfigStep;
   onMaintenanceScriptChange: (value: string) => void;
   onDevScriptChange: (value: string) => void;
   onEnvVarsChange: (updater: (prev: EnvVar[]) => EnvVar[]) => void;
+  onConfigStepChange?: (step: ConfigStep) => void;
   onSave: () => void;
   onBack: () => void;
 }
@@ -92,19 +94,55 @@ export function EnvironmentWorkspaceConfig({
   vncWebsocketUrl,
   isSaving,
   errorMessage,
+  initialConfigStep,
   onMaintenanceScriptChange,
   onDevScriptChange,
   onEnvVarsChange,
+  onConfigStepChange,
   onSave,
   onBack,
 }: EnvironmentWorkspaceConfigProps) {
   // Current step (starts at run-scripts since scripts and env-vars were done in initial setup)
-  const [currentConfigStep, setCurrentConfigStep] = useState<ConfigStep>("run-scripts");
+  const [currentConfigStep, setCurrentConfigStep] = useState<ConfigStep>(
+    () => initialConfigStep ?? "run-scripts"
+  );
+
+  // Sync configStep when initialConfigStep prop changes (e.g., when draft loads after navigation)
+  useEffect(() => {
+    if (initialConfigStep && initialConfigStep !== currentConfigStep) {
+      setCurrentConfigStep(initialConfigStep);
+      // Also update completedSteps to include all steps before the restored step
+      const stepIndex = ALL_CONFIG_STEPS.indexOf(initialConfigStep);
+      setCompletedSteps((prev) => {
+        const next = new Set(prev);
+        for (let i = 0; i < stepIndex; i++) {
+          next.add(ALL_CONFIG_STEPS[i]);
+        }
+        return next;
+      });
+    }
+  }, [initialConfigStep]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Notify parent when config step changes
+  useEffect(() => {
+    onConfigStepChange?.(currentConfigStep);
+  }, [currentConfigStep, onConfigStepChange]);
 
   // Track which steps have been completed (scripts and env-vars are pre-completed from initial setup)
-  const [completedSteps, setCompletedSteps] = useState<Set<ConfigStep>>(
-    () => new Set(["scripts", "env-vars"] as ConfigStep[])
-  );
+  // If we're restoring to a later step, mark all previous steps as completed
+  const [completedSteps, setCompletedSteps] = useState<Set<ConfigStep>>(() => {
+    const baseCompleted: ConfigStep[] = ["scripts", "env-vars"];
+    if (initialConfigStep) {
+      const stepIndex = ALL_CONFIG_STEPS.indexOf(initialConfigStep);
+      // Mark all steps before the current step as completed
+      for (let i = 0; i < stepIndex; i++) {
+        if (!baseCompleted.includes(ALL_CONFIG_STEPS[i])) {
+          baseCompleted.push(ALL_CONFIG_STEPS[i]);
+        }
+      }
+    }
+    return new Set(baseCompleted);
+  });
 
   const [commandsCopied, setCommandsCopied] = useState(false);
   const copyResetTimeoutRef = useRef<number | null>(null);

@@ -4,13 +4,15 @@ import {
   type EnvironmentConfigDraft,
   type EnvironmentDraftMetadata,
 } from "@/types/environment";
-import type { LayoutPhase } from "@cmux/shared/components/environment";
+import type { ConfigStep, LayoutPhase } from "@cmux/shared/components/environment";
 import { useSyncExternalStore } from "react";
 
 export interface EnvironmentDraft extends EnvironmentDraftMetadata {
   step: "select" | "configure";
   /** Sub-phase within configure step: initial-setup shows the config form, workspace-config shows VS Code/browser */
   layoutPhase?: LayoutPhase;
+  /** Current config step within workspace-config phase: determines which panel (vscode/browser) is shown */
+  configStep?: ConfigStep;
   config: EnvironmentConfigDraft;
   lastUpdatedAt: number;
 }
@@ -164,9 +166,11 @@ const buildDraft = (
   metadata: EnvironmentDraftMetadata,
   config: EnvironmentConfigDraft,
   layoutPhase?: LayoutPhase,
+  configStep?: ConfigStep,
 ): EnvironmentDraft => ({
   step: "configure",
   layoutPhase,
+  configStep,
   selectedRepos: metadata.selectedRepos,
   instanceId: metadata.instanceId,
   snapshotId: metadata.snapshotId,
@@ -251,6 +255,7 @@ export const updateEnvironmentDraftConfig = (
       { selectedRepos, instanceId, snapshotId },
       nextConfig,
       prev?.layoutPhase, // Preserve layoutPhase
+      prev?.configStep, // Preserve configStep
     );
   });
 
@@ -263,6 +268,19 @@ export const updateEnvironmentDraftLayoutPhase = (
     return {
       ...prev,
       layoutPhase,
+      lastUpdatedAt: now(),
+    };
+  });
+
+export const updateEnvironmentDraftConfigStep = (
+  teamSlugOrId: string,
+  configStep: ConfigStep,
+): EnvironmentDraft | null =>
+  store.update(teamSlugOrId, (prev) => {
+    if (!prev) return null;
+    return {
+      ...prev,
+      configStep,
       lastUpdatedAt: now(),
     };
   });
