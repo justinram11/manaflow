@@ -20,7 +20,7 @@ import { parseGithubRepoUrl } from "@cmux/shared";
 import { Link, useRouter } from "@tanstack/react-router";
 import clsx from "clsx";
 import { useAction, useMutation } from "convex/react";
-import { Check, GitBranch, Image, Link2, Loader2, Mic, Server, X } from "lucide-react";
+import { Check, GitBranch, Image, Link2, Mic, Server, X } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AgentCommandItem, MAX_AGENT_COMMAND_COUNT } from "./AgentCommandItem";
@@ -187,11 +187,6 @@ export const DashboardInputControls = memo(function DashboardInputControls({
     return map;
   }, [agentOptions]);
 
-  const branchFooter = isLoadingMoreBranches ? (
-    <div className="flex items-center justify-center py-1.5">
-      <Loader2 className="h-3.5 w-3.5 animate-spin text-neutral-400" />
-    </div>
-  ) : null;
 
   const generateInstanceId = () => crypto.randomUUID();
 
@@ -697,7 +692,6 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                   onLoadMore={onBranchLoadMore}
                   canLoadMore={canLoadMoreBranches}
                   isLoadingMore={isLoadingMoreBranches}
-                  footer={branchFooter}
                   placeholder="Branch"
                   singleSelect={true}
                   className="rounded-2xl"

@@ -498,7 +498,7 @@ const SearchableSelect = forwardRef<
   useEffect(() => {
     if (!open) return;
     triggerLoadMore();
-  }, [open, filteredOptions.length, triggerLoadMore]);
+  }, [open, filteredOptions.length, triggerLoadMore, canLoadMore]);
 
   useEffect(() => {
     if (!isLoadingMore) {
@@ -799,7 +799,7 @@ const SearchableSelect = forwardRef<
                       return (
                         <div
                           style={{
-                            height: rowVirtualizer.getTotalSize(),
+                            height: rowVirtualizer.getTotalSize() + (isLoadingMore ? 32 : 0),
                             position: "relative",
                           }}
                         >
@@ -849,6 +849,20 @@ const SearchableSelect = forwardRef<
                               </div>
                             );
                           })}
+                          {isLoadingMore ? (
+                            <div
+                              style={{
+                                position: "absolute",
+                                top: 0,
+                                left: 0,
+                                width: "100%",
+                                transform: `translateY(${rowVirtualizer.getTotalSize()}px)`,
+                              }}
+                              className="flex items-center justify-center h-8"
+                            >
+                              <Loader2 className="h-3.5 w-3.5 animate-spin text-neutral-400" />
+                            </div>
+                          ) : null}
                         </div>
                       );
                     })()}
