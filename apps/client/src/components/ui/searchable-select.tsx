@@ -457,6 +457,8 @@ const SearchableSelect = forwardRef<
   }, [normOptions, search, disableClientFilter]);
 
   const listRef = useRef<HTMLDivElement | null>(null);
+  // Track the previous isLoadingMore value to detect transitions from loading -> not loading
+  const prevIsLoadingMoreRef = useRef(isLoadingMore);
   const loadMoreLockRef = useRef(false);
   const rowVirtualizer = useVirtualizer({
     count: filteredOptions.length,
@@ -500,11 +502,21 @@ const SearchableSelect = forwardRef<
     triggerLoadMore();
   }, [open, filteredOptions.length, triggerLoadMore, canLoadMore]);
 
+  // Reset lock only when isLoadingMore transitions from true to false
+  // This prevents the race condition where the lock is reset before isLoadingMore becomes true
   useEffect(() => {
-    if (!isLoadingMore) {
+    if (prevIsLoadingMoreRef.current && !isLoadingMore) {
       loadMoreLockRef.current = false;
     }
-  }, [canLoadMore, isLoadingMore, filteredOptions.length]);
+    prevIsLoadingMoreRef.current = isLoadingMore;
+  }, [isLoadingMore]);
+
+  // Reset lock when dropdown closes to ensure clean state on next open
+  useEffect(() => {
+    if (!open) {
+      loadMoreLockRef.current = false;
+    }
+  }, [open]);
 
   useEffect(() => {
     if (open) {
