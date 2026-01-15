@@ -78,6 +78,13 @@ export function EnvironmentSetupFlow({
     () => initialLayoutPhase ?? "initial-setup"
   );
 
+  // Sync layoutPhase when initialLayoutPhase prop changes (e.g., when draft loads after navigation)
+  useEffect(() => {
+    if (initialLayoutPhase && initialLayoutPhase !== layoutPhase) {
+      setLayoutPhase(initialLayoutPhase);
+    }
+  }, [initialLayoutPhase]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Configuration state - blank by default, placeholder shows the default pattern
   const [envName, setEnvName] = useState(initialEnvName);
   const [envVars, setEnvVars] = useState<EnvVar[]>(() =>
@@ -357,14 +364,18 @@ export function EnvironmentSetupFlow({
         },
       },
       {
-        onSuccess: async () => {
+        onSuccess: async (data) => {
           // Mark as saved to prevent draft re-creation from useEffect
           hasSavedRef.current = true;
           toast.success("Environment saved");
           onEnvironmentSaved?.();
+          // Navigate to the newly created environment's details page
           await navigate({
-            to: "/$teamSlugOrId/environments",
-            params: { teamSlugOrId },
+            to: "/$teamSlugOrId/environments/$environmentId",
+            params: {
+              teamSlugOrId,
+              environmentId: data.id as import("@cmux/convex/dataModel").Id<"environments">,
+            },
             search: {
               step: undefined,
               selectedRepos: undefined,

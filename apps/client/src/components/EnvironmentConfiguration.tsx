@@ -533,19 +533,21 @@ export function EnvironmentConfiguration({
           onSuccess: async () => {
             toast.success("Snapshot version created");
             onEnvironmentSaved?.();
+            // Navigate back to the source environment's details page
             await navigate({
-              to: "/$teamSlugOrId/environments",
+              to: "/$teamSlugOrId/environments/$environmentId",
               params: {
                 teamSlugOrId,
+                environmentId: sourceEnvironmentId,
               },
-              search: () => ({
+              search: {
                 step: undefined,
                 selectedRepos: undefined,
                 connectionLogin: undefined,
                 repoSearch: undefined,
                 instanceId: undefined,
                 snapshotId: undefined,
-              }),
+              },
             });
           },
           onError: (err) => {
@@ -570,12 +572,16 @@ export function EnvironmentConfiguration({
           },
         },
         {
-          onSuccess: async () => {
+          onSuccess: async (data) => {
             toast.success("Environment saved");
             onEnvironmentSaved?.();
+            // Navigate to the newly created environment's details page
             await navigate({
-              to: "/$teamSlugOrId/environments",
-              params: { teamSlugOrId },
+              to: "/$teamSlugOrId/environments/$environmentId",
+              params: {
+                teamSlugOrId,
+                environmentId: data.id as Id<"environments">,
+              },
               search: {
                 step: undefined,
                 selectedRepos: undefined,
