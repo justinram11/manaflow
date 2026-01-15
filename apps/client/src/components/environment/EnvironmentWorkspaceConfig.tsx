@@ -136,9 +136,12 @@ export function EnvironmentWorkspaceConfig({
   }, [initialConfigStep, computeCompletedSteps]);
 
   // Notify parent when config step changes
+  // Use ref to avoid infinite loop if parent doesn't memoize the callback
+  const onConfigStepChangeRef = useRef(onConfigStepChange);
+  onConfigStepChangeRef.current = onConfigStepChange;
   useEffect(() => {
-    onConfigStepChange?.(currentConfigStep);
-  }, [currentConfigStep, onConfigStepChange]);
+    onConfigStepChangeRef.current?.(currentConfigStep);
+  }, [currentConfigStep]);
 
   const [commandsCopied, setCommandsCopied] = useState(false);
   const copyResetTimeoutRef = useRef<number | null>(null);
