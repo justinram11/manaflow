@@ -1,5 +1,5 @@
 import { env } from "../_shared/convex-env";
-import { capturePosthogEvent } from "../_shared/posthog";
+import { capturePosthogEvent, drainPosthogEvents } from "../_shared/posthog";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { httpAction, type ActionCtx } from "./_generated/server";
@@ -402,8 +402,8 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
             commentId: commentIdToUpdate,
           });
 
-          // Track comment updated
-          void capturePosthogEvent({
+          // Track comment updated (non-blocking)
+          capturePosthogEvent({
             distinctId: taskRun.teamId,
             event: "preview_comment_posted",
             properties: {
@@ -418,6 +418,7 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
 
           const taskCompletion = await markPreviewTaskCompleted(ctx, taskRun, task);
 
+          await drainPosthogEvents();
           return jsonResponse({
             success: true,
             commentUrl: previewRun.githubCommentUrl,
@@ -463,8 +464,8 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
             commentUrl: commentResult.commentUrl,
           });
 
-          // Track comment posted
-          void capturePosthogEvent({
+          // Track comment posted (non-blocking)
+          capturePosthogEvent({
             distinctId: taskRun.teamId,
             event: "preview_comment_posted",
             properties: {
@@ -479,6 +480,7 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
 
           const taskCompletion = await markPreviewTaskCompleted(ctx, taskRun, task);
 
+          await drainPosthogEvents();
           return jsonResponse({
             success: true,
             commentUrl: commentResult.commentUrl,

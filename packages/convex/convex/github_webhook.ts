@@ -12,7 +12,7 @@ import type {
 } from "@octokit/webhooks-types";
 import { env } from "../_shared/convex-env";
 import { hmacSha256, safeEqualHex, sha256Hex } from "../_shared/crypto";
-import { capturePosthogEvent } from "../_shared/posthog";
+import { capturePosthogEvent, drainPosthogEvents } from "../_shared/posthog";
 import { bytesToHex } from "../_shared/encoding";
 import { streamInstallationRepositories } from "../_shared/githubApp";
 import { internal } from "./_generated/api";
@@ -595,8 +595,8 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                     prUrl,
                   });
 
-                  // Track webhook event
-                  void capturePosthogEvent({
+                  // Track webhook event (non-blocking, drained at end of handler)
+                  capturePosthogEvent({
                     distinctId: previewConfig.teamId,
                     event: "preview_webhook_received",
                     properties: {
@@ -758,6 +758,9 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
     console.error("github_webhook dispatch failed", { err, delivery, event });
     // Swallow errors to avoid GitHub retries while we iterate
   }
+
+  // Drain any pending PostHog events before returning
+  await drainPosthogEvents();
 
   return new Response("ok", { status: 200 });
 });
