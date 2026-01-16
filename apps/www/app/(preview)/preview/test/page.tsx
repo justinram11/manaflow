@@ -35,12 +35,22 @@ export default async function PreviewTestPage({ searchParams }: PageProps) {
     return redirect(signInUrl);
   }
 
-  const [auth, teamsResult] = await Promise.all([
-    user.getAuthJson(),
-    user.listTeams(),
-  ]);
-  const teams: StackTeam[] = teamsResult;
-  let accessToken = auth.accessToken;
+  // Try to get auth tokens and user data
+  // Wrap in try-catch to handle any Stack Auth API errors gracefully
+  let accessToken: string | null = null;
+  let teams: StackTeam[] = [];
+
+  try {
+    const [auth, teamsResult] = await Promise.all([
+      user.getAuthJson(),
+      user.listTeams(),
+    ]);
+    teams = teamsResult;
+    accessToken = auth.accessToken;
+  } catch (error) {
+    console.error("[PreviewTestPage] Failed to fetch user data from Stack Auth", error);
+    // Fall through to try creating a fresh session
+  }
 
   // If accessToken is null, try creating a fresh session to get valid tokens
   // This can happen right after OAuth sign-in when tokens aren't fully propagated
@@ -52,6 +62,14 @@ export default async function PreviewTestPage({ searchParams }: PageProps) {
       if (freshTokens.accessToken) {
         accessToken = freshTokens.accessToken;
         console.log("[PreviewTestPage] Got fresh access token from new session");
+        // Also try to fetch teams if we didn't get them earlier
+        if (teams.length === 0) {
+          try {
+            teams = await user.listTeams();
+          } catch (teamsError) {
+            console.error("[PreviewTestPage] Failed to fetch teams", teamsError);
+          }
+        }
       }
     } catch (error) {
       console.error("[PreviewTestPage] Failed to create fresh session", error);

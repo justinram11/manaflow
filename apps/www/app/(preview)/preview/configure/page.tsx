@@ -60,15 +60,21 @@ export default async function PreviewConfigurePage({ searchParams }: PageProps) 
     return redirect(signInUrl);
   }
 
-  const [auth, teamsResult] = await Promise.all([
-    user.getAuthJson(),
-    user.listTeams(),
-  ]);
-  const teams: StackTeam[] = teamsResult;
-  let accessToken = auth.accessToken;
+  // Try to get auth tokens and user data
+  // Wrap in try-catch to handle any Stack Auth API errors gracefully
+  let accessToken: string | null = null;
+  let teams: StackTeam[] = [];
 
-  if (teams.length === 0) {
-    notFound();
+  try {
+    const [auth, teamsResult] = await Promise.all([
+      user.getAuthJson(),
+      user.listTeams(),
+    ]);
+    teams = teamsResult;
+    accessToken = auth.accessToken;
+  } catch (error) {
+    console.error("[PreviewConfigurePage] Failed to fetch user data from Stack Auth", error);
+    // Fall through to try creating a fresh session
   }
 
   // If accessToken is null, try creating a fresh session to get valid tokens
@@ -81,6 +87,14 @@ export default async function PreviewConfigurePage({ searchParams }: PageProps) 
       if (freshTokens.accessToken) {
         accessToken = freshTokens.accessToken;
         console.log("[PreviewConfigurePage] Got fresh access token from new session");
+        // Also try to fetch teams if we didn't get them earlier
+        if (teams.length === 0) {
+          try {
+            teams = await user.listTeams();
+          } catch (teamsError) {
+            console.error("[PreviewConfigurePage] Failed to fetch teams", teamsError);
+          }
+        }
       }
     } catch (error) {
       console.error("[PreviewConfigurePage] Failed to create fresh session", error);
@@ -92,6 +106,10 @@ export default async function PreviewConfigurePage({ searchParams }: PageProps) 
     console.error("[PreviewConfigurePage] No access token available after retry, redirecting to sign-in");
     const signInUrl = `/handler/sign-in?after_auth_return_to=${encodeURIComponent(configurePath)}`;
     return redirect(signInUrl);
+  }
+
+  if (teams.length === 0) {
+    notFound();
   }
 
   const repo = getSearchValue(resolvedSearch, "repo");
