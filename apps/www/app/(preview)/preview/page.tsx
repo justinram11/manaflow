@@ -11,20 +11,20 @@ import {
 } from "@/lib/team-utils";
 
 export const metadata: Metadata = {
-  title: "Screenshot previews for GitHub PRs",
+  title: "Screenshot & video previews for GitHub PRs",
   description:
-    "Code review agent that takes screenshots of code diffs involving UI changes. Automatically capture and preview visual changes in your pull requests.",
+    "Code review agent that takes screenshots and videos of code diffs involving UI changes. Automatically capture and preview visual changes in your pull requests.",
   openGraph: {
-    title: "Screenshot previews for GitHub PRs",
+    title: "Screenshot & video previews for GitHub PRs",
     description:
-      "Code review agent that takes screenshots of code diffs involving UI changes",
+      "Code review agent that takes screenshots and videos of code diffs involving UI changes",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Screenshot previews for GitHub PRs",
+    title: "Screenshot & video previews for GitHub PRs",
     description:
-      "Code review agent that takes screenshots of code diffs involving UI changes",
+      "Code review agent that takes screenshots and videos of code diffs involving UI changes",
   },
 };
 

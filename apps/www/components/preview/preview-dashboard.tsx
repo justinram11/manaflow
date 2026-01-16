@@ -4372,11 +4372,11 @@ function PreviewDashboardInner({
       {/* Header */}
       <div className="pb-10">
         <h1 className="text-3xl font-semibold tracking-tight text-white pb-2">
-          Screenshot previews for GitHub PRs
+          Screenshot & video previews for GitHub PRs
         </h1>
         <p className="text-lg text-neutral-300/85 max-w-2xl">
-          Code review agent that takes screenshots of code diffs involving UI
-          changes
+          Code review agent that takes screenshots and videos of code diffs
+          involving UI changes
         </p>
       </div>
 
@@ -4467,14 +4467,14 @@ function PreviewDashboardInner({
               iconBgColor="bg-sky-500/10"
               iconColor="text-sky-400"
               title="Computer use agent"
-              description="An agent boots your dev server and captures screenshots of your UI on every PR."
+              description="An agent boots your dev server and captures screenshots and videos of your UI on every PR."
             />
             <FeatureCard
               icon={Github}
               iconBgColor="bg-emerald-500/10"
               iconColor="text-emerald-400"
               title="GitHub comments"
-              description="Screenshots are posted directly to your PR as comments for easy review."
+              description="Screenshots and videos are posted directly to your PR as comments for easy review."
             />
             <FeatureCard
               icon={Server}
@@ -4607,8 +4607,8 @@ function PreviewDashboardInner({
             }
           >
             <p className="text-sm text-neutral-400 pb-2">
-              Want UI screenshots for your code reviews? Check out cmux - an
-              open-source Claude Code/Codex manager with visual diffs!
+              Want UI screenshots and videos for your code reviews? Check out
+              cmux - an open-source Claude Code/Codex manager with visual diffs!
             </p>
             <div className="flex items-center gap-3 pt-2">
               <Link
@@ -4653,8 +4653,8 @@ function PreviewDashboardInner({
                 <span className="text-white">
                   {configPendingDelete?.repoFullName}
                 </span>{" "}
-                from preview.new? This stops screenshot previews for this
-                repository.
+                from preview.new? This stops screenshot and video previews for
+                this repository.
               </AlertDialogDescription>
             </div>
           </AlertDialogHeader>
