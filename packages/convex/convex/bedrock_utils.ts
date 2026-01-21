@@ -201,6 +201,33 @@ function parseEventStreamHeaders(
 }
 
 /**
+ * Transform Bedrock tool IDs from `toolu_bdrk_*` format to Anthropic `tooluse_*` format.
+ * This is needed because Claude Agent SDK 0.2.8+ only accepts Anthropic-native tool IDs.
+ *
+ * Transforms only IDs within "id" or "tool_use_id" JSON fields to prevent
+ * accidental mutation of user content containing similar patterns.
+ *
+ * - "id": "toolu_bdrk_01ABC..." → "id": "tooluse_ABC..."
+ * - "tool_use_id": "toolu_bdrk_01ABC..." → "tool_use_id": "tooluse_ABC..."
+ */
+function transformBedrockToolIds(jsonString: string): string {
+  // Quick check - if no Bedrock tool IDs, return as-is
+  if (!jsonString.includes("toolu_bdrk_")) {
+    return jsonString;
+  }
+
+  // Transform toolu_bdrk_* IDs to tooluse_* format, but ONLY within JSON id fields
+  // This prevents accidental mutation of user content containing similar patterns
+  // The regex matches: "id": "toolu_bdrk_01..." or "tool_use_id": "toolu_bdrk_01..."
+  // Bedrock format: toolu_bdrk_01 + 22 alphanumeric chars
+  // Anthropic format: tooluse_ + 22 alphanumeric chars
+  return jsonString.replace(
+    /("(?:id|tool_use_id)"\s*:\s*")toolu_bdrk_01([A-Za-z0-9]{22})(")/g,
+    (_, prefix, uniquePart, suffix) => `${prefix}tooluse_${uniquePart}${suffix}`
+  );
+}
+
+/**
  * Parse a single Bedrock event message and convert to SSE format.
  *
  * Bedrock event format:
@@ -265,8 +292,24 @@ export function parseBedrockEventToSSE(messageBytes: Uint8Array): string | null 
     // The payload has a "bytes" field with base64-encoded Anthropic event
     if (payload.bytes) {
       const decodedBytes = base64Decode(payload.bytes);
-      // Return as SSE format
-      return `data: ${decodedBytes}\n\n`;
+      // Transform Bedrock tool IDs to Anthropic format
+      // SDK 0.2.8+ requires tooluse_* format, not toolu_bdrk_*
+      const transformedBytes = transformBedrockToolIds(decodedBytes);
+
+      // Extract event type from the decoded JSON for proper SSE format
+      // Anthropic SSE format requires both "event: <type>" and "data: <json>" lines
+      try {
+        const eventData = JSON.parse(transformedBytes);
+        // Validate eventType is a string to prevent invalid SSE event lines
+        const eventType =
+          typeof eventData.type === "string" ? eventData.type : "message";
+        return `event: ${eventType}\ndata: ${transformedBytes}\n\n`;
+      } catch (error) {
+        // Log parsing errors for debugging (repo rule: never suppress errors)
+        console.error("[bedrock-utils] Error parsing event JSON:", error);
+        // Fall back to data-only SSE format
+        return `data: ${transformedBytes}\n\n`;
+      }
     }
 
     // Log unexpected payload format for debugging
