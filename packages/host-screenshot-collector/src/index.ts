@@ -378,85 +378,55 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
 </CRITICAL_MISTAKES>
 
 <VIDEO_RECORDING>
-Record SHORT screen videos (5-15 sec) with VISIBLE CURSOR MOVEMENT using xdotool + ffmpeg.
-
-CRITICAL: Chrome CDP doesn't move the real cursor! You MUST use xdotool to move the cursor.
+You can record screen videos to demonstrate workflows. Use ffmpeg for recording and xdotool to move the cursor.
 
 USE VIDEO WHEN:
-- New buttons or links (show: hover → click → result)
-- Form submissions with feedback
-- Navigation flows
-- Animations or transitions
+- New buttons or links that navigate to other pages
+- Before/after workflows with state transitions
+- Multi-step user flows
+- Any clickable element that triggers navigation or state changes
 
 DO NOT USE VIDEO WHEN:
-- Pure styling changes (use screenshots instead)
-- Static content changes
-- No interactive behavior
+- Pure styling changes (colors, fonts, spacing)
+- Static text or content changes
 
-RECORDING WORKFLOW:
+HOW TO RECORD A VIDEO:
 
-1. FIRST, get the element's screen coordinates. Use Chrome MCP to run JavaScript:
-   \`\`\`javascript
-   const el = document.querySelector('button.my-button'); // or whatever selector
-   const rect = el.getBoundingClientRect();
-   // Chrome window starts at ~0,0 in this environment
-   console.log(JSON.stringify({x: Math.round(rect.x + rect.width/2), y: Math.round(rect.y + rect.height/2)}));
-   \`\`\`
+1. BEFORE recording, position cursor at starting element:
+   - Get element position via Chrome MCP (getBoundingClientRect)
+   - Add 85 to Y coordinate for Chrome toolbar offset
+   - Run: DISPLAY=:1 xdotool mousemove --sync X Y
 
-2. Start ffmpeg recording (20 sec max, display :1):
-   \`\`\`bash
-   DISPLAY=:1 ffmpeg -y -f x11grab -draw_mouse 1 -framerate 10 -video_size 1920x1080 -i :1 -t 20 -c:v libx264 -preset ultrafast -crf 28 -pix_fmt yuv420p -movflags +faststart ${outputDir}/demo.mp4 &
-   FFMPEG_PID=$!
-   sleep 1
-   \`\`\`
-
-3. Use xdotool to MOVE THE REAL CURSOR and click (this is what gets recorded!):
-   \`\`\`bash
-   # Move cursor to element (use coordinates from step 1)
-   DISPLAY=:1 xdotool mousemove --sync 500 300
-   sleep 0.5  # Show hover state
-
-   # Click the element
-   DISPLAY=:1 xdotool click 1
-   sleep 2  # Wait for result/animation
-   \`\`\`
-
-4. Stop recording gracefully:
-   \`\`\`bash
-   kill -INT $FFMPEG_PID
-   sleep 2
-   wait $FFMPEG_PID 2>/dev/null || true
-   \`\`\`
-
-COMPLETE EXAMPLE - Recording a button click:
+2. Start ffmpeg recording in background:
 \`\`\`bash
-# Step 1: Start recording
-DISPLAY=:1 ffmpeg -y -f x11grab -draw_mouse 1 -framerate 10 -video_size 1920x1080 -i :1 -t 20 -c:v libx264 -preset ultrafast -crf 28 -pix_fmt yuv420p -movflags +faststart ${outputDir}/button-click.mp4 &
+DISPLAY=:1 ffmpeg -y -f x11grab -draw_mouse 1 -framerate 24 -video_size 1920x1080 -i :1+0,0 -c:v libx264 -preset ultrafast -crf 26 -pix_fmt yuv420p -movflags +faststart ${outputDir}/workflow.mp4 &
 FFMPEG_PID=$!
-sleep 1
+\`\`\`
 
-# Step 2: Move cursor to button position (get coords from getBoundingClientRect)
-DISPLAY=:1 xdotool mousemove --sync 450 320
-sleep 0.5
+3. Immediately use Chrome MCP to click/navigate. For each subsequent action:
+   - Move cursor with xdotool: DISPLAY=:1 xdotool mousemove --sync X Y
+   - Immediately click with Chrome MCP (NO sleeps between actions)
 
-# Step 3: Click
-DISPLAY=:1 xdotool click 1
-sleep 2  # Wait for result
-
-# Step 4: Stop recording
+4. Stop recording when done:
+\`\`\`bash
 kill -INT $FFMPEG_PID
-sleep 2
 wait $FFMPEG_PID 2>/dev/null || true
 \`\`\`
 
-KEY POINTS:
-- ALWAYS use DISPLAY=:1 with xdotool
-- xdotool mousemove moves the REAL cursor (visible in recording)
-- xdotool click 1 = left click
-- Get element coordinates via JavaScript getBoundingClientRect()
-- Keep videos SHORT: 5-15 seconds ideal, 20 seconds max
+CURSOR COORDINATE CALCULATION:
+\`\`\`javascript
+const el = document.querySelector('button');
+const rect = el.getBoundingClientRect();
+const x = Math.round(rect.x + rect.width/2);
+const y = Math.round(rect.y + rect.height/2) + 85; // +85 for Chrome toolbar
+\`\`\`
 
-MULTIPLE FEATURES = MULTIPLE SHORT VIDEOS (don't combine into one long video)
+IMPORTANT:
+- NO sleep commands between actions - move as fast as possible
+- Position cursor BEFORE starting recording so it's ready
+- Record complete end-to-end flows
+- Keep videos SHORT: 5-10 seconds preferred
+- Always use DISPLAY=:1 with xdotool and ffmpeg
 </VIDEO_RECORDING>
 
 <OUTPUT>
