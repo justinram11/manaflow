@@ -48,7 +48,7 @@ interface ScreenshotOptions {
   installCommand?: string;
   devCommand?: string;
   pathToClaudeCodeExecutable?: string;
-  auth: { anthropicApiKey: string };
+  auth: { anthropicApiKey: string } | { taskRunJwt: string };
   convexSiteUrl?: string;
 }
 
@@ -62,6 +62,8 @@ interface CLIArgs {
   verbose?: boolean;
   useLocal?: boolean;
   convexUrl?: string;
+  useProxy?: boolean;
+  taskRunJwt?: string;
 }
 
 // ============================================================================
@@ -505,12 +507,14 @@ Options:
   --dev-command <cmd>     Command to start dev server (e.g., "bun run dev")
   --skip-clone            Skip cloning, use existing workspace (requires --workspace)
   --use-local             Build and use local screenshot collector instead of fetching from Convex
+  --use-proxy             Use Convex proxy with JWT auth (same path as Morph sandboxes -> Bedrock)
+  --task-run-jwt <jwt>     Task run JWT for proxy auth (defaults to CMUX_TASK_RUN_JWT or a fake test token)
   --convex-url <url>      Convex site URL for fetching collector (default: https://cmux.convex.site)
   --verbose               Enable verbose logging
   --help                  Show this help message
 
 Environment:
-  ANTHROPIC_API_KEY       Required for running Claude Code
+  CMUX_TASK_RUN_JWT        Optional override for proxy auth JWT
   CMUX_IS_STAGING         Set to "true" to use staging releases (default: false)
   CONVEX_SITE_URL         Alternative way to set Convex URL for remote download
 
@@ -569,6 +573,12 @@ function parseArgs(args: string[]): CLIArgs {
       result.skipClone = true;
     } else if (arg === "--use-local") {
       result.useLocal = true;
+    } else if (arg === "--use-proxy") {
+      result.useProxy = true;
+    } else if (arg === "--task-run-jwt") {
+      result.taskRunJwt = args[++i];
+    } else if (arg.startsWith("--task-run-jwt=")) {
+      result.taskRunJwt = arg.slice("--task-run-jwt=".length);
     } else if (arg === "--convex-url") {
       result.convexUrl = args[++i];
     } else if (arg.startsWith("--convex-url=")) {
@@ -599,13 +609,27 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Check for ANTHROPIC_API_KEY
-  const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
-  if (!anthropicApiKey) {
-    console.error("Error: ANTHROPIC_API_KEY environment variable is required");
-    console.error("Set it via: export ANTHROPIC_API_KEY=your-key");
+  // Determine auth mode
+  const useProxy = args.useProxy ?? false;
+  if (!useProxy) {
+    console.error("Error: Direct API key auth is disabled for this script (proxy-only mode).");
+    console.error("Run with --use-proxy (and optionally --task-run-jwt).");
     process.exit(1);
   }
+
+  // When using proxy, require convex URL
+  const convexSiteUrl = args.convexUrl || getConvexSiteUrl();
+  if (useProxy && !convexSiteUrl) {
+    console.error("Error: --use-proxy requires --convex-url or CONVEX_SITE_URL to be set");
+    process.exit(1);
+  }
+
+  // Determine auth config
+  // Use a longer fake JWT to simulate real JWT length (303 chars like Morph uses)
+  const fakeJwt = "eyJhbGciOiJIUzI1NiJ9.eyJ0YXNrUnVuSWQiOiJ0ZXN0MTIzIiwidGVhbUlkIjoidGVhbTEyMyIsInVzZXJJZCI6InVzZXIxMjMiLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDA0MzIwMH0.fake_signature_padding_to_make_it_longer_like_real_jwt_tokens_are";
+  const auth: { taskRunJwt: string } = {
+    taskRunJwt: args.taskRunJwt?.trim() || process.env.CMUX_TASK_RUN_JWT?.trim() || fakeJwt,
+  };
 
   // Validate skip-clone requires workspace
   if (args.skipClone && !args.workspaceDir) {
@@ -672,6 +696,7 @@ async function main(): Promise<void> {
     await waitForCDP();
 
     // Run screenshot collector
+    log(useProxy ? "Using Convex proxy -> Bedrock path (JWT auth)" : "Using direct Anthropic API (API key auth)");
     await runScreenshotCollector({
       workspaceDir: workspace,
       changedFiles: prInfo.changedFiles,
@@ -682,9 +707,9 @@ async function main(): Promise<void> {
       outputDir,
       installCommand: args.installCommand,
       devCommand: args.devCommand,
-      auth: { anthropicApiKey },
+      auth,
       useLocal: args.useLocal,
-      convexSiteUrl: args.convexUrl || getConvexSiteUrl(),
+      convexSiteUrl,
     });
 
     log("Done! Media saved to:", { outputDir });

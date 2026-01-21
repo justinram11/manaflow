@@ -68,6 +68,13 @@ if [[ ! -f "$DIST_FILE" ]]; then
   exit 1
 fi
 
+# Inject version and build time into the built file
+BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+echo "Injecting version: $FULL_VERSION, build time: $BUILD_TIME"
+sed -i.bak "s/__COLLECTOR_VERSION__/$FULL_VERSION/g" "$DIST_FILE"
+sed -i.bak "s/__COLLECTOR_BUILD_TIME__/$BUILD_TIME/g" "$DIST_FILE"
+rm -f "$DIST_FILE.bak"
+
 FILE_SIZE=$(wc -c < "$DIST_FILE")
 echo "Built: $DIST_FILE ($FILE_SIZE bytes)"
 echo ""

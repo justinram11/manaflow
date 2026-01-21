@@ -457,8 +457,6 @@ export async function startScreenshotCollection(
   }
 
   const trimmedTaskRunJwt = options.taskRunJwt?.trim();
-  const trimmedAnthropicKey =
-    options.anthropicApiKey?.trim() ?? process.env.ANTHROPIC_API_KEY;
 
   let claudeAuth: ClaudeCodeAuthConfig | null = null;
 
@@ -470,24 +468,12 @@ export async function startScreenshotCollection(
     await logToScreenshotCollector(
       `JWT details: present=${!!trimmedTaskRunJwt}, length=${trimmedTaskRunJwt?.length ?? 0}, first 20 chars=${trimmedTaskRunJwt?.substring(0, 20) ?? "N/A"}`
     );
-  } else if (trimmedAnthropicKey) {
-    claudeAuth = { auth: { anthropicApiKey: trimmedAnthropicKey } };
-    await logToScreenshotCollector(
-      `ANTHROPIC_API_KEY source: ${
-        options.anthropicApiKey?.trim() ? "payload" : "environment"
-      }`
-    );
-    await logToScreenshotCollector(
-      `ANTHROPIC_API_KEY (first 8 chars): ${
-        trimmedAnthropicKey.slice(0, 8) ?? "<none>"
-      }`
-    );
   } else {
     const reason =
-      "Missing Claude auth (taskRunJwt or ANTHROPIC_API_KEY required for screenshot collection)";
+      "Missing taskRunJwt for screenshot collection (proxy-only mode).";
     await logToScreenshotCollector(reason);
     await logToScreenshotCollector(
-      `Auth debug: taskRunJwt=${options.taskRunJwt ? "present" : "missing"}, anthropicApiKey=${options.anthropicApiKey ? "present" : "missing"}, env ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY ? "present" : "missing"}`
+      `Auth debug: taskRunJwt=${options.taskRunJwt ? "present" : "missing"}`
     );
     log("ERROR", reason, { baseBranch, mergeBase });
     return { status: "skipped", reason, commitSha };

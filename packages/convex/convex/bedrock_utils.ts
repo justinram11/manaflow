@@ -221,6 +221,17 @@ export function parseBedrockEventToSSE(messageBytes: Uint8Array): string | null 
     // The payload has a "bytes" field with base64-encoded Anthropic event
     if (payload.bytes) {
       const decodedBytes = base64Decode(payload.bytes);
+      // Parse the event to check if we need to clean it up
+      try {
+        const event = JSON.parse(decodedBytes);
+        // Remove Bedrock-specific fields that may confuse clients
+        if (event.type === "message_stop" && "amazon-bedrock-invocationMetrics" in event) {
+          delete event["amazon-bedrock-invocationMetrics"];
+          return `data: ${JSON.stringify(event)}\n\n`;
+        }
+      } catch {
+        // If parsing fails, just return the original
+      }
       // Return as SSE format
       return `data: ${decodedBytes}\n\n`;
     }

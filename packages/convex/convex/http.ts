@@ -21,6 +21,7 @@ import {
   createScreenshotSet,
   dispatchPreviewJob,
   completePreviewJob,
+  createTestPreviewTask,
 } from "./preview_jobs_http";
 import {
   syncRelease as syncHostScreenshotCollectorRelease,
@@ -140,6 +141,12 @@ http.route({
   path: "/api/preview/complete",
   method: "POST",
   handler: completePreviewJob,
+});
+
+http.route({
+  path: "/api/preview/test-task",
+  method: "POST",
+  handler: createTestPreviewTask,
 });
 
 http.route({

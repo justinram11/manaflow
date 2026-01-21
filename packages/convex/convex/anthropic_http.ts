@@ -295,6 +295,23 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
         );
       }
 
+      // Return a 503 error for Haiku requests
+      // The SDK makes internal Haiku requests that we can't properly mock
+      // Returning an error allows the SDK to gracefully skip these operations
+      if (requestedModel?.includes("haiku")) {
+        console.log("[anthropic-proxy] Rejecting Haiku request (not supported via Bedrock proxy)");
+        return jsonResponse(
+          {
+            type: "error",
+            error: {
+              type: "overloaded_error",
+              message: "Haiku model is temporarily unavailable. Please use a different model.",
+            },
+          },
+          503
+        );
+      }
+
       const bedrockModelId = toBedrockModelId(requestedModel);
       const streamSuffix = body.stream ? "-with-response-stream" : "";
       const bedrockUrl = `${BEDROCK_BASE_URL}/model/${bedrockModelId}/invoke${streamSuffix}`;

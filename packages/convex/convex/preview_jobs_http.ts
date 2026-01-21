@@ -1,3 +1,4 @@
+import { SignJWT } from "jose";
 import { env } from "../_shared/convex-env";
 import { capturePosthogEvent, drainPosthogEvents } from "../_shared/posthog";
 import { internal } from "./_generated/api";
@@ -539,5 +540,90 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
         { previewRunId: previewRun._id },
       );
     }
+  }
+});
+
+/**
+ * HTTP action to create a test preview task run for development/testing.
+ * Creates a task and taskRun with isPreviewJob=true, returns JWT for worker auth.
+ * Authenticated via bearer token (CMUX_TASK_RUN_JWT_SECRET).
+ */
+export const createTestPreviewTask = httpAction(async (ctx, req) => {
+  const authHeader = req.headers.get("authorization") ?? "";
+  const [, bearerToken] = authHeader.split(" ");
+
+  if (!bearerToken || bearerToken !== env.CMUX_TASK_RUN_JWT_SECRET) {
+    console.error("[preview-jobs-http] Unauthorized test task request");
+    return jsonResponse({ error: "Unauthorized" }, 401);
+  }
+
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return jsonResponse({ error: "Invalid JSON" }, 400);
+  }
+
+  if (
+    !body ||
+    typeof body !== "object" ||
+    !("teamId" in body) ||
+    !("userId" in body) ||
+    !("prUrl" in body)
+  ) {
+    return jsonResponse({
+      error: "Missing required fields: teamId, userId, prUrl"
+    }, 400);
+  }
+
+  const { teamId, userId, prUrl, repoUrl } = body as {
+    teamId: string;
+    userId: string;
+    prUrl: string;
+    repoUrl?: string;
+  };
+
+  console.log("[preview-jobs-http] Creating test preview task", {
+    teamId,
+    userId,
+    prUrl,
+  });
+
+  try {
+    // Create a test task for this preview run
+    const taskId = await ctx.runMutation(internal.tasks.createTestTask, {
+      teamId,
+      userId,
+      name: `Test Preview: ${prUrl}`,
+      repoUrl,
+    });
+
+    // Create the preview task run
+    const result = await ctx.runMutation(internal.taskRuns.createForPreview, {
+      taskId,
+      teamId,
+      userId,
+      prUrl,
+    });
+
+    console.log("[preview-jobs-http] Test preview task created", {
+      taskId,
+      taskRunId: result.taskRunId,
+    });
+
+    return jsonResponse({
+      success: true,
+      taskId,
+      taskRunId: result.taskRunId,
+      jwt: result.jwt,
+    });
+  } catch (error) {
+    console.error("[preview-jobs-http] Failed to create test preview task", {
+      error,
+    });
+    return jsonResponse({
+      error: "Failed to create test preview task",
+      message: error instanceof Error ? error.message : String(error),
+    }, 500);
   }
 });

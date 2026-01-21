@@ -8,6 +8,70 @@ import { formatClaudeMessage } from "./claudeMessageFormatter";
 
 export const SCREENSHOT_STORAGE_ROOT = "/root/screenshots";
 
+// Placeholder API key that signals to the proxy to use platform credits (Bedrock)
+const CMUX_ANTHROPIC_PROXY_PLACEHOLDER_API_KEY = "sk_placeholder_cmux_anthropic_api_key";
+
+// Directories for Claude Code configuration (matches main dashboard setup)
+const CLAUDE_LIFECYCLE_DIR = "/root/lifecycle/claude";
+const CLAUDE_SECRETS_DIR = `${CLAUDE_LIFECYCLE_DIR}/secrets`;
+const CLAUDE_API_KEY_HELPER_PATH = `${CLAUDE_SECRETS_DIR}/anthropic_key_helper.sh`;
+const CLAUDE_SETTINGS_PATH = "/root/.claude/settings.json";
+const CLAUDE_CONFIG_DIR = path.dirname(CLAUDE_SETTINGS_PATH);
+
+// Environment variables that should be unset to ensure Claude Code uses proxy-only auth
+const CLAUDE_KEY_ENV_VARS_TO_UNSET = [
+  "ANTHROPIC_AUTH_TOKEN",
+  "CLAUDE_API_KEY",
+];
+
+/**
+ * Sets up Claude Code configuration using the same approach as the main dashboard.
+ * This writes settings.json with apiKeyHelper instead of using ANTHROPIC_API_KEY env var.
+ */
+async function setupClaudeCodeConfig(options: {
+  anthropicBaseUrl: string;
+  customHeaders: string;
+  apiKey: string;
+}): Promise<void> {
+  const { anthropicBaseUrl, customHeaders, apiKey } = options;
+
+  // Ensure directories exist
+  await fs.mkdir(CLAUDE_SECRETS_DIR, { recursive: true });
+  await fs.mkdir(path.dirname(CLAUDE_SETTINGS_PATH), { recursive: true });
+
+  // Create the apiKeyHelper script (like main dashboard does)
+  const helperScript = `#!/bin/sh
+echo ${apiKey}`;
+  await fs.writeFile(CLAUDE_API_KEY_HELPER_PATH, helperScript, { mode: 0o700 });
+
+  // Create settings.json with apiKeyHelper and env block (like main dashboard does)
+  const settingsConfig = {
+    apiKeyHelper: CLAUDE_API_KEY_HELPER_PATH,
+    env: {
+      CLAUDE_CODE_ENABLE_TELEMETRY: 0,
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1,
+      ANTHROPIC_BASE_URL: anthropicBaseUrl,
+      ANTHROPIC_CUSTOM_HEADERS: customHeaders,
+    },
+  };
+
+  await fs.writeFile(
+    CLAUDE_SETTINGS_PATH,
+    JSON.stringify(settingsConfig, null, 2),
+    { mode: 0o644 }
+  );
+
+  await logToScreenshotCollector(
+    `[setupClaudeCodeConfig] Created settings.json at ${CLAUDE_SETTINGS_PATH}`
+  );
+  await logToScreenshotCollector(
+    `[setupClaudeCodeConfig] Created apiKeyHelper at ${CLAUDE_API_KEY_HELPER_PATH}`
+  );
+  await logToScreenshotCollector(
+    `[setupClaudeCodeConfig] ANTHROPIC_BASE_URL: ${anthropicBaseUrl}`
+  );
+}
+
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 const VIDEO_EXTENSIONS = new Set([".mp4", ".webm", ".mkv", ".gif"]);
 
@@ -18,62 +82,6 @@ function isScreenshotFile(fileName: string): boolean {
 function isVideoFile(fileName: string): boolean {
   return VIDEO_EXTENSIONS.has(path.extname(fileName).toLowerCase());
 }
-
-const screenshotOutputSchema = z.object({
-  hasUiChanges: z.boolean(),
-  images: z
-    .array(
-      z.object({
-        path: z.string().min(1),
-        description: z.string().min(1),
-      })
-    )
-    .default([]),
-  videos: z
-    .array(
-      z.object({
-        path: z.string().min(1),
-        description: z.string().min(1),
-      })
-    )
-    .default([]),
-});
-
-type ScreenshotStructuredOutput = z.infer<typeof screenshotOutputSchema>;
-
-const screenshotOutputJsonSchema = {
-  $schema: "http://json-schema.org/draft-07/schema#",
-  type: "object",
-  additionalProperties: false,
-  required: ["hasUiChanges", "images"],
-  properties: {
-    hasUiChanges: { type: "boolean" },
-    images: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["path", "description"],
-        properties: {
-          path: { type: "string" },
-          description: { type: "string" },
-        },
-      },
-    },
-    videos: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["path", "description"],
-        properties: {
-          path: { type: "string" },
-          description: { type: "string" },
-        },
-      },
-    },
-  },
-} as const;
 
 async function collectMediaFiles(
   directory: string
@@ -203,7 +211,22 @@ export async function captureScreenshotsForBranch(
   } = options;
   const outputDir = normalizeScreenshotOutputDir(requestedOutputDir);
   const useTaskRunJwt = isTaskRunJwtAuth(auth);
-  const providedApiKey = !useTaskRunJwt ? auth.anthropicApiKey : undefined;
+
+  if (!useTaskRunJwt) {
+    await logToScreenshotCollector(
+      "[ERROR] Direct Anthropic API key auth is disabled for screenshot collection. Provide taskRunJwt."
+    );
+    throw new Error(
+      "Direct Anthropic API key auth is disabled for screenshot collection."
+    );
+  }
+
+  if (!convexSiteUrl) {
+    await logToScreenshotCollector(
+      "[ERROR] convexSiteUrl is required for proxy-only screenshot collection."
+    );
+    throw new Error("convexSiteUrl is required for proxy-only screenshot collection.");
+  }
 
   const devInstructions = (() => {
     const normalizedSetupScript = setupScript?.trim() ?? "";
@@ -392,19 +415,10 @@ This creates a slideshow video where each step is shown for 2 seconds.
 IMPORTANT: If the PR adds a button, link, or any clickable element, you MUST create a video showing the before/after states.
 </VIDEO_RECORDING>
 
-<OUTPUT_REQUIREMENTS>
-When you are finished with your task, you MUST call the StructuredOutput tool to provide your final response. This is required - do not attempt to stop without calling this tool.
-
-The StructuredOutput tool requires a JSON object with this schema:
-- hasUiChanges (boolean, required): true only if the PR modifies UI-rendering code AND you captured screenshots or videos; false if no UI changes
-- images (array, required): Array of objects with "path" (string) and "description" (string) for each screenshot
-- videos (array, optional): Array of objects with "path" (string) and "description" (string) for each video
-
-Example call:
-StructuredOutput({ "hasUiChanges": true, "images": [{"path": "/root/screenshots/button-hover.png", "description": "Button hover state"}], "videos": [] })
-
-Do not close the browser when done. Do not create summary documents.
-</OUTPUT_REQUIREMENTS>`;
+<OUTPUT>
+When you are finished, leave the browser open and briefly state what you captured.
+Do not create summary documents.
+</OUTPUT>`;
 
   await logToScreenshotCollector(
     `Starting Claude Agent with browser MCP for branch: ${branch}`
@@ -412,17 +426,17 @@ Do not close the browser when done. Do not create summary documents.
 
   const screenshotPaths: string[] = [];
   const videoPaths: string[] = [];
-  let structuredOutput: ScreenshotStructuredOutput | null = null;
 
-  if (useTaskRunJwt && !convexSiteUrl) {
-    await logToScreenshotCollector(
-      "[WARN] convexSiteUrl is missing; Anthropic proxy requests may fail."
-    );
-  }
-  const normalizedConvexSiteUrl = formatOptionalValue(convexSiteUrl);
+  // Convert .convex.cloud to .convex.site for HTTP endpoints
+  // HTTP routes are served from .convex.site, not .convex.cloud
+  const normalizedConvexSiteUrl = formatOptionalValue(convexSiteUrl)
+    .replace(".convex.cloud", ".convex.site");
 
   await logToScreenshotCollector(
-    `[DEBUG] convexSiteUrl: ${normalizedConvexSiteUrl}`
+    `[DEBUG] convexSiteUrl (original): ${formatOptionalValue(convexSiteUrl)}`
+  );
+  await logToScreenshotCollector(
+    `[DEBUG] convexSiteUrl (normalized): ${normalizedConvexSiteUrl}`
   );
 
   const anthropicBaseUrl = `${normalizedConvexSiteUrl}/api/anthropic`;
@@ -437,24 +451,15 @@ Do not close the browser when done. Do not create summary documents.
       "ANTHROPIC_API_KEY"
     );
     const originalApiKey = process.env.ANTHROPIC_API_KEY;
-    if (useTaskRunJwt) {
-      delete process.env.ANTHROPIC_API_KEY;
-      // Log JWT info for debugging
-      await logToScreenshotCollector(
-        `Using taskRun JWT auth. JWT present: ${!!auth.taskRunJwt}, JWT length: ${auth.taskRunJwt?.length ?? 0}, JWT first 20 chars: ${auth.taskRunJwt?.substring(0, 20) ?? "N/A"}`
-      );
-      await logToScreenshotCollector(
-        `ANTHROPIC_BASE_URL: ${anthropicBaseUrl}`
-      );
-      await logToScreenshotCollector(
-        `[DEBUG] ANTHROPIC_CUSTOM_HEADERS will be: x-cmux-token:<jwt>`
-      );
-    } else if (providedApiKey) {
-      process.env.ANTHROPIC_API_KEY = providedApiKey;
-      await logToScreenshotCollector(
-        `Using API key auth. Key present: ${!!providedApiKey}, Key length: ${providedApiKey?.length ?? 0}`
-      );
-    }
+    delete process.env.ANTHROPIC_API_KEY;
+    // Log JWT info for debugging
+    await logToScreenshotCollector(
+      `Using taskRun JWT auth. JWT present: ${!!auth.taskRunJwt}, JWT length: ${auth.taskRunJwt?.length ?? 0}, JWT first 20 chars: ${auth.taskRunJwt?.substring(0, 20) ?? "N/A"}`
+    );
+    await logToScreenshotCollector(`ANTHROPIC_BASE_URL: ${anthropicBaseUrl}`);
+    await logToScreenshotCollector(
+      `[DEBUG] ANTHROPIC_CUSTOM_HEADERS will be: x-cmux-token:<jwt>`
+    );
 
     await logToScreenshotCollector(
       `Arguments to Claude Code: ${JSON.stringify({
@@ -467,52 +472,74 @@ Do not close the browser when done. Do not create summary documents.
     const claudeEnv: NodeJS.ProcessEnv = {
       ...process.env,
       IS_SANDBOX: "1",
+      // Don't set CLAUDE_CONFIG_DIR - we use settingSources: [] to ignore config files
       CLAUDE_CODE_ENABLE_TELEMETRY: "0",
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
     };
 
-    // Remove Bedrock-related environment variables that may be inherited from the parent process.
-    // These can cause Claude Code to use Bedrock instead of the direct Anthropic API,
-    // leading to "You MUST call the StructuredOutput tool" errors.
+    // Remove environment variables that may interfere with our configured auth path.
+    // CLAUDE_CODE_OAUTH_TOKEN: If present, Claude Code may bypass ANTHROPIC_BASE_URL and go direct to Anthropic.
+    // AWS_*/BEDROCK: These can cause Claude Code to use Bedrock directly instead of our proxy.
+    // ANTHROPIC_MODEL/SMALL_FAST_MODEL: We want Claude Code to use its defaults, not inherited values.
+    delete claudeEnv.CLAUDE_CODE_OAUTH_TOKEN;
     delete claudeEnv.AWS_BEARER_TOKEN_BEDROCK;
     delete claudeEnv.CLAUDE_CODE_USE_BEDROCK;
     delete claudeEnv.ANTHROPIC_MODEL;
     delete claudeEnv.ANTHROPIC_SMALL_FAST_MODEL;
 
-    // Only use proxy if convexSiteUrl is provided
-    if (convexSiteUrl) {
-      claudeEnv.ANTHROPIC_BASE_URL = anthropicBaseUrl;
-      claudeEnv.ANTHROPIC_API_KEY = "sk_placeholder_cmux_anthropic_api_key";
+    // Configure proxy auth via env vars (works both locally and in sandbox)
+    // We use settingSources: [] to ignore user/project settings, so env vars take precedence
+    const customHeaders = `x-cmux-token:${auth.taskRunJwt}\nx-cmux-source:screenshot-collector`;
 
-      if (useTaskRunJwt) {
-        // Use JWT auth via Convex proxy
-        claudeEnv.ANTHROPIC_CUSTOM_HEADERS = `x-cmux-token:${auth.taskRunJwt}`;
-      } else {
-        // Using proxy without JWT - clear any inherited custom headers
-        delete claudeEnv.ANTHROPIC_CUSTOM_HEADERS;
-      }
-    } else {
-      // No proxy - use direct API key auth from environment or provided key
-      if (providedApiKey) {
-        claudeEnv.ANTHROPIC_API_KEY = providedApiKey;
-      }
-      delete claudeEnv.ANTHROPIC_CUSTOM_HEADERS;
+    // Unset any conflicting auth variables first
+    for (const envVar of CLAUDE_KEY_ENV_VARS_TO_UNSET) {
+      delete claudeEnv[envVar];
     }
 
+    // Set proxy env vars
+    claudeEnv.ANTHROPIC_BASE_URL = anthropicBaseUrl;
+    claudeEnv.ANTHROPIC_CUSTOM_HEADERS = customHeaders;
+    claudeEnv.ANTHROPIC_API_KEY = CMUX_ANTHROPIC_PROXY_PLACEHOLDER_API_KEY;
+
     await logToScreenshotCollector(
-      `[DEBUG] Claude env: ${JSON.stringify({
-        ANTHROPIC_BASE_URL: formatOptionalValue(claudeEnv.ANTHROPIC_BASE_URL),
-        ANTHROPIC_CUSTOM_HEADERS: formatSecretValue(
-          claudeEnv.ANTHROPIC_CUSTOM_HEADERS
-        ),
-        ANTHROPIC_API_KEY: formatSecretValue(claudeEnv.ANTHROPIC_API_KEY),
-        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: formatOptionalValue(
-          claudeEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
-        ),
-        CLAUDE_CODE_ENABLE_TELEMETRY: formatOptionalValue(
-          claudeEnv.CLAUDE_CODE_ENABLE_TELEMETRY
-        ),
-      })}`
+      `[DEBUG] Using env vars for proxy routing (settingSources: [] ignores user config)`
+    );
+
+    // Log process.env for debugging sandbox vs local differences (FULL VALUES for debugging)
+    const relevantEnvVars = [
+      "ANTHROPIC_API_KEY",
+      "ANTHROPIC_BASE_URL",
+      "ANTHROPIC_CUSTOM_HEADERS",
+      "ANTHROPIC_AUTH_TOKEN",
+      "CLAUDE_API_KEY",
+      "CLAUDE_CODE_OAUTH_TOKEN",
+      "CLAUDE_CONFIG_DIR",
+      "AWS_BEARER_TOKEN_BEDROCK",
+      "CLAUDE_CODE_USE_BEDROCK",
+      "HOME",
+      "USER",
+    ];
+    const processEnvSnapshot: Record<string, string> = {};
+    for (const key of relevantEnvVars) {
+      const val = process.env[key];
+      processEnvSnapshot[key] = val ?? "<unset>";
+    }
+    await logToScreenshotCollector(
+      `[DEBUG] process.env (before query): ${JSON.stringify(processEnvSnapshot, null, 2)}`
+    );
+
+    await logToScreenshotCollector(
+      `[DEBUG] claudeEnv passed to query(): ${JSON.stringify({
+        ANTHROPIC_BASE_URL: claudeEnv.ANTHROPIC_BASE_URL ?? "<unset>",
+        ANTHROPIC_CUSTOM_HEADERS: claudeEnv.ANTHROPIC_CUSTOM_HEADERS ?? "<unset>",
+        ANTHROPIC_API_KEY: claudeEnv.ANTHROPIC_API_KEY ?? "<unset>",
+        CLAUDE_CODE_OAUTH_TOKEN: claudeEnv.CLAUDE_CODE_OAUTH_TOKEN ?? "<unset>",
+        CLAUDE_CONFIG_DIR: claudeEnv.CLAUDE_CONFIG_DIR ?? "<unset>",
+      }, null, 2)}`
+    );
+
+    await logToScreenshotCollector(
+      `[DEBUG] JWT token being used: ${auth.taskRunJwt}`
     );
 
     try {
@@ -534,10 +561,9 @@ Do not close the browser when done. Do not create summary documents.
           permissionMode: "bypassPermissions",
           cwd: workspaceDir,
           pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
-          outputFormat: {
-            type: "json_schema",
-            schema: screenshotOutputJsonSchema,
-          },
+          // Empty array = SDK isolation mode, disables loading user/project settings
+          // This ensures env vars (ANTHROPIC_BASE_URL, etc.) are used instead of ~/.claude/settings.json
+          settingSources: [],
           env: claudeEnv,
           stderr: (data) =>
             logToScreenshotCollector(`[claude-code-stderr] ${data}`),
@@ -549,21 +575,6 @@ Do not close the browser when done. Do not create summary documents.
           await logToScreenshotCollector(formatted);
         }
 
-        if (message.type === "result" && "structured_output" in message) {
-          const parsed = screenshotOutputSchema.safeParse(
-            message.structured_output
-          );
-          if (parsed.success) {
-            structuredOutput = parsed.data;
-            await logToScreenshotCollector(
-              `Structured output captured (hasUiChanges=${parsed.data.hasUiChanges}, images=${parsed.data.images.length})`
-            );
-          } else {
-            await logToScreenshotCollector(
-              `Structured output validation failed: ${parsed.error.message}`
-            );
-          }
-        }
       }
     } catch (error) {
       await logToScreenshotCollector(
@@ -613,64 +624,21 @@ Do not close the browser when done. Do not create summary documents.
       });
     }
 
-    const imageDescriptionByPath = new Map<string, string>();
-    const videoDescriptionByPath = new Map<string, string>();
-    const resolvedOutputDir = path.resolve(outputDir);
-    if (structuredOutput) {
-      for (const image of structuredOutput.images) {
-        const absolutePath = path.isAbsolute(image.path)
-          ? path.normalize(image.path)
-          : path.normalize(path.resolve(resolvedOutputDir, image.path));
-        imageDescriptionByPath.set(absolutePath, image.description);
-      }
-      for (const video of structuredOutput.videos) {
-        const absolutePath = path.isAbsolute(video.path)
-          ? path.normalize(video.path)
-          : path.normalize(path.resolve(resolvedOutputDir, video.path));
-        videoDescriptionByPath.set(absolutePath, video.description);
-      }
-    }
-
     const screenshotsWithDescriptions = screenshotPaths.map((absolutePath) => {
-      const normalized = path.normalize(absolutePath);
       return {
         path: absolutePath,
-        description: imageDescriptionByPath.get(normalized),
       };
     });
 
     const videosWithDescriptions = videoPaths.map((absolutePath) => {
-      const normalized = path.normalize(absolutePath);
       return {
         path: absolutePath,
-        description: videoDescriptionByPath.get(normalized),
       };
     });
-
-    if (
-      structuredOutput &&
-      structuredOutput.images.length > 0 &&
-      imageDescriptionByPath.size === 0
-    ) {
-      await logToScreenshotCollector(
-        "Structured output provided image descriptions, but none matched saved files; ensure paths are absolute or relative to the output directory."
-      );
-    }
-
-    if (
-      structuredOutput &&
-      structuredOutput.videos.length > 0 &&
-      videoDescriptionByPath.size === 0
-    ) {
-      await logToScreenshotCollector(
-        "Structured output provided video descriptions, but none matched saved files; ensure paths are absolute or relative to the output directory."
-      );
-    }
 
     return {
       screenshots: screenshotsWithDescriptions,
       videos: videosWithDescriptions,
-      hasUiChanges: structuredOutput?.hasUiChanges,
     };
   } catch (error) {
     const message =

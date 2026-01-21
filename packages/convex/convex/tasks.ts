@@ -1130,6 +1130,40 @@ export const createForPreview = internalMutation({
   },
 });
 
+/**
+ * Create a minimal test task for development/testing purposes.
+ * Used by the test preview task endpoint.
+ */
+export const createTestTask = internalMutation({
+  args: {
+    teamId: v.string(),
+    userId: v.string(),
+    name: v.string(),
+    repoUrl: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const taskId = await ctx.db.insert("tasks", {
+      text: args.name,
+      description: "Test task for screenshot collection development",
+      projectFullName: args.repoUrl,
+      baseBranch: undefined,
+      worktreePath: undefined,
+      isCompleted: false,
+      isPreview: true,
+      createdAt: now,
+      updatedAt: now,
+      lastActivityAt: now,
+      images: undefined,
+      userId: args.userId,
+      teamId: args.teamId,
+      environmentId: undefined,
+      isCloudWorkspace: true,
+    });
+    return taskId;
+  },
+});
+
 export const setCompletedInternal = internalMutation({
   args: {
     taskId: v.id("tasks"),
