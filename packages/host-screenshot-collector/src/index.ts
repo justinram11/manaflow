@@ -7,6 +7,119 @@ import { logToScreenshotCollector } from "./logger";
 import { formatClaudeMessage } from "./claudeMessageFormatter";
 
 export const SCREENSHOT_STORAGE_ROOT = "/root/screenshots";
+export const EVENTS_LOG_FILENAME = "events.log";
+
+// Chrome DevTools Protocol port (same as chrome-devtools-mcp)
+const CDP_PORT = 39382;
+
+/**
+ * Get bounding rect for an element via Chrome DevTools Protocol.
+ * The uid from chrome-devtools-mcp is assumed to be "contextId_nodeId" or similar format.
+ * We extract the nodeId and call DOM.getBoxModel.
+ */
+async function getBoundingRectFromCDP(
+  uid: string
+): Promise<{ x: number; y: number; width: number; height: number } | null> {
+  try {
+    // Get CDP WebSocket URL
+    const targetsResponse = await fetch(`http://0.0.0.0:${CDP_PORT}/json`);
+    const targets = (await targetsResponse.json()) as Array<{
+      type?: string;
+      webSocketDebuggerUrl?: string;
+    }>;
+    const pageTarget = targets.find(
+      (t) => t.type === "page" && t.webSocketDebuggerUrl
+    );
+
+    if (!pageTarget?.webSocketDebuggerUrl) {
+      return null;
+    }
+
+    // Parse uid to extract nodeId (assume format "contextId_nodeId" or just nodeId)
+    const parts = uid.split("_");
+    const nodeIdStr = parts[parts.length - 1] ?? "";
+    const nodeId = parseInt(nodeIdStr, 10);
+
+    if (isNaN(nodeId)) {
+      return null;
+    }
+
+    const wsUrl = pageTarget.webSocketDebuggerUrl;
+    if (!wsUrl) {
+      return null;
+    }
+
+    // Connect to CDP via WebSocket and get box model
+    return new Promise((resolve) => {
+      const ws = new WebSocket(wsUrl);
+      let resolved = false;
+
+      const cleanup = () => {
+        if (!resolved) {
+          resolved = true;
+          resolve(null);
+        }
+        try {
+          ws.close();
+        } catch {
+          // ignore
+        }
+      };
+
+      // Timeout after 3 seconds
+      const timeout = setTimeout(cleanup, 3000);
+
+      ws.addEventListener("open", () => {
+        // Call DOM.getBoxModel to get element bounds
+        ws.send(
+          JSON.stringify({
+            id: 1,
+            method: "DOM.getBoxModel",
+            params: { nodeId },
+          })
+        );
+      });
+
+      ws.addEventListener("message", (event) => {
+        try {
+          const response = JSON.parse(String(event.data)) as {
+            id?: number;
+            result?: {
+              model?: {
+                content?: number[];
+              };
+            };
+          };
+
+          if (response.id === 1) {
+            clearTimeout(timeout);
+            resolved = true;
+            ws.close();
+
+            const c = response.result?.model?.content;
+            if (c && c.length >= 6) {
+              // content is quad: [x1,y1, x2,y2, x3,y3, x4,y4]
+              resolve({
+                x: c[0] ?? 0,
+                y: c[1] ?? 0,
+                width: (c[2] ?? 0) - (c[0] ?? 0),
+                height: (c[5] ?? 0) - (c[1] ?? 0),
+              });
+            } else {
+              resolve(null);
+            }
+          }
+        } catch {
+          cleanup();
+        }
+      });
+
+      ws.addEventListener("error", cleanup);
+    });
+  } catch {
+    return null;
+  }
+}
 
 // Placeholder API key that signals to the proxy to use platform credits (Bedrock)
 const CMUX_ANTHROPIC_PROXY_PLACEHOLDER_API_KEY = "sk_placeholder_cmux_anthropic_api_key";
@@ -378,7 +491,7 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
 </CRITICAL_MISTAKES>
 
 <VIDEO_RECORDING>
-Record screen videos to demonstrate workflows. The cursor is added in post-processing.
+Record screen videos to demonstrate workflows. Cursor overlay is added automatically in post-processing.
 
 YOU MUST RECORD A VIDEO IF:
 - There is a button, link, or clickable element
@@ -390,97 +503,135 @@ Screenshots alone are NOT enough for interactive changes - you MUST record a vid
 
 SKIP VIDEO ONLY FOR: pure styling changes (colors, fonts, spacing), static text-only changes
 
-STEP 1 - PREPARE (before recording):
-Get the coordinates of the FIRST element you will CLICK via Chrome MCP (getBoundingClientRect, add 85 to Y).
-
-STEP 2 - START RECORDING (right before first click):
+STEP 1 - START RECORDING:
 \`\`\`bash
-CLICKS_LOG="${outputDir}/clicks.log"
-echo -n "" > "$CLICKS_LOG"
 DISPLAY=:1 ffmpeg -y -f x11grab -draw_mouse 0 -framerate 24 -video_size 1920x1080 -i :1+0,0 -c:v libx264 -preset ultrafast -crf 26 -pix_fmt yuv420p "${outputDir}/raw.mp4" &
 FFMPEG_PID=$!
 sleep 0.3
-echo "$(date +%s.%N) X Y" >> "$CLICKS_LOG"
 \`\`\`
-Then IMMEDIATELY CLICK with Chrome MCP (not hover - actually CLICK the element).
-DO NOT call list_pages or select_page after clicking - just click and move on.
 
-STEP 3 - FOR ADDITIONAL CLICKS:
-a) Get element coordinates (getBoundingClientRect, add 85 to Y)
-b) Log: echo "$(date +%s.%N) X Y" >> "$CLICKS_LOG"
-c) CLICK with Chrome MCP
+STEP 2 - CLICK ELEMENTS:
+For each click, you MUST:
+1. First, get the element's bounding rect via Chrome MCP evaluate: \`element.getBoundingClientRect()\`
+2. Then click the element
 
-STEP 4 - STOP RECORDING:
+This ensures the cursor position is captured in the trajectory for the video overlay.
+The cursor starts at screen center and animates to your first click, then follows subsequent clicks.
+
+STEP 3 - STOP RECORDING:
 \`\`\`bash
 kill -INT $FFMPEG_PID
 wait $FFMPEG_PID 2>/dev/null || true
 \`\`\`
 After the last click, just STOP. Do not sleep to "wait for page to load" - kill ffmpeg immediately.
-If you absolutely must wait, 0.5 seconds MAX. But prefer to just stop immediately.
-
-CRITICAL: CLICK elements (not hover). Show the full end-to-end flow - click the button/link and show where it goes.
 
 ⚠️⚠️⚠️ CRITICAL - NEVER CALL list_pages OR select_page AFTER CLICKING ⚠️⚠️⚠️
-The video is recording the X11 SCREEN directly via ffmpeg. When you click with Chrome MCP:
-- The result (page navigation, modal opening, new tab, etc.) is ALREADY being recorded on screen
-- Do NOT call list_pages - the screen recording already shows everything
-- Do NOT call select_page - even if a new tab opens, the SCREEN shows it
-- Just: click → kill ffmpeg → done
-This is NON-NEGOTIABLE. Calling list_pages/select_page after clicking is WRONG.
+The video records the X11 SCREEN directly. When you click:
+- The result is ALREADY being recorded on screen
+- Do NOT call list_pages or select_page - just click → kill ffmpeg → done
+This is NON-NEGOTIABLE.
 
-STEP 5 - ADD CURSOR OVERLAY:
+STEP 4 - POST-PROCESS (adds cursor overlay automatically):
 \`\`\`bash
 python3 << PYSCRIPT
-import subprocess, os, sys
+import subprocess, os, sys, json
+
 outdir = "${outputDir}"
-clicks = []
+events_log_path = f"{outdir}/events.log"
+
+# Parse events.log for bounding_rect and pretool events
+# The pretool hook calls CDP to get bounding rect when it sees a tool with uid
+clicks = []  # list of (timestamp_ms, x, y)
+recording_start_ms = None
+last_bounding_rect = None  # (x, y) screen coordinates from most recent bounding_rect event
+
+print(f"Reading events from {events_log_path}", file=sys.stderr)
+
+# Parse events.log
+line_count = 0
 try:
-    with open(f"{outdir}/clicks.log") as f:
+    with open(events_log_path) as f:
         for line in f:
-            parts = line.strip().split()
-            if len(parts) >= 3:
-                clicks.append((float(parts[0]), int(parts[1]), int(parts[2])))
+            line = line.strip()
+            if not line:
+                continue
+            line_count += 1
+            event = json.loads(line)
+            ts = event.get("timestamp", 0)
+            event_type = event.get("event", "")
+
+            # Detect recording start (logged when ffmpeg starts)
+            if event_type == "recording_start":
+                if recording_start_ms is None:
+                    recording_start_ms = ts
+                    print(f"Found recording start at {ts}", file=sys.stderr)
+
+            # Bounding rect from CDP (logged by pretool hook)
+            elif event_type == "bounding_rect":
+                x = event.get("x", 0)
+                y = event.get("y", 0)
+                w = event.get("width", 0)
+                h = event.get("height", 0)
+                # Compute center and add browser chrome offset (85px)
+                screen_x = int(x + w/2)
+                screen_y = int(y + h/2 + 85)
+                last_bounding_rect = (screen_x, screen_y, ts)
+                print(f"bounding_rect: ({x},{y},{w},{h}) -> center=({screen_x}, {screen_y})", file=sys.stderr)
+
+            # Click event (logged by pretool hook)
+            elif event_type == "pretool":
+                tool_name = event.get("tool", "").lower()
+                uid = event.get("uid", "")
+                if "click" in tool_name:
+                    if last_bounding_rect:
+                        clicks.append((ts, last_bounding_rect[0], last_bounding_rect[1]))
+                        print(f"click (uid={uid}) at ({last_bounding_rect[0]}, {last_bounding_rect[1]}) ts={ts}", file=sys.stderr)
+                    else:
+                        print(f"WARNING: click without bounding_rect, tool={tool_name}, uid={uid}", file=sys.stderr)
+
+    print(f"Processed {line_count} events", file=sys.stderr)
+except FileNotFoundError:
+    print(f"ERROR: events.log not found: {events_log_path}", file=sys.stderr)
 except Exception as e:
-    print(f"Error reading clicks: {e}", file=sys.stderr)
+    print(f"ERROR reading events.log: {e}", file=sys.stderr)
 
-print(f"Found {len(clicks)} clicks (raw): {clicks}", file=sys.stderr)
+print(f"Found {len(clicks)} clicks", file=sys.stderr)
 
+# Convert timestamps to relative time from first click (cursor starts at center)
 if clicks:
-    # Convert absolute timestamps to relative (first click = 0)
-    first_t = clicks[0][0]
-    clicks = [(t - first_t, x, y) for t, x, y in clicks]
+    first_ts = clicks[0][0]
+    # All clicks relative to first click, starting at t=0.5s (gives time for animation from center)
+    clicks = [(0.5 + (ts - first_ts) / 1000.0, x, y) for ts, x, y in clicks]
     print(f"Adjusted clicks: {clicks}", file=sys.stderr)
 
+if clicks:
     filters = []
 
-    # Cursor starts at screen center and animates to first click over 0.3s
+    # Cursor starts at screen center and animates to first click position
     cx, cy = 960, 540  # screen center
-    first_x, first_y = clicks[0][1], clicks[0][2]
-    anim_dur = 0.3  # animation duration in seconds
+    first_t, first_x, first_y = clicks[0]
+    anim_dur = max(first_t, 0.1)  # animation ends at first click (at least 0.1s)
 
-    # Animate from center to first click (0 to anim_dur)
-    # Using linear interpolation: pos = start + (end - start) * (t / dur)
-    yellow_x_expr = f"({cx-14}+({first_x-14}-{cx-14})*(t/{anim_dur}))"
-    yellow_y_expr = f"({cy-20}+({first_y-20}-{cy-20})*(t/{anim_dur}))"
-    black_x_expr = f"({cx-3}+({first_x-3}-{cx-3})*(t/{anim_dur}))"
-    black_y_expr = f"({cy-8}+({first_y-8}-{cy-8})*(t/{anim_dur}))"
+    print(f"Animation: center ({cx},{cy}) -> ({first_x},{first_y}) over {anim_dur:.2f}s", file=sys.stderr)
 
+    yellow_x_expr = f"({cx-14}+({first_x-14}-{cx-14})*min(t/{anim_dur},1))"
+    yellow_y_expr = f"({cy-20}+({first_y-20}-{cy-20})*min(t/{anim_dur},1))"
+    black_x_expr = f"({cx-3}+({first_x-3}-{cx-3})*min(t/{anim_dur},1))"
+    black_y_expr = f"({cy-8}+({first_y-8}-{cy-8})*min(t/{anim_dur},1))"
+
+    # Animation phase - cursor moves from center to first click
     filters.append(f"drawtext=text='●':x='{yellow_x_expr}':y='{yellow_y_expr}':fontsize=36:fontcolor=yellow@0.5:enable='between(t,0,{anim_dur:.2f})'")
     filters.append(f"drawtext=text='●':x='{black_x_expr}':y='{black_y_expr}':fontsize=12:fontcolor=black:enable='between(t,0,{anim_dur:.2f})'")
 
-    # Static positions for each click (after animation)
+    # Static cursor at each click position
     for i, (t, x, y) in enumerate(clicks):
-        start_t = max(t, anim_dur)  # don't overlap with animation
         end_t = clicks[i+1][0] if i+1 < len(clicks) else 9999
-        if end_t <= start_t:
+        if end_t <= t:
             continue
-        e = f"enable='between(t,{start_t:.2f},{end_t:.2f})'"
-        # Yellow outer circle - bigger, more visible
+        e = f"enable='between(t,{t:.2f},{end_t:.2f})'"
         filters.append(f"drawtext=text='●':x={x-14}:y={y-20}:fontsize=36:fontcolor=yellow@0.5:{e}")
-        # Black inner circle - centered inside yellow (concentric)
         filters.append(f"drawtext=text='●':x={x-3}:y={y-8}:fontsize=12:fontcolor=black:{e}")
 
-    # Add 2x speed (setpts=0.5*PTS)
     filter_str = ",".join(filters) + ",setpts=0.5*PTS"
     print(f"Running ffmpeg with {len(filters)} filter elements + 2x speed", file=sys.stderr)
     result = subprocess.run(f'ffmpeg -y -i "{outdir}/raw.mp4" -vf "{filter_str}" "{outdir}/workflow.mp4"', shell=True)
@@ -490,7 +641,6 @@ if clicks:
         print(f"ffmpeg failed with code {result.returncode}", file=sys.stderr)
         os.rename(f"{outdir}/raw.mp4", f"{outdir}/workflow.mp4")
 else:
-    # No clicks, but still speed up 2x
     print("No clicks found, speeding up raw video 2x", file=sys.stderr)
     result = subprocess.run(f'ffmpeg -y -i "{outdir}/raw.mp4" -vf "setpts=0.5*PTS" "{outdir}/workflow.mp4"', shell=True)
     if result.returncode == 0:
@@ -502,11 +652,9 @@ PYSCRIPT
 
 IMPORTANT:
 - CLICK elements, not hover - show the full interaction flow
-- Log clicks BEFORE clicking so timestamp is accurate
 - Kill ffmpeg immediately when result is visible
-- Show end-to-end: click button → see result (new page, modal, state change)
-- NEVER call list_pages or select_page after clicking - screen recording captures everything
-- After last click: kill ffmpeg. That's it. Done. No more MCP calls.
+- NEVER call list_pages or select_page after clicking
+- After last click: kill ffmpeg → run post-process. Done.
 </VIDEO_RECORDING>
 
 <OUTPUT>
@@ -667,6 +815,15 @@ Do not create summary documents.
 
     let detectedHasUiChanges: boolean | undefined;
 
+    // Write trajectory to JSONL file for post-processing (video cursor overlay)
+    const trajectoryPath = path.join(outputDir, "trajectory.jsonl");
+    const trajectoryStream = await fs.open(trajectoryPath, "w");
+
+    // Events log for pretool hook - logs tool calls with uid and bounding rects
+    const eventsLogPath = path.join(outputDir, EVENTS_LOG_FILENAME);
+    // Clear/create events.log at start
+    await fs.writeFile(eventsLogPath, "");
+
     try {
       for await (const message of query({
         prompt,
@@ -694,6 +851,88 @@ Do not create summary documents.
             logToScreenshotCollector(`[claude-code-stderr] ${data}`),
         },
       })) {
+        // Write message to trajectory JSONL with timestamp
+        const timestamp = Date.now();
+        const trajectoryEntry = {
+          timestamp,
+          message,
+        };
+        await trajectoryStream.write(JSON.stringify(trajectoryEntry) + "\n");
+
+        // PRETOOL HOOK: When we see a tool_use with uid, call CDP to get bounding rect
+        // This captures cursor position BEFORE the click happens
+        if (message.type === "assistant") {
+          const content = message.message?.content;
+          if (Array.isArray(content)) {
+            for (const block of content) {
+              if (
+                block &&
+                typeof block === "object" &&
+                "type" in block &&
+                block.type === "tool_use" &&
+                "name" in block
+              ) {
+                const toolName = String(block.name);
+                const toolNameLower = toolName.toLowerCase();
+                const input = "input" in block && block.input && typeof block.input === "object"
+                  ? block.input as Record<string, unknown>
+                  : {};
+                const uid = typeof input.uid === "string" ? input.uid : undefined;
+
+                const isClickTool = toolNameLower.includes("click");
+
+                // If we have a uid, call CDP to get bounding rect
+                if (uid) {
+                  try {
+                    const rect = await getBoundingRectFromCDP(uid);
+                    if (rect) {
+                      // Log bounding_rect event FIRST (before pretool)
+                      await fs.appendFile(
+                        eventsLogPath,
+                        JSON.stringify({
+                          timestamp,
+                          event: "bounding_rect",
+                          ...rect,
+                          uid,
+                        }) + "\n"
+                      );
+
+                      await logToScreenshotCollector(
+                        `[PRETOOL] Got bounding rect for uid=${uid}: x=${rect.x}, y=${rect.y}, w=${rect.width}, h=${rect.height}`
+                      );
+                    } else {
+                      await logToScreenshotCollector(
+                        `[PRETOOL] Could not get bounding rect for uid=${uid}`
+                      );
+                    }
+                  } catch (cdpError) {
+                    await logToScreenshotCollector(
+                      `[PRETOOL] CDP error for uid=${uid}: ${cdpError instanceof Error ? cdpError.message : String(cdpError)}`
+                    );
+                  }
+                }
+
+                // Log pretool event for click tools
+                if (isClickTool) {
+                  await fs.appendFile(
+                    eventsLogPath,
+                    JSON.stringify({
+                      timestamp,
+                      event: "pretool",
+                      tool: toolName,
+                      ...(uid ? { uid } : {}),
+                    }) + "\n"
+                  );
+
+                  await logToScreenshotCollector(
+                    `[PRETOOL] Click: ${toolName}${uid ? ` uid=${uid}` : ""}`
+                  );
+                }
+              }
+            }
+          }
+        }
+
         // Format and log all message types
         const formatted = formatClaudeMessage(message);
         if (formatted) {
@@ -750,6 +989,9 @@ Do not create summary documents.
       });
       throw error;
     } finally {
+      // Close trajectory stream
+      await trajectoryStream.close();
+
       // Restore original API key
       if (hadOriginalApiKey) {
         if (originalApiKey !== undefined) {
