@@ -436,18 +436,23 @@ export function setupSocketHandlers(
           );
         }
 
-        const diffs = await getGitDiff({
-          headRef: parsed.headRef,
-          baseRef: parsed.baseRef,
-          repoFullName: parsed.repoFullName,
-          repoUrl: parsed.repoUrl,
-          originPathOverride: parsed.originPathOverride,
-          includeContents: parsed.includeContents ?? true,
-          maxBytes: parsed.maxBytes,
-          teamSlugOrId: safeTeam,
-          lastKnownBaseSha: parsed.lastKnownBaseSha,
-          lastKnownMergeCommitSha: parsed.lastKnownMergeCommitSha,
-        });
+        const diffs = await runWithAuth(
+          currentAuthToken,
+          currentAuthHeaderJson,
+          () =>
+            getGitDiff({
+              headRef: parsed.headRef,
+              baseRef: parsed.baseRef,
+              repoFullName: parsed.repoFullName,
+              repoUrl: parsed.repoUrl,
+              originPathOverride: parsed.originPathOverride,
+              includeContents: parsed.includeContents ?? true,
+              maxBytes: parsed.maxBytes,
+              teamSlugOrId: safeTeam,
+              lastKnownBaseSha: parsed.lastKnownBaseSha,
+              lastKnownMergeCommitSha: parsed.lastKnownMergeCommitSha,
+            })
+        );
 
         if (parsed.originPathOverride) {
           const workspacePath = parsed.originPathOverride;
