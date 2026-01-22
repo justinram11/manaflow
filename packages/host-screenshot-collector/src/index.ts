@@ -702,9 +702,9 @@ if clicks:
         video_duration = float(probe.stdout.strip()) if probe.stdout.strip() else 60.0
         print(f"Video duration: {video_duration:.1f}s", file=sys.stderr)
 
-        # STEP 2: Apply variable speed - 1x during actions, 2x between actions
+        # STEP 2: Apply variable speed - 1x during actions, 4x between actions
         # NO TRIMMING - entire video is kept, just at different speeds
-        FAST_SPEED = 2
+        FAST_SPEED = 4
         ACTION_BEFORE = 0.5  # seconds before click at normal speed
         ACTION_AFTER = 0.5   # seconds after click at normal speed
 
