@@ -117,19 +117,29 @@ function VSCodeComponent() {
   const [iframeStatus, setIframeStatus] =
     useState<PersistentIframeStatus>("loading");
   const prevWorkspaceUrlRef = useRef<string | null>(null);
+  const hasEverLoadedRef = useRef(false);
 
   // Only reset to loading when the URL actually changes to a different value
   // This prevents flickering when the URL reference changes but the value is the same
   useEffect(() => {
     if (workspaceUrl !== prevWorkspaceUrlRef.current) {
-      // Only reset to loading if we're transitioning to a new URL
-      // Don't reset if we're already loaded with the same URL
-      if (workspaceUrl !== null && prevWorkspaceUrlRef.current !== null) {
+      const isNewWorkspace = prevWorkspaceUrlRef.current !== null && workspaceUrl !== null;
+      prevWorkspaceUrlRef.current = workspaceUrl;
+
+      // Only reset to loading for actual workspace changes, not initial load or refreshes
+      // This prevents flicker when switching back to an already-loaded workspace
+      if (isNewWorkspace && !hasEverLoadedRef.current) {
         setIframeStatus("loading");
       }
-      prevWorkspaceUrlRef.current = workspaceUrl;
     }
   }, [workspaceUrl]);
+
+  // Track when we've successfully loaded at least once
+  useEffect(() => {
+    if (iframeStatus === "loaded") {
+      hasEverLoadedRef.current = true;
+    }
+  }, [iframeStatus]);
 
   // Stable callback for status changes - setIframeStatus is already stable
   const handleStatusChange = useCallback(
