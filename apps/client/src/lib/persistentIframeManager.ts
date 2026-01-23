@@ -16,6 +16,7 @@ type IframeEntry = {
   pinned: boolean;
   allow?: string;
   sandbox?: string;
+  isStabilized: boolean; // Tracks if the iframe has completed initial stabilization
 };
 
 interface MountOptions {
@@ -174,6 +175,10 @@ class PersistentIframeManager {
       backface-visibility: hidden;
       z-index: var(--z-iframe);
       isolation: isolate;
+      will-change: transform, opacity;
+      opacity: 0;
+      transition: opacity 50ms ease-out;
+      contain: strict;
     `;
     wrapper.setAttribute("data-iframe-key", key);
     wrapper.setAttribute("data-drag-disable-pointer", "");
@@ -216,6 +221,7 @@ class PersistentIframeManager {
       pinned: false,
       allow: options?.allow,
       sandbox: options?.sandbox,
+      isStabilized: false,
     };
 
     this.iframes.set(key, entry);
@@ -248,64 +254,82 @@ class PersistentIframeManager {
       entry.wrapper.className = options.className;
     }
 
-    // First sync position while hidden
-    this.syncIframePosition(key);
-
-    // Then make visible after a microtask to ensure position is set
-    requestAnimationFrame(() => {
-      // Apply base styles without clobbering layout-related properties (width/height/transform)
-      entry.wrapper.style.position = "fixed";
-      entry.wrapper.style.top = "0";
-      entry.wrapper.style.left = "0";
-      entry.wrapper.style.right = "";
-      entry.wrapper.style.bottom = "";
-      entry.wrapper.style.visibility = "visible";
-      entry.wrapper.style.pointerEvents = "auto";
-      entry.wrapper.style.overflow = "hidden";
-      entry.wrapper.style.backfaceVisibility = "hidden";
-
-      // Apply custom styles (including z-index if provided)
-      if (options?.style) {
-        for (const [styleKey, styleValue] of Object.entries(options.style)) {
-          if (styleValue === undefined || styleValue === null) {
-            continue;
-          }
-
-          const cssKey = styleKey.replace(
-            /[A-Z]/g,
-            (match) => `-${match.toLowerCase()}`
-          );
-          const cssValue =
-            typeof styleValue === "number" &&
-            !UNITLESS_CSS_PROPERTIES.has(cssKey)
-              ? `${styleValue}px`
-              : String(styleValue);
-          entry.wrapper.style.setProperty(cssKey, cssValue);
-        }
-      }
-
-      // Set default z-index if not provided in options
-      if (!options?.style?.zIndex) {
-        entry.wrapper.style.zIndex = "var(--z-iframe)";
-        entry.wrapper.style.isolation = "isolate";
-      }
-
-      // Ensure the iframe wrapper reflects any layout changes triggered by new styles
-      this.syncIframePosition(key);
-
-      entry.isVisible = true;
-      if (this.debugMode) console.log(`[Mount] Iframe ${key} is now visible`);
-    });
+    // First sync position while hidden (synchronously to avoid flash)
+    this.syncIframePositionImmediate(key);
 
     entry.lastUsed = Date.now();
+
+    // Use double-RAF to ensure position is painted before showing
+    // This prevents the flash of the iframe at the wrong position
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        // Re-check entry still exists after async delay
+        const currentEntry = this.iframes.get(key);
+        if (!currentEntry) return;
+
+        // Apply base styles without clobbering layout-related properties (width/height/transform)
+        currentEntry.wrapper.style.position = "fixed";
+        currentEntry.wrapper.style.top = "0";
+        currentEntry.wrapper.style.left = "0";
+        currentEntry.wrapper.style.right = "";
+        currentEntry.wrapper.style.bottom = "";
+        currentEntry.wrapper.style.visibility = "visible";
+        currentEntry.wrapper.style.pointerEvents = "auto";
+        currentEntry.wrapper.style.overflow = "hidden";
+        currentEntry.wrapper.style.backfaceVisibility = "hidden";
+        currentEntry.wrapper.style.willChange = "transform, opacity";
+        currentEntry.wrapper.style.contain = "strict";
+
+        // Apply custom styles (including z-index if provided)
+        if (options?.style) {
+          for (const [styleKey, styleValue] of Object.entries(options.style)) {
+            if (styleValue === undefined || styleValue === null) {
+              continue;
+            }
+
+            const cssKey = styleKey.replace(
+              /[A-Z]/g,
+              (match) => `-${match.toLowerCase()}`
+            );
+            const cssValue =
+              typeof styleValue === "number" &&
+              !UNITLESS_CSS_PROPERTIES.has(cssKey)
+                ? `${styleValue}px`
+                : String(styleValue);
+            currentEntry.wrapper.style.setProperty(cssKey, cssValue);
+          }
+        }
+
+        // Set default z-index if not provided in options
+        if (!options?.style?.zIndex) {
+          currentEntry.wrapper.style.zIndex = "var(--z-iframe)";
+          currentEntry.wrapper.style.isolation = "isolate";
+        }
+
+        // Ensure position is synced before revealing
+        this.syncIframePositionImmediate(key);
+
+        // Fade in with opacity transition (smoother than visibility toggle)
+        currentEntry.wrapper.style.opacity = "1";
+        currentEntry.isVisible = true;
+        currentEntry.isStabilized = true;
+
+        if (this.debugMode) console.log(`[Mount] Iframe ${key} is now visible`);
+      });
+    });
 
     // Start observing the target element
     this.resizeObserver.observe(targetElement);
 
-    // Listen for scroll events
+    // Throttled scroll handler to prevent excessive syncing
+    let scrollRafId: number | null = null;
     const scrollHandler = () => {
-      if (this.debugMode) console.log(`[Scroll] Syncing position for ${key}`);
-      this.syncIframePosition(key);
+      if (scrollRafId !== null) return; // Already scheduled
+      scrollRafId = requestAnimationFrame(() => {
+        scrollRafId = null;
+        if (this.debugMode) console.log(`[Scroll] Syncing position for ${key}`);
+        this.syncIframePosition(key);
+      });
     };
     const scrollableParents = this.getScrollableParents(targetElement);
     scrollableParents.forEach((parent) => {
@@ -319,10 +343,22 @@ class PersistentIframeManager {
     return () => {
       if (this.debugMode) console.log(`[Unmount] Starting unmount for ${key}`);
 
+      // Cancel any pending scroll RAF
+      if (scrollRafId !== null) {
+        cancelAnimationFrame(scrollRafId);
+      }
+
       targetElement.removeAttribute("data-iframe-target");
-      entry.wrapper.style.visibility = "hidden";
+      // Use opacity fade-out instead of abrupt visibility change
+      entry.wrapper.style.opacity = "0";
       entry.wrapper.style.pointerEvents = "none";
       entry.isVisible = false;
+      // Delay hiding to allow opacity transition
+      setTimeout(() => {
+        if (!entry.isVisible) {
+          entry.wrapper.style.visibility = "hidden";
+        }
+      }, 50);
 
       this.resizeObserver.unobserve(targetElement);
       scrollableParents.forEach((parent) => {
@@ -333,9 +369,30 @@ class PersistentIframeManager {
   }
 
   /**
-   * Sync iframe position with target element
+   * Sync iframe position with target element (batched via RAF)
    */
   private syncIframePosition(key: string) {
+    const entry = this.iframes.get(key);
+    if (!entry) return;
+
+    // Use requestAnimationFrame to batch position updates and prevent flashing
+    const existingTimeout = this.syncTimeouts.get(key);
+    if (existingTimeout !== undefined) {
+      cancelAnimationFrame(existingTimeout);
+    }
+
+    const rafId = requestAnimationFrame(() => {
+      this.syncTimeouts.delete(key);
+      this.syncIframePositionImmediate(key);
+    });
+
+    this.syncTimeouts.set(key, rafId);
+  }
+
+  /**
+   * Sync iframe position immediately (synchronous, for initial mount)
+   */
+  private syncIframePositionImmediate(key: string) {
     const entry = this.iframes.get(key);
     if (!entry) return;
 
@@ -363,21 +420,10 @@ class PersistentIframeManager {
       return;
     }
 
-    // Use requestAnimationFrame to batch position updates and prevent flashing
-    const existingTimeout = this.syncTimeouts.get(key);
-    if (existingTimeout !== undefined) {
-      cancelAnimationFrame(existingTimeout);
-    }
-
-    const rafId = requestAnimationFrame(() => {
-      this.syncTimeouts.delete(key);
-      // Update wrapper position using transform, keeping resize handles unobstructed
-      entry.wrapper.style.transform = `translate(${rect.left + borderLeft}px, ${rect.top + borderTop}px)`;
-      entry.wrapper.style.width = `${width}px`;
-      entry.wrapper.style.height = `${height}px`;
-    });
-
-    this.syncTimeouts.set(key, rafId);
+    // Update wrapper position using transform, keeping resize handles unobstructed
+    entry.wrapper.style.transform = `translate(${rect.left + borderLeft}px, ${rect.top + borderTop}px)`;
+    entry.wrapper.style.width = `${width}px`;
+    entry.wrapper.style.height = `${height}px`;
   }
 
   /**
@@ -422,10 +468,18 @@ class PersistentIframeManager {
       this.syncTimeouts.delete(key);
     }
 
-    entry.wrapper.style.visibility = "hidden";
+    // Fade out with opacity transition
+    entry.wrapper.style.opacity = "0";
     entry.wrapper.style.pointerEvents = "none";
-    this.moveIframeOffscreen(entry);
     entry.isVisible = false;
+
+    // Delay full hide to allow opacity transition, then move offscreen
+    setTimeout(() => {
+      if (!entry.isVisible) {
+        entry.wrapper.style.visibility = "hidden";
+        this.moveIframeOffscreen(entry);
+      }
+    }, 50);
   }
 
   /**
@@ -493,16 +547,20 @@ class PersistentIframeManager {
 
   /**
    * Clean up old iframes
+   * More conservative cleanup: never remove pinned iframes, prioritize keeping stabilized ones
    */
   private cleanupOldIframes(): void {
     if (this.iframes.size <= this.maxIframes) return;
 
     const sorted = Array.from(this.iframes.entries())
-      .filter(([, entry]) => !entry.isVisible)
+      // Never remove visible or pinned iframes
+      .filter(([, entry]) => !entry.isVisible && !entry.pinned)
       .sort(([, a], [, b]) => {
-        if (a.pinned !== b.pinned) {
-          return a.pinned ? 1 : -1;
+        // Prioritize keeping stabilized (fully loaded) iframes
+        if (a.isStabilized !== b.isStabilized) {
+          return a.isStabilized ? 1 : -1;
         }
+        // Then sort by last used time
         return a.lastUsed - b.lastUsed;
       });
 
@@ -582,6 +640,8 @@ class PersistentIframeManager {
     entry.wrapper.style.width = `${viewportWidth}px`;
     entry.wrapper.style.height = `${viewportHeight}px`;
     entry.wrapper.style.transform = `translate(-${viewportWidth}px, -${viewportHeight}px)`;
+    entry.wrapper.style.opacity = "0";
+    entry.isStabilized = false;
   }
 
   isIframeFocused(key: string): boolean {
