@@ -57,6 +57,9 @@ import {
 import z from "zod";
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { useSocket } from "@/contexts/socket/use-socket";
+import type { CreateLocalWorkspaceResponse } from "@cmux/shared";
+import { toast } from "sonner";
 
 type TaskRunListItem = (typeof api.taskRuns.getByTask._returnType)[number];
 type IframeStatusEntry = {
@@ -305,6 +308,7 @@ function TaskDetailPage() {
   const { taskId, teamSlugOrId } = Route.useParams();
   const search = Route.useSearch();
   const localServeWeb = useLocalVSCodeServeWebQuery();
+  const { socket } = useSocket();
   const task = useQuery(api.tasks.getById, {
     teamSlugOrId,
     id: taskId,
@@ -639,6 +643,53 @@ function TaskDetailPage() {
     };
   }, [selectedRun, taskRuns?.length]);
 
+  // Get primary repo from task for local workspace creation
+  const primaryRepo = task?.projectFullName;
+
+  // Handle opening a local workspace for the current task run
+  const handleOpenLocalWorkspace = useCallback(() => {
+    if (!socket) {
+      toast.error("Socket not connected");
+      return;
+    }
+
+    if (!primaryRepo) {
+      toast.error("No repository information available");
+      return;
+    }
+
+    if (!selectedRun?.newBranch) {
+      toast.error("No branch information available");
+      return;
+    }
+
+    const loadingToast = toast.loading("Creating local workspace...");
+
+    socket.emit(
+      "create-local-workspace",
+      {
+        teamSlugOrId,
+        projectFullName: primaryRepo,
+        repoUrl: `https://github.com/${primaryRepo}.git`,
+        branch: selectedRun.newBranch,
+        linkedFromCloudTaskRunId: selectedRun._id, // Link to the current cloud task run
+      },
+      (response: CreateLocalWorkspaceResponse) => {
+        if (response.success && response.workspacePath) {
+          toast.success("Local workspace created!", {
+            id: loadingToast,
+            description: "VS Code (Local) is now available in the sidebar",
+          });
+          // Don't navigate - the local VS Code entry will appear under the current task run
+        } else {
+          toast.error(response.error || "Failed to create workspace", {
+            id: loadingToast,
+          });
+        }
+      }
+    );
+  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, selectedRun?._id]);
+
   // Determine workspace type for layout overrides
   const isLocalWorkspaceTask = task?.isLocalWorkspace;
   const isCloudWorkspaceTask = task?.isCloudWorkspace;
@@ -784,6 +835,12 @@ function TaskDetailPage() {
           taskRunId={headerTaskRunId}
           teamSlugOrId={teamSlugOrId}
           onPanelSettings={handleOpenPanelSettings}
+          onOpenLocalWorkspace={
+            // Only show folder icon for regular tasks (not local/cloud workspaces)
+            !isLocalWorkspaceTask && !isCloudWorkspaceTask
+              ? handleOpenLocalWorkspace
+              : undefined
+          }
         />
         <PanelConfigModal
           open={isPanelSettingsOpen}

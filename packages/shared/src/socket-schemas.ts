@@ -62,6 +62,7 @@ export const CreateLocalWorkspaceSchema = z.object({
   workspaceName: z.string().optional(),
   descriptor: z.string().optional(),
   sequence: z.number().optional(),
+  linkedFromCloudTaskRunId: typedZid("taskRuns").optional(), // Links this local workspace to a cloud task run
 });
 
 export const CreateLocalWorkspaceResponseSchema = z.object({

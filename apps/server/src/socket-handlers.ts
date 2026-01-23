@@ -849,6 +849,7 @@ export function setupSocketHandlers(
           taskRunId: providedTaskRunId,
           workspaceName: providedWorkspaceName,
           descriptor: providedDescriptor,
+          linkedFromCloudTaskRunId,
         } = parsed.data;
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
 
@@ -923,6 +924,7 @@ export function setupSocketHandlers(
                 projectFullName: projectFullName ?? undefined,
                 repoUrl,
                 branch,
+                linkedFromCloudTaskRunId,
               }
             );
             taskId = reservation.taskId;

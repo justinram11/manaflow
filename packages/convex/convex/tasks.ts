@@ -31,6 +31,9 @@ export const get = authQuery({
     // Exclude preview tasks from the main tasks list
     q = q.filter((qq) => qq.neq(qq.field("isPreview"), true));
 
+    // Exclude linked local workspaces (they're shown under their parent cloud run)
+    q = q.filter((qq) => qq.eq(qq.field("linkedFromCloudTaskRunId"), undefined));
+
     // Exclude local workspaces when in web mode
     if (args.excludeLocalWorkspaces) {
       q = q.filter((qq) => qq.neq(qq.field("isLocalWorkspace"), true));
@@ -86,7 +89,9 @@ export const getArchivedPaginated = authQuery({
         idx.eq("teamId", teamId).eq("userId", userId),
       )
       .filter((qq) => qq.eq(qq.field("isArchived"), true))
-      .filter((qq) => qq.neq(qq.field("isPreview"), true));
+      .filter((qq) => qq.neq(qq.field("isPreview"), true))
+      // Exclude linked local workspaces (they're shown under their parent cloud run)
+      .filter((qq) => qq.eq(qq.field("linkedFromCloudTaskRunId"), undefined));
 
     // Exclude local workspaces when in web mode
     if (args.excludeLocalWorkspaces) {
@@ -1123,5 +1128,49 @@ export const setCompletedInternal = internalMutation({
         crownEvaluationStatus: args.crownEvaluationStatus,
       }),
     });
+  },
+});
+
+/**
+ * Get local workspace task linked from a cloud task run.
+ * Used to show linked local VS Code entry in the sidebar under cloud task runs.
+ */
+export const getLinkedLocalWorkspace = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    cloudTaskRunId: v.id("taskRuns"),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    // Find local workspace task linked from this cloud task run
+    const linkedTask = await ctx.db
+      .query("tasks")
+      .withIndex("by_linked_cloud_task_run", (q) =>
+        q.eq("linkedFromCloudTaskRunId", args.cloudTaskRunId),
+      )
+      .filter((q) => q.eq(q.field("teamId"), teamId))
+      .filter((q) => q.eq(q.field("userId"), userId))
+      .first();
+
+    if (!linkedTask) {
+      return null;
+    }
+
+    // Get the task run for the linked local workspace (we need its ID and vscode status)
+    const taskRun = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_task", (q) => q.eq("taskId", linkedTask._id))
+      .first();
+
+    if (!taskRun) {
+      return null;
+    }
+
+    return {
+      task: linkedTask,
+      taskRun,
+    };
   },
 });

@@ -54,6 +54,7 @@ export const reserve = authMutation({
     projectFullName: v.optional(v.string()),
     repoUrl: v.optional(v.string()),
     branch: v.optional(v.string()),
+    linkedFromCloudTaskRunId: v.optional(v.id("taskRuns")),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -100,6 +101,7 @@ export const reserve = authMutation({
       worktreePath: undefined,
       isCompleted: false,
       isLocalWorkspace: true,
+      linkedFromCloudTaskRunId: args.linkedFromCloudTaskRunId,
       createdAt: now,
       updatedAt: now,
       lastActivityAt: now,
