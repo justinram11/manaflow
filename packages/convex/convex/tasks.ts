@@ -156,6 +156,9 @@ export const getWithNotificationOrder = authQuery({
 
     q = q.filter((qq) => qq.neq(qq.field("isPreview"), true));
 
+    // Exclude linked local workspaces (they're shown under their parent cloud run)
+    q = q.filter((qq) => qq.eq(qq.field("linkedFromCloudTaskRunId"), undefined));
+
     // Exclude local workspaces when in web mode
     if (args.excludeLocalWorkspaces) {
       q = q.filter((qq) => qq.neq(qq.field("isLocalWorkspace"), true));
