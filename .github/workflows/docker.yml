@@ -4,8 +4,31 @@ on:
   push:
     branches: [main]
     paths:
+      # Core Docker files
       - Dockerfile
       - .github/workflows/docker.yml
+      # Package manifests (dependency changes)
+      - package.json
+      - bun.lock
+      - .npmrc
+      # Worker application (bundled into image)
+      - apps/worker/**
+      # Shared packages (copied into image)
+      - packages/shared/**
+      - packages/convex/**
+      # VS Code extension (built and installed in image)
+      - packages/vscode-extension/**
+      # Go proxies (compiled into image)
+      - scripts/cdp-proxy/**
+      - scripts/vnc-proxy/**
+      # Repo enablers for apt
+      - scripts/repo-enablers/**
+      # Configuration files
+      - configs/**
+      # Rust crates (compiled into image)
+      - crates/**
+      # Shell scripts
+      - prompt-wrapper.sh
   workflow_dispatch:
 
 env:
