@@ -2149,8 +2149,12 @@ function TaskRunDetails({
   );
 
   // Trailing for cloud VS Code when there's a linked local workspace
+  // Compose Cloud icon with existing status/error indicator to preserve visibility
   const cloudVSCodeTrailing = hasLinkedLocalWorkspace ? (
-    <Cloud className="w-3 h-3 text-neutral-400" />
+    <span className="flex items-center gap-1">
+      {vscodeTrailing}
+      <Cloud className="w-3 h-3 text-neutral-400" />
+    </span>
   ) : (
     vscodeTrailing
   );

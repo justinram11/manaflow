@@ -127,14 +127,9 @@ export function PersistentIframe({
     const persistKeyChanged = persistKey !== prevPersistKeyRef.current;
     const srcChanged = src !== prevSrcRef.current;
 
-    // Only reset if values actually changed, and only reset for key changes
-    // For src changes, let the iframe naturally handle the reload without flashing loading state
-    if (persistKeyChanged) {
+    if (persistKeyChanged || srcChanged) {
       setStatus("loading");
       prevPersistKeyRef.current = persistKey;
-      prevSrcRef.current = src;
-    } else if (srcChanged) {
-      // Update refs but don't reset to loading - prevents flash when URL is refreshed
       prevSrcRef.current = src;
     }
   }, [persistKey, src]);

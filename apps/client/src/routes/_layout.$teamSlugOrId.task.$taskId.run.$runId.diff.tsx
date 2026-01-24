@@ -983,6 +983,14 @@ function RunDiffPage() {
   const taskRunId = selectedRun?._id ?? runId;
 
   const handleOpenLocalWorkspace = useCallback(() => {
+    // If query is still loading, don't allow creation to prevent duplicates
+    if (linkedLocalWorkspaceQuery.isLoading) {
+      toast.info("Checking for existing workspace...", {
+        description: "Please wait a moment and try again",
+      });
+      return;
+    }
+
     // If a linked local workspace already exists, just show a message
     if (linkedLocalWorkspace) {
       toast.info("Local workspace already exists", {
@@ -1031,7 +1039,7 @@ function RunDiffPage() {
         }
       }
     );
-  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, selectedRun?._id, linkedLocalWorkspace]);
+  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, selectedRun?._id, linkedLocalWorkspace, linkedLocalWorkspaceQuery.isLoading]);
 
   // 404 if selected run is missing
   if (!selectedRun) {

@@ -130,26 +130,6 @@ function applyPhaseMapping(
   }
 }
 
-// Cache successful preflight results to avoid unnecessary re-checks
-const preflightCache = new Map<string, { result: IframePreflightResult; timestamp: number }>();
-const PREFLIGHT_CACHE_TTL = 60_000; // 1 minute cache
-
-function getCachedPreflight(url: string): IframePreflightResult | null {
-  const cached = preflightCache.get(url);
-  if (!cached) return null;
-  if (Date.now() - cached.timestamp > PREFLIGHT_CACHE_TTL) {
-    preflightCache.delete(url);
-    return null;
-  }
-  return cached.result;
-}
-
-function setCachedPreflight(url: string, result: IframePreflightResult): void {
-  if (result.ok) {
-    preflightCache.set(url, { result, timestamp: Date.now() });
-  }
-}
-
 export function useIframePreflight({
   url,
   enabled = true,
@@ -220,16 +200,6 @@ export function useIframePreflight({
       return;
     }
 
-    // Check cache first - if we have a recent successful preflight, use it
-    const cachedResult = getCachedPreflight(stableUrl);
-    if (cachedResult && cachedResult.ok) {
-      phaseRef.current = "ready";
-      setPhase("ready");
-      setResult(cachedResult);
-      setError(null);
-      return;
-    }
-
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -258,10 +228,6 @@ export function useIframePreflight({
       }
       setResult(payload);
       if (payload.ok) {
-        // Cache successful result to avoid re-checking on navigation
-        if (stableUrl) {
-          setCachedPreflight(stableUrl, payload);
-        }
         updatePhase("ready");
         setError(null);
         return;

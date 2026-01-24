@@ -19,9 +19,8 @@ type WarmTarget = {
   pinned: boolean;
 };
 
-// Increased warmup limits for better responsiveness when switching workspaces
-const MAX_ACTIVE_LOCAL_WARMUPS = 4;
-const MAX_WARM_LOCAL_WORKSPACES = 12;
+const MAX_ACTIVE_LOCAL_WARMUPS = 2;
+const MAX_WARM_LOCAL_WORKSPACES = 10;
 
 export function useWarmLocalWorkspaces({
   teamSlugOrId,
@@ -212,69 +211,19 @@ export function useWarmLocalWorkspaces({
     previousPinnedRef.current = nextPinned;
   }, [enabled, pinnedRunIds]);
 
-  // Debounced preloading to prevent rapid consecutive calls
-  const warmTargetsRef = useRef<WarmTarget[]>([]);
-  const preloadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    warmTargetsRef.current = warmTargets;
-  }, [warmTargets]);
-
   useEffect(() => {
     if (!enabled) {
-      if (preloadTimeoutRef.current) {
-        clearTimeout(preloadTimeoutRef.current);
-        preloadTimeoutRef.current = null;
-      }
       return;
     }
     if (warmTargets.length === 0) {
       return;
     }
-
-    // Debounce preloading by 100ms to batch rapid changes
-    if (preloadTimeoutRef.current) {
-      clearTimeout(preloadTimeoutRef.current);
-    }
-
-    preloadTimeoutRef.current = setTimeout(() => {
-      preloadTimeoutRef.current = null;
-      void preloadTaskRunIframes(
-        warmTargetsRef.current.map(({ taskRunId, url }) => ({ taskRunId, url }))
-      ).catch((error) => {
-        console.error("Failed to warm local workspace iframes", error);
-      });
-    }, 100);
-
-    return () => {
-      if (preloadTimeoutRef.current) {
-        clearTimeout(preloadTimeoutRef.current);
-        preloadTimeoutRef.current = null;
-      }
-    };
+    void preloadTaskRunIframes(
+      warmTargets.map(({ taskRunId, url }) => ({ taskRunId, url }))
+    ).catch((error) => {
+      console.error("Failed to warm local workspace iframes", error);
+    });
   }, [enabled, warmTargets]);
-
-  // Keepalive interval: periodically refresh pinned workspaces to ensure they stay warm
-  useEffect(() => {
-    if (!enabled || pinnedRunIds.length === 0) {
-      return;
-    }
-
-    const keepaliveInterval = setInterval(() => {
-      const pinnedTargets = warmTargetsRef.current.filter((t) => t.pinned);
-      if (pinnedTargets.length > 0) {
-        void preloadTaskRunIframes(
-          pinnedTargets.map(({ taskRunId, url }) => ({ taskRunId, url }))
-        ).catch((error) => {
-          console.error("Failed to refresh pinned workspace iframes", error);
-        });
-      }
-    }, 30_000); // Refresh every 30 seconds
-
-    return () => {
-      clearInterval(keepaliveInterval);
-    };
-  }, [enabled, pinnedRunIds.length]);
 }
 
 function flattenRuns(runs: TaskRunListItem[]): TaskRunListItem[] {

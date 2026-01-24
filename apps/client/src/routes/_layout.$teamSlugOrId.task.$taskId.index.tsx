@@ -655,6 +655,15 @@ function TaskDetailPage() {
 
   // Handle opening a local workspace for the current task run
   const handleOpenLocalWorkspace = useCallback(() => {
+    // If query is still loading (undefined), don't allow creation to prevent duplicates
+    // linkedLocalWorkspace is undefined while loading, null when no linked workspace exists
+    if (linkedLocalWorkspace === undefined) {
+      toast.info("Checking for existing workspace...", {
+        description: "Please wait a moment and try again",
+      });
+      return;
+    }
+
     // If a linked local workspace already exists, just show a message
     if (linkedLocalWorkspace) {
       toast.info("Local workspace already exists", {

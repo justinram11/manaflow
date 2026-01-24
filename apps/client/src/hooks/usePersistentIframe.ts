@@ -78,25 +78,10 @@ export function usePersistentIframe({
   }, [key, url, preload, allow, sandbox]);
 
   // Memoize mount options to prevent unnecessary re-mounts
-  // Use refs to track previous values and only update when actually changed
-  const prevMountOptionsRef = useRef({ className, style, allow, sandbox });
-  const mountOptions = useMemo(() => {
-    const prev = prevMountOptionsRef.current;
-    // Deep compare style objects to prevent unnecessary changes
-    const styleChanged =
-      JSON.stringify(style) !== JSON.stringify(prev.style);
-    const changed =
-      className !== prev.className ||
-      styleChanged ||
-      allow !== prev.allow ||
-      sandbox !== prev.sandbox;
-
-    if (changed) {
-      prevMountOptionsRef.current = { className, style, allow, sandbox };
-      return { className, style, allow, sandbox };
-    }
-    return prev;
-  }, [className, style, allow, sandbox]);
+  const mountOptions = useMemo(
+    () => ({ className, style, allow, sandbox }),
+    [className, style, allow, sandbox]
+  );
 
   // Mount/unmount effect - only re-runs when key, url, or mount options change
   // Uses refs for callbacks to avoid effect re-runs when callbacks change
