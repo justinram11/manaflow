@@ -4,6 +4,7 @@ import {
   WorkerCreateTerminalSchema,
   WorkerExecSchema,
   WorkerStartScreenshotCollectionSchema,
+  WorkerUploadFilesSchema,
   type ClientToServerEvents,
   type InterServerEvents,
   type PostStartCommand,
@@ -1066,6 +1067,61 @@ managementIO.on("connection", (socket) => {
       });
     } catch (error) {
       log("ERROR", "Error executing command", error, WORKER_ID);
+      callback({
+        error: error instanceof Error ? error : new Error(String(error)),
+        data: null,
+      });
+    }
+  });
+
+  socket.on("worker:upload-files", async (data, callback) => {
+    try {
+      const validated = WorkerUploadFilesSchema.parse(data);
+      const workspaceRoot = "/root/workspace";
+
+      for (const file of validated.files) {
+        const action = file.action ?? "write";
+        const resolvedPath = path.resolve(workspaceRoot, file.destinationPath);
+        const normalizedRoot = path.resolve(workspaceRoot);
+        if (
+          resolvedPath !== normalizedRoot &&
+          !resolvedPath.startsWith(`${normalizedRoot}${path.sep}`)
+        ) {
+          throw new Error(
+            `Invalid destination path outside workspace: ${file.destinationPath}`
+          );
+        }
+
+        if (action === "delete") {
+          await fs.rm(resolvedPath, { recursive: true, force: true });
+          continue;
+        }
+
+        if (!file.contentBase64) {
+          throw new Error(
+            `Missing content for write action: ${file.destinationPath}`
+          );
+        }
+
+        const dir = path.dirname(resolvedPath);
+        await fs.mkdir(dir, { recursive: true });
+        await fs.writeFile(
+          resolvedPath,
+          Buffer.from(file.contentBase64, "base64")
+        );
+
+        if (file.mode) {
+          await fs.chmod(resolvedPath, parseInt(file.mode, 8));
+        }
+      }
+
+      callback({
+        error: null,
+        data: { success: true },
+      });
+    } catch (error) {
+      console.error("[worker:upload-files] Failed to apply file sync", error);
+      log("ERROR", "Failed to apply file sync", error);
       callback({
         error: error instanceof Error ? error : new Error(String(error)),
         data: null,

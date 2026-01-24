@@ -167,15 +167,26 @@ export const WorkerTerminalFailedSchema = z.object({
 });
 
 // File upload schema for authentication files
+export const WorkerUploadFileSchema = z
+  .object({
+    sourcePath: z.string().optional(), // Path on host (for logging/debugging)
+    destinationPath: z.string(), // Path in container (relative to workspace root)
+    action: z.enum(["write", "delete"]).optional(),
+    contentBase64: z.string().optional(), // Base64 encoded file content
+    mode: z.string().optional(), // File permissions (e.g., "644")
+  })
+  .superRefine((value, ctx) => {
+    const action = value.action ?? "write";
+    if (action === "write" && !value.contentBase64) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "contentBase64 is required for write actions",
+      });
+    }
+  });
+
 export const WorkerUploadFilesSchema = z.object({
-  files: z.array(
-    z.object({
-      sourcePath: z.string(), // Path on host
-      destinationPath: z.string(), // Path in container
-      content: z.string(), // Base64 encoded file content
-      mode: z.string().optional(), // File permissions (e.g., "644")
-    })
-  ),
+  files: z.array(WorkerUploadFileSchema),
   terminalId: z.string().optional(), // Optional terminal context
 });
 
@@ -255,10 +266,11 @@ export type WorkerTerminalClosed = z.infer<typeof WorkerTerminalClosedSchema>;
 export type WorkerTerminalIdle = z.infer<typeof WorkerTerminalIdleSchema>;
 export type WorkerTaskComplete = z.infer<typeof WorkerTaskCompleteSchema>;
 export type WorkerTerminalFailed = z.infer<typeof WorkerTerminalFailedSchema>;
-export type WorkerUploadFiles = z.infer<typeof WorkerUploadFilesSchema>;
 export type WorkerConfigureGit = z.infer<typeof WorkerConfigureGitSchema>;
 export type WorkerExec = z.infer<typeof WorkerExecSchema>;
 export type WorkerExecResult = z.infer<typeof WorkerExecResultSchema>;
+export type WorkerUploadFile = z.infer<typeof WorkerUploadFileSchema>;
+export type WorkerUploadFiles = z.infer<typeof WorkerUploadFilesSchema>;
 export type WorkerStartScreenshotCollection = z.infer<
   typeof WorkerStartScreenshotCollectionSchema
 >;
@@ -286,7 +298,10 @@ export interface ServerToWorkerEvents {
   "worker:terminal-input": (data: WorkerTerminalInput) => void;
 
   // File operations
-  "worker:upload-files": (data: WorkerUploadFiles) => void;
+  "worker:upload-files": (
+    data: WorkerUploadFiles,
+    callback: (result: ErrorOr<{ success: true }>) => void
+  ) => void;
 
   // Git configuration
   "worker:configure-git": (data: WorkerConfigureGit) => void;
