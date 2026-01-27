@@ -4,6 +4,7 @@ import { convexQuery } from "@convex-dev/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSocket } from "@/contexts/socket/use-socket";
 import z from "zod";
 import type { PersistentIframeStatus } from "@/components/persistent-iframe";
 import { PersistentWebView } from "@/components/persistent-webview";
@@ -85,6 +86,60 @@ function VSCodeComponent() {
     teamSlugOrId,
     id: taskRunId,
   });
+  const { socket } = useSocket();
+
+  // Query for linked local workspace to trigger sync
+  const linkedLocalWorkspace = useQuery(
+    api.tasks.getLinkedLocalWorkspace,
+    { teamSlugOrId, cloudTaskRunId: taskRunId }
+  );
+
+  // Query workspace settings for auto-sync preference
+  const workspaceSettings = useQuery(api.workspaceSettings.get, { teamSlugOrId });
+  const autoSyncEnabled = workspaceSettings?.autoSyncEnabled ?? true;
+
+  // Debug logging for sync trigger
+  console.log("[VSCode route] Sync debug:", {
+    autoSyncEnabled,
+    hasSocket: !!socket,
+    linkedLocalWorkspace: linkedLocalWorkspace === undefined ? "loading" : linkedLocalWorkspace,
+    worktreePath: linkedLocalWorkspace?.task?.worktreePath,
+  });
+
+  // Trigger sync when viewing a cloud task that has a linked local workspace
+  // This restores the sync session after page refresh or server restart
+  useEffect(() => {
+    if (!autoSyncEnabled || !socket) {
+      return;
+    }
+
+    const localWorkspacePath = linkedLocalWorkspace?.task?.worktreePath;
+    if (!localWorkspacePath) {
+      return;
+    }
+
+    console.log(
+      "[VSCode route] Triggering local-cloud sync:",
+      localWorkspacePath,
+      "->",
+      taskRunId
+    );
+
+    socket.emit(
+      "trigger-local-cloud-sync",
+      {
+        localWorkspacePath,
+        cloudTaskRunId: taskRunId,
+      },
+      (response: { success: boolean; error?: string }) => {
+        if (!response.success) {
+          console.error("[VSCode route] Failed to trigger sync:", response.error);
+        } else {
+          console.log("[VSCode route] Sync triggered successfully");
+        }
+      }
+    );
+  }, [autoSyncEnabled, socket, linkedLocalWorkspace?.task?.worktreePath, taskRunId]);
 
   // Extract stable values from taskRun to avoid re-renders when unrelated fields change
   const rawWorkspaceUrl = taskRun?.vscode?.workspaceUrl;

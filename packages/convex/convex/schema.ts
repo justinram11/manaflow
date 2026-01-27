@@ -1154,6 +1154,7 @@ const convexSchema = defineSchema({
     type: v.union(
       v.literal("run_completed"),
       v.literal("run_failed"),
+      v.literal("run_needs_input"),
     ),
     message: v.optional(v.string()), // Optional summary message
     readAt: v.optional(v.number()), // Null/undefined means unread

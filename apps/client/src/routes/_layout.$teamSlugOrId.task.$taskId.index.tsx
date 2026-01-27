@@ -491,6 +491,52 @@ function TaskDetailPage() {
     selectedRunId ? { teamSlugOrId, cloudTaskRunId: selectedRunId } : "skip"
   );
 
+  // Helper to trigger sync - can be called from multiple places for reliability
+  const triggerSyncIfNeeded = useCallback(() => {
+    if (!autoSyncEnabled || !socket) {
+      return;
+    }
+
+    let localWorkspacePath: string | undefined;
+    let cloudTaskRunId: string | undefined;
+
+    // Case 1: Viewing a local workspace task directly
+    if (task?.isLocalWorkspace && task?.linkedFromCloudTaskRunId && task?.worktreePath) {
+      localWorkspacePath = task.worktreePath;
+      cloudTaskRunId = task.linkedFromCloudTaskRunId;
+    }
+    // Case 2: Viewing a cloud task that has a linked local workspace
+    else if (linkedLocalWorkspace?.task?.worktreePath && selectedRunId) {
+      localWorkspacePath = linkedLocalWorkspace.task.worktreePath;
+      cloudTaskRunId = selectedRunId;
+    }
+
+    if (!localWorkspacePath || !cloudTaskRunId) {
+      return;
+    }
+
+    socket.emit(
+      "trigger-local-cloud-sync",
+      {
+        localWorkspacePath,
+        cloudTaskRunId,
+      },
+      (response: { success: boolean; error?: string }) => {
+        if (!response.success) {
+          console.error("Failed to trigger sync:", response.error);
+        }
+      }
+    );
+  }, [
+    autoSyncEnabled,
+    socket,
+    task?.isLocalWorkspace,
+    task?.linkedFromCloudTaskRunId,
+    task?.worktreePath,
+    linkedLocalWorkspace?.task?.worktreePath,
+    selectedRunId,
+  ]);
+
   useEffect(() => {
     const previousRunId = previousSelectedRunIdRef.current;
     if (previousRunId === selectedRunId) {
@@ -521,6 +567,15 @@ function TaskDetailPage() {
       ]);
     }
   }, [selectedRunId, workspaceUrl]);
+
+  // Restore sync session when returning to a page with a local workspace linked to a cloud task run
+  // This handles two scenarios:
+  // 1. Viewing a local workspace task directly (task.isLocalWorkspace && task.linkedFromCloudTaskRunId)
+  // 2. Viewing a cloud task that has a linked local workspace (linkedLocalWorkspace exists)
+  // The sync session is in-memory on the server and gets lost on page refresh or server restart
+  useEffect(() => {
+    triggerSyncIfNeeded();
+  }, [triggerSyncIfNeeded]);
 
   const updateIframeStatus = useCallback(
     (
@@ -566,8 +621,10 @@ function TaskDetailPage() {
   const onEditorLoad = useCallback(() => {
     if (selectedRunId) {
       console.log(`Workspace view loaded for task run ${selectedRunId}`);
+      // Trigger sync when workspace iframe loads - ensures sync starts on user interaction
+      triggerSyncIfNeeded();
     }
-  }, [selectedRunId]);
+  }, [selectedRunId, triggerSyncIfNeeded]);
 
   const onEditorError = useCallback(
     (error: Error) => {

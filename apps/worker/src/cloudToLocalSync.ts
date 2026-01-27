@@ -276,6 +276,115 @@ export class CloudToLocalSyncSession {
     }
   }
 
+  /**
+   * Trigger a full sync of all existing files in the workspace.
+   * This is used when a local workspace is first created to sync existing cloud changes.
+   */
+  async triggerFullSync(): Promise<{ filesSent: number }> {
+    if (this.disposed) {
+      return { filesSent: 0 };
+    }
+
+    console.log(
+      `[CloudToLocalSync] Triggering full sync for taskRun ${this.taskRunId}`
+    );
+
+    const files: WorkerSyncFile[] = [];
+    let batchBytes = 0;
+    let totalFilesSent = 0;
+
+    const sendBatch = () => {
+      if (files.length > 0) {
+        this.emitSyncFiles({
+          taskRunId: this.taskRunId,
+          files: [...files],
+          timestamp: Date.now(),
+        });
+        totalFilesSent += files.length;
+        files.length = 0;
+        batchBytes = 0;
+      }
+    };
+
+    // Recursively collect all files
+    const collectFiles = async (dir: string): Promise<void> => {
+      let entries;
+      try {
+        entries = await fs.readdir(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+
+      for (const entry of entries) {
+        const absolutePath = path.join(dir, entry.name);
+        const rel = path.relative(this.workspacePath, absolutePath);
+        if (!rel || rel.startsWith("..")) {
+          continue;
+        }
+
+        const relativePath = normalizeRelativePath(rel);
+
+        // Check ignore patterns
+        const ignorePath = entry.isDirectory()
+          ? `${relativePath}/`
+          : relativePath;
+        if (this.ignoreMatcher.ignores(ignorePath)) {
+          continue;
+        }
+
+        if (entry.isDirectory()) {
+          await collectFiles(absolutePath);
+          continue;
+        }
+
+        if (!entry.isFile()) {
+          continue;
+        }
+
+        // Check batch limits
+        if (files.length >= MAX_BATCH_FILES || batchBytes >= MAX_BATCH_BYTES) {
+          sendBatch();
+        }
+
+        try {
+          const stat = await fs.stat(absolutePath);
+          if (stat.size > MAX_SINGLE_FILE_BYTES) {
+            console.log(
+              `[CloudToLocalSync] Skipping large file: ${relativePath} (${stat.size} bytes)`
+            );
+            continue;
+          }
+
+          const content = await fs.readFile(absolutePath);
+          const contentBase64 = content.toString("base64");
+          const mode = (stat.mode & 0o777).toString(8);
+
+          files.push({
+            relativePath,
+            action: "write",
+            contentBase64,
+            mode,
+          });
+          batchBytes += content.length;
+        } catch (error) {
+          console.error(
+            `[CloudToLocalSync] Failed to read file ${relativePath}:`,
+            error
+          );
+        }
+      }
+    };
+
+    await collectFiles(this.workspacePath);
+    sendBatch(); // Send remaining files
+
+    console.log(
+      `[CloudToLocalSync] Full sync completed: sent ${totalFilesSent} files for taskRun ${this.taskRunId}`
+    );
+
+    return { filesSent: totalFilesSent };
+  }
+
   async dispose(): Promise<void> {
     this.disposed = true;
     if (this.flushTimer) {
@@ -372,6 +481,21 @@ export class CloudToLocalSyncManager {
         session.markSyncedFromLocal(relativePath);
       }
     }
+  }
+
+  /**
+   * Trigger a full sync of all existing files for a given taskRun.
+   * Used when a local workspace is first created to download existing cloud changes.
+   */
+  async triggerFullSync(taskRunId: Id<"taskRuns">): Promise<{ filesSent: number }> {
+    const session = this.sessions.get(taskRunId);
+    if (!session) {
+      console.log(
+        `[CloudToLocalSync] No session found for taskRun ${taskRunId} to trigger full sync`
+      );
+      return { filesSent: 0 };
+    }
+    return session.triggerFullSync();
   }
 
   async disposeAll(): Promise<void> {

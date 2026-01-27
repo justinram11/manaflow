@@ -37,6 +37,23 @@ export abstract class VSCodeInstance extends EventEmitter {
   // Static registry of all VSCode instances
   protected static instances = new Map<Id<"taskRuns">, VSCodeInstance>();
 
+  // Callback for when instance connects - used by LocalCloudSyncManager for lazy sync
+  private static onInstanceConnectedCallback:
+    | ((taskRunId: Id<"taskRuns">, instance: VSCodeInstance) => void)
+    | null = null;
+
+  /**
+   * Set a callback to be notified when any VSCodeInstance connects to its worker.
+   * Used by LocalCloudSyncManager to implement lazy sync.
+   */
+  static setOnInstanceConnected(
+    callback:
+      | ((taskRunId: Id<"taskRuns">, instance: VSCodeInstance) => void)
+      | null
+  ): void {
+    VSCodeInstance.onInstanceConnectedCallback = callback;
+  }
+
   protected config: VSCodeInstanceConfig;
   protected instanceId: Id<"taskRuns">;
   protected taskRunId: Id<"taskRuns">;
@@ -98,6 +115,10 @@ export abstract class VSCodeInstance extends EventEmitter {
         );
         this.workerConnected = true;
         this.emit("worker-connected");
+        // Notify any listeners (e.g., LocalCloudSyncManager for lazy sync)
+        if (VSCodeInstance.onInstanceConnectedCallback) {
+          VSCodeInstance.onInstanceConnectedCallback(this.taskRunId, this);
+        }
         resolve();
       });
 

@@ -1258,6 +1258,29 @@ managementIO.on("connection", (socket) => {
     }
   });
 
+  // Handle request for full cloud sync (initial download of all cloud files)
+  socket.on("worker:request-full-cloud-sync", async (data, callback) => {
+    const { taskRunId } = data;
+
+    if (!cloudToLocalSyncManager) {
+      log("ERROR", "[Worker] Cloud sync manager not available for full sync request");
+      callback({ filesSent: 0 });
+      return;
+    }
+
+    try {
+      const result = await cloudToLocalSyncManager.triggerFullSync(taskRunId);
+      log(
+        "INFO",
+        `[Worker] Completed full cloud sync for task ${taskRunId}: ${result.filesSent} files sent`
+      );
+      callback(result);
+    } catch (error) {
+      log("ERROR", `[Worker] Failed to trigger full cloud sync for task ${taskRunId}`, error);
+      callback({ filesSent: 0 });
+    }
+  });
+
   socket.on("disconnect", (reason) => {
     log("WARNING", `Main server disconnected from worker ${WORKER_ID}`, {
       reason,

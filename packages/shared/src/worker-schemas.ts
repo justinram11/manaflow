@@ -325,6 +325,11 @@ export interface ServerToWorkerEvents {
     workspacePath: string;
   }) => void;
   "worker:stop-cloud-sync": (data: { taskRunId: Id<"taskRuns"> }) => void;
+  // Request a full sync of all existing files from cloud to local
+  "worker:request-full-cloud-sync": (
+    data: { taskRunId: Id<"taskRuns"> },
+    callback: (result: { filesSent: number }) => void
+  ) => void;
   "worker:start-screenshot-collection": (
     data: WorkerStartScreenshotCollection | undefined
   ) => void;

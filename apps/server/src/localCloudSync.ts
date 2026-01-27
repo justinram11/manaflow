@@ -116,6 +116,11 @@ async function collectWorkspaceFiles(
   return files;
 }
 
+// Exponential backoff settings for lazy sync
+const INITIAL_RETRY_DELAY_MS = 2000;
+const MAX_RETRY_DELAY_MS = 30000;
+const MAX_RETRY_ATTEMPTS = 5;
+
 class LocalCloudSyncSession {
   private readonly localPath: string;
   private readonly cloudTaskRunId: Id<"taskRuns">;
@@ -133,7 +138,13 @@ class LocalCloudSyncSession {
   private lastSyncError: string | null = null;
   // Track files recently written by cloud sync to avoid echo loops
   private recentlySyncedFromCloud = new Set<string>();
+  // Lazy sync: track retry attempts for exponential backoff
+  private retryAttempts = 0;
+  private waitingForWorker = false;
   private readonly onWorkerConnected = () => {
+    // Reset retry state when worker connects
+    this.retryAttempts = 0;
+    this.waitingForWorker = false;
     this.scheduleFlush(250);
   };
   private readonly onWorkerDisconnected = () => {
@@ -288,6 +299,30 @@ class LocalCloudSyncSession {
   }
 
   /**
+   * Notify session that a VSCodeInstance is now available for its cloud task run.
+   * Called by LocalCloudSyncManager when a new instance is registered.
+   */
+  notifyInstanceAvailable(instance: VSCodeInstance): void {
+    if (this.disposed) {
+      return;
+    }
+    console.log(
+      `[localCloudSync] Instance became available for ${this.cloudTaskRunId}, attaching and flushing`
+    );
+    this.attachInstance(instance);
+    // Reset retry state and trigger flush
+    this.retryAttempts = 0;
+    this.waitingForWorker = false;
+    if (this.pending.size > 0) {
+      this.scheduleFlush(100);
+    }
+  }
+
+  getCloudTaskRunId(): Id<"taskRuns"> {
+    return this.cloudTaskRunId;
+  }
+
+  /**
    * Mark a file as recently synced from cloud, so we don't echo it back.
    */
   markSyncedFromCloud(relativePath: string): void {
@@ -385,12 +420,34 @@ class LocalCloudSyncSession {
     if (!workerSocket) {
       this.syncing = false;
       this.lastSyncError = "Worker socket not connected";
-      console.log(
-        `[localCloudSync] No worker socket for ${this.cloudTaskRunId}, retrying in 2s`
-      );
-      this.scheduleFlush(2000);
+
+      // Lazy sync: use exponential backoff, then stop retrying and wait for worker
+      if (this.retryAttempts < MAX_RETRY_ATTEMPTS) {
+        const delay = Math.min(
+          INITIAL_RETRY_DELAY_MS * Math.pow(2, this.retryAttempts),
+          MAX_RETRY_DELAY_MS
+        );
+        this.retryAttempts++;
+        console.log(
+          `[localCloudSync] No worker socket for ${this.cloudTaskRunId}, retry ${this.retryAttempts}/${MAX_RETRY_ATTEMPTS} in ${delay}ms`
+        );
+        this.scheduleFlush(delay);
+      } else if (!this.waitingForWorker) {
+        // Max retries reached - stop retrying, wait for worker to connect
+        this.waitingForWorker = true;
+        console.log(
+          `[localCloudSync] Max retries reached for ${this.cloudTaskRunId}, waiting for worker connection (${this.pending.size} files pending)`
+        );
+        serverLogger.info(
+          `[localCloudSync] Entering lazy sync mode for ${this.cloudTaskRunId} - will flush when worker connects`
+        );
+      }
       return;
     }
+
+    // Worker connected - reset retry state
+    this.retryAttempts = 0;
+    this.waitingForWorker = false;
 
     const entries = Array.from(this.pending.values());
     this.pending.clear();
@@ -681,6 +738,24 @@ export class LocalCloudSyncManager {
   }
 
   /**
+   * Notify sync sessions that a VSCodeInstance has become available.
+   * Called when a new VSCodeInstance is created or reconnected.
+   */
+  notifyInstanceAvailable(
+    cloudTaskRunId: Id<"taskRuns">,
+    instance: VSCodeInstance
+  ): void {
+    const localPath = this.cloudToLocalMap.get(cloudTaskRunId);
+    if (!localPath) {
+      return;
+    }
+    const session = this.sessions.get(localPath);
+    if (session) {
+      session.notifyInstanceAvailable(instance);
+    }
+  }
+
+  /**
    * Handle incoming file sync from cloud worker.
    * Writes files from the cloud workspace to the local workspace.
    */
@@ -769,3 +844,9 @@ export class LocalCloudSyncManager {
 
 // Singleton instance - exported to avoid circular dependency issues
 export const localCloudSyncManager = new LocalCloudSyncManager();
+
+// Register callback for lazy sync: when a VSCodeInstance connects,
+// notify any waiting sync sessions
+VSCodeInstance.setOnInstanceConnected((taskRunId, instance) => {
+  localCloudSyncManager.notifyInstanceAvailable(taskRunId, instance);
+});
