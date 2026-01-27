@@ -5,7 +5,7 @@ import type {
   StreamFileState,
   StreamFileStatus,
 } from "@/components/heatmap-diff-viewer";
-import { MonacoGitDiffViewer } from "@/components/monaco/monaco-git-diff-viewer";
+import { MonacoGitDiffViewerWithSidebar } from "@/components/monaco/monaco-git-diff-viewer-with-sidebar";
 import { RunScreenshotGallery } from "@/components/RunScreenshotGallery";
 import { TaskDetailHeader } from "@/components/task-detail-header";
 import { useSocket } from "@/contexts/socket/use-socket";
@@ -1145,7 +1145,7 @@ function RunDiffPage() {
                       onHeatmapTooltipLanguageChange={handleHeatmapTooltipLanguageChange}
                     />
                   ) : (
-                    <MonacoGitDiffViewer
+                    <MonacoGitDiffViewerWithSidebar
                       diffs={diffQuery.data ?? []}
                       onControlsChange={setDiffControls}
                     />

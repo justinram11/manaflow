@@ -1274,9 +1274,9 @@ export function MonacoGitDiffViewerWithSidebar({
   }
 
   return (
-    <div className="grow flex bg-white dark:bg-neutral-900">
+    <div className="grow flex bg-white dark:bg-neutral-900 min-h-0">
       {/* Sidebar */}
-      <div className="flex-shrink-0 sticky top-0 h-screen overflow-hidden">
+      <div className="flex-shrink-0 sticky top-0 self-start max-h-screen overflow-y-auto">
         <DiffSidebarFilter
           diffs={diffs}
           viewedFiles={viewedFiles}

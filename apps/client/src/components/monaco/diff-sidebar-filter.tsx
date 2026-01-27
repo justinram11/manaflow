@@ -631,10 +631,10 @@ export function DiffSidebarFilter({
   );
 
   return (
-    <div className={cn("flex", className)}>
+    <div className={cn("flex max-h-screen", className)}>
       <aside
         id={sidebarPanelId}
-        className="relative flex flex-col bg-white dark:bg-neutral-900 border-r border-neutral-200 dark:border-neutral-800"
+        className="relative flex flex-col max-h-screen bg-white dark:bg-neutral-900 border-r border-neutral-200 dark:border-neutral-800"
         style={
           {
             width: `${sidebarWidth}px`,
