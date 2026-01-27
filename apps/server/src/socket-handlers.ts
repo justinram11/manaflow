@@ -1208,6 +1208,7 @@ export function setupSocketHandlers(
           projectFullName,
           repoUrl: explicitRepoUrl,
           branch: requestedBranch,
+          baseBranch: requestedBaseBranch,
           taskId: providedTaskId,
           taskRunId: providedTaskRunId,
           workspaceName: providedWorkspaceName,
@@ -1277,6 +1278,7 @@ export function setupSocketHandlers(
             ? `https://github.com/${projectFullName}.git`
             : undefined);
         const branch = requestedBranch?.trim();
+        const baseBranch = requestedBaseBranch?.trim();
 
         let workspaceConfig: WorkspaceConfigResponse | null = null;
         if (projectFullName) {
@@ -1484,6 +1486,88 @@ export function setupSocketHandlers(
             })();
           };
 
+          const normalizeBranchName = (
+            value?: string | null
+          ): string | null => {
+            if (!value) {
+              return null;
+            }
+            const trimmed = value.trim();
+            if (!trimmed) {
+              return null;
+            }
+            const withoutPrefix = trimmed
+              .replace(/^refs\/heads\//, "")
+              .replace(/^refs\/remotes\/origin\//, "")
+              .replace(/^origin\//, "");
+            const sanitized = withoutPrefix.replace(
+              /[^a-zA-Z0-9._/-]/g,
+              "-"
+            );
+            return sanitized || null;
+          };
+
+          const hasGitRef = (cwd: string, ref: string): Promise<boolean> =>
+            new Promise((resolve) => {
+              execFile(
+                "git",
+                ["rev-parse", "--verify", "--quiet", ref],
+                { cwd },
+                (error) => {
+                  resolve(!error);
+                }
+              );
+            });
+
+          const ensureBaseBranchRefs = async (
+            repoPath: string,
+            baseBranchName: string,
+            headBranchName?: string | null
+          ) => {
+            if (headBranchName && baseBranchName === headBranchName) {
+              return;
+            }
+            const remoteRef = `refs/remotes/origin/${baseBranchName}`;
+            const localRef = `refs/heads/${baseBranchName}`;
+
+            const hasRemoteRef = await hasGitRef(repoPath, remoteRef);
+            if (!hasRemoteRef) {
+              try {
+                await execFileAsync(
+                  "git",
+                  ["fetch", "origin", `${baseBranchName}:${remoteRef}`],
+                  { cwd: repoPath }
+                );
+              } catch (error) {
+                serverLogger.warn(
+                  `[create-local-workspace] Failed to fetch base branch ${baseBranchName}`,
+                  error
+                );
+                console.error(error);
+              }
+            }
+
+            const hasLocalRef = await hasGitRef(repoPath, localRef);
+            if (!hasLocalRef) {
+              const refreshedRemoteRef = await hasGitRef(repoPath, remoteRef);
+              if (refreshedRemoteRef) {
+                try {
+                  await execFileAsync(
+                    "git",
+                    ["branch", baseBranchName, `origin/${baseBranchName}`],
+                    { cwd: repoPath }
+                  );
+                } catch (error) {
+                  serverLogger.warn(
+                    `[create-local-workspace] Failed to create local base branch ${baseBranchName}`,
+                    error
+                  );
+                  console.error(error);
+                }
+              }
+            }
+          };
+
           const baseServeWebUrl =
             (await waitForVSCodeServeWebBaseUrl()) ??
             getVSCodeServeWebBaseUrl();
@@ -1578,6 +1662,30 @@ export function setupSocketHandlers(
                 error instanceof Error
                   ? `Git clone failed to produce a checkout: ${error.message}`
                   : "Git clone failed to produce a checkout"
+              );
+            }
+
+            const normalizedHeadBranch = normalizeBranchName(branch);
+            let baseBranchName = normalizeBranchName(baseBranch);
+            if (!baseBranchName) {
+              try {
+                const repoMgr = RepositoryManager.getInstance();
+                baseBranchName = await repoMgr.getDefaultBranch(
+                  resolvedWorkspacePath
+                );
+              } catch (error) {
+                serverLogger.warn(
+                  "[create-local-workspace] Failed to detect default base branch",
+                  error
+                );
+                console.error(error);
+              }
+            }
+            if (baseBranchName) {
+              await ensureBaseBranchRefs(
+                resolvedWorkspacePath,
+                baseBranchName,
+                normalizedHeadBranch
               );
             }
           } else {

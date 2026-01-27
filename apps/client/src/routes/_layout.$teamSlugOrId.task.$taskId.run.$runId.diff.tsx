@@ -981,6 +981,7 @@ function RunDiffPage() {
   ]);
 
   const taskRunId = selectedRun?._id ?? runId;
+  const baseBranch = task?.baseBranch ?? "main";
 
   const handleOpenLocalWorkspace = useCallback(() => {
     // If query is still loading, don't allow creation to prevent duplicates
@@ -1023,6 +1024,7 @@ function RunDiffPage() {
         projectFullName: primaryRepo,
         repoUrl: `https://github.com/${primaryRepo}.git`,
         branch: selectedRun.newBranch,
+        baseBranch,
         linkedFromCloudTaskRunId: selectedRun._id, // Link to the current cloud task run
       },
       (response: CreateLocalWorkspaceResponse) => {
@@ -1039,7 +1041,7 @@ function RunDiffPage() {
         }
       }
     );
-  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, selectedRun?._id, linkedLocalWorkspace, linkedLocalWorkspaceQuery.isLoading]);
+  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, selectedRun?._id, linkedLocalWorkspace, linkedLocalWorkspaceQuery.isLoading, baseBranch]);
 
   // 404 if selected run is missing
   if (!selectedRun) {

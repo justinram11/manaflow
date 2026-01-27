@@ -658,6 +658,7 @@ function TaskDetailPage() {
 
   // Get primary repo from task for local workspace creation
   const primaryRepo = task?.projectFullName;
+  const baseBranch = task?.baseBranch ?? "main";
 
   // Handle opening a local workspace for the current task run
   const handleOpenLocalWorkspace = useCallback(() => {
@@ -702,6 +703,7 @@ function TaskDetailPage() {
         projectFullName: primaryRepo,
         repoUrl: `https://github.com/${primaryRepo}.git`,
         branch: selectedRun.newBranch,
+        baseBranch,
         linkedFromCloudTaskRunId: selectedRun._id, // Link to the current cloud task run
       },
       (response: CreateLocalWorkspaceResponse) => {
@@ -718,7 +720,7 @@ function TaskDetailPage() {
         }
       }
     );
-  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, selectedRun?._id, linkedLocalWorkspace]);
+  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, selectedRun?._id, linkedLocalWorkspace, baseBranch]);
 
   // Handle toggling auto-sync on/off
   const handleToggleAutoSync = useCallback(() => {
