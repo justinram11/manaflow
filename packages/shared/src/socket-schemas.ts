@@ -57,6 +57,7 @@ export const CreateLocalWorkspaceSchema = z.object({
   projectFullName: z.string().optional(),
   repoUrl: z.string().optional(),
   branch: z.string().optional(),
+  baseBranch: z.string().optional(),
   taskId: typedZid("tasks").optional(),
   taskRunId: typedZid("taskRuns").optional(),
   workspaceName: z.string().optional(),
@@ -397,6 +398,17 @@ export const DockerPullImageResponseSchema = z.object({
   error: z.string().optional(),
 });
 
+export const DockerPullProgressSchema = z.object({
+  imageName: z.string(),
+  status: z.string(),
+  progress: z.string().optional(),
+  id: z.string().optional(),
+  current: z.number().optional(),
+  total: z.number().optional(),
+  percent: z.number().optional(),
+  phase: z.enum(["waiting", "pulling", "complete", "error"]).optional(),
+});
+
 export const GitStatusSchema = z.object({
   isAvailable: z.boolean(),
   version: z.string().optional(),
@@ -481,6 +493,7 @@ export type DockerStatus = z.infer<typeof DockerStatusSchema>;
 export type DockerPullImageResponse = z.infer<
   typeof DockerPullImageResponseSchema
 >;
+export type DockerPullProgress = z.infer<typeof DockerPullProgressSchema>;
 export type GitStatus = z.infer<typeof GitStatusSchema>;
 export type GitHubStatus = z.infer<typeof GitHubStatusSchema>;
 export type GitHubFetchRepos = z.infer<typeof GitHubFetchReposSchema>;
@@ -580,6 +593,17 @@ export interface ClientToServerEvents {
   "get-local-vscode-serve-web-origin": (
     callback: (response: { baseUrl: string | null; port: number | null }) => void
   ) => void;
+  "check-vscode-availability": (
+    data: { refresh?: boolean } | undefined,
+    callback: (response: {
+      available: boolean;
+      executablePath: string | null;
+      variant: string | null;
+      source: string | null;
+      suggestions: string[];
+      errors: string[];
+    }) => void
+  ) => void;
   "archive-task": (
     data: ArchiveTask,
     callback: (response: { success: boolean; error?: string }) => void
@@ -609,6 +633,7 @@ export interface ServerToClientEvents {
   "available-editors": (data: AvailableEditors) => void;
   "task-started": (data: TaskStarted) => void;
   "task-failed": (data: TaskError) => void;
+  "docker-pull-progress": (data: DockerPullProgress) => void;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type

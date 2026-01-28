@@ -216,13 +216,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
             },
             (event: { status: string; progress: string; id?: string }) => {
               lastProgressTime = Date.now();
-              // Log pull progress
               if (event.status) {
-                const progressMsg = event.progress
-                  ? `${event.status} ${event.id || ""}: ${event.progress}`
-                  : `${event.status} ${event.id || ""}`;
-                dockerLogger.info(`Pull progress: ${progressMsg}`);
-
                 // Update status with progress (throttled - only major status changes)
                 if (
                   event.status === "Downloading" ||

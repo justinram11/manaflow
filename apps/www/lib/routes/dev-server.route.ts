@@ -177,7 +177,14 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
 
     console.log(`Created dev server instance: ${instance.id}`);
 
-    const exposedServices = instance.networking.httpServices;
+    // SDK bug: instances.start() returns empty httpServices array
+    // Re-fetch instance to get the actual networking data
+    const refreshedInstance =
+      instance.networking.httpServices.length === 0
+        ? await client.instances.get({ instanceId: instance.id })
+        : instance;
+
+    const exposedServices = refreshedInstance.networking.httpServices;
     const vscodeService = exposedServices.find(
       (service) => service.port === 39378
     );

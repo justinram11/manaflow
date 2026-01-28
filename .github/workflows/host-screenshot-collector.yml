@@ -56,11 +56,16 @@ jobs:
           CONVEX_SITE_URL="${NEXT_PUBLIC_CONVEX_URL/.convex.cloud/.convex.site}"
           echo "Using Convex site URL: ${CONVEX_SITE_URL}"
 
+          # Build release URL from repository and commit
+          RELEASE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
+          echo "Release URL: ${RELEASE_URL}"
+
           # Upload the file to Convex via HTTP endpoint
           curl -X POST "${CONVEX_SITE_URL}/api/host-screenshot-collector/sync" \
             -H "Content-Type: application/octet-stream" \
             -H "X-Version: ${VERSION}" \
             -H "X-Commit-SHA: ${GITHUB_SHA}" \
             -H "X-Is-Staging: false" \
+            -H "X-Release-URL: ${RELEASE_URL}" \
             --data-binary @packages/host-screenshot-collector/dist/index.js \
             --fail-with-body

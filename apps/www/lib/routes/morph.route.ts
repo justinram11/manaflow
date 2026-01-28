@@ -594,6 +594,11 @@ morphRouter.openapi(
           () => instance.setWakeOn(true, true)
         );
         instance = instance!;
+        // SDK bug: instances.start() returns empty httpServices array
+        // Re-fetch instance to get the actual networking data
+        if (instance.networking.httpServices.length === 0) {
+          instance = await client.instances.get({ instanceId: instance.id });
+        }
       } else {
         console.log(`Using existing Morph instance: ${instanceId}`);
 

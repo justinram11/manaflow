@@ -29,6 +29,8 @@ import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
 import type {
+  DockerPullProgress,
+  DockerPullImageResponse,
   ProviderStatusResponse,
   TaskAcknowledged,
   TaskError,
@@ -116,6 +118,78 @@ function DashboardComponent() {
   const { theme } = useTheme();
   const { addTaskToExpand } = useExpandTasks();
   const onboarding = useOnboardingOptional();
+  const dockerPullToastIdRef = useRef<
+    ReturnType<typeof toast.custom> | undefined
+  >(undefined);
+
+  const renderDockerPullToast = useCallback(
+    (progress: DockerPullProgress) => () => {
+      const title =
+        progress.phase === "waiting"
+          ? "Waiting for Docker image pull"
+          : "Pulling Docker image";
+      const description =
+        progress.phase === "waiting"
+          ? "This may take a few minutes. We'll start once the image is ready."
+          : "This may take a few minutes. You can keep working while it downloads.";
+      return (
+        <div className="flex w-[360px] flex-col gap-2 rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-neutral-900 shadow-lg dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100">
+          <div className="text-sm font-medium">{title}</div>
+          <div className="text-xs text-neutral-600 dark:text-neutral-300">
+            {progress.imageName}
+          </div>
+          <div className="text-xs text-neutral-600 dark:text-neutral-300">
+            {description}
+          </div>
+        </div>
+      );
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleDockerPullProgress = (payload: DockerPullProgress) => {
+      if (payload.phase === "complete") {
+        if (dockerPullToastIdRef.current) {
+          toast.dismiss(dockerPullToastIdRef.current);
+          dockerPullToastIdRef.current = undefined;
+        }
+        return;
+      }
+
+      if (payload.phase === "error") {
+        if (dockerPullToastIdRef.current) {
+          toast.dismiss(dockerPullToastIdRef.current);
+          dockerPullToastIdRef.current = undefined;
+        }
+        toast.error(`Docker image pull failed for ${payload.imageName}.`);
+        return;
+      }
+
+      if (payload.phase !== "pulling" && payload.phase !== "waiting") {
+        return;
+      }
+
+      if (dockerPullToastIdRef.current) {
+        toast.custom(renderDockerPullToast(payload), {
+          id: dockerPullToastIdRef.current,
+          duration: Infinity,
+        });
+      } else {
+        dockerPullToastIdRef.current = toast.custom(
+          renderDockerPullToast(payload),
+          { duration: Infinity }
+        );
+      }
+    };
+
+    socket.on("docker-pull-progress", handleDockerPullProgress);
+    return () => {
+      socket.off("docker-pull-progress", handleDockerPullProgress);
+    };
+  }, [renderDockerPullToast, socket]);
 
   // Query tasks to check if user is new (has no tasks)
   const tasksQuery = useQuery(
@@ -584,6 +658,48 @@ function DashboardComponent() {
     return [];
   }, [selectedBranch, defaultBranchName, branchNames]);
 
+  const ensureDockerReadyForLocalTask = useCallback(async (): Promise<boolean> => {
+    if (!socket) {
+      console.error("Cannot verify Docker status: socket not connected");
+      toast.error(
+        "Cannot verify Docker status. Please ensure the server is running."
+      );
+      return false;
+    }
+
+    const status = await new Promise<ProviderStatusResponse | undefined>(
+      (resolve) => {
+        socket.emit("check-provider-status", resolve);
+      }
+    );
+
+    const isRunning = status?.dockerStatus?.isRunning ?? false;
+    setDockerReady(isRunning);
+
+    if (!isRunning) {
+      toast.error(
+        "Docker isn't running. Install or start Docker Desktop to run local tasks."
+      );
+      return false;
+    }
+
+    const pullResponse = await new Promise<DockerPullImageResponse>(
+      (resolve) => {
+        socket.emit("docker-pull-image", resolve);
+      }
+    );
+
+    if (!pullResponse.success) {
+      toast.error(
+        pullResponse.error ??
+          "Docker image is not ready yet. Please try again."
+      );
+      return false;
+    }
+
+    return true;
+  }, [setDockerReady, socket]);
+
   const handleStartTask = useCallback(async () => {
     if (isStartingTaskRef.current) {
       return;
@@ -595,83 +711,8 @@ function DashboardComponent() {
     try {
       // For local mode, perform a fresh docker check right before starting
       if (!isEnvSelected && !isCloudMode) {
-        // Always check Docker status when in local mode, regardless of current state
-        if (socket) {
-          const dockerCheck = await new Promise<{
-            isRunning: boolean;
-            workerImage?: {
-              name: string;
-              isAvailable: boolean;
-              isPulling?: boolean;
-            };
-          }>((resolve) => {
-            socket.emit("check-provider-status", (response) => {
-              const isRunning = !!response?.dockerStatus?.isRunning;
-              if (typeof isRunning === "boolean") {
-                setDockerReady(isRunning);
-              }
-              resolve({
-                isRunning,
-                workerImage: response?.dockerStatus?.workerImage,
-              });
-            });
-          });
-
-          // Only show the alert if Docker is actually not running after checking
-          if (!dockerCheck.isRunning) {
-            toast.error("Docker is not running. Start Docker Desktop.");
-            return;
-          }
-
-          // Check if Docker worker image is available, auto-pull if not
-          if (dockerCheck.workerImage && !dockerCheck.workerImage.isAvailable) {
-            const imageName = dockerCheck.workerImage.name;
-            if (dockerCheck.workerImage.isPulling) {
-              toast.error(
-                `Docker image "${imageName}" is currently being pulled. Please wait for it to complete.`
-              );
-              return;
-            }
-
-            // Auto-pull the image
-            const pullToastId = toast.loading(
-              `Pulling Docker image "${imageName}"... This may take a few minutes on first run.`
-            );
-
-            try {
-              const pullResult = await new Promise<{
-                success: boolean;
-                imageName?: string;
-                error?: string;
-              }>((resolve) => {
-                socket.emit("docker-pull-image", (response) => {
-                  resolve(response);
-                });
-              });
-
-              if (!pullResult.success) {
-                toast.dismiss(pullToastId);
-                toast.error(
-                  pullResult.error || `Failed to pull Docker image "${imageName}"`
-                );
-                return;
-              }
-
-              toast.dismiss(pullToastId);
-              toast.success(`Docker image "${imageName}" pulled successfully`);
-            } catch (pullError) {
-              toast.dismiss(pullToastId);
-              console.error("Error pulling Docker image:", pullError);
-              toast.error(`Failed to pull Docker image "${imageName}"`);
-              return;
-            }
-          }
-        } else {
-          // If socket is not connected, we can't verify Docker status
-          console.error("Cannot verify Docker status: socket not connected");
-          toast.error(
-            "Cannot verify Docker status. Please ensure the server is running."
-          );
+        const dockerReady = await ensureDockerReadyForLocalTask();
+        if (!dockerReady) {
           return;
         }
       }
@@ -771,7 +812,11 @@ function DashboardComponent() {
       ) => {
         if ("error" in response) {
           console.error("Task start error:", response.error);
-          toast.error(`Task start error: ${JSON.stringify(response.error)}`);
+          const message =
+            typeof response.error === "string"
+              ? response.error
+              : "Task failed to start. Please try again.";
+          toast.error(message);
           return;
         }
 
@@ -825,6 +870,7 @@ function DashboardComponent() {
     isEnvSelected,
     theme,
     generateUploadUrl,
+    ensureDockerReadyForLocalTask,
   ]);
 
   // Fetch repos on mount if none exist

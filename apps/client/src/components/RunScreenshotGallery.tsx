@@ -63,6 +63,7 @@ const NO_UI_CHANGES_ERROR_SNIPPETS = [
   "returned no files in the git diff",
   "no ui changes",
   "no files to capture",
+  "No UI changes detected",
 ];
 
 function detectEmptyReason(set: RunScreenshotSet): {
