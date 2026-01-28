@@ -7,6 +7,7 @@ import {
 } from "@cmux/shared/agentConfig";
 import type {
   WorkerCreateTerminal,
+  WorkerSyncFiles,
   WorkerTerminalFailed,
 } from "@cmux/shared/worker-schemas";
 import { parseGithubRepoUrl } from "@cmux/shared/utils/parse-github-repo-url";
@@ -36,6 +37,7 @@ import { CmuxVSCodeInstance } from "./vscode/CmuxVSCodeInstance";
 import { DockerVSCodeInstance } from "./vscode/DockerVSCodeInstance";
 import { VSCodeInstance } from "./vscode/VSCodeInstance";
 import { getWorktreePath, setupProjectWorkspace } from "./workspace";
+import { localCloudSyncManager } from "./localCloudSync";
 import { workerExec } from "./utils/workerExec";
 import rawSwitchBranchScript from "./utils/switch-branch.ts?raw";
 
@@ -543,12 +545,25 @@ export async function spawnAgent(
     );
     vscodeInstance.startFileWatch(worktreePath);
 
+    // Start cloud-to-local sync (syncs cloud changes back to linked local workspace)
+    vscodeInstance.startCloudSync();
+
     // Set up file change event handler for real-time diff updates
     vscodeInstance.on("file-changes", async (data) => {
       serverLogger.info(
         `[AgentSpawner] File changes detected for ${agent.name}:`,
         { changeCount: data.changes.length, taskRunId: data.taskRunId }
       );
+    });
+
+    // Set up sync-files event handler for cloud-to-local sync
+    vscodeInstance.on("sync-files", async (data: WorkerSyncFiles) => {
+      serverLogger.info(
+        `[AgentSpawner] Sync files received for ${agent.name}:`,
+        { fileCount: data.files.length, taskRunId: data.taskRunId }
+      );
+      // Write synced files to local workspace
+      await localCloudSyncManager.handleCloudSync(data);
     });
 
     // Set up terminal-failed event handler

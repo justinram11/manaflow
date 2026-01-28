@@ -601,7 +601,7 @@ const convexSchema = defineSchema({
   workspaceSettings: defineTable({
     worktreePath: v.optional(v.string()), // Custom path for git worktrees
     autoPrEnabled: v.optional(v.boolean()), // Auto-create PR for crown winner (default: false)
-    autoSyncEnabled: v.optional(v.boolean()), // Auto-sync workspace changes
+    autoSyncEnabled: v.optional(v.boolean()), // Auto-sync local workspace to cloud (default: true)
     nextLocalWorkspaceSequence: v.optional(v.number()), // Counter for local workspace naming
     // Heatmap review settings
     heatmapModel: v.optional(v.string()), // Model to use for heatmap review (e.g., "anthropic-opus-4-5", "cmux-heatmap-2")
@@ -1154,6 +1154,7 @@ const convexSchema = defineSchema({
     type: v.union(
       v.literal("run_completed"),
       v.literal("run_failed"),
+      v.literal("run_needs_input"),
     ),
     message: v.optional(v.string()), // Optional summary message
     readAt: v.optional(v.number()), // Null/undefined means unread

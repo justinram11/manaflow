@@ -2,6 +2,7 @@ import { api } from "@cmux/convex/api";
 import { env } from "./utils/server-env";
 import type { Id } from "@cmux/convex/dataModel";
 import type { WorkspaceConfigResponse } from "@cmux/www-openapi-client";
+import type { WorkerSyncFiles } from "@cmux/shared/worker-schemas";
 import {
   ArchiveTaskSchema,
   GitFullDiffRequestSchema,
@@ -17,6 +18,8 @@ import {
   type CreateLocalWorkspaceResponse,
   CreateCloudWorkspaceSchema,
   type CreateCloudWorkspaceResponse,
+  TriggerLocalCloudSyncSchema,
+  type TriggerLocalCloudSyncResponse,
   type AvailableEditors,
   type FileInfo,
   isLoopbackHostname,
@@ -45,6 +48,7 @@ import { getRustTime } from "./native/core";
 import type { RealtimeServer } from "./realtime";
 import { RepositoryManager } from "./repositoryManager";
 import type { GitRepoInfo } from "./server";
+import { localCloudSyncManager } from "./localCloudSync";
 import { generatePRInfoAndBranchNames } from "./utils/branchNameGenerator";
 import { getConvex } from "./utils/convexClient";
 import { ensureRunWorktreeAndBranch } from "./utils/ensureRunWorktree";
@@ -61,7 +65,9 @@ import { runWithAuth, runWithAuthToken } from "./utils/requestContext";
 import { extractSandboxStartError } from "./utils/sandboxErrors";
 import { getWwwClient } from "./utils/wwwClient";
 import { getWwwOpenApiModule } from "./utils/wwwOpenApiModule";
+import { CmuxVSCodeInstance } from "./vscode/CmuxVSCodeInstance";
 import { DockerVSCodeInstance } from "./vscode/DockerVSCodeInstance";
+import { VSCodeInstance } from "./vscode/VSCodeInstance";
 import {
   getVSCodeServeWebBaseUrl,
   getVSCodeServeWebPort,
@@ -1746,6 +1752,63 @@ export function setupSocketHandlers(
               error
             );
           }
+
+          if (linkedFromCloudTaskRunId) {
+            // When creating a local workspace linked to a cloud task run,
+            // we need to first download all existing cloud changes before
+            // starting the local-to-cloud sync. Otherwise, the local-to-cloud
+            // sync would overwrite the cloud changes with the fresh git clone.
+            const cloudInstance = VSCodeInstance.getInstance(linkedFromCloudTaskRunId);
+            if (cloudInstance && cloudInstance.isWorkerConnected()) {
+              try {
+                const workerSocket = cloudInstance.getWorkerSocket();
+
+                // First, tell the cloud worker to start watching files and prepare for syncing
+                workerSocket.emit("worker:start-cloud-sync", {
+                  taskRunId: linkedFromCloudTaskRunId,
+                  workspacePath: "/workspace", // Default cloud workspace path
+                });
+
+                // Request a full sync of all existing cloud files
+                // Wait for the callback to ensure files are sent before starting local-to-cloud sync
+                await new Promise<void>((resolve) => {
+                  workerSocket.emit(
+                    "worker:request-full-cloud-sync",
+                    { taskRunId: linkedFromCloudTaskRunId },
+                    (result: { filesSent: number }) => {
+                      serverLogger.info(
+                        `[create-local-workspace] Full cloud sync completed: ${result.filesSent} files received from cloud`
+                      );
+                      resolve();
+                    }
+                  );
+
+                  // Timeout after 30 seconds in case of issues
+                  setTimeout(() => {
+                    serverLogger.warn(
+                      "[create-local-workspace] Full cloud sync timed out after 30s"
+                    );
+                    resolve();
+                  }, 30000);
+                });
+              } catch (error) {
+                serverLogger.warn(
+                  "[create-local-workspace] Failed to perform initial cloud sync, starting local-to-cloud sync anyway",
+                  error
+                );
+              }
+            } else {
+              serverLogger.info(
+                "[create-local-workspace] Cloud worker not connected, skipping initial cloud download"
+              );
+            }
+
+            // Now start the local-to-cloud sync
+            void localCloudSyncManager.startSync({
+              localWorkspacePath: resolvedWorkspacePath,
+              cloudTaskRunId: linkedFromCloudTaskRunId,
+            });
+          }
         } catch (error) {
           serverLogger.error("Error creating local workspace:", error);
           const message =
@@ -3243,6 +3306,7 @@ ${title}`;
           if (worktreePaths.length > 0) {
             for (const worktreePath of worktreePaths) {
               gitDiffManager.unwatchWorkspace(worktreePath);
+              localCloudSyncManager.stopSync(worktreePath);
             }
             serverLogger.info(
               `Stopped git diff watchers for archived task ${taskId}: ${worktreePaths.join(", ")}`
@@ -3276,6 +3340,191 @@ ${title}`;
           success: false,
           error: error instanceof Error ? error.message : "Unknown error",
         });
+      }
+    });
+
+    socket.on("trigger-local-cloud-sync", async (data, callback) => {
+      serverLogger.info(
+        `[trigger-local-cloud-sync] RECEIVED event:`,
+        JSON.stringify(data)
+      );
+      try {
+        const parsed = TriggerLocalCloudSyncSchema.safeParse(data);
+        if (!parsed.success) {
+          const response: TriggerLocalCloudSyncResponse = {
+            success: false,
+            error: `Invalid request: ${parsed.error.message}`,
+          };
+          callback(response);
+          return;
+        }
+
+        const { localWorkspacePath, cloudTaskRunId } = parsed.data;
+
+        // Basic path validation - must be absolute and not contain traversal
+        if (!path.isAbsolute(localWorkspacePath)) {
+          const response: TriggerLocalCloudSyncResponse = {
+            success: false,
+            error: "Invalid workspace path: must be absolute",
+          };
+          callback(response);
+          return;
+        }
+
+        // Check for path traversal attempts (.. in the path after normalization)
+        const normalizedPath = path.resolve(localWorkspacePath);
+        if (normalizedPath.includes("/../") || normalizedPath.endsWith("/..")) {
+          serverLogger.warn(
+            `[trigger-local-cloud-sync] Path traversal attempt: ${localWorkspacePath}`
+          );
+          const response: TriggerLocalCloudSyncResponse = {
+            success: false,
+            error: "Invalid workspace path",
+          };
+          callback(response);
+          return;
+        }
+
+        serverLogger.info(
+          `[trigger-local-cloud-sync] Manual sync requested: ${localWorkspacePath} -> ${cloudTaskRunId}`
+        );
+        console.log(
+          `[trigger-local-cloud-sync] Manual sync requested: ${localWorkspacePath} -> ${cloudTaskRunId}`
+        );
+
+        // Check if sync session exists (use original path for lookup)
+        const status = localCloudSyncManager.getStatus(localWorkspacePath);
+
+        // Always check if we need to reconnect to the cloud workspace
+        // This handles server restarts where VSCodeInstance is lost but cloud workspace is still running
+        const existingInstance = VSCodeInstance.getInstance(cloudTaskRunId);
+        console.log(
+          `[trigger-local-cloud-sync] Reconnect check: existingInstance=${!!existingInstance}, workerConnected=${existingInstance?.isWorkerConnected() ?? "N/A"}`
+        );
+        if (!existingInstance || !existingInstance.isWorkerConnected()) {
+          // Query task run to get worker URL for reconnection
+          const taskRun = await getConvex().query(api.taskRuns.get, {
+            teamSlugOrId: safeTeam,
+            id: cloudTaskRunId,
+          });
+
+          if (!taskRun) {
+            serverLogger.warn(
+              `[trigger-local-cloud-sync] Task run not found or unauthorized: ${cloudTaskRunId}`
+            );
+            const response: TriggerLocalCloudSyncResponse = {
+              success: false,
+              error: "Task run not found or unauthorized",
+            };
+            callback(response);
+            return;
+          }
+
+          let workerUrl = taskRun.vscode?.ports?.worker;
+          const vscodeStatus = taskRun.vscode?.status;
+          const vscodeUrl = taskRun.vscode?.url;
+
+          // For Morph instances, derive worker URL from VSCode URL if not stored
+          // VSCode is on port 39378, worker is on port 39377
+          if (
+            !workerUrl &&
+            vscodeUrl &&
+            taskRun.vscode?.provider === "morph"
+          ) {
+            workerUrl = vscodeUrl.replace("port-39378", "port-39377");
+            serverLogger.info(
+              `[trigger-local-cloud-sync] Derived worker URL from VSCode URL: ${workerUrl}`
+            );
+          }
+
+          if (
+            workerUrl &&
+            vscodeStatus === "running" &&
+            taskRun.vscode?.provider !== "docker"
+          ) {
+            serverLogger.info(
+              `[trigger-local-cloud-sync] No VSCodeInstance or worker disconnected, attempting to reconnect to worker at ${workerUrl}`
+            );
+            try {
+              const reconnectedInstance = await CmuxVSCodeInstance.reconnect({
+                config: {
+                  taskRunId: cloudTaskRunId,
+                  taskId: taskRun.taskId,
+                  teamSlugOrId: safeTeam,
+                },
+                workerUrl,
+                sandboxId: taskRun.vscode?.containerName,
+              });
+              serverLogger.info(
+                `[trigger-local-cloud-sync] Successfully reconnected to cloud workspace`
+              );
+
+              // Start file watch and cloud sync after reconnecting
+              // This is critical - without this, the cloud-to-local sync won't work
+              reconnectedInstance.startFileWatch("/root/workspace");
+              reconnectedInstance.startCloudSync();
+              serverLogger.info(
+                `[trigger-local-cloud-sync] Started file watch and cloud sync for reconnected instance`
+              );
+
+              // Set up sync-files event handler for cloud-to-local sync
+              reconnectedInstance.on(
+                "sync-files",
+                async (data: WorkerSyncFiles) => {
+                  serverLogger.info(
+                    `[trigger-local-cloud-sync] Sync files received after reconnect:`,
+                    { fileCount: data.files.length, taskRunId: data.taskRunId }
+                  );
+                  await localCloudSyncManager.handleCloudSync(data);
+                }
+              );
+            } catch (reconnectError) {
+              serverLogger.warn(
+                `[trigger-local-cloud-sync] Failed to reconnect to worker, will use lazy sync`,
+                reconnectError
+              );
+              // Continue anyway - lazy sync will handle it when worker becomes available
+            }
+          }
+        }
+
+        if (!status.found) {
+          // Start a new sync session if none exists
+          serverLogger.info(
+            `[trigger-local-cloud-sync] No existing session, starting new sync`
+          );
+          await localCloudSyncManager.startSync({
+            localWorkspacePath,
+            cloudTaskRunId,
+          });
+        }
+
+        // Trigger the sync (use original path for lookup)
+        const result =
+          await localCloudSyncManager.triggerSync(localWorkspacePath);
+
+        if (result.success) {
+          const response: TriggerLocalCloudSyncResponse = {
+            success: true,
+            message: `Queued ${result.filesQueued} files for sync`,
+            filesQueued: result.filesQueued,
+          };
+          callback(response);
+        } else {
+          const response: TriggerLocalCloudSyncResponse = {
+            success: false,
+            error: result.error,
+          };
+          callback(response);
+        }
+      } catch (error) {
+        serverLogger.error("[trigger-local-cloud-sync] Error:", error);
+        console.error("[trigger-local-cloud-sync] Error:", error);
+        const response: TriggerLocalCloudSyncResponse = {
+          success: false,
+          error: error instanceof Error ? error.message : "Unknown error",
+        };
+        callback(response);
       }
     });
   });

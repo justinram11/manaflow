@@ -353,6 +353,19 @@ export const ArchiveTaskSchema = z.object({
   taskId: typedZid("tasks"),
 });
 
+// Trigger local-to-cloud sync schema
+export const TriggerLocalCloudSyncSchema = z.object({
+  localWorkspacePath: z.string(),
+  cloudTaskRunId: typedZid("taskRuns"),
+});
+
+export const TriggerLocalCloudSyncResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string().optional(),
+  filesQueued: z.number().optional(),
+  error: z.string().optional(),
+});
+
 export const SpawnFromCommentSchema = z.object({
   url: z.string(),
   page: z.string(),
@@ -487,6 +500,10 @@ export type GitHubCreateDraftPr = z.infer<typeof GitHubCreateDraftPrSchema>;
 export type GitHubSyncPrState = z.infer<typeof GitHubSyncPrStateSchema>;
 export type GitHubMergeBranch = z.infer<typeof GitHubMergeBranchSchema>;
 export type ArchiveTask = z.infer<typeof ArchiveTaskSchema>;
+export type TriggerLocalCloudSync = z.infer<typeof TriggerLocalCloudSyncSchema>;
+export type TriggerLocalCloudSyncResponse = z.infer<
+  typeof TriggerLocalCloudSyncResponseSchema
+>;
 export type SpawnFromComment = z.infer<typeof SpawnFromCommentSchema>;
 export type ProviderStatus = z.infer<typeof ProviderStatusSchema>;
 export type DockerStatus = z.infer<typeof DockerStatusSchema>;
@@ -619,6 +636,11 @@ export interface ClientToServerEvents {
       vscodeUrl?: string;
       error?: string;
     }) => void
+  ) => void;
+  // Trigger local-to-cloud file sync
+  "trigger-local-cloud-sync": (
+    data: TriggerLocalCloudSync,
+    callback: (response: TriggerLocalCloudSyncResponse) => void
   ) => void;
 }
 

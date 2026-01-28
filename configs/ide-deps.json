@@ -33,6 +33,6 @@
     "opencode-ai": "1.1.36",
     "codebuff": "1.0.602",
     "@devcontainers/cli": "0.82.0",
-    "@sourcegraph/amp": "0.0.1769553623-ge42d35"
+    "@sourcegraph/amp": "0.0.1769549468-gbb40bb"
   }
 }
