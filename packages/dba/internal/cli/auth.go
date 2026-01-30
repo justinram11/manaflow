@@ -140,6 +140,38 @@ var authWhoamiCmd = &cobra.Command{
 	RunE:  authStatusCmd.RunE, // Alias for status
 }
 
+// Root-level shorthand commands (aliases for auth subcommands)
+var loginCmd = &cobra.Command{
+	Use:   "login",
+	Short: "Login via browser (shorthand for 'dba auth login')",
+	Long: `Authenticate with cmux via your browser.
+
+This opens your default browser to complete the authentication flow.
+Once authenticated, your credentials are stored securely and shared
+with the cmux CLI.
+
+This is a shorthand for 'dba auth login'.`,
+	RunE: authLoginCmd.RunE,
+}
+
+var logoutCmd = &cobra.Command{
+	Use:   "logout",
+	Short: "Logout and clear credentials (shorthand for 'dba auth logout')",
+	Long: `Remove stored authentication credentials.
+
+This is a shorthand for 'dba auth logout'.`,
+	RunE: authLogoutCmd.RunE,
+}
+
+var whoamiCmd = &cobra.Command{
+	Use:   "whoami",
+	Short: "Show current user (shorthand for 'dba auth whoami')",
+	Long: `Display the currently authenticated user.
+
+This is a shorthand for 'dba auth whoami'.`,
+	RunE: authStatusCmd.RunE,
+}
+
 func init() {
 	authCmd.AddCommand(authLoginCmd)
 	authCmd.AddCommand(authLogoutCmd)

@@ -25,6 +25,7 @@ type Instance struct {
 	VSCodeURL       string `json:"vscodeUrl"`
 	VNCURL          string `json:"vncUrl"`
 	WorkerURL       string `json:"workerUrl"`
+	ChromeURL       string `json:"chromeUrl"` // Chrome DevTools proxy URL
 }
 
 // Client is a simple VM management client
@@ -337,6 +338,63 @@ func (c *Client) GetSSHCredentials(ctx context.Context, instanceID string) (stri
 	return result.SSHCommand, nil
 }
 
+func sshOptions() []string {
+	return []string{
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+	}
+}
+
+func resolveRemoteSyncPath(ctx context.Context, sshTarget string) (string, error) {
+	cmdArgs := append(sshOptions(), sshTarget, "sh", "-lc",
+		`for p in /home/dba/workspace /root/workspace /workspace /home/user/project; do
+  if [ -d "$p" ]; then
+    echo "$p"
+    exit 0
+  fi
+done
+echo "$HOME"`,
+	)
+	cmd := exec.CommandContext(ctx, "ssh", cmdArgs...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		trimmed := strings.TrimSpace(string(output))
+		if trimmed != "" {
+			return "", fmt.Errorf("failed to determine remote sync path: %w: %s", err, trimmed)
+		}
+		return "", fmt.Errorf("failed to determine remote sync path: %w", err)
+	}
+
+	remotePath := strings.TrimSpace(string(output))
+	if remotePath == "" {
+		return "", fmt.Errorf("remote sync path is empty")
+	}
+
+	return remotePath, nil
+}
+
+func ensureRemoteDir(ctx context.Context, sshTarget, remotePath string) error {
+	cmdArgs := append(sshOptions(), sshTarget, "mkdir", "-p", remotePath)
+	cmd := exec.CommandContext(ctx, "ssh", cmdArgs...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		trimmed := strings.TrimSpace(string(output))
+		if trimmed != "" {
+			return fmt.Errorf("failed to create remote directory: %w: %s", err, trimmed)
+		}
+		return fmt.Errorf("failed to create remote directory: %w", err)
+	}
+
+	return nil
+}
+
+func formatRemotePath(remotePath string) string {
+	if strings.HasSuffix(remotePath, "/") {
+		return remotePath
+	}
+	return remotePath + "/"
+}
+
 // SyncToVM syncs a local directory to the VM using rsync over SSH
 func (c *Client) SyncToVM(ctx context.Context, instanceID string, localPath string) error {
 	// Get SSH credentials
@@ -352,6 +410,17 @@ func (c *Client) SyncToVM(ctx context.Context, instanceID string, localPath stri
 	}
 	sshTarget := parts[1] // token@ssh.cloud.morph.so
 
+	remotePath, err := resolveRemoteSyncPath(ctx, sshTarget)
+	if err != nil {
+		return err
+	}
+
+	if err := ensureRemoteDir(ctx, sshTarget, remotePath); err != nil {
+		return err
+	}
+
+	remoteDest := formatRemotePath(remotePath)
+
 	// Use rsync to sync files
 	// Exclude common large/generated directories
 	rsyncArgs := []string{
@@ -366,9 +435,9 @@ func (c *Client) SyncToVM(ctx context.Context, instanceID string, localPath stri
 		"--exclude", ".venv",
 		"--exclude", "venv",
 		"--exclude", "target",
-		"-e", "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
+		"-e", "ssh " + strings.Join(sshOptions(), " "),
 		localPath + "/",
-		fmt.Sprintf("%s:/home/user/project/", sshTarget),
+		fmt.Sprintf("%s:%s", sshTarget, remoteDest),
 	}
 
 	cmd := exec.CommandContext(ctx, "rsync", rsyncArgs...)
@@ -397,6 +466,13 @@ func (c *Client) SyncFromVM(ctx context.Context, instanceID string, localPath st
 	}
 	sshTarget := parts[1]
 
+	remotePath, err := resolveRemoteSyncPath(ctx, sshTarget)
+	if err != nil {
+		return err
+	}
+
+	remoteSource := formatRemotePath(remotePath)
+
 	// Ensure local directory exists
 	if err := os.MkdirAll(localPath, 0755); err != nil {
 		return fmt.Errorf("failed to create local directory: %w", err)
@@ -413,8 +489,8 @@ func (c *Client) SyncFromVM(ctx context.Context, instanceID string, localPath st
 		"--exclude", ".venv",
 		"--exclude", "venv",
 		"--exclude", "target",
-		"-e", "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
-		fmt.Sprintf("%s:/home/user/project/", sshTarget),
+		"-e", "ssh " + strings.Join(sshOptions(), " "),
+		fmt.Sprintf("%s:%s", sshTarget, remoteSource),
 		filepath.Clean(localPath) + "/",
 	}
 

@@ -19,7 +19,7 @@ var rootCmd = &cobra.Command{
 	Long: `DBA (DevBox Agent) manages cloud VMs for development.
 
 Quick start:
-  dba auth login                 # Authenticate
+  dba login                      # Authenticate (or: dba auth login)
   dba start ./my-project         # Create VM, sync directory → returns ID
   dba code <id>                  # Open VS Code
   dba ssh <id>                   # SSH into VM
@@ -43,6 +43,11 @@ func init() {
 
 	// Auth commands
 	rootCmd.AddCommand(authCmd)
+
+	// Root-level shorthand commands for auth (convenience aliases)
+	rootCmd.AddCommand(loginCmd)
+	rootCmd.AddCommand(logoutCmd)
+	rootCmd.AddCommand(whoamiCmd)
 }
 
 // Execute runs the root command

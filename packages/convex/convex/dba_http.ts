@@ -500,7 +500,8 @@ async function handleExecCommand(
     }
 
     // Morph API expects command as an array
-    const commandArray = Array.isArray(command) ? command : ["bash", "-c", command];
+    // Split string commands into array; don't wrap in bash -c as Morph handles execution
+    const commandArray = Array.isArray(command) ? command : command.split(" ");
 
     // Execute command via Morph API
     const morphResponse = await morphFetch(
@@ -762,20 +763,31 @@ async function handleGetInstanceSsh(
     }
 
     // Get SSH credentials from Morph API
-    const morphResponse = await morphFetch(
-      `/instance/${providerInstanceId}/ssh_key`
+    const primaryResponse = await morphFetch(
+      `/instance/${providerInstanceId}/ssh/key`
     );
+    let morphResponse = primaryResponse;
 
-    if (!morphResponse.ok) {
-      const errorText = await morphResponse.text();
-      console.error("[dba.ssh] Morph API error:", {
-        status: morphResponse.status,
-        body: errorText.slice(0, 500),
-      });
-      return jsonResponse(
-        { code: 502, message: "Failed to get SSH credentials" },
-        502
+    if (!primaryResponse.ok) {
+      const fallbackResponse = await morphFetch(
+        `/instance/${providerInstanceId}/ssh_key`
       );
+      if (fallbackResponse.ok) {
+        morphResponse = fallbackResponse;
+      } else {
+        const primaryText = await primaryResponse.text();
+        const fallbackText = await fallbackResponse.text();
+        console.error("[dba.ssh] Morph API error:", {
+          primaryStatus: primaryResponse.status,
+          primaryBody: primaryText.slice(0, 500),
+          fallbackStatus: fallbackResponse.status,
+          fallbackBody: fallbackText.slice(0, 500),
+        });
+        return jsonResponse(
+          { code: 502, message: "Failed to get SSH credentials" },
+          502
+        );
+      }
     }
 
     const sshData = (await morphResponse.json()) as {
