@@ -1,0 +1,430 @@
+// Package vm provides a simple client for managing Morph VMs via Convex API.
+package vm
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/dba-cli/dba/internal/auth"
+)
+
+// Instance represents a VM instance
+type Instance struct {
+	ID              string `json:"id"`              // Our dba ID (Convex doc ID)
+	MorphInstanceID string `json:"morphInstanceId"` // Internal Morph ID
+	Status          string `json:"status"`
+	VSCodeURL       string `json:"vscodeUrl"`
+	VNCURL          string `json:"vncUrl"`
+	WorkerURL       string `json:"workerUrl"`
+}
+
+// Client is a simple VM management client
+type Client struct {
+	httpClient *http.Client
+	baseURL    string
+	teamSlug   string
+}
+
+// NewClient creates a new VM client
+func NewClient() (*Client, error) {
+	cfg := auth.GetConfig()
+	return &Client{
+		httpClient: &http.Client{Timeout: 60 * time.Second},
+		baseURL:    cfg.ConvexSiteURL,
+	}, nil
+}
+
+// SetTeamSlug sets the team slug for API calls
+func (c *Client) SetTeamSlug(teamSlug string) {
+	c.teamSlug = teamSlug
+}
+
+// doRequest makes an authenticated request to the API
+func (c *Client) doRequest(ctx context.Context, method, path string, body interface{}) (*http.Response, error) {
+	accessToken, err := auth.GetAccessToken()
+	if err != nil {
+		return nil, fmt.Errorf("not authenticated: %w", err)
+	}
+
+	var bodyReader io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		bodyReader = bytes.NewReader(data)
+	}
+
+	url := c.baseURL + path
+	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	return c.httpClient.Do(req)
+}
+
+// CreateOptions for creating a VM
+type CreateOptions struct {
+	SnapshotID string
+	Name       string
+	TTLSeconds int
+}
+
+// CreateInstance creates a new VM instance
+func (c *Client) CreateInstance(ctx context.Context, opts CreateOptions) (*Instance, error) {
+	if c.teamSlug == "" {
+		return nil, fmt.Errorf("team slug not set")
+	}
+
+	body := map[string]interface{}{
+		"teamSlugOrId": c.teamSlug,
+	}
+	if opts.SnapshotID != "" {
+		body["snapshotId"] = opts.SnapshotID
+	}
+	if opts.Name != "" {
+		body["name"] = opts.Name
+	}
+	if opts.TTLSeconds > 0 {
+		body["ttlSeconds"] = opts.TTLSeconds
+	}
+
+	resp, err := c.doRequest(ctx, "POST", "/api/v1/dba/instances", body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result Instance
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// GetInstance gets the status of an instance
+func (c *Client) GetInstance(ctx context.Context, instanceID string) (*Instance, error) {
+	if c.teamSlug == "" {
+		return nil, fmt.Errorf("team slug not set")
+	}
+
+	path := fmt.Sprintf("/api/v1/dba/instances/%s?teamSlugOrId=%s", instanceID, c.teamSlug)
+	resp, err := c.doRequest(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result Instance
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// StopInstance stops (deletes) an instance
+func (c *Client) StopInstance(ctx context.Context, instanceID string) error {
+	if c.teamSlug == "" {
+		return fmt.Errorf("team slug not set")
+	}
+
+	body := map[string]interface{}{
+		"teamSlugOrId": c.teamSlug,
+	}
+
+	resp, err := c.doRequest(ctx, "POST", fmt.Sprintf("/api/v1/dba/instances/%s/stop", instanceID), body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("API error (%d): %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
+// PauseInstance pauses an instance
+func (c *Client) PauseInstance(ctx context.Context, instanceID string) error {
+	if c.teamSlug == "" {
+		return fmt.Errorf("team slug not set")
+	}
+
+	body := map[string]interface{}{
+		"teamSlugOrId": c.teamSlug,
+	}
+
+	resp, err := c.doRequest(ctx, "POST", fmt.Sprintf("/api/v1/dba/instances/%s/pause", instanceID), body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("API error (%d): %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
+// ResumeInstance resumes a paused instance
+func (c *Client) ResumeInstance(ctx context.Context, instanceID string) error {
+	if c.teamSlug == "" {
+		return fmt.Errorf("team slug not set")
+	}
+
+	body := map[string]interface{}{
+		"teamSlugOrId": c.teamSlug,
+	}
+
+	resp, err := c.doRequest(ctx, "POST", fmt.Sprintf("/api/v1/dba/instances/%s/resume", instanceID), body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("API error (%d): %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
+// ListInstances lists all instances for the team
+func (c *Client) ListInstances(ctx context.Context) ([]Instance, error) {
+	if c.teamSlug == "" {
+		return nil, fmt.Errorf("team slug not set")
+	}
+
+	path := fmt.Sprintf("/api/v1/dba/instances?teamSlugOrId=%s", c.teamSlug)
+	resp, err := c.doRequest(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Instances []Instance `json:"instances"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result.Instances, nil
+}
+
+// WaitForReady waits for an instance to be ready
+func (c *Client) WaitForReady(ctx context.Context, instanceID string, timeout time.Duration) (*Instance, error) {
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		instance, err := c.GetInstance(ctx, instanceID)
+		if err != nil {
+			// Keep trying on transient errors
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		if instance.Status == "running" {
+			return instance, nil
+		}
+
+		if instance.Status == "stopped" || instance.Status == "error" {
+			return nil, fmt.Errorf("instance failed with status: %s", instance.Status)
+		}
+
+		time.Sleep(2 * time.Second)
+	}
+
+	return nil, fmt.Errorf("timeout waiting for instance to be ready")
+}
+
+// ExecCommand executes a command in the VM
+func (c *Client) ExecCommand(ctx context.Context, instanceID string, command string) (string, string, int, error) {
+	if c.teamSlug == "" {
+		return "", "", -1, fmt.Errorf("team slug not set")
+	}
+
+	body := map[string]interface{}{
+		"teamSlugOrId": c.teamSlug,
+		"command":      command,
+		"timeout":      60,
+	}
+
+	resp, err := c.doRequest(ctx, "POST", fmt.Sprintf("/api/v1/dba/instances/%s/exec", instanceID), body)
+	if err != nil {
+		return "", "", -1, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", "", -1, fmt.Errorf("API error (%d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Stdout   string `json:"stdout"`
+		Stderr   string `json:"stderr"`
+		ExitCode int    `json:"exit_code"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", "", -1, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result.Stdout, result.Stderr, result.ExitCode, nil
+}
+
+// GetSSHCredentials gets SSH credentials for an instance
+func (c *Client) GetSSHCredentials(ctx context.Context, instanceID string) (string, error) {
+	if c.teamSlug == "" {
+		return "", fmt.Errorf("team slug not set")
+	}
+
+	path := fmt.Sprintf("/api/v1/dba/instances/%s/ssh?teamSlugOrId=%s", instanceID, c.teamSlug)
+	resp, err := c.doRequest(ctx, "GET", path, nil)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("API error (%d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		SSHCommand string `json:"sshCommand"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result.SSHCommand, nil
+}
+
+// SyncToVM syncs a local directory to the VM using rsync over SSH
+func (c *Client) SyncToVM(ctx context.Context, instanceID string, localPath string) error {
+	// Get SSH credentials
+	sshCmd, err := c.GetSSHCredentials(ctx, instanceID)
+	if err != nil {
+		return fmt.Errorf("failed to get SSH credentials: %w", err)
+	}
+
+	// Parse SSH command: "ssh token@ssh.cloud.morph.so"
+	parts := strings.Fields(sshCmd)
+	if len(parts) < 2 {
+		return fmt.Errorf("invalid SSH command format")
+	}
+	sshTarget := parts[1] // token@ssh.cloud.morph.so
+
+	// Use rsync to sync files
+	// Exclude common large/generated directories
+	rsyncArgs := []string{
+		"-avz",
+		"--delete",
+		"--exclude", ".git",
+		"--exclude", "node_modules",
+		"--exclude", ".next",
+		"--exclude", "dist",
+		"--exclude", "build",
+		"--exclude", "__pycache__",
+		"--exclude", ".venv",
+		"--exclude", "venv",
+		"--exclude", "target",
+		"-e", "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
+		localPath + "/",
+		fmt.Sprintf("%s:/home/user/project/", sshTarget),
+	}
+
+	cmd := exec.CommandContext(ctx, "rsync", rsyncArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("rsync failed: %w", err)
+	}
+
+	return nil
+}
+
+// SyncFromVM syncs files from the VM to a local directory
+func (c *Client) SyncFromVM(ctx context.Context, instanceID string, localPath string) error {
+	// Get SSH credentials
+	sshCmd, err := c.GetSSHCredentials(ctx, instanceID)
+	if err != nil {
+		return fmt.Errorf("failed to get SSH credentials: %w", err)
+	}
+
+	// Parse SSH command
+	parts := strings.Fields(sshCmd)
+	if len(parts) < 2 {
+		return fmt.Errorf("invalid SSH command format")
+	}
+	sshTarget := parts[1]
+
+	// Ensure local directory exists
+	if err := os.MkdirAll(localPath, 0755); err != nil {
+		return fmt.Errorf("failed to create local directory: %w", err)
+	}
+
+	// Use rsync to sync files
+	rsyncArgs := []string{
+		"-avz",
+		"--exclude", "node_modules",
+		"--exclude", ".next",
+		"--exclude", "dist",
+		"--exclude", "build",
+		"--exclude", "__pycache__",
+		"--exclude", ".venv",
+		"--exclude", "venv",
+		"--exclude", "target",
+		"-e", "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
+		fmt.Sprintf("%s:/home/user/project/", sshTarget),
+		filepath.Clean(localPath) + "/",
+	}
+
+	cmd := exec.CommandContext(ctx, "rsync", rsyncArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("rsync failed: %w", err)
+	}
+
+	return nil
+}
