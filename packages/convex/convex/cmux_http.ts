@@ -369,17 +369,16 @@ export const createInstance = httpAction(async (ctx, req) => {
         timings.mkdir = Date.now() - mkdirStart;
         console.log(`[cmux.create] mkdir completed in ${timings.mkdir}ms`);
 
-        // Write owner ID - use sh -c for shell redirection since Morph exec
-        // runs commands directly without a shell
+        // Write owner ID - Morph exec wraps commands in shell, so pass args directly
         const ownerId = identity!.subject;
         const ownerIdStart = Date.now();
-        await runExec(["sh", "-c", `echo '${ownerId}' > /var/run/cmux/owner-id`], "write owner-id");
+        await runExec(["echo", ownerId, ">", "/var/run/cmux/owner-id"], "write owner-id");
         timings.writeOwnerId = Date.now() - ownerIdStart;
         console.log(`[cmux.create] write owner-id completed in ${timings.writeOwnerId}ms`);
 
         // Write Stack Auth project ID
         const projectIdStart = Date.now();
-        await runExec(["sh", "-c", `echo '${stackProjectId}' > /var/run/cmux/stack-project-id`], "write project-id");
+        await runExec(["echo", stackProjectId, ">", "/var/run/cmux/stack-project-id"], "write project-id");
         timings.writeProjectId = Date.now() - projectIdStart;
         console.log(`[cmux.create] write project-id completed in ${timings.writeProjectId}ms`);
 
