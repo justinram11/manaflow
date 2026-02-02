@@ -319,6 +319,24 @@ export const createInstance = httpAction(async (ctx, req) => {
     const workerUrl = exposedServices.workerUrl ?? bootUrls.workerUrl;
     const proxyUrls = buildDbaProxyUrls(workerUrl);
 
+    // Helper to clean up orphaned Morph VM on failure
+    // This prevents resource leaks when subsequent operations fail after VM creation
+    const cleanupMorphInstance = async (reason: string) => {
+      console.warn(`[cmux.create] Cleaning up orphaned Morph VM ${morphData.id}: ${reason}`);
+      try {
+        const deleteResponse = await morphFetch(`/instance/${morphData.id}`, {
+          method: "DELETE",
+        });
+        if (deleteResponse.ok) {
+          console.log(`[cmux.create] Successfully deleted orphaned VM ${morphData.id}`);
+        } else {
+          console.error(`[cmux.create] Failed to delete orphaned VM ${morphData.id}: ${deleteResponse.status}`);
+        }
+      } catch (cleanupError) {
+        console.error(`[cmux.create] Error deleting orphaned VM ${morphData.id}:`, cleanupError);
+      }
+    };
+
     // Inject auth config for worker daemon (JWT validation)
     // This writes the owner ID and Stack Auth project ID to the VM
     const stackProjectId = env.NEXT_PUBLIC_STACK_PROJECT_ID;
@@ -375,7 +393,8 @@ export const createInstance = httpAction(async (ctx, req) => {
         console.log(`[cmux.create] Auth config total: ${timings.authTotal}ms`);
       } catch (e) {
         console.error("[cmux.create] Failed to inject auth config:", e);
-        // Return error instead of silently continuing with broken auth
+        // Clean up the orphaned VM before returning error
+        await cleanupMorphInstance(`Auth config injection failed: ${e instanceof Error ? e.message : "unknown error"}`);
         return jsonResponse(
           { code: 500, message: `Failed to configure worker auth: ${e instanceof Error ? e.message : "unknown error"}` },
           500
@@ -388,15 +407,22 @@ export const createInstance = httpAction(async (ctx, req) => {
     // Store the instance in Convex with provider mapping (no URL caching)
     console.log("[cmux.create] Storing in Convex...");
     const convexStart = Date.now();
-    const result = await ctx.runMutation(devboxApi.create, {
-      teamSlugOrId: body.teamSlugOrId,
-      providerInstanceId: morphData.id,
-      provider: "morph",
-      name: body.name,
-      snapshotId,
-      metadata: body.metadata,
-      source: "cli",
-    }) as { id: string; isExisting: boolean };
+    let result: { id: string; isExisting: boolean };
+    try {
+      result = await ctx.runMutation(devboxApi.create, {
+        teamSlugOrId: body.teamSlugOrId,
+        providerInstanceId: morphData.id,
+        provider: "morph",
+        name: body.name,
+        snapshotId,
+        metadata: body.metadata,
+        source: "cli",
+      }) as { id: string; isExisting: boolean };
+    } catch (convexError) {
+      // Convex mutation failed (e.g., invalid team) - clean up the Morph VM
+      await cleanupMorphInstance(`Convex mutation failed: ${convexError instanceof Error ? convexError.message : "unknown error"}`);
+      throw convexError; // Re-throw to be caught by outer catch
+    }
     timings.convexStore = Date.now() - convexStart;
     console.log(`[cmux.create] Convex store completed in ${timings.convexStore}ms`);
 

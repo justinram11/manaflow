@@ -217,15 +217,39 @@ export const createInstance = httpAction(async (ctx, req) => {
     const { vscodeUrl, workerUrl, vncUrl } =
       extractNetworkingUrls(httpServices);
 
+    // Helper to clean up orphaned Morph VM on failure
+    const cleanupMorphInstance = async (reason: string) => {
+      console.warn(`[devbox.create] Cleaning up orphaned Morph VM ${morphData.id}: ${reason}`);
+      try {
+        const deleteResponse = await morphFetch(`/instance/${morphData.id}`, {
+          method: "DELETE",
+        });
+        if (deleteResponse.ok) {
+          console.log(`[devbox.create] Successfully deleted orphaned VM ${morphData.id}`);
+        } else {
+          console.error(`[devbox.create] Failed to delete orphaned VM ${morphData.id}: ${deleteResponse.status}`);
+        }
+      } catch (cleanupError) {
+        console.error(`[devbox.create] Error deleting orphaned VM ${morphData.id}:`, cleanupError);
+      }
+    };
+
     // Store the instance in Convex
-    const result = await ctx.runMutation(devboxApi.create, {
-      teamSlugOrId: body.teamSlugOrId,
-      providerInstanceId: morphData.id,
-      provider: "morph",
-      name: body.name,
-      snapshotId: body.snapshotId,
-      metadata: body.metadata,
-    }) as { id: string; isExisting: boolean };
+    let result: { id: string; isExisting: boolean };
+    try {
+      result = await ctx.runMutation(devboxApi.create, {
+        teamSlugOrId: body.teamSlugOrId,
+        providerInstanceId: morphData.id,
+        provider: "morph",
+        name: body.name,
+        snapshotId: body.snapshotId,
+        metadata: body.metadata,
+      }) as { id: string; isExisting: boolean };
+    } catch (convexError) {
+      // Convex mutation failed (e.g., invalid team) - clean up the Morph VM
+      await cleanupMorphInstance(`Convex mutation failed: ${convexError instanceof Error ? convexError.message : "unknown error"}`);
+      throw convexError; // Re-throw to be caught by outer catch
+    }
 
     return jsonResponse({
       id: result.id,
