@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/cmux-cli/cmux-devbox/internal/auth"
@@ -177,9 +176,9 @@ func runPtySession(wsURL string) error {
 	}
 	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
-	// Handle terminal resize
+	// Handle terminal resize (Unix only, no-op on Windows)
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGWINCH)
+	setupResizeHandler(sigCh)
 	go func() {
 		for range sigCh {
 			width, height, err := term.GetSize(int(os.Stdin.Fd()))

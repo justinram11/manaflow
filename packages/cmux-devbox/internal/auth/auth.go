@@ -28,13 +28,13 @@ const (
 	DevProjectID      = "1467bed0-8522-45ee-a8d8-055de324118c"
 	DevPublishableKey = "pck_pt4nwry6sdskews2pxk4g2fbe861ak2zvaf3mqendspa0"
 	DevCmuxURL         = "http://localhost:9779"
-	DevConvexSiteURL   = "https://famous-camel-162.convex.site" // Same as prod - Convex is always cloud
+	DevConvexSiteURL   = "https://famous-camel-162.convex.site" // Dev Convex HTTP site
 
 	// Prod Stack Auth project
 	ProdProjectID       = "8a877114-b905-47c5-8b64-3a2d90679577"
 	ProdPublishableKey  = "pck_8761mjjmyqc84e1e8ga3rn0k1nkggmggwa3pyzzgntv70"
 	ProdCmuxURL         = "https://cmux.sh"
-	ProdConvexSiteURL   = "https://famous-camel-162.convex.site" // Production Convex HTTP site
+	ProdConvexSiteURL   = "https://adorable-wombat-701.convex.site" // Production Convex HTTP site
 )
 
 // Config holds auth configuration
