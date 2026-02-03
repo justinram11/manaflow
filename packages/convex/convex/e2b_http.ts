@@ -72,6 +72,35 @@ const e2bInstancesApi = (internal as any).e2bInstances as {
   recordStopInternal: FunctionReference<"mutation", "internal">;
 };
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const devboxInternalApi = (internal as any).devboxInstances as {
+  getByIdInternal: FunctionReference<"query", "internal">;
+  getInfo: FunctionReference<"query", "internal">;
+};
+
+/**
+ * Resolve an instance ID to E2B provider instance ID.
+ * Accepts either cmux_xxx (devboxId) or raw E2B instance ID.
+ */
+async function resolveToE2BInstanceId(
+  ctx: ActionCtx,
+  id: string
+): Promise<{ e2bInstanceId: string; devboxId: string } | null> {
+  // If it's a cmux_ ID, look up the provider instance ID
+  if (id.startsWith("cmux_") || id.startsWith("dba_")) {
+    const instance = await ctx.runQuery(devboxInternalApi.getByIdInternal, { id });
+    if (!instance) return null;
+
+    const info = await ctx.runQuery(devboxInternalApi.getInfo, { devboxId: id });
+    if (!info || info.provider !== "e2b") return null;
+
+    return { e2bInstanceId: info.providerInstanceId, devboxId: id };
+  }
+
+  // Otherwise, assume it's already an E2B instance ID
+  return { e2bInstanceId: id, devboxId: "" };
+}
+
 // ============================================================================
 // POST /api/v1/e2b/instances - Create a new E2B instance
 // ============================================================================
@@ -185,10 +214,17 @@ export const listInstances = httpAction(async (ctx, req) => {
 
 async function handleGetInstance(
   ctx: ActionCtx,
-  e2bInstanceId: string,
+  instanceId: string,
   teamSlugOrId: string
 ): Promise<Response> {
   try {
+    // Resolve to E2B instance ID
+    const resolved = await resolveToE2BInstanceId(ctx, instanceId);
+    if (!resolved) {
+      return jsonResponse({ code: 404, message: "Instance not found" }, 404);
+    }
+    const { e2bInstanceId } = resolved;
+
     // Get instance from Convex
     const instance = await ctx.runQuery(devboxApi.getByProviderInstanceId, {
       teamSlugOrId,
@@ -232,11 +268,18 @@ async function handleGetInstance(
 
 async function handleExecCommand(
   ctx: ActionCtx,
-  e2bInstanceId: string,
+  instanceId: string,
   teamSlugOrId: string,
   command: string
 ): Promise<Response> {
   try {
+    // Resolve to E2B instance ID
+    const resolved = await resolveToE2BInstanceId(ctx, instanceId);
+    if (!resolved) {
+      return jsonResponse({ code: 404, message: "Instance not found" }, 404);
+    }
+    const { e2bInstanceId } = resolved;
+
     // Verify the user owns this instance
     const instance = await ctx.runQuery(devboxApi.getByProviderInstanceId, {
       teamSlugOrId,
@@ -273,11 +316,18 @@ async function handleExecCommand(
 
 async function handleExtendTimeout(
   ctx: ActionCtx,
-  e2bInstanceId: string,
+  instanceId: string,
   teamSlugOrId: string,
   timeoutMs?: number
 ): Promise<Response> {
   try {
+    // Resolve to E2B instance ID
+    const resolved = await resolveToE2BInstanceId(ctx, instanceId);
+    if (!resolved) {
+      return jsonResponse({ code: 404, message: "Instance not found" }, 404);
+    }
+    const { e2bInstanceId } = resolved;
+
     // Verify the user owns this instance
     const instance = await ctx.runQuery(devboxApi.getByProviderInstanceId, {
       teamSlugOrId,
@@ -312,10 +362,17 @@ async function handleExtendTimeout(
 
 async function handleStopInstance(
   ctx: ActionCtx,
-  e2bInstanceId: string,
+  instanceId: string,
   teamSlugOrId: string
 ): Promise<Response> {
   try {
+    // Resolve to E2B instance ID
+    const resolved = await resolveToE2BInstanceId(ctx, instanceId);
+    if (!resolved) {
+      return jsonResponse({ code: 404, message: "Instance not found" }, 404);
+    }
+    const { e2bInstanceId } = resolved;
+
     // Verify the user owns this instance
     const instance = await ctx.runQuery(devboxApi.getByProviderInstanceId, {
       teamSlugOrId,

@@ -345,6 +345,41 @@ http.route({
 });
 
 // =============================================================================
+// v2/cmux API - E2B-based cmux sandboxes (cmux-devbox-2 CLI)
+// =============================================================================
+
+http.route({
+  path: "/api/v2/cmux/instances",
+  method: "POST",
+  handler: e2bCreateInstance,
+});
+
+http.route({
+  path: "/api/v2/cmux/instances",
+  method: "GET",
+  handler: e2bListInstances,
+});
+
+http.route({
+  path: "/api/v2/cmux/templates",
+  method: "GET",
+  handler: e2bListTemplates,
+});
+
+// Instance-specific routes use pathPrefix to capture the instance ID
+http.route({
+  pathPrefix: "/api/v2/cmux/instances/",
+  method: "GET",
+  handler: e2bInstanceGetRouter,
+});
+
+http.route({
+  pathPrefix: "/api/v2/cmux/instances/",
+  method: "POST",
+  handler: e2bInstanceActionRouter,
+});
+
+// =============================================================================
 // v2/devbox API - Unified devbox management with provider selection (Morph/E2B)
 // =============================================================================
 
