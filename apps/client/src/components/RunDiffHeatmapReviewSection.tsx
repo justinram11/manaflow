@@ -7,9 +7,7 @@ import {
   type StreamFileState,
 } from "@/components/heatmap-diff-viewer";
 import type { HeatmapColorSettings } from "@/components/heatmap-diff-viewer/heatmap-gradient";
-import type { HeatmapModelOptionValue, TooltipLanguageValue } from "@/lib/heatmap-settings";
 import type { DiffViewerControls } from "@/components/heatmap-diff-viewer";
-import { kitties } from "./kitties";
 
 export interface RunDiffHeatmapReviewSectionProps {
   repoFullName: string;
@@ -27,17 +25,14 @@ export interface RunDiffHeatmapReviewSectionProps {
   >;
   heatmapThreshold: number;
   heatmapColors: HeatmapColorSettings;
-  heatmapModel: HeatmapModelOptionValue;
-  heatmapTooltipLanguage: TooltipLanguageValue;
   streamStateByFile?: Map<string, StreamFileState>;
   fileOutputs?: Array<{
     filePath: string;
     codexReviewOutput: unknown;
   }>;
-  onHeatmapThresholdChange?: (next: number) => void;
   onHeatmapColorsChange?: (next: HeatmapColorSettings) => void;
-  onHeatmapModelChange?: (next: HeatmapModelOptionValue) => void;
-  onHeatmapTooltipLanguageChange?: (next: TooltipLanguageValue) => void;
+  isHeatmapActive?: boolean;
+  onToggleHeatmap?: () => void;
 }
 
 function applyRepoPrefix(
@@ -70,14 +65,11 @@ export function RunDiffHeatmapReviewSection(
     metadataByRepo,
     heatmapThreshold,
     heatmapColors,
-    heatmapModel,
-    heatmapTooltipLanguage,
     streamStateByFile,
     fileOutputs,
-    onHeatmapThresholdChange,
     onHeatmapColorsChange,
-    onHeatmapModelChange,
-    onHeatmapTooltipLanguageChange,
+    isHeatmapActive,
+    onToggleHeatmap,
   } = props;
 
   const repoFullNames = useMemo(() => {
@@ -140,31 +132,6 @@ export function RunDiffHeatmapReviewSection(
 
   const combinedDiffs = combinedDiffsRef.current;
 
-  const kitty = useMemo(
-    () => kitties[Math.floor(Math.random() * kitties.length)],
-    []
-  );
-
-  if (combinedDiffs.length === 0) {
-    return (
-      <div className="grow bg-white dark:bg-neutral-900">
-        <div className="flex flex-col">
-          <hr className="border-neutral-200 dark:border-neutral-800" />
-          <div className="px-3 py-6 text-center">
-            <span className="select-none text-xs text-neutral-500 dark:text-neutral-400">
-              You've reached the end of the diff!
-            </span>
-            <div className="grid place-content-center">
-              <pre className="mt-2 pb-20 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
-                {kitty}
-              </pre>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <GitDiffHeatmapReviewViewer
       diffs={combinedDiffs}
@@ -174,13 +141,10 @@ export function RunDiffHeatmapReviewSection(
       shouldPrefixDiffs={shouldPrefix}
       heatmapThreshold={heatmapThreshold}
       heatmapColors={heatmapColors}
-      heatmapModel={heatmapModel}
-      heatmapTooltipLanguage={heatmapTooltipLanguage}
-      onHeatmapThresholdChange={onHeatmapThresholdChange}
       onHeatmapColorsChange={onHeatmapColorsChange}
-      onHeatmapModelChange={onHeatmapModelChange}
-      onHeatmapTooltipLanguageChange={onHeatmapTooltipLanguageChange}
       onControlsChange={onControlsChange}
+      isHeatmapActive={isHeatmapActive}
+      onToggleHeatmap={onToggleHeatmap}
     />
   );
 }
