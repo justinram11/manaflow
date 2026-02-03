@@ -50,6 +50,21 @@ import {
   instanceGetRouter as dbaInstanceGetRouter,
   instanceDeleteRouter as dbaInstanceDeleteRouter,
 } from "./dba_http";
+import {
+  createInstance as e2bCreateInstance,
+  listInstances as e2bListInstances,
+  listTemplates as e2bListTemplates,
+  instanceActionRouter as e2bInstanceActionRouter,
+  instanceGetRouter as e2bInstanceGetRouter,
+} from "./e2b_http";
+import {
+  createInstance as devboxV2CreateInstance,
+  listInstances as devboxV2ListInstances,
+  getConfig as devboxV2GetConfig,
+  getMe as devboxV2GetMe,
+  instanceActionRouter as devboxV2InstanceActionRouter,
+  instanceGetRouter as devboxV2InstanceGetRouter,
+} from "./devbox_v2_http";
 
 const http = httpRouter();
 
@@ -292,6 +307,82 @@ http.route({
   pathPrefix: "/api/v1/dba/instances/",
   method: "DELETE",
   handler: dbaInstanceDeleteRouter,
+});
+
+// =============================================================================
+// v1/e2b API - E2B instance management with user authentication
+// =============================================================================
+
+http.route({
+  path: "/api/v1/e2b/instances",
+  method: "POST",
+  handler: e2bCreateInstance,
+});
+
+http.route({
+  path: "/api/v1/e2b/instances",
+  method: "GET",
+  handler: e2bListInstances,
+});
+
+http.route({
+  path: "/api/v1/e2b/templates",
+  method: "GET",
+  handler: e2bListTemplates,
+});
+
+// Instance-specific routes use pathPrefix to capture the instance ID
+http.route({
+  pathPrefix: "/api/v1/e2b/instances/",
+  method: "GET",
+  handler: e2bInstanceGetRouter,
+});
+
+http.route({
+  pathPrefix: "/api/v1/e2b/instances/",
+  method: "POST",
+  handler: e2bInstanceActionRouter,
+});
+
+// =============================================================================
+// v2/devbox API - Unified devbox management with provider selection (Morph/E2B)
+// =============================================================================
+
+http.route({
+  path: "/api/v2/devbox/instances",
+  method: "POST",
+  handler: devboxV2CreateInstance,
+});
+
+http.route({
+  path: "/api/v2/devbox/instances",
+  method: "GET",
+  handler: devboxV2ListInstances,
+});
+
+http.route({
+  path: "/api/v2/devbox/config",
+  method: "GET",
+  handler: devboxV2GetConfig,
+});
+
+http.route({
+  path: "/api/v2/devbox/me",
+  method: "GET",
+  handler: devboxV2GetMe,
+});
+
+// Instance-specific routes use pathPrefix to capture the instance ID
+http.route({
+  pathPrefix: "/api/v2/devbox/instances/",
+  method: "GET",
+  handler: devboxV2InstanceGetRouter,
+});
+
+http.route({
+  pathPrefix: "/api/v2/devbox/instances/",
+  method: "POST",
+  handler: devboxV2InstanceActionRouter,
 });
 
 export default http;

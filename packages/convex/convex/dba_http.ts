@@ -1158,7 +1158,7 @@ async function handleHideHttpService(
 // ============================================================================
 // GET /api/v1/dba/snapshots - List snapshots
 // ============================================================================
-export const listSnapshots = httpAction(async (ctx, req) => {
+export const listSnapshots = httpAction(async (ctx) => {
   const { error } = await getAuthenticatedUser(ctx);
   if (error) return error;
 

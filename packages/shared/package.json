@@ -121,6 +121,10 @@
     "./hooks/use-network": {
       "import": "./src/hooks/use-network.ts",
       "types": "./src/hooks/use-network.ts"
+    },
+    "./e2b-templates": {
+      "import": "./src/e2b-templates.ts",
+      "types": "./src/e2b-templates.ts"
     }
   },
   "peerDependencies": {

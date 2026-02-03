@@ -11,11 +11,11 @@ const instanceStatusValidator = v.union(
 );
 
 /**
- * Generate a friendly ID for CLI users (dba_xxxxxxxx)
+ * Generate a friendly ID for CLI users (cmux_xxxxxxxx)
  */
 function generateDevboxId(): string {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-  let result = "dba_";
+  let result = "cmux_";
   const array = new Uint8Array(8);
   crypto.getRandomValues(array);
   for (let i = 0; i < 8; i++) {
@@ -31,6 +31,7 @@ export const list = authQuery({
   args: {
     teamSlugOrId: v.string(),
     includeStoppedAfter: v.optional(v.number()),
+    provider: v.optional(v.union(v.literal("morph"), v.literal("e2b"))),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -43,7 +44,24 @@ export const list = authQuery({
       )
       .order("desc");
 
-    const rawInstances = await instancesQuery.collect();
+    let rawInstances = await instancesQuery.collect();
+
+    // If provider filter is specified, join with devboxInfo to filter
+    if (args.provider) {
+      const devboxInfos = await ctx.db
+        .query("devboxInfo")
+        .collect();
+
+      const devboxIdsByProvider = new Set(
+        devboxInfos
+          .filter((info) => info.provider === args.provider)
+          .map((info) => info.devboxId)
+      );
+
+      rawInstances = rawInstances.filter((instance) =>
+        devboxIdsByProvider.has(instance.devboxId)
+      );
+    }
 
     // Filter based on stopped status
     if (args.includeStoppedAfter !== undefined) {
@@ -61,12 +79,12 @@ export const list = authQuery({
 });
 
 /**
- * Get a specific devbox instance by ID (dba_xxxxxxxx).
+ * Get a specific devbox instance by ID (cmux_xxxxxxxx).
  */
 export const getById = authQuery({
   args: {
     teamSlugOrId: v.string(),
-    id: v.string(), // The devboxId (dba_xxx)
+    id: v.string(), // The devboxId (cmux_xxx)
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -135,15 +153,63 @@ export const getDevboxIdFromProvider = internalQuery({
 });
 
 /**
+ * Get devbox instance by provider instance ID.
+ */
+export const getByProviderInstanceId = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    providerInstanceId: v.string(),
+    provider: v.optional(v.union(v.literal("morph"), v.literal("e2b"))),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+
+    // Look up devbox ID from provider info
+    const info = await ctx.db
+      .query("devboxInfo")
+      .withIndex("by_providerInstanceId", (q) =>
+        q.eq("providerInstanceId", args.providerInstanceId)
+      )
+      .first();
+
+    if (!info) {
+      return null;
+    }
+
+    // Verify provider matches if specified
+    if (args.provider && info.provider !== args.provider) {
+      return null;
+    }
+
+    const instance = await ctx.db
+      .query("devboxInstances")
+      .withIndex("by_devboxId", (q) => q.eq("devboxId", info.devboxId))
+      .first();
+
+    // Verify ownership
+    if (!instance || instance.teamId !== teamId || instance.userId !== userId) {
+      return null;
+    }
+
+    return { ...instance, provider: info.provider, providerInstanceId: info.providerInstanceId };
+  },
+});
+
+/**
  * Create a new devbox instance record with provider info.
  */
 export const create = authMutation({
   args: {
     teamSlugOrId: v.string(),
-    providerInstanceId: v.string(), // e.g., morphvm_xxx
-    provider: v.optional(v.literal("morph")),
+    providerInstanceId: v.string(), // e.g., morphvm_xxx or E2B sandbox ID
+    provider: v.optional(v.union(v.literal("morph"), v.literal("e2b"))),
     name: v.optional(v.string()),
     snapshotId: v.optional(v.string()),
+    templateId: v.optional(v.string()), // For E2B templates
+    vscodeUrl: v.optional(v.string()),
+    workerUrl: v.optional(v.string()),
+    vncUrl: v.optional(v.string()),
     environmentId: v.optional(v.id("environments")),
     metadata: v.optional(v.record(v.string(), v.string())),
     source: v.optional(v.union(v.literal("cli"), v.literal("web"))),
@@ -212,22 +278,46 @@ export const create = authMutation({
 });
 
 /**
- * Update the status of a devbox instance by ID.
+ * Update the status of a devbox instance by ID or provider instance ID.
  */
 export const updateStatus = authMutation({
   args: {
     teamSlugOrId: v.string(),
-    id: v.string(), // The devboxId
+    id: v.optional(v.string()), // The devboxId
+    providerInstanceId: v.optional(v.string()), // Or provider instance ID
+    provider: v.optional(v.union(v.literal("morph"), v.literal("e2b"))),
     status: instanceStatusValidator,
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
     const teamId = await getTeamId(ctx, args.teamSlugOrId);
 
-    const instance = await ctx.db
-      .query("devboxInstances")
-      .withIndex("by_devboxId", (q) => q.eq("devboxId", args.id))
-      .first();
+    let instance;
+
+    const devboxId = args.id;
+    const providerInstanceId = args.providerInstanceId;
+
+    if (devboxId) {
+      instance = await ctx.db
+        .query("devboxInstances")
+        .withIndex("by_devboxId", (q) => q.eq("devboxId", devboxId))
+        .first();
+    } else if (providerInstanceId) {
+      // Look up by provider instance ID
+      const info = await ctx.db
+        .query("devboxInfo")
+        .withIndex("by_providerInstanceId", (q) =>
+          q.eq("providerInstanceId", providerInstanceId)
+        )
+        .first();
+
+      if (info) {
+        instance = await ctx.db
+          .query("devboxInstances")
+          .withIndex("by_devboxId", (q) => q.eq("devboxId", info.devboxId))
+          .first();
+      }
+    }
 
     if (!instance || instance.teamId !== teamId || instance.userId !== userId) {
       throw new Error("Instance not found or not authorized");
@@ -255,21 +345,45 @@ export const updateStatus = authMutation({
 });
 
 /**
- * Record access for a devbox instance by ID.
+ * Record access for a devbox instance by ID or provider instance ID.
  */
 export const recordAccess = authMutation({
   args: {
     teamSlugOrId: v.string(),
-    id: v.string(), // The devboxId
+    id: v.optional(v.string()), // The devboxId
+    providerInstanceId: v.optional(v.string()), // Or provider instance ID
+    provider: v.optional(v.union(v.literal("morph"), v.literal("e2b"))),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
     const teamId = await getTeamId(ctx, args.teamSlugOrId);
 
-    const instance = await ctx.db
-      .query("devboxInstances")
-      .withIndex("by_devboxId", (q) => q.eq("devboxId", args.id))
-      .first();
+    let instance;
+
+    const devboxId = args.id;
+    const providerInstanceId = args.providerInstanceId;
+
+    if (devboxId) {
+      instance = await ctx.db
+        .query("devboxInstances")
+        .withIndex("by_devboxId", (q) => q.eq("devboxId", devboxId))
+        .first();
+    } else if (providerInstanceId) {
+      // Look up by provider instance ID
+      const info = await ctx.db
+        .query("devboxInfo")
+        .withIndex("by_providerInstanceId", (q) =>
+          q.eq("providerInstanceId", providerInstanceId)
+        )
+        .first();
+
+      if (info) {
+        instance = await ctx.db
+          .query("devboxInstances")
+          .withIndex("by_devboxId", (q) => q.eq("devboxId", info.devboxId))
+          .first();
+      }
+    }
 
     if (!instance || instance.teamId !== teamId || instance.userId !== userId) {
       throw new Error("Instance not found or not authorized");
