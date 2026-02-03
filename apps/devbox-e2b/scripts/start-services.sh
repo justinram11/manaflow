@@ -28,6 +28,22 @@ chmod 644 "$BOOT_ID_FILE"
 chown user:user "$BOOT_ID_FILE"
 echo "[cmux-e2b] Boot ID saved: ${BOOT_ID:0:8}..."
 
+# Set user password to auth token for SSH/rsync access
+echo "user:$AUTH_TOKEN" | sudo chpasswd
+echo "[cmux-e2b] SSH password set to auth token"
+
+# Start SSH server on port 10000
+echo "[cmux-e2b] Starting SSH server on port 10000..."
+# Create privilege separation directory (required by sshd)
+sudo mkdir -p /run/sshd
+sudo chmod 755 /run/sshd
+# Generate host keys if missing
+sudo ssh-keygen -A 2>/dev/null || true
+# Start sshd on port 10000
+sudo /usr/sbin/sshd -p 10000
+SSH_PORT=10000
+echo "[cmux-e2b] SSH available on port $SSH_PORT (user: user, password: auth token)"
+
 # VNC password not needed - auth proxy validates tokens before allowing access
 echo "[cmux-e2b] VNC auth handled by token proxy (no VNC password needed)"
 

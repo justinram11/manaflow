@@ -297,6 +297,252 @@ async function getCdpWebSocketUrl() {
 }
 
 /**
+ * Get or create browser connection using puppeteer-core
+ */
+let browserInstance = null;
+
+async function getBrowser() {
+  if (browserInstance && browserInstance.isConnected()) {
+    return browserInstance;
+  }
+
+  try {
+    const puppeteer = require("puppeteer-core");
+    const cdpUrl = await getCdpWebSocketUrl();
+    if (!cdpUrl) {
+      throw new Error("Chrome CDP not available");
+    }
+
+    browserInstance = await puppeteer.connect({
+      browserWSEndpoint: cdpUrl,
+      defaultViewport: null,
+    });
+
+    return browserInstance;
+  } catch (e) {
+    console.error("[worker-daemon] Failed to connect to browser:", e.message);
+    throw e;
+  }
+}
+
+/**
+ * Get the active page or create one
+ */
+async function getActivePage() {
+  const browser = await getBrowser();
+  const pages = await browser.pages();
+  if (pages.length > 0) {
+    return pages[0];
+  }
+  return await browser.newPage();
+}
+
+/**
+ * Build accessibility tree snapshot with element refs
+ */
+async function buildAccessibilitySnapshot(page) {
+  const snapshot = await page.accessibility.snapshot();
+  if (!snapshot) {
+    return "No accessibility tree available";
+  }
+
+  let refCounter = 1;
+  const lines = [];
+
+  function traverse(node, indent = 0) {
+    const prefix = "  ".repeat(indent);
+    const ref = `@e${refCounter++}`;
+    let line = `${prefix}${ref} [${node.role}]`;
+
+    if (node.name) {
+      line += ` "${node.name}"`;
+    }
+    if (node.value) {
+      line += ` value="${node.value}"`;
+    }
+    if (node.focused) {
+      line += " (focused)";
+    }
+
+    lines.push(line);
+
+    if (node.children) {
+      for (const child of node.children) {
+        traverse(child, indent + 1);
+      }
+    }
+  }
+
+  traverse(snapshot);
+  return lines.join("\n");
+}
+
+/**
+ * Find element by ref (e.g., @e1) or CSS selector
+ */
+async function findElement(page, selector) {
+  if (selector.startsWith("@e")) {
+    // Element ref - need to find by accessibility tree position
+    const refNum = parseInt(selector.substring(2));
+    const snapshot = await page.accessibility.snapshot();
+    if (!snapshot) {
+      throw new Error("Cannot find element: no accessibility tree");
+    }
+
+    let counter = 0;
+    let targetNode = null;
+
+    function findByRef(node) {
+      counter++;
+      if (counter === refNum) {
+        targetNode = node;
+        return true;
+      }
+      if (node.children) {
+        for (const child of node.children) {
+          if (findByRef(child)) return true;
+        }
+      }
+      return false;
+    }
+
+    findByRef(snapshot);
+
+    if (!targetNode) {
+      throw new Error(`Element ${selector} not found`);
+    }
+
+    // Try to find by role and name
+    const role = targetNode.role.toLowerCase();
+    const name = targetNode.name;
+
+    // Use aria selectors
+    if (name) {
+      const element = await page.$(`[aria-label="${name}"], [title="${name}"], [name="${name}"]`);
+      if (element) return element;
+
+      // Try text content match
+      const elements = await page.$$(`${role}, button, a, input, [role="${role}"]`);
+      for (const el of elements) {
+        const text = await el.evaluate(e => e.textContent || e.value || e.getAttribute('aria-label') || e.getAttribute('title'));
+        if (text && text.includes(name)) {
+          return el;
+        }
+      }
+    }
+
+    throw new Error(`Could not locate element ${selector} in DOM`);
+  } else {
+    // CSS selector
+    const element = await page.$(selector);
+    if (!element) {
+      throw new Error(`Element ${selector} not found`);
+    }
+    return element;
+  }
+}
+
+/**
+ * Execute a browser command
+ */
+async function execBrowserCommand(command, params) {
+  try {
+    const page = await getActivePage();
+
+    switch (command) {
+      case "snapshot": {
+        const snapshot = await buildAccessibilitySnapshot(page);
+        return { data: { snapshot } };
+      }
+
+      case "open": {
+        await page.goto(params.url, { waitUntil: "domcontentloaded", timeout: 30000 });
+        return { data: { url: params.url } };
+      }
+
+      case "click": {
+        const element = await findElement(page, params.selector);
+        await element.click();
+        return { data: { clicked: params.selector } };
+      }
+
+      case "type": {
+        await page.keyboard.type(params.text);
+        return { data: { typed: params.text } };
+      }
+
+      case "fill": {
+        const element = await findElement(page, params.selector);
+        await element.click({ clickCount: 3 }); // Select all
+        await element.type(params.value);
+        return { data: { filled: params.selector, value: params.value } };
+      }
+
+      case "press": {
+        await page.keyboard.press(params.key);
+        return { data: { pressed: params.key } };
+      }
+
+      case "scroll": {
+        const direction = params.direction.toLowerCase();
+        const delta = direction === "up" ? -500 : 500;
+        await page.evaluate((d) => window.scrollBy(0, d), delta);
+        return { data: { scrolled: direction } };
+      }
+
+      case "back": {
+        await page.goBack({ waitUntil: "domcontentloaded" });
+        return { data: { navigated: "back" } };
+      }
+
+      case "forward": {
+        await page.goForward({ waitUntil: "domcontentloaded" });
+        return { data: { navigated: "forward" } };
+      }
+
+      case "reload": {
+        await page.reload({ waitUntil: "domcontentloaded" });
+        return { data: { reloaded: true } };
+      }
+
+      case "url": {
+        const url = page.url();
+        return { data: { url } };
+      }
+
+      case "title": {
+        const title = await page.title();
+        return { data: { title } };
+      }
+
+      case "wait": {
+        const timeout = params.timeout || 30000;
+        if (params.selector.startsWith("@e")) {
+          // For element refs, just wait a bit and try to find
+          await new Promise(r => setTimeout(r, 1000));
+          await findElement(page, params.selector);
+        } else {
+          await page.waitForSelector(params.selector, { timeout });
+        }
+        return { data: { found: params.selector } };
+      }
+
+      case "hover": {
+        const element = await findElement(page, params.selector);
+        await element.hover();
+        return { data: { hovered: params.selector } };
+      }
+
+      default:
+        return { error: `Unknown command: ${command}` };
+    }
+  } catch (e) {
+    console.error(`[worker-daemon] Browser command ${command} failed:`, e.message);
+    return { error: e.message };
+  }
+}
+
+/**
  * Run browser agent with prompt
  */
 async function runBrowserAgent(prompt, options = {}) {
@@ -427,10 +673,181 @@ async function handleRequest(req, res) {
           return;
         }
         try {
+          // Ensure parent directory exists
+          const dir = require("path").dirname(body.path);
+          fs.mkdirSync(dir, { recursive: true });
           fs.writeFileSync(body.path, body.content);
           sendJson(res, { success: true });
         } catch (e) {
           sendJson(res, { error: e.message }, 500);
+        }
+        break;
+      }
+
+      case "/list-files": {
+        // List files in a directory with metadata for sync
+        const dirPath = body.path || "/home/user/workspace";
+        const recursive = body.recursive !== false;
+        try {
+          const files = [];
+          const walkDir = (dir, base = "") => {
+            const entries = fs.readdirSync(dir, { withFileTypes: true });
+            for (const entry of entries) {
+              const fullPath = require("path").join(dir, entry.name);
+              const relativePath = require("path").join(base, entry.name);
+
+              // Skip node_modules, .git, etc.
+              if (entry.name === "node_modules" || entry.name === ".git" || entry.name === ".venv") {
+                continue;
+              }
+
+              if (entry.isDirectory()) {
+                if (recursive) {
+                  walkDir(fullPath, relativePath);
+                }
+              } else if (entry.isFile()) {
+                const stat = fs.statSync(fullPath);
+                files.push({
+                  path: relativePath,
+                  size: stat.size,
+                  mtime: stat.mtimeMs,
+                });
+              }
+            }
+          };
+          walkDir(dirPath);
+          sendJson(res, { files, basePath: dirPath });
+        } catch (e) {
+          sendJson(res, { error: e.message }, 500);
+        }
+        break;
+      }
+
+      case "/sync-upload": {
+        // Upload multiple files for sync
+        // Expects: { basePath: string, files: [{ path: string, content: string }] }
+        const basePath = body.basePath || "/home/user/workspace";
+        const files = body.files || [];
+
+        if (!Array.isArray(files)) {
+          sendJson(res, { error: "files must be an array" }, 400);
+          return;
+        }
+
+        const results = [];
+        for (const file of files) {
+          try {
+            const fullPath = require("path").join(basePath, file.path);
+            const dir = require("path").dirname(fullPath);
+            fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(fullPath, file.content);
+            results.push({ path: file.path, success: true });
+          } catch (e) {
+            results.push({ path: file.path, success: false, error: e.message });
+          }
+        }
+        sendJson(res, { results, uploaded: results.filter(r => r.success).length });
+        break;
+      }
+
+      case "/sync-download": {
+        // Download multiple files for sync
+        // Expects: { basePath: string, paths: string[] }
+        const basePath = body.basePath || "/home/user/workspace";
+        const paths = body.paths || [];
+
+        if (!Array.isArray(paths)) {
+          sendJson(res, { error: "paths must be an array" }, 400);
+          return;
+        }
+
+        const files = [];
+        for (const filePath of paths) {
+          try {
+            const fullPath = require("path").join(basePath, filePath);
+            const content = fs.readFileSync(fullPath, "utf-8");
+            const stat = fs.statSync(fullPath);
+            files.push({ path: filePath, content, mtime: stat.mtimeMs });
+          } catch (e) {
+            files.push({ path: filePath, error: e.message });
+          }
+        }
+        sendJson(res, { files });
+        break;
+      }
+
+      case "/sync-tar": {
+        // Fast sync: receive base64-encoded tar.gz and extract to basePath
+        // Expects: { basePath: string, tarData: string (base64 encoded tar.gz) }
+        const basePath = body.basePath || "/home/user/workspace";
+        const tarData = body.tarData;
+
+        if (!tarData) {
+          sendJson(res, { error: "tarData required" }, 400);
+          return;
+        }
+
+        try {
+          const zlib = require("zlib");
+          const tar = require("tar");
+          const path = require("path");
+
+          // Decode base64 to buffer
+          const tarBuffer = Buffer.from(tarData, "base64");
+
+          // Decompress gzip
+          const decompressed = zlib.gunzipSync(tarBuffer);
+
+          // Write to temp file for extraction
+          const tempTarPath = `/tmp/sync-${Date.now()}.tar`;
+          fs.writeFileSync(tempTarPath, decompressed);
+
+          // Ensure base path exists
+          fs.mkdirSync(basePath, { recursive: true });
+
+          // Extract tar using tar command (more reliable than node tar for all cases)
+          const { execSync } = require("child_process");
+          execSync(`tar -xf "${tempTarPath}" -C "${basePath}"`, {
+            stdio: "pipe",
+          });
+
+          // Clean up temp file
+          fs.unlinkSync(tempTarPath);
+
+          // Count extracted files
+          const countResult = execSync(`find "${basePath}" -type f | wc -l`, {
+            encoding: "utf-8",
+          });
+          const fileCount = parseInt(countResult.trim()) || 0;
+
+          sendJson(res, { success: true, files: fileCount, basePath });
+        } catch (e) {
+          console.error("[worker-daemon] sync-tar failed:", e.message);
+          sendJson(res, { success: false, error: e.message }, 500);
+        }
+        break;
+      }
+
+      case "/delete-file": {
+        // Delete a file or directory
+        if (!body.path) {
+          sendJson(res, { error: "path required" }, 400);
+          return;
+        }
+        try {
+          const stat = fs.statSync(body.path);
+          if (stat.isDirectory()) {
+            fs.rmSync(body.path, { recursive: true });
+          } else {
+            fs.unlinkSync(body.path);
+          }
+          sendJson(res, { success: true });
+        } catch (e) {
+          if (e.code === "ENOENT") {
+            sendJson(res, { success: true }); // Already deleted
+          } else {
+            sendJson(res, { error: e.message }, 500);
+          }
         }
         break;
       }
@@ -481,25 +898,23 @@ async function handleRequest(req, res) {
       }
 
       case "/screenshot": {
-        // Take a screenshot using Chrome CDP
-        const cdpUrl = await getCdpWebSocketUrl();
-        if (!cdpUrl) {
-          sendJson(res, { error: "Chrome not available" }, 503);
-          return;
-        }
+        // Take a screenshot using puppeteer (of the actual active page)
+        try {
+          const page = await getActivePage();
+          const screenshotBuffer = await page.screenshot({
+            type: "png",
+            fullPage: false,
+          });
+          const imageData = screenshotBuffer.toString("base64");
 
-        // Use Chrome screenshot capability
-        const targetPath = body.path || "/tmp/screenshot.png";
-        const result = await execCommand(
-          `google-chrome --headless --screenshot=${targetPath} --window-size=1920,1080 --no-sandbox about:blank 2>/dev/null`,
-          30000
-        );
+          // Optionally save to file
+          const targetPath = body.path || "/tmp/screenshot.png";
+          fs.writeFileSync(targetPath, screenshotBuffer);
 
-        if (result.exit_code === 0 && fs.existsSync(targetPath)) {
-          const imageData = fs.readFileSync(targetPath).toString("base64");
-          sendJson(res, { success: true, path: targetPath, base64: imageData });
-        } else {
-          sendJson(res, { error: "Screenshot failed", details: result.stderr }, 500);
+          sendJson(res, { success: true, path: targetPath, base64: imageData, data: { base64: imageData } });
+        } catch (e) {
+          console.error("[worker-daemon] Screenshot failed:", e.message);
+          sendJson(res, { error: "Screenshot failed: " + e.message }, 500);
         }
         break;
       }
@@ -521,6 +936,137 @@ async function handleRequest(req, res) {
         break;
       }
 
+      // Browser automation commands (matching Morph CLI's computer subcommands)
+      case "/snapshot": {
+        // Get accessibility tree snapshot
+        const result = await execBrowserCommand("snapshot", {});
+        sendJson(res, result);
+        break;
+      }
+
+      case "/open": {
+        // Navigate to URL
+        if (!body.url) {
+          sendJson(res, { error: "url required" }, 400);
+          return;
+        }
+        const result = await execBrowserCommand("open", { url: body.url });
+        sendJson(res, result);
+        break;
+      }
+
+      case "/click": {
+        // Click element
+        if (!body.selector) {
+          sendJson(res, { error: "selector required" }, 400);
+          return;
+        }
+        const result = await execBrowserCommand("click", { selector: body.selector });
+        sendJson(res, result);
+        break;
+      }
+
+      case "/type": {
+        // Type text
+        if (!body.text) {
+          sendJson(res, { error: "text required" }, 400);
+          return;
+        }
+        const result = await execBrowserCommand("type", { text: body.text });
+        sendJson(res, result);
+        break;
+      }
+
+      case "/fill": {
+        // Fill input field
+        if (!body.selector || body.value === undefined) {
+          sendJson(res, { error: "selector and value required" }, 400);
+          return;
+        }
+        const result = await execBrowserCommand("fill", { selector: body.selector, value: body.value });
+        sendJson(res, result);
+        break;
+      }
+
+      case "/press": {
+        // Press key
+        if (!body.key) {
+          sendJson(res, { error: "key required" }, 400);
+          return;
+        }
+        const result = await execBrowserCommand("press", { key: body.key });
+        sendJson(res, result);
+        break;
+      }
+
+      case "/scroll": {
+        // Scroll page
+        if (!body.direction) {
+          sendJson(res, { error: "direction required" }, 400);
+          return;
+        }
+        const result = await execBrowserCommand("scroll", { direction: body.direction });
+        sendJson(res, result);
+        break;
+      }
+
+      case "/back": {
+        // Navigate back
+        const result = await execBrowserCommand("back", {});
+        sendJson(res, result);
+        break;
+      }
+
+      case "/forward": {
+        // Navigate forward
+        const result = await execBrowserCommand("forward", {});
+        sendJson(res, result);
+        break;
+      }
+
+      case "/reload": {
+        // Reload page
+        const result = await execBrowserCommand("reload", {});
+        sendJson(res, result);
+        break;
+      }
+
+      case "/url": {
+        // Get current URL
+        const result = await execBrowserCommand("url", {});
+        sendJson(res, result);
+        break;
+      }
+
+      case "/title": {
+        // Get page title
+        const result = await execBrowserCommand("title", {});
+        sendJson(res, result);
+        break;
+      }
+
+      case "/wait": {
+        // Wait for element
+        if (!body.selector) {
+          sendJson(res, { error: "selector required" }, 400);
+          return;
+        }
+        const result = await execBrowserCommand("wait", { selector: body.selector, timeout: body.timeout });
+        sendJson(res, result);
+        break;
+      }
+
+      case "/hover": {
+        // Hover over element
+        if (!body.selector) {
+          sendJson(res, { error: "selector required" }, 400);
+          return;
+        }
+        const result = await execBrowserCommand("hover", { selector: body.selector });
+        sendJson(res, result);
+        break;
+      }
+
       default:
         sendJson(res, { error: "Not found" }, 404);
     }
@@ -533,22 +1079,109 @@ async function handleRequest(req, res) {
 // Create HTTP server
 const server = http.createServer(handleRequest);
 
-// Create WebSocket server for PTY sessions
-const wss = new WebSocketServer({ server, path: "/pty" });
+// Create WebSocket server for PTY and SSH sessions
+// Using noServer mode to handle multiple paths
+// IMPORTANT: Disable perMessageDeflate to ensure binary data integrity for SSH
+const wss = new WebSocketServer({
+  noServer: true,
+  perMessageDeflate: false,  // Disable compression - critical for binary SSH data
+});
+const net = require("net");
 
 // Track active PTY sessions
 const ptySessions = new Map();
 
-wss.on("connection", (ws, req) => {
-  // Verify auth from query string or headers
+// Handle HTTP upgrade requests for WebSocket
+server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
+  const pathname = url.pathname;
   const token = url.searchParams.get("token") || req.headers.authorization?.replace("Bearer ", "");
 
-  if (token !== AUTH_TOKEN) {
-    ws.close(4401, "Unauthorized");
+  // Verify auth
+  ensureValidToken();
+  if (!token || token !== AUTH_TOKEN) {
+    socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+    socket.destroy();
     return;
   }
 
+  if (pathname === "/pty") {
+    // Handle PTY connections
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      handlePtyConnection(ws, url);
+    });
+  } else if (pathname === "/ssh") {
+    // Handle SSH tunnel connections
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      handleSshConnection(ws, url);
+    });
+  } else {
+    socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+    socket.destroy();
+  }
+});
+
+// Handle SSH tunnel WebSocket connection
+function handleSshConnection(ws, url) {
+  console.log("[worker-daemon] SSH WebSocket connection established");
+
+  // Buffer incoming WebSocket data until SSH connection is ready
+  let sshConnected = false;
+  const pendingData = [];
+
+  // Connect to local SSH server on port 10000
+  const sshSocket = net.createConnection({ port: 10000, host: "127.0.0.1" }, () => {
+    console.log("[worker-daemon] Connected to local SSH server");
+    sshConnected = true;
+
+    // Flush any pending data
+    for (const data of pendingData) {
+      sshSocket.write(data);
+    }
+    pendingData.length = 0;
+  });
+
+  sshSocket.on("error", (err) => {
+    console.error("[worker-daemon] SSH socket error:", err.message);
+    ws.close(4500, `SSH: ${err.message}`);
+  });
+
+  // Forward SSH data to WebSocket (binary)
+  sshSocket.on("data", (data) => {
+    if (ws.readyState === ws.OPEN) {
+      ws.send(data);
+    }
+  });
+
+  sshSocket.on("close", () => {
+    console.log("[worker-daemon] SSH socket closed");
+    if (ws.readyState === ws.OPEN) {
+      ws.close(1000, "SSH closed");
+    }
+  });
+
+  // Forward WebSocket data to SSH socket (binary)
+  ws.on("message", (msg, isBinary) => {
+    if (sshConnected && sshSocket.writable) {
+      sshSocket.write(msg);
+    } else if (!sshConnected) {
+      pendingData.push(msg);
+    }
+  });
+
+  ws.on("close", () => {
+    console.log("[worker-daemon] SSH WebSocket closed");
+    sshSocket.destroy();
+  });
+
+  ws.on("error", (err) => {
+    console.error("[worker-daemon] SSH WebSocket error:", err.message);
+    sshSocket.destroy();
+  });
+}
+
+// Handle PTY WebSocket connection
+function handlePtyConnection(ws, url) {
   console.log("[worker-daemon] PTY WebSocket connection established");
 
   // Parse options from query string
@@ -560,7 +1193,6 @@ wss.on("connection", (ws, req) => {
   // Spawn PTY process
   let pty;
   try {
-    // Try to use node-pty if available, otherwise fallback to script command
     try {
       const nodePty = require("node-pty");
       pty = nodePty.spawn(shell, [], {
@@ -571,13 +1203,12 @@ wss.on("connection", (ws, req) => {
         env: { ...process.env, TERM: "xterm-256color" },
       });
     } catch (e) {
-      // Fallback to script command for PTY emulation
       console.log("[worker-daemon] node-pty not available, using script fallback");
       pty = spawn("script", ["-q", "-c", shell, "/dev/null"], {
         cwd,
         env: { ...process.env, TERM: "xterm-256color", COLUMNS: cols.toString(), LINES: rows.toString() },
       });
-      pty.resize = () => {}; // No-op for fallback
+      pty.resize = () => {};
     }
   } catch (e) {
     console.error("[worker-daemon] Failed to spawn PTY:", e.message);
@@ -588,19 +1219,15 @@ wss.on("connection", (ws, req) => {
   const sessionId = crypto.randomBytes(8).toString("hex");
   ptySessions.set(sessionId, { pty, ws });
 
-  // Send session ID to client
   ws.send(JSON.stringify({ type: "session", id: sessionId }));
 
-  // Forward PTY output to WebSocket
   if (pty.onData) {
-    // node-pty style
     pty.onData((data) => {
       if (ws.readyState === ws.OPEN) {
         ws.send(JSON.stringify({ type: "data", data }));
       }
     });
   } else if (pty.stdout) {
-    // spawn style
     pty.stdout.on("data", (data) => {
       if (ws.readyState === ws.OPEN) {
         ws.send(JSON.stringify({ type: "data", data: data.toString() }));
@@ -613,23 +1240,18 @@ wss.on("connection", (ws, req) => {
     });
   }
 
-  // Handle WebSocket messages
   ws.on("message", (msg) => {
     try {
       const message = JSON.parse(msg.toString());
-
       switch (message.type) {
         case "data":
-          // Send data to PTY
           if (pty.write) {
             pty.write(message.data);
           } else if (pty.stdin) {
             pty.stdin.write(message.data);
           }
           break;
-
         case "resize":
-          // Resize PTY
           if (pty.resize) {
             pty.resize(message.cols || 80, message.rows || 24);
           }
@@ -640,7 +1262,6 @@ wss.on("connection", (ws, req) => {
     }
   });
 
-  // Handle PTY exit
   const onExit = (code) => {
     console.log(`[worker-daemon] PTY exited with code ${code}`);
     ptySessions.delete(sessionId);
@@ -657,7 +1278,6 @@ wss.on("connection", (ws, req) => {
     pty.on("exit", onExit);
   }
 
-  // Handle WebSocket close
   ws.on("close", () => {
     console.log("[worker-daemon] PTY WebSocket closed");
     ptySessions.delete(sessionId);
@@ -667,12 +1287,13 @@ wss.on("connection", (ws, req) => {
       pty.destroy();
     }
   });
-});
+}
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`[worker-daemon] Listening on port ${PORT}`);
   console.log(`[worker-daemon] Auth token: ${AUTH_TOKEN.substring(0, 8)}...`);
   console.log(`[worker-daemon] PTY WebSocket available at ws://localhost:${PORT}/pty`);
+  console.log(`[worker-daemon] SSH WebSocket available at ws://localhost:${PORT}/ssh`);
 });
 
 // Graceful shutdown

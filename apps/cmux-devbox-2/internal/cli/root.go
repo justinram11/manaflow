@@ -18,13 +18,12 @@ var rootCmd = &cobra.Command{
 
 Quick start:
   cmux login                      # Authenticate (or: cmux auth login)
-  cmux start --name my-dev        # Create sandbox → returns ID
-  cmux new                        # Same as 'cmux start'
+  cmux start ./my-project         # Create sandbox, sync directory → returns ID
   cmux code <id>                  # Open VS Code
-  cmux vnc <id>                   # Open VNC desktop
-  cmux exec <id> "echo hi"        # Run command
-  cmux pause <id>                 # Pause sandbox (preserves state)
-  cmux resume <id>                # Resume paused sandbox
+  cmux pty <id>                   # Open terminal session
+  cmux sync <id> ./my-project     # Sync files via rsync (incremental)
+  cmux computer screenshot <id>   # Take browser screenshot
+  cmux stop <id>                  # Stop sandbox
   cmux delete <id>                # Delete sandbox
   cmux ls                         # List all sandboxes`,
 	SilenceUsage:  true,
@@ -66,6 +65,15 @@ func init() {
 
 	// Exec command
 	rootCmd.AddCommand(execCmd)
+
+	// Sync command (uses rsync over WebSocket SSH)
+	rootCmd.AddCommand(syncCmd)
+
+	// PTY command (terminal session)
+	rootCmd.AddCommand(ptyCmd)
+
+	// Computer commands (browser automation)
+	rootCmd.AddCommand(computerCmd)
 
 	// Templates
 	rootCmd.AddCommand(templatesCmd)
