@@ -95,6 +95,7 @@ func SetVersionInfo(version, commit, buildTime string) {
 	commitStr = commit
 	buildTimeStr = buildTime
 	rootCmd.Version = version
+	rootCmd.SetVersionTemplate("cmux version {{.Version}}\n")
 }
 
 func SetBuildMode(mode string) {
