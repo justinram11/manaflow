@@ -25,8 +25,10 @@ const (
 	DevPublishableKey = "pck_pt4nwry6sdskews2pxk4g2fbe861ak2zvaf3mqendspa0"
 	DevCmuxURL        = "http://localhost:9779"
 	DevConvexSiteURL  = "https://famous-camel-162.convex.site"
+)
 
-	// Prod defaults (set via ldflags)
+// Prod defaults (set via ldflags) - must be var not const for ldflags to work
+var (
 	ProdProjectID      = ""
 	ProdPublishableKey = ""
 	ProdCmuxURL        = ""
