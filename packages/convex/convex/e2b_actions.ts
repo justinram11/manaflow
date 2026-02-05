@@ -3,7 +3,8 @@
 import { internalAction } from "./_generated/server";
 import { v } from "convex/values";
 import { env } from "../_shared/convex-env";
-import { E2BClient, CMUX_DEVBOX_TEMPLATE_ID, type E2BInstance } from "@cmux/e2b-client";
+import { DEFAULT_E2B_TEMPLATE_ID } from "@cmux/shared/e2b-templates";
+import { E2BClient, type E2BInstance } from "@cmux/e2b-client";
 
 /**
  * Get E2B client with API key from env
@@ -46,7 +47,7 @@ export const startInstance = internalAction({
     const client = getE2BClient();
 
     const instance = await client.instances.start({
-      templateId: args.templateId || CMUX_DEVBOX_TEMPLATE_ID,
+      templateId: args.templateId ?? DEFAULT_E2B_TEMPLATE_ID,
       ttlSeconds: args.ttlSeconds ?? 60 * 60,
       metadata: args.metadata,
       envs: args.envs,

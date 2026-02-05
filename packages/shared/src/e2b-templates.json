@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-01-30T00:00:00Z",
+  "updatedAt": "2026-02-05T00:00:00Z",
   "templates": [
     {
       "templateId": "cmux-devbox-base",
@@ -11,11 +11,26 @@
       "versions": [
         {
           "version": 1,
-          "e2bTemplateId": "base",
+          "e2bTemplateId": "jwxrccum0mglnp704hnk",
           "capturedAt": "2026-01-30T00:00:00Z"
         }
       ],
-      "description": "Base E2B template for cmux workspaces. Uses default E2B base template until custom template is created."
+      "description": "Base E2B template for cmux workspaces (no Docker)."
+    },
+    {
+      "templateId": "cmux-devbox-docker",
+      "label": "Standard workspace (Docker)",
+      "cpu": "4 vCPU",
+      "memory": "8 GB RAM",
+      "disk": "20 GB SSD",
+      "versions": [
+        {
+          "version": 1,
+          "e2bTemplateId": "pou9b3m5z92g2hafjxrl",
+          "capturedAt": "2026-01-30T00:00:00Z"
+        }
+      ],
+      "description": "E2B template for cmux workspaces with Docker-in-Docker enabled."
     }
   ]
 }

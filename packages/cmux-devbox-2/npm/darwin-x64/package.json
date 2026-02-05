@@ -1,6 +1,6 @@
 {
   "name": "cmux-darwin-x64",
-  "version": "0.7.6",
+  "version": "0.7.7",
   "description": "cmux binary for macOS x64",
   "os": ["darwin"],
   "cpu": ["x64"],

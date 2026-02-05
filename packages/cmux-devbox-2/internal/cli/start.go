@@ -12,12 +12,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Template IDs for E2B sandboxes
 const (
-	// Default template without Docker (faster builds)
-	defaultTemplateID = "jwxrccum0mglnp704hnk"
-	// Template with Docker support (for running containers)
-	dockerTemplateID = "pou9b3m5z92g2hafjxrl"
+	// Preset IDs from packages/shared/src/e2b-templates.json (stable identifiers)
+	defaultTemplatePresetID = "cmux-devbox-base"
+	dockerTemplatePresetID  = "cmux-devbox-docker"
+
+	// Template names in E2B (fallback if template list endpoint is unavailable)
+	defaultTemplateName = "cmux-devbox"
+	dockerTemplateName  = "cmux-devbox-docker"
 )
 
 var (
@@ -120,17 +122,36 @@ Examples:
 			}
 		}
 
+		client := api.NewClient()
+
 		// Determine which template to use
 		templateID := startFlagTemplate
 		if templateID == "" {
-			if startFlagDocker {
-				templateID = dockerTemplateID
-			} else {
-				templateID = defaultTemplateID
+			templates, err := client.ListTemplates(teamSlug)
+			if err == nil {
+				presetID := defaultTemplatePresetID
+				if startFlagDocker {
+					presetID = dockerTemplatePresetID
+				}
+				for _, t := range templates {
+					if t.PresetID == presetID {
+						templateID = t.ID
+						break
+					}
+				}
+			}
+
+			// Fallback to E2B template name if the template list endpoint isn't
+			// available (or isn't returning the expected schema yet).
+			if templateID == "" {
+				if startFlagDocker {
+					templateID = dockerTemplateName
+				} else {
+					templateID = defaultTemplateName
+				}
 			}
 		}
 
-		client := api.NewClient()
 		resp, err := client.CreateInstance(teamSlug, templateID, name)
 		if err != nil {
 			return err

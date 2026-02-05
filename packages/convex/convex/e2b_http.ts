@@ -1,6 +1,7 @@
 import { httpAction, type ActionCtx } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import type { FunctionReference } from "convex/server";
+import { E2B_TEMPLATE_PRESETS } from "@cmux/shared/e2b-templates";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json",
@@ -540,20 +541,13 @@ export const listTemplates = httpAction(async (ctx) => {
   const { error } = await getAuthenticatedUser(ctx);
   if (error) return error;
 
-  // Return static list of available templates
-  // In the future, this could be fetched from E2B API or a database
-  const templates = [
-    {
-      id: "base",
-      name: "Base Template",
-      description: "Default E2B base template",
-    },
-    {
-      id: "cmux-devbox",
-      name: "CMUX Devbox",
-      description: "Pre-configured template for cmux workspaces with VSCode and tools",
-    },
-  ];
+  const templates = E2B_TEMPLATE_PRESETS.map((preset) => ({
+    presetId: preset.templateId,
+    templateId: preset.id,
+    name: preset.label,
+    description: preset.description,
+    supportsDocker: preset.templateId.includes("docker"),
+  }));
 
   return jsonResponse({ templates });
 });

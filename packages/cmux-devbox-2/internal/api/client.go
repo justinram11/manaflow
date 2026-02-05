@@ -218,8 +218,11 @@ func (c *Client) Exec(teamSlug, id, command string, timeout int) (*ExecResponse,
 }
 
 type Template struct {
-	ID   string `json:"templateId"`
-	Name string `json:"name"`
+	ID             string `json:"templateId"`
+	PresetID       string `json:"presetId"`
+	Name           string `json:"name"`
+	Description    string `json:"description,omitempty"`
+	SupportsDocker bool   `json:"supportsDocker,omitempty"`
 }
 
 type ListTemplatesResponse struct {
