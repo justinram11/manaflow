@@ -170,7 +170,7 @@ type GitDiffHeatmapReviewViewerProps = {
   onToggleHeatmap?: () => void;
 };
 
-const SIDEBAR_WIDTH_STORAGE_KEY = "cmux:git-diff-viewer:file-tree-width";
+const SIDEBAR_WIDTH_STORAGE_KEY = "cmux:monaco-diff-sidebar:width";
 const SIDEBAR_DEFAULT_WIDTH = 280;
 const SIDEBAR_MIN_WIDTH = 200;
 const SIDEBAR_MAX_WIDTH = 442;
