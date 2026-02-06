@@ -283,18 +283,29 @@ function sendJson(res, data, status = 200) {
 }
 
 /**
- * Get Chrome CDP WebSocket URL
+ * Get Chrome CDP WebSocket URL with timeout
  */
-async function getCdpWebSocketUrl() {
+async function getCdpWebSocketUrl(timeoutMs = 5000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
-    const response = await fetch(`http://localhost:${CDP_PORT}/json/version`);
+    const response = await fetch(`http://localhost:${CDP_PORT}/json/version`, {
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
     if (!response.ok) {
       throw new Error(`CDP version endpoint returned ${response.status}`);
     }
     const data = await response.json();
     return data.webSocketDebuggerUrl;
   } catch (e) {
-    console.error("[worker-daemon] Failed to get CDP WebSocket URL:", e.message);
+    clearTimeout(timeoutId);
+    if (e.name === "AbortError") {
+      console.error("[worker-daemon] CDP WebSocket URL request timed out");
+    } else {
+      console.error("[worker-daemon] Failed to get CDP WebSocket URL:", e.message);
+    }
     return null;
   }
 }
@@ -304,7 +315,7 @@ async function getCdpWebSocketUrl() {
  */
 let browserInstance = null;
 
-async function getBrowser() {
+async function getBrowser(timeoutMs = 10000) {
   if (browserInstance && browserInstance.isConnected()) {
     return browserInstance;
   }
@@ -316,10 +327,17 @@ async function getBrowser() {
       throw new Error("Chrome CDP not available");
     }
 
-    browserInstance = await puppeteer.connect({
+    // Add timeout to puppeteer.connect
+    const connectPromise = puppeteer.connect({
       browserWSEndpoint: cdpUrl,
       defaultViewport: null,
     });
+
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("Browser connection timed out")), timeoutMs)
+    );
+
+    browserInstance = await Promise.race([connectPromise, timeoutPromise]);
 
     return browserInstance;
   } catch (e) {
@@ -902,12 +920,23 @@ async function handleRequest(req, res) {
 
       case "/screenshot": {
         // Take a screenshot using puppeteer (of the actual active page)
+        // Wrap in timeout to prevent hanging forever
+        const screenshotTimeoutMs = body.timeout || 15000;
         try {
-          const page = await getActivePage();
-          const screenshotBuffer = await page.screenshot({
-            type: "png",
-            fullPage: false,
-          });
+          const screenshotPromise = (async () => {
+            const page = await getActivePage();
+            const screenshotBuffer = await page.screenshot({
+              type: "png",
+              fullPage: false,
+            });
+            return screenshotBuffer;
+          })();
+
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Screenshot timed out")), screenshotTimeoutMs)
+          );
+
+          const screenshotBuffer = await Promise.race([screenshotPromise, timeoutPromise]);
           const imageData = screenshotBuffer.toString("base64");
 
           // Optionally save to file
@@ -1070,6 +1099,22 @@ async function handleRequest(req, res) {
         break;
       }
 
+      case "/pty-sessions": {
+        // List all active PTY sessions
+        const sessions = [];
+        for (const [id, session] of ptySessions) {
+          sessions.push({
+            id,
+            createdAt: session.createdAt || Date.now(),
+            shell: session.shell || "/bin/bash",
+            cwd: session.cwd || "/home/user/workspace",
+            connected: session.ws && session.ws.readyState === 1, // WebSocket.OPEN
+          });
+        }
+        sendJson(res, { success: true, sessions });
+        break;
+      }
+
       default:
         sendJson(res, { error: "Not found" }, 404);
     }
@@ -1092,6 +1137,7 @@ const wss = new WebSocketServer({
 const net = require("net");
 
 // Track active PTY sessions
+// Each session: { pty, ws, createdAt, shell, cwd }
 const ptySessions = new Map();
 
 // Handle HTTP upgrade requests for WebSocket
@@ -1220,7 +1266,7 @@ function handlePtyConnection(ws, url) {
   }
 
   const sessionId = crypto.randomBytes(8).toString("hex");
-  ptySessions.set(sessionId, { pty, ws });
+  ptySessions.set(sessionId, { pty, ws, createdAt: Date.now(), shell, cwd });
 
   ws.send(JSON.stringify({ type: "session", id: sessionId }));
 

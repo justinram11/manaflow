@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/cmux-cli/cmux-devbox-2/internal/api"
@@ -203,6 +205,109 @@ func runPtySession(wsURL string) error {
 
 	<-done
 	return nil
+}
+
+var ptyListCmd = &cobra.Command{
+	Use:   "pty-list <id>",
+	Short: "List PTY sessions in a sandbox",
+	Long: `List all active PTY sessions in a sandbox.
+
+Output can be piped to other tools like rg for filtering.
+
+Examples:
+  cmux pty-list cmux_abc123
+  cmux pty-list cmux_abc123 | rg bash
+  cmux pty-list cmux_abc123 --json`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		sandboxID := args[0]
+
+		teamSlug, err := getTeamSlug()
+		if err != nil {
+			return fmt.Errorf("failed to get team: %w", err)
+		}
+
+		client := api.NewClient()
+		inst, err := client.GetInstance(teamSlug, sandboxID)
+		if err != nil {
+			return fmt.Errorf("sandbox not found: %w", err)
+		}
+
+		if inst.WorkerURL == "" {
+			return fmt.Errorf("worker URL not available")
+		}
+
+		token, err := client.GetAuthToken(teamSlug, sandboxID)
+		if err != nil {
+			return fmt.Errorf("failed to get auth token: %w", err)
+		}
+
+		// Call the /pty-sessions endpoint
+		sessionsURL := strings.TrimRight(inst.WorkerURL, "/") + "/pty-sessions"
+		req, err := http.NewRequest("GET", sessionsURL, nil)
+		if err != nil {
+			return fmt.Errorf("failed to create request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+
+		httpClient := &http.Client{Timeout: 30 * time.Second}
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("failed to list sessions: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("failed to list sessions: %s", string(body))
+		}
+
+		var result struct {
+			Success  bool `json:"success"`
+			Sessions []struct {
+				ID        string `json:"id"`
+				CreatedAt int64  `json:"createdAt"`
+				Shell     string `json:"shell"`
+				Cwd       string `json:"cwd"`
+				Connected bool   `json:"connected"`
+			} `json:"sessions"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return fmt.Errorf("failed to decode response: %w", err)
+		}
+
+		if flagJSON {
+			output, _ := json.MarshalIndent(result.Sessions, "", "  ")
+			fmt.Println(string(output))
+			return nil
+		}
+
+		if len(result.Sessions) == 0 {
+			fmt.Println("No active PTY sessions")
+			return nil
+		}
+
+		fmt.Printf("%-18s %-12s %-25s %-10s %s\n", "SESSION ID", "SHELL", "CWD", "CONNECTED", "CREATED")
+		fmt.Println(strings.Repeat("-", 90))
+		for _, s := range result.Sessions {
+			created := time.UnixMilli(s.CreatedAt).Format(time.RFC3339)
+			shell := s.Shell
+			if len(shell) > 10 {
+				shell = "..." + shell[len(shell)-7:]
+			}
+			cwd := s.Cwd
+			if len(cwd) > 23 {
+				cwd = "..." + cwd[len(cwd)-20:]
+			}
+			connStatus := "no"
+			if s.Connected {
+				connStatus = "yes"
+			}
+			fmt.Printf("%-18s %-12s %-25s %-10s %s\n", s.ID, shell, cwd, connStatus, created)
+		}
+
+		return nil
+	},
 }
 
 func init() {

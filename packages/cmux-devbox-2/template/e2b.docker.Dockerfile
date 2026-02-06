@@ -1,12 +1,12 @@
-# E2B Dockerfile for cmux devbox template
-# Simplified version without Docker and nginx (E2B handles port exposure)
+# E2B Dockerfile for cmux devbox template WITH Docker support
+# This template includes Docker-in-Docker for running containers
 
 FROM ubuntu:22.04
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system packages (no Docker, no nginx)
+# Install system packages including Docker dependencies
 RUN apt-get update && apt-get install -y \
     curl \
     wget \
@@ -33,6 +33,16 @@ RUN apt-get update && apt-get install -y \
     fonts-liberation \
     fonts-dejavu-core \
     fonts-noto-color-emoji \
+    # Docker dependencies
+    apt-transport-https \
+    iptables \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Docker
+RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \
     && rm -rf /var/lib/apt/lists/*
 
 # Configure SSH server on port 10000 (since 22 may not be exposed by E2B)
@@ -60,12 +70,12 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
     && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
-# Install cmux-code (our VSCode fork with OpenVSIX marketplace support)
-# From manaflow-ai/vscode-1 releases
+# Install cmux-code (VSCode fork with OpenVSIX marketplace support)
+# Fetch latest release from manaflow-ai/vscode-1
 RUN ARCH=$(dpkg --print-architecture) && \
     if [ "$ARCH" = "amd64" ]; then ARCH="x64"; fi && \
-    CMUX_CODE_VERSION="0.9.0" && \
-    wget -q "https://github.com/manaflow-ai/vscode-1/releases/download/v${CMUX_CODE_VERSION}/vscode-server-linux-${ARCH}-web.tar.gz" -O /tmp/cmux-code.tar.gz && \
+    RELEASE_URL=$(curl -s https://api.github.com/repos/manaflow-ai/vscode-1/releases/latest | grep "browser_download_url.*vscode-server-linux-${ARCH}-web.tar.gz" | cut -d '"' -f 4) && \
+    wget -q "$RELEASE_URL" -O /tmp/cmux-code.tar.gz && \
     mkdir -p /app/cmux-code && \
     tar -xzf /tmp/cmux-code.tar.gz -C /app/cmux-code --strip-components=1 && \
     rm /tmp/cmux-code.tar.gz && \
@@ -86,7 +96,8 @@ RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearm
 
 # Create user account (E2B expects a 'user' account)
 RUN useradd -m -s /bin/bash -u 1000 user \
-    && echo "user:user" | chpasswd
+    && echo "user:user" | chpasswd \
+    && usermod -aG docker user
 
 # Setup for user
 RUN mkdir -p /home/user/workspace /home/user/.vnc /home/user/.chrome-data /home/user/.chrome-visible /home/user/.config /home/user/.local/share/applications \
@@ -111,7 +122,7 @@ RUN echo '{ \
   "files.autoSave": "afterDelay", \
   "files.autoSaveDelay": 1000, \
   "terminal.integrated.fontSize": 14, \
-  "terminal.integrated.defaultProfile.linux": "bash", \
+  "terminal.integrated.defaultProfile.linux": "cmux", \
   "terminal.integrated.shellIntegration.enabled": false, \
   "security.workspace.trust.enabled": false, \
   "security.workspace.trust.startupPrompt": "never", \
@@ -136,8 +147,8 @@ COPY worker/xstartup /home/user/.vnc/xstartup
 RUN chmod +x /home/user/.vnc/xstartup \
     && chown user:user /home/user/.vnc/xstartup
 
-# Create the start services script
-COPY worker/start-services.sh /usr/local/bin/start-services.sh
+# Create the start services script (Docker version)
+COPY worker/start-services-docker.sh /usr/local/bin/start-services.sh
 RUN chmod +x /usr/local/bin/start-services.sh
 
 # Install Go for building worker daemon

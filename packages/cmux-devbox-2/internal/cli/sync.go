@@ -64,9 +64,8 @@ Examples:
 		if err != nil {
 			return fmt.Errorf("path not found: %w", err)
 		}
-		if !info.IsDir() {
-			return fmt.Errorf("path must be a directory")
-		}
+
+		isFile := !info.IsDir()
 
 		client := api.NewClient()
 
@@ -91,6 +90,15 @@ Examples:
 		rsyncFlagDryRun = syncFlagDryRun
 		rsyncFlagVerbose = syncFlagVerbose
 		rsyncFlagExclude = syncFlagExclude
+
+		if isFile {
+			// Single file sync
+			if syncFlagWatch {
+				return fmt.Errorf("--watch is not supported for single file sync")
+			}
+			fmt.Printf("Syncing file %s to %s:%s via rsync...\n", absPath, sandboxID, remotePath)
+			return runRsyncSingleFile(inst.WorkerURL, token, absPath, remotePath)
+		}
 
 		if syncFlagWatch {
 			return watchAndRsync(inst.WorkerURL, token, absPath, remotePath)

@@ -12,12 +12,23 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	// Preset IDs from packages/shared/src/e2b-templates.json (stable identifiers)
+	defaultTemplatePresetID = "cmux-devbox-base"
+	dockerTemplatePresetID  = "cmux-devbox-docker"
+
+	// Template names in E2B (fallback if template list endpoint is unavailable)
+	defaultTemplateName = "cmux-devbox"
+	dockerTemplateName  = "cmux-devbox-docker"
+)
+
 var (
 	startFlagName     string
 	startFlagTemplate string
 	startFlagOpen     bool
 	startFlagGit      string
 	startFlagBranch   string
+	startFlagDocker   bool
 )
 
 // isGitURL checks if the string looks like a git URL
@@ -42,7 +53,8 @@ Examples:
   cmux start https://github.com/user/repo # Clone git repo into sandbox
   cmux start --git https://github.com/x/y # Clone git repo (explicit)
   cmux start --git user/repo              # Clone from GitHub shorthand
-  cmux start -o                           # Create sandbox and open VS Code`,
+  cmux start -o                           # Create sandbox and open VS Code
+  cmux start --docker                     # Create sandbox with Docker support`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		teamSlug, err := getTeamSlug()
@@ -111,7 +123,36 @@ Examples:
 		}
 
 		client := api.NewClient()
-		resp, err := client.CreateInstance(teamSlug, startFlagTemplate, name)
+
+		// Determine which template to use
+		templateID := startFlagTemplate
+		if templateID == "" {
+			templates, err := client.ListTemplates(teamSlug)
+			if err == nil {
+				presetID := defaultTemplatePresetID
+				if startFlagDocker {
+					presetID = dockerTemplatePresetID
+				}
+				for _, t := range templates {
+					if t.PresetID == presetID {
+						templateID = t.ID
+						break
+					}
+				}
+			}
+
+			// Fallback to E2B template name if the template list endpoint isn't
+			// available (or isn't returning the expected schema yet).
+			if templateID == "" {
+				if startFlagDocker {
+					templateID = dockerTemplateName
+				} else {
+					templateID = defaultTemplateName
+				}
+			}
+		}
+
+		resp, err := client.CreateInstance(teamSlug, templateID, name)
 		if err != nil {
 			return err
 		}
@@ -172,9 +213,8 @@ Examples:
 
 		if flagJSON {
 			output := map[string]interface{}{
-				"devboxId":      resp.DevboxID,
-				"e2bInstanceId": resp.E2BInstanceID,
-				"status":        resp.Status,
+				"id":     resp.DevboxID,
+				"status": resp.Status,
 			}
 			if vscodeAuthURL != "" {
 				output["vscodeUrl"] = vscodeAuthURL
@@ -201,9 +241,6 @@ Examples:
 			} else if resp.VNCURL != "" {
 				fmt.Printf("  VNC:    %s\n", resp.VNCURL)
 			}
-			if resp.E2BInstanceID != "" && flagVerbose {
-				fmt.Printf("  E2B ID: %s\n", resp.E2BInstanceID)
-			}
 		}
 
 		if startFlagOpen && vscodeAuthURL != "" {
@@ -217,8 +254,9 @@ Examples:
 
 func init() {
 	startCmd.Flags().StringVarP(&startFlagName, "name", "n", "", "Name for the sandbox")
-	startCmd.Flags().StringVarP(&startFlagTemplate, "template", "T", "", "E2B template ID")
+	startCmd.Flags().StringVarP(&startFlagTemplate, "template", "T", "", "E2B template ID (overrides --docker)")
 	startCmd.Flags().BoolVarP(&startFlagOpen, "open", "o", false, "Open VSCode after creation")
 	startCmd.Flags().StringVar(&startFlagGit, "git", "", "Git repository URL to clone (or user/repo shorthand)")
 	startCmd.Flags().StringVarP(&startFlagBranch, "branch", "b", "", "Git branch to clone")
+	startCmd.Flags().BoolVar(&startFlagDocker, "docker", false, "Use template with Docker support (slower to build but includes Docker)")
 }

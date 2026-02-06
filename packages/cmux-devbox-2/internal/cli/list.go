@@ -41,7 +41,7 @@ var listCmd = &cobra.Command{
 			if name == "" {
 				name = "(unnamed)"
 			}
-			fmt.Printf("  %s - %s (%s)\n", inst.DevboxID, inst.Status, name)
+			fmt.Printf("  %s - %s (%s)\n", inst.ID, inst.Status, name)
 		}
 		return nil
 	},

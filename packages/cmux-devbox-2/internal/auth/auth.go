@@ -461,7 +461,7 @@ func FetchUserProfile() (*UserProfile, error) {
 
 	cfg := GetConfig()
 	client := &http.Client{Timeout: 30 * time.Second}
-	profileURL := fmt.Sprintf("%s/api/v2/cmux/me", cfg.ConvexSiteURL)
+	profileURL := fmt.Sprintf("%s/api/v2/devbox/me", cfg.ConvexSiteURL)
 	req, _ := http.NewRequest("GET", profileURL, nil)
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 

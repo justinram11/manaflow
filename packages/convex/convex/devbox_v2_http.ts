@@ -8,9 +8,10 @@
 import { httpAction, type ActionCtx } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import type { FunctionReference } from "convex/server";
-
-// Default template ID for E2B instances (cmux-devbox with VSCode, VNC, Chrome)
-const DEFAULT_E2B_TEMPLATE_ID = "pou9b3m5z92g2hafjxrl";
+import {
+  DEFAULT_E2B_TEMPLATE_ID,
+  E2B_TEMPLATE_PRESETS,
+} from "@cmux/shared/e2b-templates";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json",
@@ -641,6 +642,55 @@ export const getMe = httpAction(async (ctx) => {
 });
 
 // ============================================================================
+// POST /api/v2/devbox/instances/{id}/token - Get auth token
+// ============================================================================
+async function handleGetAuthToken(
+  ctx: ActionCtx,
+  id: string,
+  teamSlugOrId: string
+): Promise<Response> {
+  try {
+    const instance = await ctx.runQuery(devboxApi.getById, {
+      teamSlugOrId,
+      id,
+    });
+
+    if (!instance) {
+      return jsonResponse({ code: 404, message: "Instance not found" }, 404);
+    }
+
+    const providerInstanceId = await getProviderInstanceId(ctx, id);
+    if (!providerInstanceId) {
+      return jsonResponse(
+        { code: 404, message: "Provider mapping not found" },
+        404
+      );
+    }
+
+    const result = (await ctx.runAction(e2bActionsApi.execCommand, {
+      instanceId: providerInstanceId,
+      command: "cat /home/user/.worker-auth-token 2>/dev/null || echo ''",
+    })) as { stdout?: string; stderr?: string; exit_code?: number };
+
+    const token = result.stdout?.trim() || "";
+    if (!token) {
+      return jsonResponse(
+        { code: 503, message: "Auth token not yet available" },
+        503
+      );
+    }
+
+    return jsonResponse({ token });
+  } catch (error) {
+    console.error("[devbox_v2.token] Error:", error);
+    return jsonResponse(
+      { code: 500, message: "Failed to get auth token" },
+      500
+    );
+  }
+}
+
+// ============================================================================
 // Route handler for instance-specific POST actions
 // ============================================================================
 export const instanceActionRouter = httpAction(async (ctx, req) => {
@@ -702,6 +752,17 @@ export const instanceActionRouter = httpAction(async (ctx, req) => {
       }
       return handleUpdateTtl(ctx, id, body.teamSlugOrId, body.ttlSeconds);
 
+    case "token":
+      return handleGetAuthToken(ctx, id, body.teamSlugOrId);
+
+    case "extend":
+      return handleUpdateTtl(
+        ctx,
+        id,
+        body.teamSlugOrId,
+        body.ttlSeconds ?? 3600
+      );
+
     default:
       return jsonResponse({ code: 404, message: "Not found" }, 404);
   }
@@ -729,4 +790,22 @@ export const instanceGetRouter = httpAction(async (ctx, req) => {
   const id = pathParts[4];
 
   return handleGetInstance(ctx, id, teamSlugOrId);
+});
+
+// ============================================================================
+// GET /api/v2/devbox/templates - List available templates
+// ============================================================================
+export const listTemplates = httpAction(async (ctx) => {
+  const { error } = await getAuthenticatedUser(ctx);
+  if (error) return error;
+
+  const templates = E2B_TEMPLATE_PRESETS.map((preset) => ({
+    presetId: preset.id,
+    templateId: preset.templateId,
+    name: preset.label,
+    description: preset.description,
+    supportsDocker: preset.templateId.includes("docker"),
+  }));
+
+  return jsonResponse({ templates });
 });

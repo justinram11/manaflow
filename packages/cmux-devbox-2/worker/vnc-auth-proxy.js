@@ -269,6 +269,10 @@ server.on('upgrade', (req, socket, head) => {
   const vncSocket = net.connect(VNC_PORT, '127.0.0.1', () => {
     console.log('[vnc-auth] Connected to VNC server');
 
+    // Disable Nagle's algorithm for low-latency VNC
+    vncSocket.setNoDelay(true);
+    socket.setNoDelay(true);
+
     // Perform WebSocket handshake
     const key = req.headers['sec-websocket-key'];
     const protocol = req.headers['sec-websocket-protocol'];

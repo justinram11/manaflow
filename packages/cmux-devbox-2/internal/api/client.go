@@ -66,10 +66,9 @@ func (c *Client) doRequest(method, path string, body interface{}) ([]byte, error
 	return respBody, nil
 }
 
-// Instance represents an E2B sandbox instance
+// Instance represents a sandbox instance
 type Instance struct {
 	ID        string `json:"id"`
-	DevboxID  string `json:"devboxId"`
 	Name      string `json:"name,omitempty"`
 	Status    string `json:"status"`
 	Template  string `json:"templateId,omitempty"`
@@ -85,28 +84,12 @@ type CreateInstanceRequest struct {
 	Name         string `json:"name,omitempty"`
 }
 
-// CreateInstanceID handles the nested id object from Convex
-type CreateInstanceID struct {
-	ID         string `json:"id"`
-	IsExisting bool   `json:"isExisting"`
-}
-
-type createInstanceRawResponse struct {
-	ID            CreateInstanceID `json:"id"`
-	E2BInstanceID string           `json:"e2bInstanceId"`
-	Status        string           `json:"status"`
-	VSCodeURL     string           `json:"vscodeUrl,omitempty"`
-	WorkerURL     string           `json:"workerUrl,omitempty"`
-	VNCURL        string           `json:"vncUrl,omitempty"`
-}
-
 type CreateInstanceResponse struct {
-	DevboxID      string `json:"devboxId"`
-	E2BInstanceID string `json:"e2bInstanceId"`
-	Status        string `json:"status"`
-	VSCodeURL     string `json:"vscodeUrl,omitempty"`
-	WorkerURL     string `json:"workerUrl,omitempty"`
-	VNCURL        string `json:"vncUrl,omitempty"`
+	DevboxID  string `json:"id"`
+	Status    string `json:"status"`
+	VSCodeURL string `json:"vscodeUrl,omitempty"`
+	WorkerURL string `json:"workerUrl,omitempty"`
+	VNCURL    string `json:"vncUrl,omitempty"`
 }
 
 func (c *Client) CreateInstance(teamSlug, templateID, name string) (*CreateInstanceResponse, error) {
@@ -116,24 +99,17 @@ func (c *Client) CreateInstance(teamSlug, templateID, name string) (*CreateInsta
 		Name:         name,
 	}
 
-	respBody, err := c.doRequest("POST", "/api/v2/cmux/instances", body)
+	respBody, err := c.doRequest("POST", "/api/v2/devbox/instances", body)
 	if err != nil {
 		return nil, err
 	}
 
-	var raw createInstanceRawResponse
-	if err := json.Unmarshal(respBody, &raw); err != nil {
+	var resp CreateInstanceResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w (body: %s)", err, string(respBody))
 	}
 
-	return &CreateInstanceResponse{
-		DevboxID:      raw.ID.ID,
-		E2BInstanceID: raw.E2BInstanceID,
-		Status:        raw.Status,
-		VSCodeURL:     raw.VSCodeURL,
-		WorkerURL:     raw.WorkerURL,
-		VNCURL:        raw.VNCURL,
-	}, nil
+	return &resp, nil
 }
 
 type ListInstancesResponse struct {
@@ -141,7 +117,7 @@ type ListInstancesResponse struct {
 }
 
 func (c *Client) ListInstances(teamSlug string) ([]Instance, error) {
-	path := fmt.Sprintf("/api/v2/cmux/instances?teamSlugOrId=%s", teamSlug)
+	path := fmt.Sprintf("/api/v2/devbox/instances?teamSlugOrId=%s", teamSlug)
 	respBody, err := c.doRequest("GET", path, nil)
 	if err != nil {
 		return nil, err
@@ -155,7 +131,7 @@ func (c *Client) ListInstances(teamSlug string) ([]Instance, error) {
 }
 
 func (c *Client) GetInstance(teamSlug, id string) (*Instance, error) {
-	path := fmt.Sprintf("/api/v2/cmux/instances/%s?teamSlugOrId=%s", id, teamSlug)
+	path := fmt.Sprintf("/api/v2/devbox/instances/%s?teamSlugOrId=%s", id, teamSlug)
 	respBody, err := c.doRequest("GET", path, nil)
 	if err != nil {
 		return nil, err
@@ -169,14 +145,14 @@ func (c *Client) GetInstance(teamSlug, id string) (*Instance, error) {
 }
 
 func (c *Client) StopInstance(teamSlug, id string) error {
-	path := fmt.Sprintf("/api/v2/cmux/instances/%s/stop", id)
+	path := fmt.Sprintf("/api/v2/devbox/instances/%s/stop", id)
 	_, err := c.doRequest("POST", path, map[string]string{"teamSlugOrId": teamSlug})
 	return err
 }
 
 // ExtendTimeout extends the sandbox timeout (E2B doesn't have pause/resume)
 func (c *Client) ExtendTimeout(teamSlug, id string, timeoutMs int) error {
-	path := fmt.Sprintf("/api/v2/cmux/instances/%s/extend", id)
+	path := fmt.Sprintf("/api/v2/devbox/instances/%s/extend", id)
 	body := map[string]interface{}{
 		"teamSlugOrId": teamSlug,
 		"timeoutMs":    timeoutMs,
@@ -198,7 +174,7 @@ type ExecResponse struct {
 }
 
 func (c *Client) Exec(teamSlug, id, command string, timeout int) (*ExecResponse, error) {
-	path := fmt.Sprintf("/api/v2/cmux/instances/%s/exec", id)
+	path := fmt.Sprintf("/api/v2/devbox/instances/%s/exec", id)
 	body := ExecRequest{
 		TeamSlugOrID: teamSlug,
 		Command:      command,
@@ -218,8 +194,11 @@ func (c *Client) Exec(teamSlug, id, command string, timeout int) (*ExecResponse,
 }
 
 type Template struct {
-	ID   string `json:"templateId"`
-	Name string `json:"name"`
+	ID             string `json:"templateId"`
+	PresetID       string `json:"presetId"`
+	Name           string `json:"name"`
+	Description    string `json:"description,omitempty"`
+	SupportsDocker bool   `json:"supportsDocker,omitempty"`
 }
 
 type ListTemplatesResponse struct {
@@ -227,7 +206,7 @@ type ListTemplatesResponse struct {
 }
 
 func (c *Client) ListTemplates(teamSlug string) ([]Template, error) {
-	path := fmt.Sprintf("/api/v2/cmux/templates?teamSlugOrId=%s", teamSlug)
+	path := fmt.Sprintf("/api/v2/devbox/templates?teamSlugOrId=%s", teamSlug)
 	respBody, err := c.doRequest("GET", path, nil)
 	if err != nil {
 		return nil, err
@@ -246,7 +225,7 @@ type AuthTokenResponse struct {
 
 // GetAuthToken fetches the auth token from the sandbox
 func (c *Client) GetAuthToken(teamSlug, id string) (string, error) {
-	path := fmt.Sprintf("/api/v2/cmux/instances/%s/token", id)
+	path := fmt.Sprintf("/api/v2/devbox/instances/%s/token", id)
 	body := map[string]string{"teamSlugOrId": teamSlug}
 
 	respBody, err := c.doRequest("POST", path, body)

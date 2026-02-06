@@ -146,7 +146,7 @@ Examples:
 			return nil
 		}
 
-		fmt.Printf("ID:       %s\n", inst.DevboxID)
+		fmt.Printf("ID:       %s\n", inst.ID)
 		fmt.Printf("Status:   %s\n", inst.Status)
 		if inst.Name != "" {
 			fmt.Printf("Name:     %s\n", inst.Name)

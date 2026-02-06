@@ -6,6 +6,7 @@ import (
 
 	"github.com/cmux-cli/cmux-devbox-2/internal/auth"
 	"github.com/cmux-cli/cmux-devbox-2/internal/cli"
+	"github.com/cmux-cli/cmux-devbox-2/internal/version"
 )
 
 // Build-time variables set via ldflags
@@ -20,6 +21,7 @@ func main() {
 	cli.SetVersionInfo(Version, Commit, BuildTime)
 	cli.SetBuildMode(Mode)
 	auth.SetBuildMode(Mode)
+	version.SetCurrentVersion(Version)
 
 	if os.Getenv("CMUX_E2B_DEV") == "" && os.Getenv("CMUX_E2B_PROD") == "" {
 		if Mode == "dev" {
