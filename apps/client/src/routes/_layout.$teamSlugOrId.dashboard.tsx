@@ -24,6 +24,8 @@ import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useOnboardingOptional } from "@/contexts/onboarding";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { createFakeConvexId } from "@/lib/fakeConvexId";
+import { stackClientApp } from "@/lib/stack";
+import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListeners";
 import { getApiIntegrationsGithubBranches } from "@/queries/branches";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
@@ -663,6 +665,46 @@ function DashboardComponent() {
     }
     return [];
   }, [selectedBranch, defaultBranchName, branchNames]);
+
+  // Prewarm sandbox when user starts typing with a repo selected in cloud mode
+  const prewarmCacheKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!taskDescription.trim()) {
+      // Reset when input is cleared (after task submission) so next typing triggers a new prewarm
+      prewarmCacheKeyRef.current = null;
+      return;
+    }
+    // Only trigger in cloud mode with a repo selected (not environment)
+    if (isEnvSelected || !isCloudMode || !selectedProject[0]) return;
+
+    const repoUrl = `https://github.com/${selectedProject[0]}.git`;
+    const branch = effectiveSelectedBranch[0] || "";
+    const cacheKey = `${teamSlugOrId}:${repoUrl}:${branch}`;
+
+    // Skip if already prewarmed for this exact combo
+    if (prewarmCacheKeyRef.current === cacheKey) return;
+    prewarmCacheKeyRef.current = cacheKey;
+
+    // Fire-and-forget prewarm request
+    (async () => {
+      try {
+        const user = await stackClientApp.getUser();
+        if (!user) return;
+        const authHeaders = await user.getAuthHeaders();
+        await fetch(`${WWW_ORIGIN}/api/sandboxes/prewarm`, {
+          method: "POST",
+          headers: { ...authHeaders, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            teamSlugOrId,
+            repoUrl,
+            branch: branch || undefined,
+          }),
+        });
+      } catch (error) {
+        console.error("[prewarm] Failed to trigger prewarm:", error);
+      }
+    })();
+  }, [taskDescription, selectedProject, effectiveSelectedBranch, isEnvSelected, isCloudMode, teamSlugOrId]);
 
   const ensureDockerReadyForLocalTask = useCallback(async (): Promise<boolean> => {
     if (!socket) {
