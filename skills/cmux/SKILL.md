@@ -18,6 +18,7 @@ npm install -g cmux
 ```bash
 cmux login                      # Authenticate (opens browser)
 cmux start ./my-project         # Create sandbox, upload directory → returns ID
+cmux start .                    # Or use current directory
 cmux code <id>                  # Open VS Code
 cmux pty <id>                   # Open terminal session
 cmux upload <id> ./my-project   # Upload files/directories to sandbox
@@ -27,6 +28,8 @@ cmux stop <id>                  # Stop sandbox
 cmux delete <id>                # Delete sandbox
 cmux ls                         # List all sandboxes
 ```
+
+> **Preferred:** Always use `cmux start .` or `cmux start <local-path>` to sync your local directory to a cloud sandbox. This is the recommended workflow over cloning from a git repo.
 
 ## Commands
 
@@ -41,10 +44,15 @@ cmux whoami              # Show current user and team
 ### Sandbox Lifecycle
 
 ```bash
-cmux start [path]        # Create sandbox, optionally upload directory
-cmux start -o [path]     # Create and open VS Code immediately
-cmux start --docker      # Create sandbox with Docker support
+# Preferred: local-to-cloud (syncs your local directory to the sandbox)
+cmux start .             # Create sandbox from current directory (recommended)
+cmux start ./my-project  # Create sandbox from a specific local directory
+cmux start -o .          # Create from local dir and open VS Code immediately
+
+# Alternative: clone from git
 cmux start --git user/repo  # Clone a git repo into sandbox
+
+cmux start --docker      # Create sandbox with Docker support
 cmux ls                  # List all sandboxes
 cmux status <id>         # Show sandbox details and URLs
 cmux stop <id>           # Stop sandbox
@@ -137,7 +145,7 @@ Sandbox IDs look like `cmux_abc12345`. Use the full ID when running commands. Ge
 
 ## Common Workflows
 
-### Create and develop in a sandbox
+### Create and develop in a sandbox (preferred: local-to-cloud)
 
 ```bash
 cmux start ./my-project        # Creates sandbox, uploads files
