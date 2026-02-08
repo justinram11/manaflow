@@ -68,16 +68,17 @@ func (c *Client) doRequest(method, path string, body interface{}) ([]byte, error
 
 // Instance represents a sandbox instance
 type Instance struct {
-	ID        string `json:"id"`
-	Name      string `json:"name,omitempty"`
-	Status    string `json:"status"`
-	Provider  string `json:"provider,omitempty"`
-	Template  string `json:"templateId,omitempty"`
-	GPU       string `json:"gpu,omitempty"`
-	CreatedAt int64  `json:"createdAt,omitempty"`
-	VSCodeURL string `json:"vscodeUrl,omitempty"`
-	VNCURL    string `json:"vncUrl,omitempty"`
-	WorkerURL string `json:"workerUrl,omitempty"`
+	ID         string `json:"id"`
+	Name       string `json:"name,omitempty"`
+	Status     string `json:"status"`
+	Provider   string `json:"provider,omitempty"`
+	Template   string `json:"templateId,omitempty"`
+	GPU        string `json:"gpu,omitempty"`
+	CreatedAt  int64  `json:"createdAt,omitempty"`
+	JupyterURL string `json:"jupyterUrl,omitempty"`
+	VSCodeURL  string `json:"vscodeUrl,omitempty"`
+	VNCURL     string `json:"vncUrl,omitempty"`
+	WorkerURL  string `json:"workerUrl,omitempty"`
 }
 
 type CreateInstanceRequest struct {
@@ -94,14 +95,15 @@ type CreateInstanceRequest struct {
 }
 
 type CreateInstanceResponse struct {
-	DevboxID  string `json:"id"`
-	Provider  string `json:"provider,omitempty"`
-	Status    string `json:"status"`
-	Template  string `json:"templateId,omitempty"`
-	GPU       string `json:"gpu,omitempty"`
-	VSCodeURL string `json:"vscodeUrl,omitempty"`
-	WorkerURL string `json:"workerUrl,omitempty"`
-	VNCURL    string `json:"vncUrl,omitempty"`
+	DevboxID   string `json:"id"`
+	Provider   string `json:"provider,omitempty"`
+	Status     string `json:"status"`
+	Template   string `json:"templateId,omitempty"`
+	GPU        string `json:"gpu,omitempty"`
+	JupyterURL string `json:"jupyterUrl,omitempty"`
+	VSCodeURL  string `json:"vscodeUrl,omitempty"`
+	WorkerURL  string `json:"workerUrl,omitempty"`
+	VNCURL     string `json:"vncUrl,omitempty"`
 }
 
 func (c *Client) CreateInstance(req CreateInstanceRequest) (*CreateInstanceResponse, error) {

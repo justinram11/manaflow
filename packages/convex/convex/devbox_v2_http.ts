@@ -220,6 +220,8 @@ export const createInstance = httpAction(async (ctx, req) => {
         instanceId: string;
         status: string;
         gpu?: string | null;
+        authToken?: string;
+        jupyterUrl?: string;
         vscodeUrl?: string;
         workerUrl?: string;
         vncUrl?: string;
@@ -246,8 +248,8 @@ export const createInstance = httpAction(async (ctx, req) => {
         status: result.status,
         templateId,
         gpu: result.gpu ?? undefined,
+        jupyterUrl: result.jupyterUrl,
         vscodeUrl: result.vscodeUrl,
-        workerUrl: result.workerUrl,
         vncUrl: result.vncUrl,
       });
     }

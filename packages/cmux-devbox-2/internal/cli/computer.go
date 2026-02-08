@@ -88,20 +88,15 @@ Example:
 			return err
 		}
 
-		if flagJSON {
-			output, _ := json.Marshal(result)
-			fmt.Println(string(output))
-		} else {
-			// Parse and display in readable format
-			if data, ok := result["data"].(map[string]interface{}); ok {
-				if snapshot, ok := data["snapshot"].(string); ok {
-					fmt.Println(snapshot)
-					return nil
-				}
+		// Parse and display in readable format
+		if data, ok := result["data"].(map[string]interface{}); ok {
+			if snapshot, ok := data["snapshot"].(string); ok {
+				fmt.Println(snapshot)
+				return nil
 			}
-			output, _ := json.Marshal(result)
-			fmt.Println(string(output))
 		}
+		output, _ := json.Marshal(result)
+		fmt.Println(string(output))
 		return nil
 	},
 }

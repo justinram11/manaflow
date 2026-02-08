@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"github.com/cmux-cli/cmux-devbox-2/internal/api"
@@ -33,12 +32,6 @@ Examples:
 		instances, err := client.ListInstances(teamSlug, listFlagProvider)
 		if err != nil {
 			return err
-		}
-
-		if flagJSON {
-			data, _ := json.MarshalIndent(instances, "", "  ")
-			fmt.Println(string(data))
-			return nil
 		}
 
 		if len(instances) == 0 {
@@ -85,12 +78,6 @@ Examples:
 		templates, err := client.ListTemplates(teamSlug, templatesFlagProvider)
 		if err != nil {
 			return err
-		}
-
-		if flagJSON {
-			data, _ := json.MarshalIndent(templates, "", "  ")
-			fmt.Println(string(data))
-			return nil
 		}
 
 		if len(templates) == 0 {

@@ -22,29 +22,88 @@ function getModalClient(): ModalClient {
 }
 
 /**
+ * Generate a 64-char hex auth token (same format as E2B worker daemon).
+ */
+function generateAuthToken(): string {
+  const array = new Uint8Array(32);
+  crypto.getRandomValues(array);
+  return Array.from(array, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
  * Extract networking URLs from Modal instance.
  */
 function extractNetworkingUrls(instance: ModalInstance) {
   const httpServices = instance.networking.httpServices;
+  const jupyterService = httpServices.find(
+    (s) => s.port === 8888 || s.name === "jupyter",
+  );
   const vscodeService = httpServices.find(
     (s) => s.port === 39378 || s.name === "vscode",
   );
-  const workerService = httpServices.find(
-    (s) => s.port === 39377 || s.name === "worker",
-  );
-  const vncService = httpServices.find(
-    (s) => s.port === 39380 || s.name === "vnc",
-  );
 
   return {
+    jupyterUrl: jupyterService?.url,
     vscodeUrl: vscodeService?.url,
-    workerUrl: workerService?.url,
-    vncUrl: vncService?.url,
   };
 }
 
 /**
- * Start a new Modal sandbox instance.
+ * Setup script that installs Jupyter Lab + code-server and starts them with token auth.
+ * Writes token to /home/user/.worker-auth-token for compatibility with E2B auth flow.
+ */
+function buildSetupScript(authToken: string): string {
+  return `#!/bin/bash
+set -e
+
+# Create workspace directory
+mkdir -p /home/user/workspace
+
+# Write auth token (same path as E2B for compatibility)
+echo -n '${authToken}' > /home/user/.worker-auth-token
+chmod 600 /home/user/.worker-auth-token
+
+# Install system dependencies if needed
+if ! command -v curl &>/dev/null; then
+  apt-get update -qq > /dev/null 2>&1
+  apt-get install -y -qq curl procps > /dev/null 2>&1
+fi
+
+# Install JupyterLab
+pip install -q jupyterlab 2>/dev/null
+
+# Install code-server (VS Code in browser)
+curl -fsSL https://code-server.dev/install.sh | sh -s -- --method standalone > /dev/null 2>&1
+
+# Start Jupyter Lab on port 8888 with token auth
+nohup jupyter lab \\
+  --ip=0.0.0.0 \\
+  --port=8888 \\
+  --ServerApp.token='${authToken}' \\
+  --ServerApp.allow_root=True \\
+  --ServerApp.root_dir=/home/user/workspace \\
+  --no-browser \\
+  > /tmp/jupyter.log 2>&1 &
+
+# Start code-server (VS Code) on port 39378
+# Uses password auth with the same token
+export PASSWORD='${authToken}'
+nohup code-server \\
+  --bind-addr 0.0.0.0:39378 \\
+  --auth password \\
+  --disable-telemetry \\
+  --disable-update-check \\
+  /home/user/workspace \\
+  > /tmp/code-server.log 2>&1 &
+
+# Wait for services to start
+sleep 2
+echo "SETUP_COMPLETE"
+`;
+}
+
+/**
+ * Start a new Modal sandbox instance with Jupyter + code-server + token auth.
  */
 export const startInstance = internalAction({
   args: {
@@ -64,7 +123,7 @@ export const startInstance = internalAction({
     const presetId = args.templateId ?? DEFAULT_MODAL_TEMPLATE_ID;
     const preset = getModalTemplateByPresetId(presetId);
     const gpu = args.gpu ?? preset?.gpu;
-    const image = args.image ?? preset?.image ?? "ubuntu:22.04";
+    const image = args.image ?? preset?.image ?? "python:3.11-slim";
 
     try {
       const instance = await client.instances.start({
@@ -75,19 +134,36 @@ export const startInstance = internalAction({
         metadata: args.metadata,
         envs: args.envs,
         image,
-        encryptedPorts: [39377, 39378, 39380],
+        encryptedPorts: [8888, 39378],
       });
 
-      const { vscodeUrl, workerUrl, vncUrl } =
-        extractNetworkingUrls(instance);
+      // Generate auth token (same format as E2B: 64 hex chars)
+      const authToken = generateAuthToken();
+
+      // Run setup script to install Jupyter + code-server + write token
+      console.log("[modal_actions] Running setup script...");
+      const setupResult = await instance.exec(buildSetupScript(authToken));
+      if (setupResult.exit_code !== 0) {
+        console.error(
+          "[modal_actions] Setup script failed:",
+          setupResult.stderr,
+        );
+      }
+
+      // Refresh tunnel URLs after services are started
+      await instance.refreshTunnels();
+      const { jupyterUrl, vscodeUrl } = extractNetworkingUrls(instance);
 
       return {
         instanceId: instance.id,
         status: "running",
         gpu: gpu ?? null,
+        authToken,
+        jupyterUrl: jupyterUrl
+          ? `${jupyterUrl}?token=${authToken}`
+          : undefined,
         vscodeUrl,
-        workerUrl,
-        vncUrl,
+        vncUrl: undefined,
       };
     } finally {
       client.close();
@@ -109,20 +185,24 @@ export const getInstance = internalAction({
         instanceId: args.instanceId,
       });
       const isRunning = await instance.isRunning();
-      const { vscodeUrl, workerUrl, vncUrl } =
-        extractNetworkingUrls(instance);
+
+      // Refresh tunnels for current URLs
+      await instance.refreshTunnels();
+      const { jupyterUrl, vscodeUrl } = extractNetworkingUrls(instance);
 
       return {
         instanceId: args.instanceId,
         status: isRunning ? "running" : "stopped",
+        jupyterUrl,
         vscodeUrl,
-        workerUrl,
-        vncUrl,
+        workerUrl: null,
+        vncUrl: null,
       };
     } catch {
       return {
         instanceId: args.instanceId,
         status: "stopped",
+        jupyterUrl: null,
         vscodeUrl: null,
         workerUrl: null,
         vncUrl: null,

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -55,20 +54,29 @@ var startCmd = &cobra.Command{
 	Long: `Create a new sandbox and optionally sync files or clone a git repo.
 
 Providers:
-  e2b    (default) E2B cloud sandboxes
-  modal  Modal sandboxes with optional GPU support
+  e2b    (default) VS Code + VNC desktop. Best for web dev, Docker.
+  modal  Jupyter Lab + VS Code + GPU. Best for ML/AI, data science.
+
+Using --gpu auto-selects Modal. No need to specify --provider.
+
+GPU options (Modal):
+  T4          16GB VRAM - inference, fine-tuning small models
+  L4          24GB VRAM - inference, image generation
+  A10G        24GB VRAM - training medium models
+  A100        40GB VRAM - training large models (7B-70B)
+  A100-80GB   80GB VRAM - very large models
+  H100        80GB VRAM - fastest, cutting-edge research
+  Multi-GPU:  A100:2, H100:4, H100:8
 
 Examples:
-  cmux start                                    # E2B sandbox (default)
-  cmux start --provider modal                   # Modal sandbox (CPU only)
-  cmux start --provider modal --gpu A100        # Modal sandbox with A100 GPU
-  cmux start --provider modal --gpu T4          # Modal sandbox with T4 GPU
-  cmux start --provider modal --gpu H100 --cpu 8 --memory 65536
-  cmux start .                                  # Sync current directory
-  cmux start https://github.com/user/repo       # Clone git repo
-  cmux start --git user/repo                    # Clone from GitHub shorthand
-  cmux start -o                                 # Create sandbox and open VS Code
-  cmux start --docker                           # E2B sandbox with Docker support`,
+  cmux start                          # E2B sandbox (default, web dev)
+  cmux start --gpu T4                 # Modal + T4 GPU + Jupyter
+  cmux start --gpu A100               # Modal + A100 GPU + Jupyter
+  cmux start --gpu H100:2             # Modal + 2x H100 GPUs
+  cmux start --provider modal         # Modal CPU-only + Jupyter
+  cmux start .                        # Sync current directory
+  cmux start https://github.com/u/r   # Clone git repo
+  cmux start --docker                 # E2B with Docker support`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		teamSlug, err := getTeamSlug()
@@ -290,49 +298,41 @@ Examples:
 			providerLabel = "e2b"
 		}
 
-		if flagJSON {
-			output := map[string]interface{}{
-				"id":       resp.DevboxID,
-				"provider": providerLabel,
-				"status":   resp.Status,
-			}
-			if resp.GPU != "" {
-				output["gpu"] = resp.GPU
-			}
-			if vscodeAuthURL != "" {
-				output["vscodeUrl"] = vscodeAuthURL
-			} else if resp.VSCodeURL != "" {
-				output["vscodeUrl"] = resp.VSCodeURL
-			}
-			if vncAuthURL != "" {
-				output["vncUrl"] = vncAuthURL
-			} else if resp.VNCURL != "" {
-				output["vncUrl"] = resp.VNCURL
-			}
-			data, _ := json.MarshalIndent(output, "", "  ")
-			fmt.Println(string(data))
-		} else {
-			fmt.Printf("Created sandbox: %s\n", resp.DevboxID)
-			fmt.Printf("  Provider: %s\n", providerLabel)
-			fmt.Printf("  Status:   %s\n", resp.Status)
-			if resp.GPU != "" {
-				fmt.Printf("  GPU:      %s\n", resp.GPU)
-			}
-			if vscodeAuthURL != "" {
-				fmt.Printf("  VSCode:   %s\n", vscodeAuthURL)
-			} else if resp.VSCodeURL != "" {
-				fmt.Printf("  VSCode:   %s\n", resp.VSCodeURL)
-			}
-			if vncAuthURL != "" {
-				fmt.Printf("  VNC:      %s\n", vncAuthURL)
-			} else if resp.VNCURL != "" {
-				fmt.Printf("  VNC:      %s\n", resp.VNCURL)
-			}
+		// For Modal, Jupyter URL comes pre-built with token from the backend
+		jupyterURL := resp.JupyterURL
+
+		fmt.Printf("Created sandbox: %s\n", resp.DevboxID)
+		fmt.Printf("  Provider: %s\n", providerLabel)
+		fmt.Printf("  Status:   %s\n", resp.Status)
+		if resp.GPU != "" {
+			fmt.Printf("  GPU:      %s\n", resp.GPU)
+		}
+		if jupyterURL != "" {
+			fmt.Printf("  Jupyter:  %s\n", jupyterURL)
+		}
+		if vscodeAuthURL != "" {
+			fmt.Printf("  VSCode:   %s\n", vscodeAuthURL)
+		} else if resp.VSCodeURL != "" {
+			fmt.Printf("  VSCode:   %s\n", resp.VSCodeURL)
+		}
+		if vncAuthURL != "" {
+			fmt.Printf("  VNC:      %s\n", vncAuthURL)
+		} else if resp.VNCURL != "" {
+			fmt.Printf("  VNC:      %s\n", resp.VNCURL)
 		}
 
-		if startFlagOpen && vscodeAuthURL != "" {
-			fmt.Println("\nOpening VSCode...")
-			openURL(vscodeAuthURL)
+		// Auto-open: prefer Jupyter for Modal, VSCode for E2B
+		openableURL := vscodeAuthURL
+		if jupyterURL != "" {
+			openableURL = jupyterURL
+		}
+		if startFlagOpen && openableURL != "" {
+			if jupyterURL != "" {
+				fmt.Println("\nOpening Jupyter Lab...")
+			} else {
+				fmt.Println("\nOpening VSCode...")
+			}
+			openURL(openableURL)
 		}
 
 		return nil

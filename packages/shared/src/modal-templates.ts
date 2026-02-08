@@ -24,6 +24,7 @@ export const modalTemplatePresetSchema = z
     gpu: z.string().optional(),
     image: z.string(),
     description: z.string().optional(),
+    useCases: z.array(z.string()).optional(),
     versions: z.array(modalTemplateVersionSchema).min(1).readonly(),
   })
   .superRefine((preset, ctx) => {

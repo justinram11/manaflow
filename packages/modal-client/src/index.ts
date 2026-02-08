@@ -298,7 +298,7 @@ export class ModalClient {
       );
 
       const encryptedPorts = options.encryptedPorts || [
-        39377, 39378, 39380,
+        8888, 39378,
       ];
 
       const sandbox = await this.client.sandboxes.create(app, image, {
@@ -318,9 +318,8 @@ export class ModalClient {
         for (const [port, info] of Object.entries(tunnels)) {
           const portNum = Number(port);
           let name = `port-${port}`;
-          if (portNum === 39378) name = "vscode";
-          else if (portNum === 39377) name = "worker";
-          else if (portNum === 39380) name = "vnc";
+          if (portNum === 8888) name = "jupyter";
+          else if (portNum === 39378) name = "vscode";
           httpServices.push({ name, port: portNum, url: info.url });
         }
       } catch (err) {
@@ -348,9 +347,8 @@ export class ModalClient {
         for (const [port, info] of Object.entries(tunnels)) {
           const portNum = Number(port);
           let name = `port-${port}`;
-          if (portNum === 39378) name = "vscode";
-          else if (portNum === 39377) name = "worker";
-          else if (portNum === 39380) name = "vnc";
+          if (portNum === 8888) name = "jupyter";
+          else if (portNum === 39378) name = "vscode";
           httpServices.push({ name, port: portNum, url: info.url });
         }
       } catch (err) {

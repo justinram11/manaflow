@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -28,12 +27,6 @@ var execCmd = &cobra.Command{
 		resp, err := client.Exec(teamSlug, id, command, execFlagTimeout)
 		if err != nil {
 			return err
-		}
-
-		if flagJSON {
-			data, _ := json.MarshalIndent(resp, "", "  ")
-			fmt.Println(string(data))
-			return nil
 		}
 
 		if resp.Stdout != "" {

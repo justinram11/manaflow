@@ -9,7 +9,6 @@ import (
 )
 
 var (
-	flagJSON    bool
 	flagVerbose bool
 	flagTeam    string
 )
@@ -75,7 +74,6 @@ Quick start:
 }
 
 func init() {
-	rootCmd.PersistentFlags().BoolVar(&flagJSON, "json", false, "Output as JSON")
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "Verbose output")
 	rootCmd.PersistentFlags().StringVarP(&flagTeam, "team", "t", "", "Team slug (overrides default)")
 

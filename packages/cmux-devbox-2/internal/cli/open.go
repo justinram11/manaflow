@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"os/exec"
@@ -138,12 +137,6 @@ Examples:
 		inst, err := client.GetInstance(teamSlug, args[0])
 		if err != nil {
 			return err
-		}
-
-		if flagJSON {
-			data, _ := json.MarshalIndent(inst, "", "  ")
-			fmt.Println(string(data))
-			return nil
 		}
 
 		fmt.Printf("ID:       %s\n", inst.ID)

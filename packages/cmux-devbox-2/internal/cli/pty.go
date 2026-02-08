@@ -276,12 +276,6 @@ Examples:
 			return fmt.Errorf("failed to decode response: %w", err)
 		}
 
-		if flagJSON {
-			output, _ := json.MarshalIndent(result.Sessions, "", "  ")
-			fmt.Println(string(output))
-			return nil
-		}
-
 		if len(result.Sessions) == 0 {
 			fmt.Println("No active PTY sessions")
 			return nil
