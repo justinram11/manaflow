@@ -1,6 +1,6 @@
 {
   "name": "cmux-linux-x64",
-  "version": "0.7.14",
+  "version": "0.7.19",
   "description": "cmux binary for Linux x64",
   "os": ["linux"],
   "cpu": ["x64"],

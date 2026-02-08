@@ -1,4 +1,5 @@
 import { env } from "@/client-env";
+import { AnalyticsCards } from "@/components/dashboard/AnalyticsCards";
 import {
   DashboardInput,
   type EditorApi,
@@ -70,6 +71,11 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/dashboard")({
     // Prewarm queries used in TaskList
     convexQueryClient.convexClient.prewarmQuery({
       query: api.tasks.get,
+      args: { teamSlugOrId },
+    });
+    // Prewarm analytics query
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.analytics.getDashboardStats,
       args: { teamSlugOrId },
     });
   },
@@ -1322,6 +1328,8 @@ function DashboardComponent() {
                 projectFullName={selectedRepoFullName}
               />
             ) : null}
+
+            <AnalyticsCards teamSlugOrId={teamSlugOrId} />
 
             {/* {shouldShowCloudRepoOnboarding && createEnvironmentSearch ? (
               <div className="mt-4 mb-4 flex items-start gap-2 rounded-xl border border-green-200/60 dark:border-green-500/40 bg-green-50/80 dark:bg-green-500/10 px-3 py-2 text-sm text-green-900 dark:text-green-100">
