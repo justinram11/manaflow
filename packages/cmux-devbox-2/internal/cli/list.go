@@ -95,6 +95,9 @@ Examples:
 			if t.GPU != "" {
 				extra = fmt.Sprintf(" [GPU: %s]", t.GPU)
 			}
+			if t.Gated {
+				extra += " (contact founders@manaflow.com)"
+			}
 			fmt.Printf("  %s - %s [%s]%s\n", t.ID, t.Name, provider, extra)
 		}
 		return nil

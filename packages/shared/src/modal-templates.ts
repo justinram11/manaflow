@@ -102,6 +102,22 @@ export const getModalGpuTemplates = (): readonly ModalTemplatePreset[] => {
 };
 
 /**
+ * GPUs available without special approval.
+ * Higher-tier GPUs require contacting the Manaflow team.
+ */
+export const MODAL_AVAILABLE_GPUS = new Set(["T4", "L4", "A10G"]);
+
+/**
+ * Check if a GPU type requires approval (gated).
+ * Returns true if the GPU is gated and not freely available.
+ * Accepts GPU strings like "H100" or "H100:2" (multi-GPU).
+ */
+export const isModalGpuGated = (gpu: string): boolean => {
+  const baseGpu = gpu.split(":")[0]?.toUpperCase() ?? "";
+  return !MODAL_AVAILABLE_GPUS.has(baseGpu);
+};
+
+/**
  * The default template ID for preview configure environments (CPU-only).
  */
 export const DEFAULT_MODAL_PREVIEW_TEMPLATE_ID: string =

@@ -38,6 +38,17 @@ var (
 	startFlagImage    string
 )
 
+// availableGpus are GPUs that can be used without special approval
+var availableGpus = map[string]bool{
+	"T4": true, "L4": true, "A10G": true,
+}
+
+// isGpuGated returns true if the GPU type requires approval
+func isGpuGated(gpu string) bool {
+	base := strings.ToUpper(strings.Split(gpu, ":")[0])
+	return !availableGpus[base]
+}
+
 // isGitURL checks if the string looks like a git URL
 func isGitURL(s string) bool {
 	return strings.HasPrefix(s, "git@") ||
@@ -63,13 +74,14 @@ GPU options (Modal):
   T4          16GB VRAM  - inference, fine-tuning small models
   L4          24GB VRAM  - inference, image generation
   A10G        24GB VRAM  - training medium models
+
+  The following require approval (contact founders@manaflow.com):
   L40S        48GB VRAM  - inference, video generation
   A100        40GB VRAM  - training large models (7B-70B)
   A100-80GB   80GB VRAM  - very large models
   H100        80GB VRAM  - fast training, research
   H200        141GB VRAM - maximum memory capacity
   B200        192GB VRAM - latest gen, frontier models
-  Multi-GPU:  A100:2, H100:4, H100:8
 
 Examples:
   cmux start                          # E2B sandbox (default, web dev)
@@ -153,6 +165,11 @@ Examples:
 		// If --gpu is specified without --provider, default to modal
 		if startFlagGPU != "" && provider == "" {
 			provider = "modal"
+		}
+
+		// Check if the requested GPU is gated
+		if startFlagGPU != "" && isGpuGated(startFlagGPU) {
+			return fmt.Errorf("GPU type %q requires approval.\nPlease contact the Manaflow team at founders@manaflow.com for inquiry.\n\nAvailable GPUs: T4, L4, A10G", startFlagGPU)
 		}
 
 		// Determine which template to use

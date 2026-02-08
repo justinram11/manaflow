@@ -16,6 +16,7 @@ import {
 import {
   DEFAULT_MODAL_TEMPLATE_ID,
   MODAL_TEMPLATE_PRESETS,
+  isModalGpuGated,
 } from "@cmux/shared/modal-templates";
 
 type SandboxProvider = "e2b" | "modal";
@@ -201,6 +202,17 @@ export const createInstance = httpAction(async (ctx, req) => {
 
   try {
     if (provider === "modal") {
+      // Gate expensive GPUs
+      if (body.gpu && isModalGpuGated(body.gpu)) {
+        return jsonResponse(
+          {
+            code: 403,
+            message: `GPU type "${body.gpu}" requires approval. Please contact the Manaflow team at founders@manaflow.com for inquiry.`,
+          },
+          403,
+        );
+      }
+
       const templateId = body.templateId ?? DEFAULT_MODAL_TEMPLATE_ID;
 
       const result = (await ctx.runAction(modalActionsApi.startInstance, {
@@ -963,6 +975,7 @@ export const listTemplates = httpAction(async (ctx, req) => {
           disk: preset.disk,
           gpu: preset.gpu,
           image: preset.image,
+          gated: preset.gpu ? isModalGpuGated(preset.gpu) : false,
         }))
       : [];
 

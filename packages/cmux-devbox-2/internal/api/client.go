@@ -216,6 +216,7 @@ type Template struct {
 	GPU            string `json:"gpu,omitempty"`
 	Image          string `json:"image,omitempty"`
 	SupportsDocker bool   `json:"supportsDocker,omitempty"`
+	Gated          bool   `json:"gated,omitempty"`
 }
 
 type ListTemplatesResponse struct {
