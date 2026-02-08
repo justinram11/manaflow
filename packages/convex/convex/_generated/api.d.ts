@@ -78,6 +78,8 @@ import type * as userEditorSettings from "../userEditorSettings.js";
 import type * as users from "../users.js";
 import type * as users_utils_getWorkerAuth from "../users/utils/getWorkerAuth.js";
 import type * as users_utils_index from "../users/utils/index.js";
+import type * as warmPool from "../warmPool.js";
+import type * as warmPoolMaintenance from "../warmPoolMaintenance.js";
 import type * as workspaceConfigs from "../workspaceConfigs.js";
 import type * as workspaceSettings from "../workspaceSettings.js";
 
@@ -158,6 +160,8 @@ declare const fullApi: ApiFromModules<{
   users: typeof users;
   "users/utils/getWorkerAuth": typeof users_utils_getWorkerAuth;
   "users/utils/index": typeof users_utils_index;
+  warmPool: typeof warmPool;
+  warmPoolMaintenance: typeof warmPoolMaintenance;
   workspaceConfigs: typeof workspaceConfigs;
   workspaceSettings: typeof workspaceSettings;
 }>;
