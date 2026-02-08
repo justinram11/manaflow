@@ -57,10 +57,19 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
     && npm install -g npm@latest
 
-# Install Bun
-RUN curl -fsSL https://bun.sh/install | bash
-ENV BUN_INSTALL="/root/.bun"
-ENV PATH="$BUN_INSTALL/bin:$PATH"
+# Install Bun globally (accessible to all users, not just root)
+RUN curl -fsSL https://bun.sh/install | bash \
+    && cp /root/.bun/bin/bun /usr/local/bin/bun \
+    && ln -s /usr/local/bin/bun /usr/local/bin/bunx
+
+# Install Rust globally (rustup + toolchain accessible to all users)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo sh -s -- -y --default-toolchain stable --no-modify-path \
+    && chmod -R a+rX /usr/local/rustup /usr/local/cargo \
+    && ln -s /usr/local/cargo/bin/* /usr/local/bin/ \
+    && echo 'export RUSTUP_HOME=/usr/local/rustup' >> /etc/profile.d/rust.sh \
+    && echo 'export CARGO_HOME=/usr/local/cargo' >> /etc/profile.d/rust.sh
+ENV RUSTUP_HOME=/usr/local/rustup
+ENV CARGO_HOME=/usr/local/cargo
 
 # Install GitHub CLI
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
