@@ -1,8 +1,17 @@
 # Build artifacts (platform-specific native binaries)
+npm/cloudrouter-darwin-*/bin/
+npm/cloudrouter-linux-*/bin/
+npm/cloudrouter-win32-*/bin/
+npm/cmux55-darwin-*/bin/
+npm/cmux55-linux-*/bin/
+npm/cmux55-win32-*/bin/
 npm/darwin-*/bin/
 npm/linux-*/bin/
 npm/win32-*/bin/
+npm/cloudrouter/lib/cmux
+npm/cloudrouter/lib/cloudrouter
 npm/cmux/lib/cmux
+npm/cmux55/lib/cmux55
 npm/cloudrouter-zzz/lib/cmux
 npm/*/*.tgz
 
