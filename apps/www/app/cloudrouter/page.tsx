@@ -115,8 +115,6 @@ export default function CloudRouterPage() {
             Give Claude Code and Codex the ability to start VMs and run experiments with GPUs.
             Agents spin up a sandbox from your local directory, run commands, transfer files,
             and automate browsers — all from the command line or as an agent skill.
-            The agent can self-verify and close the loop for all web dev and research tasks
-            without human intervention.
           </p>
         </section>
 
