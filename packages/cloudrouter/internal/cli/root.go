@@ -31,7 +31,9 @@ Quick start:
   cloudrouter start ./my-project         # Create sandbox + upload directory
   cloudrouter code <id>                  # Open VS Code
   cloudrouter pty <id>                   # Open terminal session
-  cloudrouter stop <id>                  # Stop sandbox
+  cloudrouter stop <id>                  # Pause sandbox
+  cloudrouter resume <id>                # Resume paused sandbox
+  cloudrouter delete <id>                # Delete sandbox permanently
   cloudrouter ls                         # List all sandboxes
 
 GPU options (--gpu):

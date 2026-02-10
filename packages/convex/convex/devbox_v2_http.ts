@@ -220,7 +220,7 @@ export const createInstance = httpAction(async (ctx, req) => {
         gpu: body.gpu,
         cpu: body.cpu,
         memoryMiB: body.memoryMiB,
-        ttlSeconds: body.ttlSeconds ?? 60 * 60,
+        ttlSeconds: body.ttlSeconds ?? 600,
         metadata: {
           app: "cmux-devbox-v2",
           userId: identity!.subject,
@@ -272,7 +272,7 @@ export const createInstance = httpAction(async (ctx, req) => {
 
     const result = (await ctx.runAction(e2bActionsApi.startInstance, {
       templateId,
-      ttlSeconds: body.ttlSeconds ?? 60 * 60,
+      ttlSeconds: body.ttlSeconds ?? 600,
       metadata: {
         app: "cmux-devbox-v2",
         userId: identity!.subject,
@@ -647,6 +647,64 @@ async function handleStopInstance(
 }
 
 // ============================================================================
+// POST /api/v2/devbox/instances/{id}/delete - Delete instance (stop + remove)
+// ============================================================================
+async function handleDeleteInstance(
+  ctx: ActionCtx,
+  id: string,
+  teamSlugOrId: string
+): Promise<Response> {
+  try {
+    const instance = await ctx.runQuery(devboxApi.getById, {
+      teamSlugOrId,
+      id,
+    });
+
+    if (!instance) {
+      return jsonResponse({ code: 404, message: "Instance not found" }, 404);
+    }
+
+    const providerInfo = await getProviderInfo(ctx, id);
+    if (!providerInfo) {
+      return jsonResponse(
+        { code: 404, message: "Provider mapping not found" },
+        404
+      );
+    }
+
+    const { provider, providerInstanceId } = providerInfo;
+    const actionsApi =
+      provider === "modal" ? modalActionsApi : e2bActionsApi;
+
+    // Terminate the sandbox at the provider level
+    try {
+      await ctx.runAction(actionsApi.stopInstance, {
+        instanceId: providerInstanceId,
+      });
+    } catch (error) {
+      // If the provider instance is already gone, continue with cleanup
+      console.error("[devbox_v2.delete] Provider stop failed (may already be gone):", error);
+    }
+
+    await recordProviderActivity(ctx, provider, providerInstanceId, "stop");
+
+    // Remove the devbox instance and info records
+    await ctx.runMutation(devboxApi.remove, {
+      teamSlugOrId,
+      id,
+    });
+
+    return jsonResponse({ deleted: true, provider });
+  } catch (error) {
+    console.error("[devbox_v2.delete] Error:", error);
+    return jsonResponse(
+      { code: 500, message: "Failed to delete instance" },
+      500
+    );
+  }
+}
+
+// ============================================================================
 // POST /api/v2/devbox/instances/{id}/env - Push environment variables
 // ============================================================================
 async function handlePushEnv(
@@ -993,6 +1051,9 @@ export const instanceActionRouter = httpAction(async (ctx, req) => {
 
     case "token":
       return handleGetAuthToken(ctx, id, body.teamSlugOrId);
+
+    case "delete":
+      return handleDeleteInstance(ctx, id, body.teamSlugOrId);
 
     case "extend":
       return handleUpdateTtl(

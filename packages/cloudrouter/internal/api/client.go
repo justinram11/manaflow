@@ -162,6 +162,27 @@ func (c *Client) StopInstance(teamSlug, id string) error {
 	return err
 }
 
+// PauseInstance pauses a sandbox (preserves state)
+func (c *Client) PauseInstance(teamSlug, id string) error {
+	path := fmt.Sprintf("/api/v2/devbox/instances/%s/pause", id)
+	_, err := c.doRequest("POST", path, map[string]string{"teamSlugOrId": teamSlug})
+	return err
+}
+
+// ResumeInstance resumes a paused sandbox
+func (c *Client) ResumeInstance(teamSlug, id string) error {
+	path := fmt.Sprintf("/api/v2/devbox/instances/%s/resume", id)
+	_, err := c.doRequest("POST", path, map[string]string{"teamSlugOrId": teamSlug})
+	return err
+}
+
+// DeleteInstance terminates a sandbox and removes its record
+func (c *Client) DeleteInstance(teamSlug, id string) error {
+	path := fmt.Sprintf("/api/v2/devbox/instances/%s/delete", id)
+	_, err := c.doRequest("POST", path, map[string]string{"teamSlugOrId": teamSlug})
+	return err
+}
+
 // ExtendTimeout extends the sandbox timeout
 func (c *Client) ExtendTimeout(teamSlug, id string, timeoutMs int) error {
 	path := fmt.Sprintf("/api/v2/devbox/instances/%s/extend", id)

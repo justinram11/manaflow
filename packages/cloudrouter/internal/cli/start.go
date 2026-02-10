@@ -33,6 +33,7 @@ var (
 	startFlagCPU      float64
 	startFlagMemory   int
 	startFlagImage    string
+	startFlagTimeout  int
 )
 
 // availableGpus are GPUs that can be used without special approval
@@ -218,6 +219,7 @@ Examples:
 			TeamSlugOrID: teamSlug,
 			TemplateID:   templateID,
 			Name:         name,
+			TTLSeconds:   startFlagTimeout,
 		}
 		if provider != "" {
 			createReq.Provider = provider
@@ -355,4 +357,5 @@ func init() {
 	startCmd.Flags().Float64Var(&startFlagCPU, "cpu", 0, "CPU cores (e.g., 4, 8)")
 	startCmd.Flags().IntVar(&startFlagMemory, "memory", 0, "Memory in MiB (e.g., 8192, 65536)")
 	startCmd.Flags().StringVar(&startFlagImage, "image", "", "Container image (e.g., ubuntu:22.04)")
+	startCmd.Flags().IntVar(&startFlagTimeout, "timeout", 600, "Sandbox timeout in seconds (default: 10 minutes)")
 }
