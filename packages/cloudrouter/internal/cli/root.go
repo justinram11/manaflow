@@ -28,7 +28,6 @@ Quick start:
   cloudrouter login                      # Authenticate
   cloudrouter start                      # Create a sandbox
   cloudrouter start --gpu T4             # Create a sandbox with GPU
-  cloudrouter start --docker             # Create a sandbox with Docker
   cloudrouter start ./my-project         # Create sandbox + upload directory
   cloudrouter code <id>                  # Open VS Code
   cloudrouter pty <id>                   # Open terminal session

@@ -148,7 +148,7 @@ func TestSandboxLifecycle(t *testing.T) {
 
 	// Test: Create sandbox
 	t.Run("Start", func(t *testing.T) {
-		stdout, stderr, err := runCmuxWithTimeout(2*time.Minute, "start", "--template", "cmux-devbox", "--name", "E2E Test")
+		stdout, stderr, err := runCmuxWithTimeout(2*time.Minute, "start", "--template", "cmux-devbox-docker", "--name", "E2E Test")
 		if err != nil {
 			t.Fatalf("start command failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 		}

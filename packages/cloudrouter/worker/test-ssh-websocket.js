@@ -11,7 +11,7 @@ const { spawn, execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
-const TEMPLATE_ID = "cmux-devbox";
+const TEMPLATE_ID = "cmux-devbox-docker";
 
 async function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Start all services for the cmux E2B sandbox (Docker-enabled version)
-# Services: Docker, OpenVSCode, Chrome CDP, VNC, noVNC, worker daemon
+# Services: Docker, cmux-code (VSCode), Chrome CDP, VNC, noVNC, worker daemon (Go)
 
 echo "[cmux-e2b] Starting services (Docker-enabled)..."
 
@@ -10,14 +10,15 @@ VSCODE_TOKEN_FILE="/home/user/.vscode-token"
 BOOT_ID_FILE="/home/user/.token-boot-id"
 
 AUTH_TOKEN=$(openssl rand -hex 32)
-echo "$AUTH_TOKEN" > "$AUTH_TOKEN_FILE"
+# Use printf to avoid trailing newline (VSCode requires exact match)
+printf "%s" "$AUTH_TOKEN" > "$AUTH_TOKEN_FILE"
 chmod 644 "$AUTH_TOKEN_FILE"
 chown user:user "$AUTH_TOKEN_FILE"
 
 echo "[cmux-e2b] Auth token generated: ${AUTH_TOKEN:0:8}..."
 
-# Create VSCode connection token file (same as worker auth)
-echo "$AUTH_TOKEN" > "$VSCODE_TOKEN_FILE"
+# Create VSCode connection token file (same as worker auth, no trailing newline)
+printf "%s" "$AUTH_TOKEN" > "$VSCODE_TOKEN_FILE"
 chmod 644 "$VSCODE_TOKEN_FILE"
 chown user:user "$VSCODE_TOKEN_FILE"
 
@@ -28,9 +29,9 @@ chmod 644 "$BOOT_ID_FILE"
 chown user:user "$BOOT_ID_FILE"
 echo "[cmux-e2b] Boot ID saved: ${BOOT_ID:0:8}..."
 
-# SSH server is now handled by worker-daemon.js with token-as-username auth
+# SSH server is now handled by Go worker daemon with token-as-username auth
 # No need for system sshd or password setup
-echo "[cmux-e2b] SSH server will be started by worker daemon (token-as-username auth)"
+echo "[cmux-e2b] SSH server will be started by Go worker daemon (token-as-username auth)"
 
 # VNC password not needed - auth proxy validates tokens before allowing access
 echo "[cmux-e2b] VNC auth handled by token proxy (no VNC password needed)"
@@ -63,26 +64,24 @@ sleep 3
 echo "[cmux-e2b] Starting VNC auth proxy on port 39380..."
 node /usr/local/bin/vnc-auth-proxy.js &
 
-# Start OpenVSCode Server on port 39378 with connection token
-echo "[cmux-e2b] Starting OpenVSCode Server on port 39378 (with token auth)..."
-/opt/openvscode-server/bin/openvscode-server \
+# Start cmux-code (our VSCode fork) on port 39378
+# Uses connection-token-file for auth (same token as worker + VNC)
+echo "[cmux-e2b] Starting cmux-code on port 39378 (token-protected)..."
+/app/cmux-code/bin/code-server-oss \
     --host 0.0.0.0 \
     --port 39378 \
     --connection-token-file "$VSCODE_TOKEN_FILE" \
-    --telemetry-level off \
     --disable-workspace-trust \
-    --server-data-dir /home/user/.openvscode-server/data \
-    --user-data-dir /home/user/.openvscode-server/data \
-    --extensions-dir /home/user/.openvscode-server/extensions \
+    --disable-telemetry \
     /home/user/workspace 2>/dev/null &
 
 # Chrome with CDP is started by VNC xstartup (visible browser)
 # CDP will be available on port 9222 once VNC desktop is up
 echo "[cmux-e2b] Chrome CDP will be available on port 9222 (started via VNC)"
 
-# Start worker daemon on port 39377
+# Start worker daemon on port 39377 (Go binary)
 echo "[cmux-e2b] Starting worker daemon on port 39377..."
-node /usr/local/bin/worker-daemon.js &
+/usr/local/bin/worker-daemon &
 
 echo "[cmux-e2b] All services started!"
 echo "[cmux-e2b] Services:"

@@ -12,13 +12,11 @@ import (
 )
 
 const (
-	// Preset IDs from packages/shared/src/e2b-templates.json (stable identifiers)
-	defaultTemplatePresetID = "cmux-devbox-base"
-	dockerTemplatePresetID  = "cmux-devbox-docker"
+	// Preset ID from packages/shared/src/e2b-templates.json (stable identifier)
+	defaultTemplatePresetID = "cmux-devbox-docker"
 
-	// Template names in E2B (fallback if template list endpoint is unavailable)
-	defaultTemplateName = "cmux-devbox"
-	dockerTemplateName  = "cmux-devbox-docker"
+	// Template name in E2B (fallback if template list endpoint is unavailable)
+	defaultTemplateName = "cmux-devbox-docker"
 
 	// Modal preset IDs from packages/shared/src/modal-templates.json
 	modalDefaultPresetID = "cmux-modal-base"
@@ -30,7 +28,6 @@ var (
 	startFlagOpen     bool
 	startFlagGit      string
 	startFlagBranch   string
-	startFlagDocker   bool
 	startFlagProvider string
 	startFlagGPU      string
 	startFlagCPU      float64
@@ -83,8 +80,7 @@ Examples:
   cloudrouter start --gpu A100               # Sandbox with A100 GPU
   cloudrouter start --gpu H100:2             # Sandbox with 2x H100 GPUs
   cloudrouter start .                        # Sync current directory
-  cloudrouter start https://github.com/u/r   # Clone git repo
-  cloudrouter start --docker                 # Sandbox with Docker support`,
+  cloudrouter start https://github.com/u/r   # Clone git repo`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		teamSlug, err := getTeamSlug()
@@ -155,11 +151,6 @@ Examples:
 		client := api.NewClient()
 		provider := startFlagProvider
 
-		// --docker and --gpu are mutually exclusive
-		if startFlagDocker && startFlagGPU != "" {
-			return fmt.Errorf("--docker and --gpu cannot be used together")
-		}
-
 		// If --gpu is specified without --provider, default to modal
 		if startFlagGPU != "" && provider == "" {
 			provider = "modal"
@@ -205,13 +196,9 @@ Examples:
 						}
 					}
 				} else {
-					// E2B provider
-					presetID := defaultTemplatePresetID
-					if startFlagDocker {
-						presetID = dockerTemplatePresetID
-					}
+					// E2B provider (always uses docker template)
 					for _, t := range templates {
-						if t.PresetID == presetID {
+						if t.PresetID == defaultTemplatePresetID {
 							templateID = t.ID
 							break
 						}
@@ -222,11 +209,7 @@ Examples:
 			// Fallback to template name if the template list endpoint isn't
 			// available (or isn't returning the expected schema yet).
 			if templateID == "" && provider != "modal" {
-				if startFlagDocker {
-					templateID = dockerTemplateName
-				} else {
-					templateID = defaultTemplateName
-				}
+				templateID = defaultTemplateName
 			}
 		}
 
@@ -359,11 +342,10 @@ Examples:
 
 func init() {
 	startCmd.Flags().StringVarP(&startFlagName, "name", "n", "", "Name for the sandbox")
-	startCmd.Flags().StringVarP(&startFlagTemplate, "template", "T", "", "Template ID (overrides --docker)")
+	startCmd.Flags().StringVarP(&startFlagTemplate, "template", "T", "", "Template ID")
 	startCmd.Flags().BoolVarP(&startFlagOpen, "open", "o", false, "Open VSCode after creation")
 	startCmd.Flags().StringVar(&startFlagGit, "git", "", "Git repository URL to clone (or user/repo shorthand)")
 	startCmd.Flags().StringVarP(&startFlagBranch, "branch", "b", "", "Git branch to clone")
-	startCmd.Flags().BoolVar(&startFlagDocker, "docker", false, "Use template with Docker support (E2B only)")
 
 	// Provider selection
 	startCmd.Flags().StringVarP(&startFlagProvider, "provider", "p", "", "Sandbox provider: e2b (default), modal")
