@@ -213,7 +213,7 @@ async function main() {
     // Install vnc-auth-proxy.js (same Node.js proxy used by E2B, adjusted for Modal paths)
     console.log("[build-snapshot] Installing vnc-auth-proxy...");
     const vncProxySrc = readFileSync(
-      resolve(import.meta.dirname!, "../packages/cmux-devbox-2/worker/vnc-auth-proxy.js"),
+      resolve(import.meta.dirname!, "../packages/cloudrouter/worker/vnc-auth-proxy.js"),
       "utf-8",
     );
     // Adjust NOVNC_DIR for Modal (apt-installed noVNC is at /usr/share/novnc)

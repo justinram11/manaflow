@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Build the E2B templates used by cmux-devbox-2 (base + docker) and update the
+Build the E2B templates used by cloudrouter (base + docker) and update the
 versioned manifest in packages/shared/src/e2b-templates.json.
 
 This is analogous to scripts/snapshot.py (Morph snapshots), but for E2B
@@ -34,7 +34,7 @@ import tomllib
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-E2B_TEMPLATE_ROOT = REPO_ROOT / "packages/cmux-devbox-2"
+E2B_TEMPLATE_ROOT = REPO_ROOT / "packages/cloudrouter"
 E2B_BASE_CONFIG_PATH = E2B_TEMPLATE_ROOT / "e2b.toml"
 E2B_DOCKER_CONFIG_PATH = E2B_TEMPLATE_ROOT / "e2b.docker.toml"
 
