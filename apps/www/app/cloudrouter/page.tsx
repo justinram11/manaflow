@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Source_Serif_4 } from "next/font/google";
-import CmuxLogo from "../../components/logo/cmux-logo";
+
 
 const sourceSerif = Source_Serif_4({
   subsets: ["latin"],
@@ -74,7 +74,18 @@ export default function CloudRouterPage() {
         {/* Header */}
         <header className="mb-12 flex items-center justify-between text-base">
           <span className="flex items-center gap-2 font-bold">
-            <CmuxLogo height={24} showWordmark={false} style={{ width: 24 }} />
+            <svg viewBox="0 0 100 140" width="18" height="24" aria-hidden="true">
+              <defs>
+                <linearGradient id="cr-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#00D4FF" />
+                  <stop offset="100%" stopColor="#7C3AED" />
+                </linearGradient>
+              </defs>
+              <path
+                d="M0 0L97 67L0 135V111L52.5 67L0 23Z"
+                fill="url(#cr-grad)"
+              />
+            </svg>
             <span className="text-lg">cloudrouter</span>
           </span>
           <nav className="flex gap-4 text-neutral-500 dark:text-neutral-400">
