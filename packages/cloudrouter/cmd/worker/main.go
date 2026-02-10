@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -23,8 +24,8 @@ import (
 	"time"
 
 	"github.com/creack/pty"
-	"github.com/gliderlabs/ssh"
 	"github.com/gorilla/websocket"
+	cryptossh "golang.org/x/crypto/ssh"
 )
 
 const (
@@ -943,16 +944,15 @@ func handleSSHWebSocket(w http.ResponseWriter, r *http.Request) {
 // =============================================================================
 
 func startSSHServer() {
-	server := &ssh.Server{
-		Addr: fmt.Sprintf("0.0.0.0:%d", sshPort),
-		Handler: func(s ssh.Session) {
-			handleSSHSession(s)
-		},
+	config := &cryptossh.ServerConfig{
 		// Token-as-username authentication: username must equal the auth token
 		// Password can be anything (we use empty string from client)
-		PasswordHandler: func(ctx ssh.Context, password string) bool {
+		PasswordCallback: func(conn cryptossh.ConnMetadata, password []byte) (*cryptossh.Permissions, error) {
 			token := ensureValidToken()
-			return ctx.User() == token
+			if conn.User() == token {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("invalid credentials")
 		},
 	}
 
@@ -963,105 +963,234 @@ func startSSHServer() {
 		exec.Command("ssh-keygen", "-t", "ed25519", "-f", hostKeyPath, "-N", "", "-q").Run()
 	}
 
-	if err := server.SetOption(ssh.HostKeyFile(hostKeyPath)); err != nil {
-		log.Printf("[ssh] Failed to load host key: %v", err)
+	keyBytes, err := os.ReadFile(hostKeyPath)
+	if err != nil {
+		log.Printf("[ssh] Failed to read host key: %v", err)
+		return
+	}
+	signer, err := cryptossh.ParsePrivateKey(keyBytes)
+	if err != nil {
+		log.Printf("[ssh] Failed to parse host key: %v", err)
+		return
+	}
+	config.AddHostKey(signer)
+
+	listener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", sshPort))
+	if err != nil {
+		log.Printf("[ssh] Failed to listen: %v", err)
+		return
 	}
 
 	log.Printf("[ssh] SSH server listening on port %d", sshPort)
 	log.Printf("[ssh] Connect with: ssh <token>@<host> -p %d", sshPort)
 
-	if err := server.ListenAndServe(); err != nil {
-		log.Printf("[ssh] SSH server error: %v", err)
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Printf("[ssh] Failed to accept connection: %v", err)
+			continue
+		}
+		go handleSSHConn(conn, config)
 	}
 }
 
-func handleSSHSession(s ssh.Session) {
-	hasUser := userExists()
-	cmd := s.Command()
-	if len(cmd) > 0 {
-		var c *exec.Cmd
-		if hasUser {
-			// Exec command as 'user' (not root)
-			c = exec.Command("su", "-", "user", "-c", strings.Join(cmd, " "))
-			c.Env = append(os.Environ(), "HOME=/home/user", "USER=user")
-		} else {
-			// No 'user' account (e.g. Modal) - run directly
-			c = exec.Command("bash", "-c", strings.Join(cmd, " "))
-			c.Env = append(os.Environ(), "HOME=/home/user")
+func handleSSHConn(conn net.Conn, config *cryptossh.ServerConfig) {
+	defer conn.Close()
+
+	sshConn, chans, reqs, err := cryptossh.NewServerConn(conn, config)
+	if err != nil {
+		log.Printf("[ssh] Handshake failed: %v", err)
+		return
+	}
+	defer sshConn.Close()
+
+	go cryptossh.DiscardRequests(reqs)
+
+	for newChannel := range chans {
+		if newChannel.ChannelType() != "session" {
+			newChannel.Reject(cryptossh.UnknownChannelType, "unknown channel type")
+			continue
 		}
-		c.Dir = workspaceDir
 
-		stdin, _ := c.StdinPipe()
-		stdout, _ := c.StdoutPipe()
-		stderr, _ := c.StderrPipe()
+		channel, requests, err := newChannel.Accept()
+		if err != nil {
+			log.Printf("[ssh] Failed to accept channel: %v", err)
+			continue
+		}
 
-		if err := c.Start(); err != nil {
-			s.Exit(1)
+		go handleSSHChannel(channel, requests)
+	}
+}
+
+func handleSSHChannel(channel cryptossh.Channel, requests <-chan *cryptossh.Request) {
+	defer channel.Close()
+
+	var ptyReq *sshPtyRequest
+
+	for req := range requests {
+		switch req.Type {
+		case "pty-req":
+			ptyReq = parsePtyRequest(req.Payload)
+			if req.WantReply {
+				req.Reply(ptyReq != nil, nil)
+			}
+
+		case "exec":
+			cmdStr := parseExecPayload(req.Payload)
+			if req.WantReply {
+				req.Reply(true, nil)
+			}
+			exitCode := runSSHExec(channel, cmdStr)
+			sendExitStatus(channel, exitCode)
 			return
-		}
 
-		go io.Copy(stdin, s)
-		go io.Copy(s, stdout)
-		go io.Copy(s.Stderr(), stderr)
-
-		c.Wait()
-		exitCode := 0
-		if c.ProcessState != nil {
-			exitCode = c.ProcessState.ExitCode()
-		}
-		s.Exit(exitCode)
-	} else {
-		// Interactive shell
-		ptyReq, winCh, isPty := s.Pty()
-		if isPty {
-			var shell *exec.Cmd
-			if hasUser {
-				shell = exec.Command("su", "-", "user")
-				shell.Env = append(os.Environ(),
-					"TERM="+ptyReq.Term,
-					"HOME=/home/user",
-					"USER=user",
-				)
+		case "shell":
+			if req.WantReply {
+				req.Reply(true, nil)
+			}
+			if ptyReq != nil {
+				exitCode := runSSHShellPTY(channel, requests, ptyReq)
+				sendExitStatus(channel, exitCode)
 			} else {
-				shell = exec.Command("/bin/bash")
-				shell.Env = append(os.Environ(),
-					"TERM="+ptyReq.Term,
-					"HOME=/home/user",
-				)
+				io.WriteString(channel, "No PTY requested\n")
+				sendExitStatus(channel, 1)
 			}
-			shell.Dir = workspaceDir
+			return
 
-			ptmx, err := pty.Start(shell)
-			if err != nil {
-				s.Exit(1)
-				return
+		default:
+			if req.WantReply {
+				req.Reply(false, nil)
 			}
-			defer ptmx.Close()
-
-			// Handle window size changes
-			go func() {
-				for win := range winCh {
-					pty.Setsize(ptmx, &pty.Winsize{
-						Rows: uint16(win.Height),
-						Cols: uint16(win.Width),
-					})
-				}
-			}()
-
-			go io.Copy(ptmx, s)
-			io.Copy(s, ptmx)
-
-			shell.Wait()
-			exitCode := 0
-			if shell.ProcessState != nil {
-				exitCode = shell.ProcessState.ExitCode()
-			}
-			s.Exit(exitCode)
-		} else {
-			io.WriteString(s, "No PTY requested\n")
-			s.Exit(1)
 		}
 	}
+}
+
+type sshPtyRequest struct {
+	Term string
+	Cols uint32
+	Rows uint32
+}
+
+func parsePtyRequest(payload []byte) *sshPtyRequest {
+	// SSH pty-req: string term, uint32 cols, uint32 rows, uint32 pxWidth, uint32 pxHeight, string modes
+	if len(payload) < 4 {
+		return nil
+	}
+	termLen := binary.BigEndian.Uint32(payload[:4])
+	if int(4+termLen+8) > len(payload) {
+		return nil
+	}
+	term := string(payload[4 : 4+termLen])
+	offset := 4 + termLen
+	cols := binary.BigEndian.Uint32(payload[offset : offset+4])
+	rows := binary.BigEndian.Uint32(payload[offset+4 : offset+8])
+	return &sshPtyRequest{Term: term, Cols: cols, Rows: rows}
+}
+
+func parseExecPayload(payload []byte) string {
+	if len(payload) < 4 {
+		return ""
+	}
+	cmdLen := binary.BigEndian.Uint32(payload[:4])
+	if int(4+cmdLen) > len(payload) {
+		return ""
+	}
+	return string(payload[4 : 4+cmdLen])
+}
+
+func sendExitStatus(channel cryptossh.Channel, exitCode int) {
+	payload := make([]byte, 4)
+	binary.BigEndian.PutUint32(payload, uint32(exitCode))
+	channel.SendRequest("exit-status", false, payload)
+}
+
+func runSSHExec(channel cryptossh.Channel, cmdStr string) int {
+	hasUser := userExists()
+	var c *exec.Cmd
+	if hasUser {
+		c = exec.Command("su", "-", "user", "-c", cmdStr)
+		c.Env = append(os.Environ(), "HOME=/home/user", "USER=user")
+	} else {
+		c = exec.Command("bash", "-c", cmdStr)
+		c.Env = append(os.Environ(), "HOME=/home/user")
+	}
+	c.Dir = workspaceDir
+
+	stdin, _ := c.StdinPipe()
+	stdout, _ := c.StdoutPipe()
+	stderr, _ := c.StderrPipe()
+
+	if err := c.Start(); err != nil {
+		return 1
+	}
+
+	go io.Copy(stdin, channel)
+	go io.Copy(channel, stdout)
+	go io.Copy(channel.Stderr(), stderr)
+
+	c.Wait()
+	if c.ProcessState != nil {
+		return c.ProcessState.ExitCode()
+	}
+	return 0
+}
+
+func runSSHShellPTY(channel cryptossh.Channel, requests <-chan *cryptossh.Request, pr *sshPtyRequest) int {
+	hasUser := userExists()
+	var shell *exec.Cmd
+	if hasUser {
+		shell = exec.Command("su", "-", "user")
+		shell.Env = append(os.Environ(),
+			"TERM="+pr.Term,
+			"HOME=/home/user",
+			"USER=user",
+		)
+	} else {
+		shell = exec.Command("/bin/bash")
+		shell.Env = append(os.Environ(),
+			"TERM="+pr.Term,
+			"HOME=/home/user",
+		)
+	}
+	shell.Dir = workspaceDir
+
+	ptmx, err := pty.StartWithSize(shell, &pty.Winsize{
+		Cols: uint16(pr.Cols),
+		Rows: uint16(pr.Rows),
+	})
+	if err != nil {
+		return 1
+	}
+	defer ptmx.Close()
+
+	// Handle remaining requests (window-change)
+	go func() {
+		for req := range requests {
+			switch req.Type {
+			case "window-change":
+				if len(req.Payload) >= 8 {
+					cols := binary.BigEndian.Uint32(req.Payload[:4])
+					rows := binary.BigEndian.Uint32(req.Payload[4:8])
+					pty.Setsize(ptmx, &pty.Winsize{
+						Cols: uint16(cols),
+						Rows: uint16(rows),
+					})
+				}
+			}
+			if req.WantReply {
+				req.Reply(false, nil)
+			}
+		}
+	}()
+
+	go io.Copy(ptmx, channel)
+	io.Copy(channel, ptmx)
+
+	shell.Wait()
+	if shell.ProcessState != nil {
+		return shell.ProcessState.ExitCode()
+	}
+	return 0
 }
 
 // =============================================================================
