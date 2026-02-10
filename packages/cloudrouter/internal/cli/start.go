@@ -13,7 +13,7 @@ import (
 
 const (
 	// Preset IDs from packages/shared/src/e2b-templates.json (stable identifiers)
-	defaultTemplatePresetID = "cmux-devbox-base"
+	defaultTemplatePresetID = "cmux-devbox-docker"
 	dockerTemplatePresetID  = "cmux-devbox-docker"
 
 	// Template names in E2B (fallback if template list endpoint is unavailable)
