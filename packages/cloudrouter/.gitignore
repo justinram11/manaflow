@@ -1,0 +1,9 @@
+# Build artifacts (platform-specific native binaries)
+npm/*/bin/
+npm/cloudrouter/lib/cloudrouter
+npm/cmux/lib/cmux
+npm/cmux55/lib/cmux55
+npm/*/*.tgz
+
+# Binary outputs (top-level build directory)
+/bin/
