@@ -3,7 +3,6 @@ package api
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -309,65 +308,34 @@ func (c *Client) GetConfig() (*ConfigResponse, error) {
 	return &resp, nil
 }
 
-// UploadEnvToWorker sends environment variable content to the worker's /env endpoint.
-// Content is base64-encoded for safe transport so secrets are not exposed as plaintext in request bodies.
-func UploadEnvToWorker(workerURL, token, envContent string) error {
-	encoded := base64.StdEncoding.EncodeToString([]byte(envContent))
-	body, err := json.Marshal(map[string]string{
-		"content":  encoded,
-		"encoding": "base64",
-	})
-	if err != nil {
-		return fmt.Errorf("failed to marshal env content: %w", err)
-	}
-	_, err = DoWorkerRequest(workerURL, "/env", token, body)
-	return err
-}
-
-// DownloadEnvFromWorker reads environment variable content from the worker's /env endpoint
-func DownloadEnvFromWorker(workerURL, token string) (string, error) {
-	respBody, err := DoWorkerGetRequest(workerURL, "/env", token)
-	if err != nil {
-		return "", err
-	}
-
-	var resp struct {
-		Content string `json:"content"`
-	}
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return "", fmt.Errorf("failed to parse response: %w", err)
-	}
-	return resp.Content, nil
-}
-
-// DoWorkerGetRequest makes a GET request to the worker daemon
-func DoWorkerGetRequest(workerURL, path, token string) ([]byte, error) {
-	client := &http.Client{Timeout: 60 * time.Second}
-
-	req, err := http.NewRequest("GET", workerURL+path, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("worker error (%d): %s", resp.StatusCode, string(respBody))
-	}
-
-	return respBody, nil
-}
+// // DoWorkerGetRequest makes a GET request to the worker daemon
+// func DoWorkerGetRequest(workerURL, path, token string) ([]byte, error) {
+// 	client := &http.Client{Timeout: 60 * time.Second}
+//
+// 	req, err := http.NewRequest("GET", workerURL+path, nil)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+//
+// 	req.Header.Set("Authorization", "Bearer "+token)
+//
+// 	resp, err := client.Do(req)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	defer resp.Body.Close()
+//
+// 	respBody, err := io.ReadAll(resp.Body)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+//
+// 	if resp.StatusCode >= 400 {
+// 		return nil, fmt.Errorf("worker error (%d): %s", resp.StatusCode, string(respBody))
+// 	}
+//
+// 	return respBody, nil
+// }
 
 // DoWorkerRequest makes a direct request to the worker daemon
 func DoWorkerRequest(workerURL, path, token string, body []byte) ([]byte, error) {
