@@ -358,13 +358,22 @@ export const listInstances = httpAction(async (ctx, req) => {
       updatedAt: number;
     }>;
 
-    const instances = rawInstances.map((inst) => ({
-      id: inst.devboxId,
-      status: inst.status,
-      name: inst.name,
-      createdAt: inst.createdAt,
-      updatedAt: inst.updatedAt,
-    }));
+    // Enrich each instance with provider info
+    const instances = await Promise.all(
+      rawInstances.map(async (inst) => {
+        const info = (await ctx.runQuery(devboxInternalApi.getInfo, {
+          devboxId: inst.devboxId,
+        })) as { provider: string; providerInstanceId: string } | null;
+        return {
+          id: inst.devboxId,
+          status: inst.status,
+          name: inst.name,
+          provider: info?.provider,
+          createdAt: inst.createdAt,
+          updatedAt: inst.updatedAt,
+        };
+      }),
+    );
 
     return jsonResponse({ instances });
   } catch (error) {
