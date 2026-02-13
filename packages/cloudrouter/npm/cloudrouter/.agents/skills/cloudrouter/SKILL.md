@@ -4,7 +4,7 @@ description: Manage cloud development sandboxes with cloudrouter. Create, sync, 
 license: MIT
 metadata:
   author: manaflow-ai
-  version: "0.0.2"
+  version: "0.0.3"
 ---
 
 # cloudrouter - Cloud Sandboxes for Development
@@ -33,9 +33,9 @@ cloudrouter - Cloud Development Sandboxes
     cloudrouter stop <id>                  Stop sandbox
 
   Browser automation:
-    cloudrouter computer open <id> <url>   Navigate to URL
-    cloudrouter computer snapshot <id>     Get accessibility tree
-    cloudrouter computer screenshot <id>   Take screenshot
+    cloudrouter browser open <id> <url>   Navigate to URL
+    cloudrouter browser snapshot <id>     Get accessibility tree
+    cloudrouter browser screenshot <id>   Take screenshot
 
   Run "cloudrouter start --help" for all options.
 ```
@@ -98,8 +98,8 @@ cloudrouter start --docker .               # Sandbox with Docker enabled
 cloudrouter start --gpu T4 .               # T4 GPU (16GB VRAM)
 cloudrouter start --gpu L4 .               # L4 GPU (24GB VRAM)
 cloudrouter start --gpu A10G .             # A10G GPU (24GB VRAM)
-cloudrouter start --gpu A100 .             # A100 GPU (40GB VRAM) - requires approval
-cloudrouter start --gpu H100 .             # H100 GPU (80GB VRAM) - requires approval
+cloudrouter start --gpu A100 .             # A100 GPU (40GB VRAM)
+cloudrouter start --gpu H100 .             # H100 GPU (80GB VRAM)
 cloudrouter start --gpu H100:2 .           # Multi-GPU: 2x H100
 
 # With custom resources
@@ -118,19 +118,19 @@ cloudrouter start -p modal .               # Use Modal provider
 
 ### GPU Options
 
-| GPU | VRAM | Best For | Availability |
-|-----|------|----------|-------------|
-| T4 | 16GB | Inference, fine-tuning small models | Self-serve |
-| L4 | 24GB | Inference, image generation | Self-serve |
-| A10G | 24GB | Training medium models | Self-serve |
-| L40S | 48GB | Inference, video generation | Requires approval |
-| A100 | 40GB | Training large models (7B-70B) | Requires approval |
-| A100-80GB | 80GB | Very large models | Requires approval |
-| H100 | 80GB | Fast training, research | Requires approval |
-| H200 | 141GB | Maximum memory capacity | Requires approval |
-| B200 | 192GB | Latest gen, frontier models | Requires approval |
+All GPUs are available self-serve — no approval required.
 
-GPUs requiring approval: contact founders@manaflow.com.
+| GPU | VRAM | Best For |
+|-----|------|----------|
+| T4 | 16GB | Inference, fine-tuning small models |
+| L4 | 24GB | Inference, image generation |
+| A10G | 24GB | Training medium models |
+| L40S | 48GB | Inference, video generation |
+| A100 | 40GB | Training large models (7B-70B) |
+| A100-80GB | 80GB | Very large models |
+| H100 | 80GB | Fast training, research |
+| H200 | 141GB | Maximum memory capacity |
+| B200 | 192GB | Latest gen, frontier models |
 
 Multi-GPU: append `:N` to the GPU type, e.g. `--gpu H100:2` for 2x H100.
 
@@ -211,45 +211,45 @@ cloudrouter download <id> ./output -r /home/user/app  # Download specific remote
 >
 > **Common mistake:** `cloudrouter download <id> /remote/path /local/path` — this passes 3 positional args and will fail. Use `cloudrouter download <id> /local/path -r /remote/path` instead.
 
-### Browser Automation (cloudrouter computer)
+### Browser Automation (cloudrouter browser)
 
 Control Chrome browser via CDP in the sandbox's VNC desktop.
 
-> **Startup delay:** Chrome CDP may not be ready immediately after sandbox creation. If a `computer` command fails right after `cloudrouter start`, wait a few seconds and retry. This is rare but expected — Chrome needs a moment to boot inside the sandbox.
+> **Startup delay:** Chrome CDP may not be ready immediately after sandbox creation. If a `browser` command fails right after `cloudrouter start`, wait a few seconds and retry. This is rare but expected — Chrome needs a moment to boot inside the sandbox.
 
 #### Navigation
 
 ```bash
-cloudrouter computer open <id> <url>    # Navigate to URL
-cloudrouter computer back <id>          # Navigate back
-cloudrouter computer forward <id>       # Navigate forward
-cloudrouter computer reload <id>        # Reload page
-cloudrouter computer url <id>           # Get current URL
-cloudrouter computer title <id>         # Get page title
+cloudrouter browser open <id> <url>    # Navigate to URL
+cloudrouter browser back <id>          # Navigate back
+cloudrouter browser forward <id>       # Navigate forward
+cloudrouter browser reload <id>        # Reload page
+cloudrouter browser url <id>           # Get current URL
+cloudrouter browser title <id>         # Get page title
 ```
 
 #### Inspect Page
 
 ```bash
-cloudrouter computer snapshot <id>             # Get accessibility tree with element refs (@e1, @e2...)
-cloudrouter computer snapshot -i <id>          # Interactive elements only (preferred)
-cloudrouter computer snapshot -i -c <id>       # Interactive + compact
-cloudrouter computer screenshot <id>           # Take screenshot (base64 to stdout)
-cloudrouter computer screenshot <id> out.png   # Save screenshot to file
-cloudrouter computer eval <id> "document.title"  # Run JavaScript in browser
+cloudrouter browser snapshot <id>             # Get accessibility tree with element refs (@e1, @e2...)
+cloudrouter browser snapshot -i <id>          # Interactive elements only (preferred)
+cloudrouter browser snapshot -i -c <id>       # Interactive + compact
+cloudrouter browser screenshot <id>           # Take screenshot (base64 to stdout)
+cloudrouter browser screenshot <id> out.png   # Save screenshot to file
+cloudrouter browser eval <id> "document.title"  # Run JavaScript in browser
 ```
 
 #### Interact with Elements
 
 ```bash
-cloudrouter computer click <id> <selector>      # Click element (@e1 or CSS selector)
-cloudrouter computer dblclick <id> <selector>   # Double-click element
-cloudrouter computer type <id> "text"           # Type into focused element
-cloudrouter computer fill <id> <sel> "value"    # Clear input and fill with value
-cloudrouter computer press <id> <key>           # Press key (Enter, Tab, Escape, etc.)
-cloudrouter computer hover <id> <selector>      # Hover over element
-cloudrouter computer scroll <id> [direction]    # Scroll page (up/down/left/right)
-cloudrouter computer wait <id> <selector>       # Wait for element to appear
+cloudrouter browser click <id> <selector>      # Click element (@e1 or CSS selector)
+cloudrouter browser dblclick <id> <selector>   # Double-click element
+cloudrouter browser type <id> "text"           # Type into focused element
+cloudrouter browser fill <id> <sel> "value"    # Clear input and fill with value
+cloudrouter browser press <id> <key>           # Press key (Enter, Tab, Escape, etc.)
+cloudrouter browser hover <id> <selector>      # Hover over element
+cloudrouter browser scroll <id> [direction]    # Scroll page (up/down/left/right)
+cloudrouter browser wait <id> <selector>       # Wait for element to appear
 ```
 
 #### Element Selectors
@@ -300,22 +300,22 @@ cloudrouter download cr_abc123 ./output       # Pull files from sandbox to local
 ### Browser automation: Login to a website
 
 ```bash
-cloudrouter computer open cr_abc123 "https://example.com/login"
-cloudrouter computer snapshot cr_abc123
+cloudrouter browser open cr_abc123 "https://example.com/login"
+cloudrouter browser snapshot cr_abc123
 # Output: @e1 [input] Email, @e2 [input] Password, @e3 [button] Sign In
 
-cloudrouter computer fill cr_abc123 @e1 "user@example.com"
-cloudrouter computer fill cr_abc123 @e2 "password123"
-cloudrouter computer click cr_abc123 @e3
-cloudrouter computer screenshot cr_abc123 result.png
+cloudrouter browser fill cr_abc123 @e1 "user@example.com"
+cloudrouter browser fill cr_abc123 @e2 "password123"
+cloudrouter browser click cr_abc123 @e3
+cloudrouter browser screenshot cr_abc123 result.png
 ```
 
 ### Browser automation: Scrape data
 
 ```bash
-cloudrouter computer open cr_abc123 "https://example.com/data"
-cloudrouter computer snapshot cr_abc123   # Get structured accessibility tree
-cloudrouter computer screenshot cr_abc123 # Visual capture
+cloudrouter browser open cr_abc123 "https://example.com/data"
+cloudrouter browser snapshot cr_abc123   # Get structured accessibility tree
+cloudrouter browser screenshot cr_abc123 # Visual capture
 ```
 
 ### Sandbox Lifecycle & Cleanup
@@ -360,7 +360,7 @@ Proactively share authenticated sandbox URLs and screenshots with the user when 
 - Whenever the user might want to verify, inspect, or interact with the sandbox themselves
 
 **When to take and share screenshots:**
-- After completing a visual task (e.g., UI changes, web app deployment) — take a screenshot with `cloudrouter computer screenshot <id> out.png` and show it
+- After completing a visual task (e.g., UI changes, web app deployment) — take a screenshot with `cloudrouter browser screenshot <id> out.png` and show it
 - When something looks wrong or unexpected — screenshot it for the user to confirm
 - After browser automation steps that produce visible results (form submissions, page navigations, login flows)
 - When the user asks you to check or verify something visually
@@ -399,3 +399,12 @@ Frontend: https://5173-xxx.e2b.app   <- WRONG: publicly accessible, no auth
 -v, --verbose       Verbose output
     --json          Machine-readable JSON output
 ```
+
+## Changelog
+
+### 0.9.18
+
+- All GPUs are now self-serve — no approval required. T4, L4, A10G, L40S, A100, A100-80GB, H100, H200, and B200 are all available without contacting Manaflow.
+- Fixed documentation: browser automation command is `cloudrouter browser`, not `cloudrouter computer`. All references updated.
+- Updated production backend credentials (Convex site, project ID, publishable key, base URL).
+- Both `cloudrouter` and `cr` CLI aliases are supported and report the same version.

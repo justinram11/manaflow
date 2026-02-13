@@ -2,17 +2,16 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/manaflow-ai/cloudrouter/internal/api"
 	"github.com/spf13/cobra"
 )
 
-var execFlagTimeout int
-
 var execCmd = &cobra.Command{
-	Use:   "exec <id> <command...>",
-	Short: "Execute a command in a sandbox",
+	Use:   "ssh <id> <command...>",
+	Short: "Run a command in a sandbox via SSH",
 	Args:  cobra.MinimumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		teamSlug, err := getTeamSlug()
@@ -24,24 +23,38 @@ var execCmd = &cobra.Command{
 		command := strings.Join(args[1:], " ")
 
 		client := api.NewClient()
-		resp, err := client.Exec(teamSlug, id, command, execFlagTimeout)
+		inst, err := client.GetInstance(teamSlug, id)
+		if err != nil {
+			return fmt.Errorf("sandbox not found: %w", err)
+		}
+
+		if inst.WorkerURL == "" {
+			return fmt.Errorf("worker URL not available — sandbox may not be running")
+		}
+
+		token, err := client.GetAuthToken(teamSlug, id)
+		if err != nil {
+			return fmt.Errorf("failed to get auth token: %w", err)
+		}
+
+		if flagVerbose {
+			fmt.Fprintf(os.Stderr, "[debug] SSH command: %s\n", command)
+		}
+
+		stdout, stderr, exitCode, err := runSSHCommand(inst.WorkerURL, token, command)
 		if err != nil {
 			return err
 		}
 
-		if resp.Stdout != "" {
-			fmt.Print(resp.Stdout)
+		if stdout != "" {
+			fmt.Print(stdout)
 		}
-		if resp.Stderr != "" {
-			fmt.Print(resp.Stderr)
+		if stderr != "" {
+			fmt.Fprint(os.Stderr, stderr)
 		}
-		if resp.ExitCode != 0 {
-			return fmt.Errorf("exit code: %d", resp.ExitCode)
+		if exitCode != 0 {
+			return fmt.Errorf("exit code: %d", exitCode)
 		}
 		return nil
 	},
-}
-
-func init() {
-	execCmd.Flags().IntVar(&execFlagTimeout, "timeout", 30, "Command timeout in seconds")
 }

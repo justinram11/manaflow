@@ -34,7 +34,7 @@ Quick start:
   cloudrouter jupyter <id>               # Open Jupyter Lab
   cloudrouter vnc <id>                   # Open VNC desktop
   cloudrouter pty <id>                   # Open terminal session
-  cloudrouter exec <id> "ls -la"         # Execute a command
+  cloudrouter ssh <id> "ls -la"          # Run a command via SSH
   cloudrouter upload <id> ./my-dir       # Upload files to sandbox
   cloudrouter download <id> ./output     # Download files from sandbox
   cloudrouter browser snapshot <id>      # Get browser accessibility tree
@@ -128,7 +128,7 @@ func init() {
 	rootCmd.AddCommand(pauseCmd)
 	rootCmd.AddCommand(resumeCmd)
 
-	// Exec command
+	// SSH command (run commands in sandbox via SSH)
 	rootCmd.AddCommand(execCmd)
 
 	// File transfer commands
