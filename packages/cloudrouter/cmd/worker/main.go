@@ -76,8 +76,12 @@ func main() {
 	// Start SSH server in goroutine
 	go startSSHServer()
 
+	// Start VNC auth proxy in goroutine
+	vncProxySrv := newVNCProxy()
+	go vncProxySrv.Start()
+
 	// Start HTTP server (browser manager is cleaned up on shutdown)
-	startHTTPServer()
+	startHTTPServer(vncProxySrv)
 }
 
 // =============================================================================
@@ -207,7 +211,7 @@ func verifyAuth(r *http.Request) bool {
 // HTTP Server
 // =============================================================================
 
-func startHTTPServer() {
+func startHTTPServer(vncProxySrv *vncProxy) {
 	mux := http.NewServeMux()
 
 	// Health check - no auth
@@ -234,6 +238,7 @@ func startHTTPServer() {
 		<-sigCh
 		log.Printf("[worker] Shutting down...")
 		browser.Close()
+		vncProxySrv.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		server.Shutdown(ctx)

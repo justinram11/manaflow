@@ -188,11 +188,7 @@ RUN pip3 install --no-cache-dir \
     openai \
     anthropic
 
-# Keep Node.js VNC auth proxy (simple enough to stay in JS)
-COPY worker/vnc-auth-proxy.js /usr/local/bin/vnc-auth-proxy.js
-# Keep browser-agent-runner for browser automation (uses puppeteer)
-COPY worker/browser-agent-runner.js /usr/local/bin/browser-agent-runner.js
-RUN cd /usr/local/bin && npm install ws puppeteer-core
+# VNC auth proxy and browser agent are now built into the Go worker daemon
 
 # Make sure user can run services - add to sudoers
 RUN echo "user ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers

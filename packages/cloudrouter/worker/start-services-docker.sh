@@ -59,10 +59,7 @@ rm -f /tmp/.X1-lock /tmp/.X11-unix/X1 2>/dev/null || true
 vncserver :1 -geometry 1920x1080 -depth 24 -SecurityTypes None -localhost yes 2>/dev/null &
 sleep 3
 
-# Start VNC auth proxy on port 39380 (serves noVNC + proxies WebSocket to VNC)
-# This replaces the separate noVNC proxy - architecture matches Morph Go proxy
-echo "[cmux-e2b] Starting VNC auth proxy on port 39380..."
-node /usr/local/bin/vnc-auth-proxy.js &
+# VNC auth proxy on port 39380 is now part of the Go worker daemon
 
 # Start cmux-code (our VSCode fork) on port 39378
 # Uses connection-token-file for auth (same token as worker + VNC)
