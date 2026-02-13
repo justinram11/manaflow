@@ -117,7 +117,6 @@ const STEPS: Step[] = [
   },
   // 4. Start sandbox from current directory
   {
-    prompt: "~/my-app",
     command: "cloudrouter start .",
     output: [
       [{ text: "Waiting for sandbox to initialize.", color: "#d4d4d4" }],
@@ -157,7 +156,6 @@ const STEPS: Step[] = [
   },
   // 5. Open VS Code
   {
-    prompt: "~/my-app",
     command: "cloudrouter code cr_x7k9m2p",
     output: [
       [{ text: "Opening VS Code...", color: "#d4d4d4" }],
@@ -166,7 +164,6 @@ const STEPS: Step[] = [
   },
   // 6. Execute a command
   {
-    prompt: "~/my-app",
     command: 'cloudrouter exec cr_x7k9m2p "npm install && npm run dev"',
     output: [
       [{ text: "added 847 packages in 12s", color: "#d4d4d4" }],
@@ -188,7 +185,6 @@ const STEPS: Step[] = [
   },
   // 7. Browser automation — open URL
   {
-    prompt: "~/my-app",
     command: 'cloudrouter computer open cr_x7k9m2p "http://localhost:3000"',
     output: [
       [
@@ -200,7 +196,6 @@ const STEPS: Step[] = [
   },
   // 8. Browser automation — accessibility snapshot
   {
-    prompt: "~/my-app",
     command: "cloudrouter computer snapshot cr_x7k9m2p",
     output: [
       [
@@ -252,7 +247,6 @@ const STEPS: Step[] = [
   },
   // 9. Browser automation — click
   {
-    prompt: "~/my-app",
     command: "cloudrouter computer click cr_x7k9m2p @e6",
     output: [
       [{ text: "Clicked: @e6", color: "#d4d4d4" }],
@@ -261,7 +255,6 @@ const STEPS: Step[] = [
   },
   // 10. Browser automation — screenshot
   {
-    prompt: "~/my-app",
     command: "cloudrouter computer screenshot cr_x7k9m2p ./screenshot.png",
     output: [
       [
@@ -273,7 +266,6 @@ const STEPS: Step[] = [
   },
   // 11. Upload with watch mode
   {
-    prompt: "~/my-app",
     command: "cloudrouter upload cr_x7k9m2p ./src",
     output: [
       [
@@ -289,7 +281,6 @@ const STEPS: Step[] = [
   },
   // 12. List sandboxes
   {
-    prompt: "~/my-app",
     command: "cloudrouter ls",
     output: [
       [{ text: "Sandboxes:", color: "#d4d4d4" }],
@@ -310,7 +301,6 @@ const STEPS: Step[] = [
   },
   // 13. Start GPU sandbox
   {
-    prompt: "~/my-app",
     command: "cloudrouter start --gpu B200 --name gpu-training",
     output: [
       [{ text: "Waiting for sandbox to initialize.", color: "#d4d4d4" }],
@@ -369,7 +359,7 @@ export function TerminalDemo() {
   const [lines, setLines] = useState<Array<{ key: string; content: Line }>>([]);
   const [currentTyping, setCurrentTyping] = useState("");
   const [showCursor, setShowCursor] = useState(true);
-  const [currentPrompt, setCurrentPrompt] = useState("~");
+  const [currentPrompt, setCurrentPrompt] = useState("~/my-app");
   const [isComplete, setIsComplete] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
 
@@ -428,7 +418,7 @@ export function TerminalDemo() {
 
       for (let stepIdx = 0; stepIdx < STEPS.length; stepIdx++) {
         const step = STEPS[stepIdx];
-        const prompt = step.prompt ?? "~";
+        const prompt = step.prompt ?? "~/my-app";
 
         setCurrentPrompt(prompt);
         setCurrentTyping("");
@@ -493,7 +483,7 @@ export function TerminalDemo() {
     const allLines: Array<{ key: string; content: Line }> = [];
     let counter = 0;
     for (const step of STEPS) {
-      const prompt = step.prompt ?? "~";
+      const prompt = step.prompt ?? "~/my-app";
       allLines.push({
         key: `line-${counter++}`,
         content: [
@@ -523,7 +513,7 @@ export function TerminalDemo() {
     setLines([]);
     setCurrentTyping("");
     setShowCursor(true);
-    setCurrentPrompt("~");
+    setCurrentPrompt("~/my-app");
     setIsComplete(false);
     setIsRunning(false);
     lineCounterRef.current = 0;
