@@ -25,7 +25,7 @@ LDFLAGS := -s -w \
            -X '$(AUTH_PKG).CmuxURL=$(CMUX_API_URL)' \
            -X '$(AUTH_PKG).ConvexSiteURL=$(CONVEX_SITE_URL)'
 
-.PHONY: build build-dev build-prod build-all build-npm clean test install install-dev deps npm-version npm-publish npm-publish-dry build-npm-cloudrouter npm-publish-cloudrouter npm-publish-cloudrouter-dry
+.PHONY: build build-dev build-prod build-all build-npm build-npm-dev build-npm-cloudrouter build-npm-cloudrouter-dev clean test install install-dev deps npm-version npm-publish npm-publish-dry npm-publish-cloudrouter npm-publish-cloudrouter-dry
 
 # =============================================================================
 # Development builds
@@ -167,6 +167,21 @@ npm-publish-dry: build-npm
 # =============================================================================
 # Cloudrouter NPM package builds (@manaflow-ai/cloudrouter)
 # =============================================================================
+
+# Build cloudrouter npm packages with dev mode (no credentials needed)
+build-npm-cloudrouter-dev:
+	@echo "Building cloudrouter npm packages with dev mode..."
+	@mkdir -p npm/cloudrouter-darwin-arm64/bin npm/cloudrouter-darwin-x64/bin npm/cloudrouter-linux-arm64/bin npm/cloudrouter-linux-x64/bin npm/cloudrouter-win32-x64/bin npm/cloudrouter/lib
+	GOOS=darwin GOARCH=arm64 go build -ldflags "$(DEV_LDFLAGS)" -o npm/cloudrouter-darwin-arm64/bin/cloudrouter ./cmd/cmux
+	GOOS=darwin GOARCH=amd64 go build -ldflags "$(DEV_LDFLAGS)" -o npm/cloudrouter-darwin-x64/bin/cloudrouter ./cmd/cmux
+	GOOS=linux GOARCH=arm64 go build -ldflags "$(DEV_LDFLAGS)" -o npm/cloudrouter-linux-arm64/bin/cloudrouter ./cmd/cmux
+	GOOS=linux GOARCH=amd64 go build -ldflags "$(DEV_LDFLAGS)" -o npm/cloudrouter-linux-x64/bin/cloudrouter ./cmd/cmux
+	GOOS=windows GOARCH=amd64 go build -ldflags "$(DEV_LDFLAGS)" -o npm/cloudrouter-win32-x64/bin/cloudrouter.exe ./cmd/cmux
+	@# Copy darwin-arm64 binary to lib/cloudrouter as fallback for bunx/npx
+	@cp npm/cloudrouter-darwin-arm64/bin/cloudrouter npm/cloudrouter/lib/cloudrouter
+	@chmod +x npm/cloudrouter/lib/cloudrouter npm/cloudrouter/bin/cloudrouter 2>/dev/null || true
+	@echo "Done! Cloudrouter dev binaries built in npm/cloudrouter-*/bin/"
+	@echo "Dev defaults: localhost:9779, famous-camel-162.convex.site"
 
 # Build cloudrouter npm packages (production)
 # Usage: make build-npm-cloudrouter STACK_PROJECT_ID=... STACK_PUBLISHABLE_CLIENT_KEY=... CMUX_API_URL=... CONVEX_SITE_URL=...

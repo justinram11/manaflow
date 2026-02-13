@@ -27,16 +27,30 @@ var rootCmd = &cobra.Command{
 Quick start:
   cloudrouter login                      # Authenticate
   cloudrouter start                      # Create a sandbox
+  cloudrouter start --size small         # Create a smaller sandbox (2 vCPU, 8 GB)
   cloudrouter start --gpu B200           # Create a sandbox with GPU
   cloudrouter start ./my-project         # Create sandbox + upload directory
   cloudrouter code <id>                  # Open VS Code
+  cloudrouter jupyter <id>               # Open Jupyter Lab
+  cloudrouter vnc <id>                   # Open VNC desktop
   cloudrouter pty <id>                   # Open terminal session
+  cloudrouter exec <id> "ls -la"         # Execute a command
+  cloudrouter upload <id> ./my-dir       # Upload files to sandbox
+  cloudrouter download <id> ./output     # Download files from sandbox
+  cloudrouter browser snapshot <id>      # Get browser accessibility tree
+  cloudrouter browser open <id> <url>    # Navigate browser to URL
   cloudrouter stop <id>                  # Pause sandbox
   cloudrouter resume <id>                # Resume paused sandbox
   cloudrouter delete <id>                # Delete sandbox permanently
   cloudrouter ls                         # List all sandboxes
 
-GPU options (--gpu):
+Size presets (--size):
+  small       2 vCPU,  8 GB RAM,  20 GB disk
+  medium      4 vCPU, 16 GB RAM,  40 GB disk
+  large       8 vCPU, 32 GB RAM,  80 GB disk   (default)
+  xlarge     16 vCPU, 64 GB RAM, 160 GB disk
+
+GPU options (--gpu, auto-selects Modal provider):
   T4          16GB VRAM  - inference, fine-tuning small models
   L4          24GB VRAM  - inference, image generation
   A10G        24GB VRAM  - training medium models

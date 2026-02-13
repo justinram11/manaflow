@@ -1040,14 +1040,14 @@ export const listTemplates = httpAction(async (ctx, req) => {
     !providerFilter || providerFilter === "e2b"
       ? E2B_TEMPLATE_PRESETS.map((preset) => ({
           provider: "e2b" as const,
-          presetId: preset.id,
-          templateId: preset.templateId,
+          presetId: preset.templateId,
+          templateId: preset.id,
           name: preset.label,
           description: preset.description,
           cpu: preset.cpu,
           memory: preset.memory,
           disk: preset.disk,
-          supportsDocker: preset.templateId.includes("docker"),
+          supportsDocker: true,
         }))
       : [];
 

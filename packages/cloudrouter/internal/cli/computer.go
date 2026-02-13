@@ -34,17 +34,9 @@ Examples:
 }
 
 // shellQuote wraps a string in single quotes for safe shell execution.
+// The command goes through one shell layer: su - user -c "..." invokes bash.
 func shellQuote(s string) string {
-	// The command goes through two shell layers on the remote:
-	// 1. su - user -c "..." invokes bash
-	// 2. That bash interprets the command string
-	// We need to quote for both layers using single quotes (which have no
-	// special chars inside them except the quote itself).
-	// For the inner layer, wrap in single quotes with '\'' escaping.
-	// For the outer layer, wrap that result again.
-	inner := "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
-	outer := "'" + strings.ReplaceAll(inner, "'", "'\\''") + "'"
-	return outer
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 // runSSHCommand runs a command inside the sandbox via SSH over WebSocket tunnel.
