@@ -29,9 +29,13 @@ describe("e2b templates manifest", () => {
     }
   });
 
-  it("keeps the default template id in sync with the first preset", () => {
+  it("keeps the default template id in sync with the high (docker) preset", () => {
+    const dockerPreset = E2B_TEMPLATE_PRESETS.find(
+      (p) => p.templateId === "cmux-devbox-docker",
+    );
+    expect(dockerPreset).toBeDefined();
     expect(DEFAULT_E2B_TEMPLATE_ID).toBe(
-      E2B_TEMPLATE_PRESETS[0].latestVersion.e2bTemplateId,
+      dockerPreset!.latestVersion.e2bTemplateId,
     );
   });
 
