@@ -8,7 +8,7 @@ export function InstallBar() {
   const [copied, setCopied] = useState(false);
 
   return (
-    <div className="mb-8 flex justify-start">
+    <div className="mb-8 w-full text-center">
       <button
         type="button"
         className="group inline-flex items-center gap-3 rounded-full px-5 py-2.5 font-mono text-sm text-neutral-600 transition hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"

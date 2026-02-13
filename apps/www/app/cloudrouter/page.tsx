@@ -87,13 +87,13 @@ export default function CloudRouterPage() {
         <CloudrouterHeader />
 
         {/* Hero */}
-        <section className="mb-10">
-          <h1 className="mb-3 text-2xl font-bold leading-tight sm:text-3xl">
-            Skill that lets Claude Code/Codex spin up VMs and GPUs
+        <section className="mb-8">
+          <h1 className="mb-3 text-xl font-bold leading-tight whitespace-nowrap sm:text-2xl">
+            Skill for Claude Code/Codex to spin up VMs and GPUs
           </h1>
           <p className="max-w-xl text-sm leading-relaxed text-neutral-500 dark:text-neutral-400">
             Give Claude Code, Codex, and other agents the ability to spin up cloud sandboxes,
-            run commands, transfer files, and automate browsers — all from the CLI.
+            run commands, transfer files, and automate browsers — all from the CLI as a skill.
           </p>
         </section>
 
@@ -173,19 +173,19 @@ export default function CloudRouterPage() {
             <CodeBlock>
               {[
                 "# Open a URL in the sandbox browser",
-                'cloudrouter computer open cr_abc123 "https://example.com"',
+                'cloudrouter browser open cr_abc123 "https://example.com"',
                 "",
                 "# Get the accessibility tree with element refs",
-                "cloudrouter computer snapshot cr_abc123",
+                "cloudrouter browser snapshot cr_abc123",
                 "# → @e1 [input] Email  @e2 [input] Password  @e3 [button] Sign In",
                 "",
                 "# Interact with elements",
-                'cloudrouter computer fill cr_abc123 @e1 "user@example.com"',
-                'cloudrouter computer fill cr_abc123 @e2 "password123"',
-                "cloudrouter computer click cr_abc123 @e3",
+                'cloudrouter browser fill cr_abc123 @e1 "user@example.com"',
+                'cloudrouter browser fill cr_abc123 @e2 "password123"',
+                "cloudrouter browser click cr_abc123 @e3",
                 "",
                 "# Take a screenshot",
-                "cloudrouter computer screenshot cr_abc123 result.png",
+                "cloudrouter browser screenshot cr_abc123 result.png",
               ].join("\n")}
             </CodeBlock>
           </section>
@@ -247,13 +247,16 @@ export default function CloudRouterPage() {
             <CodeBlock>
               {[
                 "# Upload files to sandbox",
-                "cloudrouter upload cr_abc123 ./src /home/user/project/src",
+                "cloudrouter upload cr_abc123 ./src",
+                "",
+                "# Upload to a specific remote path",
+                "cloudrouter upload cr_abc123 ./src -r /home/user/project/src",
                 "",
                 "# Download from sandbox",
-                "cloudrouter download cr_abc123 /home/user/project/dist ./dist",
+                "cloudrouter download cr_abc123 ./dist",
                 "",
                 "# Watch mode — auto re-upload on changes",
-                "cloudrouter upload cr_abc123 ./src /home/user/project/src --watch",
+                "cloudrouter upload cr_abc123 ./src --watch",
               ].join("\n")}
             </CodeBlock>
           </section>
@@ -298,7 +301,7 @@ export default function CloudRouterPage() {
         <footer className="flex flex-col items-center gap-4 text-center text-xs text-neutral-400 dark:text-neutral-500">
           <div className="flex flex-wrap justify-center gap-4">
             <a
-              href="https://github.com/manaflow-ai/cloudrouter"
+              href="https://github.com/manaflow-ai/manaflow"
               target="_blank"
               rel="noopener noreferrer"
               className="transition hover:text-neutral-900 dark:hover:text-white"
