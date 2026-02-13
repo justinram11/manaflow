@@ -232,14 +232,18 @@ cloudrouter computer title <id>         # Get page title
 
 ```bash
 cloudrouter computer snapshot <id>             # Get accessibility tree with element refs (@e1, @e2...)
+cloudrouter computer snapshot -i <id>          # Interactive elements only (preferred)
+cloudrouter computer snapshot -i -c <id>       # Interactive + compact
 cloudrouter computer screenshot <id>           # Take screenshot (base64 to stdout)
 cloudrouter computer screenshot <id> out.png   # Save screenshot to file
+cloudrouter computer eval <id> "document.title"  # Run JavaScript in browser
 ```
 
 #### Interact with Elements
 
 ```bash
 cloudrouter computer click <id> <selector>      # Click element (@e1 or CSS selector)
+cloudrouter computer dblclick <id> <selector>   # Double-click element
 cloudrouter computer type <id> "text"           # Type into focused element
 cloudrouter computer fill <id> <sel> "value"    # Clear input and fill with value
 cloudrouter computer press <id> <key>           # Press key (Enter, Tab, Escape, etc.)

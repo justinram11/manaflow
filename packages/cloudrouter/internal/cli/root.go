@@ -125,8 +125,8 @@ func init() {
 	rootCmd.AddCommand(ptyCmd)
 	rootCmd.AddCommand(ptyListCmd)
 
-	// Computer commands (browser automation)
-	rootCmd.AddCommand(computerCmd)
+	// Browser commands (browser automation)
+	rootCmd.AddCommand(browserCmd)
 
 	// Templates
 	rootCmd.AddCommand(templatesCmd)

@@ -370,11 +370,8 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		handleCDPInfo(w, r)
 	case "/screenshot":
 		handleScreenshot(w, r, body)
-	// Browser automation
-	case "/snapshot", "/open", "/click", "/type", "/fill", "/press",
-		"/scroll", "/back", "/forward", "/reload", "/url", "/title",
-		"/wait", "/hover":
-		handleBrowserCommand(w, r, path[1:], body)
+	// Browser automation (screenshot returns base64 data, browser-agent runs in agent mode)
+	// All other browser commands go through /exec with "agent-browser <command>"
 	case "/browser-agent":
 		handleBrowserAgent(w, r, body)
 	default:
@@ -621,16 +618,6 @@ func handleScreenshot(w http.ResponseWriter, r *http.Request, body map[string]in
 		}
 	}
 
-	sendJSON(w, result)
-}
-
-func handleBrowserCommand(w http.ResponseWriter, r *http.Request, command string, body map[string]interface{}) {
-	result, err := browser.Execute(command, body)
-	if err != nil {
-		log.Printf("[worker] browser command %s failed: %v", command, err)
-		sendJSON(w, map[string]interface{}{"error": err.Error()})
-		return
-	}
 	sendJSON(w, result)
 }
 

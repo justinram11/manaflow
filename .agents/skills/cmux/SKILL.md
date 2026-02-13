@@ -107,14 +107,18 @@ cmux computer title <id>         # Get page title
 
 ```bash
 cmux computer snapshot <id>             # Get accessibility tree with element refs (@e1, @e2...)
+cmux computer snapshot -i <id>          # Interactive elements only (preferred)
+cmux computer snapshot -i -c <id>       # Interactive + compact
 cmux computer screenshot <id>           # Take screenshot (base64 to stdout)
 cmux computer screenshot <id> out.png   # Save screenshot to file
+cmux computer eval <id> "document.title"  # Run JavaScript in browser
 ```
 
 #### Interact with Elements
 
 ```bash
 cmux computer click <id> <selector>      # Click element (@e1 or CSS selector)
+cmux computer dblclick <id> <selector>   # Double-click element
 cmux computer type <id> "text"           # Type into focused element
 cmux computer fill <id> <sel> "value"    # Clear input and fill with value
 cmux computer press <id> <key>           # Press key (Enter, Tab, Escape, etc.)
