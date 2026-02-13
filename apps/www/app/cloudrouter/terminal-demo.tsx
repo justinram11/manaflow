@@ -88,7 +88,7 @@ const STEPS: Step[] = [
         { text: "If browser doesn't open, visit:", color: "#d4d4d4" },
       ],
       [
-        { text: "  https://cloudrouter.dev/handler/sign-in?after_auth_return_to=...", color: "#38bdf8" },
+        { text: "  https://cloudrouter.dev/handler/cli-auth-confirm?login_code=x7k9m2", color: "#38bdf8" },
       ],
       "",
       [{ text: "Waiting for authentication... (press Ctrl+C to cancel)", color: "#a3a3a3" }],
