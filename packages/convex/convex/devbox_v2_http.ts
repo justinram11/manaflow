@@ -113,6 +113,7 @@ const modalInstancesApi = (internal as any).modalInstances as {
   recordStopInternal: FunctionReference<"mutation", "internal">;
 };
 
+
 /**
  * Record activity for a provider instance
  */
@@ -200,17 +201,36 @@ export const createInstance = httpAction(async (ctx, req) => {
 
   const provider: SandboxProvider = body.provider ?? "e2b";
 
+  // Check concurrency limit before creating a new instance
+  const concurrency = await ctx.runQuery(
+    internal.cloudRouterSubscription.checkConcurrencyLimit,
+    { userId: identity!.subject },
+  );
+
+  if (!concurrency.allowed) {
+    return jsonResponse(
+      {
+        code: 429,
+        message: `Concurrency limit reached (${concurrency.current}/${concurrency.limit} running sandboxes). Stop unused sandboxes or contact founders@manaflow.ai to increase your limit.`,
+      },
+      429,
+    );
+  }
+
   try {
     if (provider === "modal") {
-      // Gate expensive GPUs
+      // Gate expensive GPUs — check if user's tier unlocks it
       if (body.gpu && isModalGpuGated(body.gpu)) {
-        return jsonResponse(
-          {
-            code: 403,
-            message: `GPU type "${body.gpu}" requires approval. Please contact founders@manaflow.ai to get this GPU enabled for your account.`,
-          },
-          403,
-        );
+        const baseGpu = body.gpu.split(":")[0]?.toUpperCase() ?? "";
+        if (!concurrency.ungatedGpus.includes(baseGpu)) {
+          return jsonResponse(
+            {
+              code: 403,
+              message: `GPU type "${body.gpu}" requires approval. Please contact founders@manaflow.ai to get this GPU enabled for your account.`,
+            },
+            403,
+          );
+        }
       }
 
       const templateId = body.templateId ?? DEFAULT_MODAL_TEMPLATE_ID;
@@ -587,6 +607,23 @@ async function handleResumeInstance(
 
     if (!instance) {
       return jsonResponse({ code: 404, message: "Instance not found" }, 404);
+    }
+
+    // Check concurrency limit before resuming (resuming makes it running)
+    const resumeIdentity = await ctx.auth.getUserIdentity();
+    const concurrency = await ctx.runQuery(
+      internal.cloudRouterSubscription.checkConcurrencyLimit,
+      { userId: resumeIdentity!.subject },
+    );
+
+    if (!concurrency.allowed) {
+      return jsonResponse(
+        {
+          code: 429,
+          message: `Concurrency limit reached (${concurrency.current}/${concurrency.limit} running sandboxes). Stop unused sandboxes or contact founders@manaflow.ai to increase your limit.`,
+        },
+        429,
+      );
     }
 
     const providerInfo = await getProviderInfo(ctx, id);

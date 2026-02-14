@@ -1270,6 +1270,18 @@ const convexSchema = defineSchema({
     .index("by_status", ["status", "createdAt"])
     .index("by_instanceId", ["instanceId"])
     .index("by_team_status", ["teamId", "status", "createdAt"]),
+
+  // CloudRouter subscription tiers for concurrency limits
+  cloudRouterSubscription: defineTable({
+    userId: v.string(),
+    subscriptionType: v.union(
+      v.literal("low"), // 50 concurrent sandboxes
+      v.literal("mid"), // 100 concurrent sandboxes
+      v.literal("high") // 500 concurrent sandboxes
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_userId", ["userId"]),
 });
 
 export default convexSchema;
