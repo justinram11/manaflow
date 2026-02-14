@@ -148,7 +148,7 @@ export async function POST(request: NextRequest) {
           })()
         : {
             "Content-Type": "application/json",
-            "x-api-key": apiKeyForRequest,
+            "x-api-key": apiKeyForRequest ?? "",
             "anthropic-version": "2023-06-01",
           };
 

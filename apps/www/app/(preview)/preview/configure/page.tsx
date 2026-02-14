@@ -197,7 +197,7 @@ export default async function PreviewConfigurePage({ searchParams }: PageProps) 
         try {
           const store = await stackServerApp.getDataVaultStore("cmux-snapshot-envs");
           const varsContent = await store.getValue(environment.dataVaultKey, {
-            secret: env.STACK_DATA_VAULT_SECRET,
+            secret: env.STACK_DATA_VAULT_SECRET ?? "",
           });
           if (typeof varsContent === "string") {
             initialEnvVarsContent = varsContent;

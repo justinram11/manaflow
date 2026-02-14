@@ -275,7 +275,7 @@ environmentsRouter.openapi(
         const store =
           await stackServerAppJs.getDataVaultStore("cmux-snapshot-envs");
         await store.setValue(dataVaultKey, body.envVarsContent, {
-          secret: env.STACK_DATA_VAULT_SECRET,
+          secret: env.STACK_DATA_VAULT_SECRET ?? "",
         });
         return { dataVaultKey };
       })();
@@ -501,7 +501,7 @@ environmentsRouter.openapi(
       const store =
         await stackServerAppJs.getDataVaultStore("cmux-snapshot-envs");
       const envVarsContent = await store.getValue(environment.dataVaultKey, {
-        secret: env.STACK_DATA_VAULT_SECRET,
+        secret: env.STACK_DATA_VAULT_SECRET ?? "",
       });
 
       if (!envVarsContent) {

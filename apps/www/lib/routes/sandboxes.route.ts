@@ -477,14 +477,8 @@ sandboxesRouter.openapi(
           envVarsToApply += `\nCMUX_TASK_RUN_JWT="${body.taskRunJwt}"`;
         }
 
-        const { githubAccessToken, githubAccessTokenError } =
+        const { githubAccessToken } =
           await githubAccessTokenPromise;
-        if (githubAccessTokenError) {
-          console.error(
-            `[sandboxes.start] GitHub access token error: ${githubAccessTokenError}`,
-          );
-          return c.text("Failed to resolve GitHub credentials", 401);
-        }
 
         const dockerInstance = dockerResult.instance;
 
@@ -507,8 +501,10 @@ sandboxesRouter.openapi(
                 }
               })()
             : Promise.resolve(),
-          // Configure GitHub access
-          configureGithubAccess(dockerInstance, githubAccessToken),
+          // Configure GitHub access (skip if no token — SSH keys are mounted instead)
+          githubAccessToken
+            ? configureGithubAccess(dockerInstance, githubAccessToken)
+            : Promise.resolve(),
           // Configure git identity
           gitIdentityPromise
             .then(([who, gh]) => {

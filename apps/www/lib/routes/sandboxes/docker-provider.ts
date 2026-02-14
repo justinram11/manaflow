@@ -1,3 +1,6 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import Docker from "dockerode";
 import { env } from "@/lib/utils/www-env";
 import { DockerSandboxInstance } from "./docker-sandbox-instance";
@@ -41,6 +44,20 @@ export interface DockerSandboxResult {
     vnc: string;
     pty: string;
   };
+}
+
+/** Mount host SSH keys + gitconfig into the container for git auth */
+function getSshBindMounts(): string[] {
+  const mounts: string[] = [];
+  const sshDir = path.join(os.homedir(), ".ssh");
+  if (fs.existsSync(sshDir)) {
+    mounts.push(`${sshDir}:/root/.ssh:ro`);
+  }
+  const gitconfig = path.join(os.homedir(), ".gitconfig");
+  if (fs.existsSync(gitconfig)) {
+    mounts.push(`${gitconfig}:/root/.gitconfig:ro`);
+  }
+  return mounts;
 }
 
 // Image pull freshness tracking (same pattern as DockerVSCodeInstance)
@@ -135,7 +152,10 @@ export async function startDockerSandbox(options?: {
       "/run": "rw,mode=755",
       "/run/lock": "rw,mode=755",
     },
-    Binds: ["/sys/fs/cgroup:/sys/fs/cgroup:rw"],
+    Binds: [
+      "/sys/fs/cgroup:/sys/fs/cgroup:rw",
+      ...getSshBindMounts(),
+    ],
   };
 
   const container = await docker.createContainer({

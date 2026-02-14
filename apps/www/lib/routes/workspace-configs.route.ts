@@ -41,7 +41,7 @@ async function loadEnvVarsContent(
   if (!dataVaultKey) return "";
   const store = await stackServerAppJs.getDataVaultStore("cmux-snapshot-envs");
   const value = await store.getValue(dataVaultKey, {
-    secret: env.STACK_DATA_VAULT_SECRET,
+    secret: env.STACK_DATA_VAULT_SECRET ?? "",
   });
   return value ?? "";
 }
@@ -156,7 +156,7 @@ workspaceConfigsRouter.openapi(
 
     try {
       await store.setValue(dataVaultKey, envVarsContent, {
-        secret: env.STACK_DATA_VAULT_SECRET,
+        secret: env.STACK_DATA_VAULT_SECRET ?? "",
       });
     } catch (error) {
       throw new HTTPException(500, {

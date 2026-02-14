@@ -10,11 +10,11 @@ const stackAdminApp = new StackServerApp({
 const store = await stackAdminApp.getDataVaultStore("cmux-snapshot-envs");
 console.log("setting value");
 await store.setValue("testing123", "a very secure cat", {
-  secret: env.STACK_DATA_VAULT_SECRET,
+  secret: env.STACK_DATA_VAULT_SECRET ?? "",
 });
 
 console.log("getting value");
 const value = await store.getValue("testing123", {
-  secret: env.STACK_DATA_VAULT_SECRET,
+  secret: env.STACK_DATA_VAULT_SECRET ?? "",
 });
 console.log("value", value);

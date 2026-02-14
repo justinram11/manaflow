@@ -8,7 +8,7 @@ export const loadEnvironmentEnvVars = async (
     const store =
       await stackServerAppJs.getDataVaultStore("cmux-snapshot-envs");
     const content = await store.getValue(dataVaultKey, {
-      secret: env.STACK_DATA_VAULT_SECRET,
+      secret: env.STACK_DATA_VAULT_SECRET ?? "",
     });
     const length = content?.length ?? 0;
     console.log(

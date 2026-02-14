@@ -544,7 +544,7 @@ export type StartSandboxResponse = {
     instanceId: string;
     vscodeUrl: string;
     workerUrl: string;
-    provider?: 'morph';
+    provider?: 'morph' | 'docker';
     vscodePersisted?: boolean;
 };
 
@@ -552,6 +552,7 @@ export type StartSandboxBody = {
     teamSlugOrId: string;
     environmentId?: string;
     snapshotId?: string;
+    provider?: 'morph' | 'docker';
     ttlSeconds?: number;
     metadata?: {
         [key: string]: string;
