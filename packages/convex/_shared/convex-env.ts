@@ -3,7 +3,7 @@ import { z } from "zod";
 
 export const env = createEnv({
   server: {
-    STACK_WEBHOOK_SECRET: z.string().min(1),
+    STACK_WEBHOOK_SECRET: z.string().min(1).optional(),
     // Stack Admin keys for backfills and server-side operations
     STACK_SECRET_SERVER_KEY: z.string().min(1).optional(),
     STACK_SUPER_SECRET_ADMIN_KEY: z.string().min(1).optional(),
@@ -13,16 +13,16 @@ export const env = createEnv({
     INSTALL_STATE_SECRET: z.string().min(1).optional(),
     CMUX_GITHUB_APP_ID: z.string().min(1).optional(),
     CMUX_GITHUB_APP_PRIVATE_KEY: z.string().min(1).optional(),
-    BASE_APP_URL: z.string().min(1),
-    CMUX_TASK_RUN_JWT_SECRET: z.string().min(1),
+    BASE_APP_URL: z.string().min(1).optional(),
+    CMUX_TASK_RUN_JWT_SECRET: z.string().min(1).optional(),
     OPENAI_API_KEY: z.string().min(1).optional(),
     ANTHROPIC_API_KEY: z.string().min(1).optional(),
     VERTEX_PRIVATE_KEY: z.string().min(1).optional(),
     AWS_BEARER_TOKEN_BEDROCK: z.string().min(1).optional(),
     MORPH_API_KEY: z.string().min(1).optional(),
     E2B_API_KEY: z.string().min(1).optional(),
-    MODAL_TOKEN_ID: z.string().min(1),
-    MODAL_TOKEN_SECRET: z.string().min(1),
+    MODAL_TOKEN_ID: z.string().min(1).optional(),
+    MODAL_TOKEN_SECRET: z.string().min(1).optional(),
     CMUX_IS_STAGING: z.string().optional(),
     CONVEX_IS_PRODUCTION: z.string().optional(),
     POSTHOG_API_KEY: z.string().optional(),

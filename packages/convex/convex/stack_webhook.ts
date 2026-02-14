@@ -36,7 +36,7 @@ export const stackWebhook = httpAction(async (ctx, req) => {
   // Verify Svix signature
   let verified: unknown;
   try {
-    const svix = new Webhook(env.STACK_WEBHOOK_SECRET);
+    const svix = new Webhook(env.STACK_WEBHOOK_SECRET ?? "");
     verified = svix.verify(payload, {
       "svix-id": req.headers.get("svix-id") ?? "",
       "svix-timestamp": req.headers.get("svix-timestamp") ?? "",

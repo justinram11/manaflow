@@ -78,7 +78,7 @@ export const reportEnvironmentError = httpAction(async (ctx, req) => {
   try {
     const tokenPayload = await verifyTaskRunToken(
       bearerToken,
-      env.CMUX_TASK_RUN_JWT_SECRET,
+      env.CMUX_TASK_RUN_JWT_SECRET ?? "",
     );
     taskRunId = tokenPayload.taskRunId as Id<"taskRuns">;
     teamId = tokenPayload.teamId;

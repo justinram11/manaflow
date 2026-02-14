@@ -16,7 +16,7 @@ export const githubSetup = httpAction(async (ctx, req) => {
   const url = new URL(req.url);
   const installationIdStr = url.searchParams.get("installation_id");
   const state = url.searchParams.get("state");
-  const base = env.BASE_APP_URL.replace(/\/$/, "");
+  const base = (env.BASE_APP_URL ?? "").replace(/\/$/, "");
   const toCmuxDeepLink = (team?: string | null) =>
     `cmux://github-connect-complete${team ? `?team=${encodeURIComponent(team)}` : ""}`;
 

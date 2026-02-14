@@ -38,7 +38,7 @@ export async function getWorkerAuth(
   try {
     const payload = await verifyTaskRunToken(
       token,
-      env.CMUX_TASK_RUN_JWT_SECRET
+      env.CMUX_TASK_RUN_JWT_SECRET ?? ""
     );
     return { token, payload };
   } catch (error) {
