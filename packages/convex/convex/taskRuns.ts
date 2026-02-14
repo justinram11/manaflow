@@ -1050,6 +1050,7 @@ export const updateVSCodeInstance = authMutation({
           extension: v.optional(v.string()),
           proxy: v.optional(v.string()),
           vnc: v.optional(v.string()),
+          pty: v.optional(v.string()),
         }),
       ),
       url: v.optional(v.string()),
@@ -1122,6 +1123,7 @@ export const updateVSCodePorts = authMutation({
       extension: v.optional(v.string()),
       proxy: v.optional(v.string()),
       vnc: v.optional(v.string()),
+      pty: v.optional(v.string()),
     }),
   },
   handler: async (ctx, args) => {

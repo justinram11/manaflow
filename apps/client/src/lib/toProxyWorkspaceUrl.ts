@@ -176,3 +176,93 @@ export function toMorphXtermBaseUrl(sourceUrl: string): string | null {
 
   return proxiedUrl.toString();
 }
+
+// --- Provider-aware URL helpers ---
+
+interface PortMap {
+  vnc?: string;
+  pty?: string;
+  proxy?: string;
+  vscode?: string;
+  worker?: string;
+}
+
+/**
+ * Build a VNC websocket URL for any provider.
+ * Morph uses subdomain-based routing; Docker uses direct host:port.
+ */
+export function toVncWebsocketUrl(
+  vscodeUrl: string,
+  provider: string,
+  ports?: PortMap,
+): string | null {
+  if (provider === "morph") return toMorphVncWebsocketUrl(vscodeUrl);
+  if (provider === "docker" && ports?.vnc) {
+    try {
+      const url = new URL(vscodeUrl);
+      url.port = ports.vnc;
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+      url.pathname = "/websockify";
+      url.search = "";
+      url.hash = "";
+      return url.toString();
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Build a VNC viewer URL (vnc.html) for any provider.
+ */
+export function toVncUrl(
+  vscodeUrl: string,
+  provider: string,
+  ports?: PortMap,
+): string | null {
+  if (provider === "morph") return toMorphVncUrl(vscodeUrl);
+  if (provider === "docker" && ports?.vnc) {
+    try {
+      const url = new URL(vscodeUrl);
+      url.protocol = url.protocol === "wss:" ? "https:" : "http:";
+      url.port = ports.vnc;
+      url.pathname = "/vnc.html";
+      const searchParams = new URLSearchParams();
+      searchParams.set("autoconnect", "1");
+      searchParams.set("resize", "scale");
+      searchParams.set("reconnect", "1");
+      searchParams.set("reconnect_delay", "1000");
+      url.search = `?${searchParams.toString()}`;
+      url.hash = "";
+      return url.toString();
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Build an xterm/PTY base URL for any provider.
+ */
+export function toXtermBaseUrl(
+  vscodeUrl: string,
+  provider: string,
+  ports?: PortMap,
+): string | null {
+  if (provider === "morph") return toMorphXtermBaseUrl(vscodeUrl);
+  if (provider === "docker" && ports?.pty) {
+    try {
+      const url = new URL(vscodeUrl);
+      url.port = ports.pty;
+      url.pathname = "/";
+      url.search = "";
+      url.hash = "";
+      return url.toString();
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}

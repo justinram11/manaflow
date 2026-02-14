@@ -1,14 +1,11 @@
 import { fetchGithubUserInfoForRequest } from "@/lib/utils/githubUserInfo";
 import { api } from "@cmux/convex/api";
 
-import type { MorphCloudClient } from "morphcloud";
-
 import type { ConvexClient } from "./snapshot";
+import type { SandboxInstance } from "./sandbox-instance";
 import { singleQuote } from "./shell";
 
-export type MorphInstance = Awaited<
-  ReturnType<MorphCloudClient["instances"]["start"]>
->;
+export type MorphInstance = SandboxInstance;
 
 export const fetchGitIdentityInputs = (
   convex: ConvexClient,

@@ -7,7 +7,7 @@ import { useQuery as useConvexQuery, useMutation } from "convex/react";
 import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import z from "zod";
 import { TaskRunTerminalSession } from "@/components/task-run-terminal-session";
-import { toMorphXtermBaseUrl } from "@/lib/toProxyWorkspaceUrl";
+import { toXtermBaseUrl } from "@/lib/toProxyWorkspaceUrl";
 import {
   createTerminalTab,
   terminalTabsQueryKey,
@@ -81,14 +81,14 @@ export const Route = createFileRoute(
       );
 
       const vscodeInfo = taskRun?.vscode;
-      const rawMorphUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
-      const isMorphProvider = vscodeInfo?.provider === "morph";
+      const rawUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
+      const hasCloudBackend = vscodeInfo?.provider === "morph" || vscodeInfo?.provider === "docker";
 
-      if (!isMorphProvider || !rawMorphUrl) {
+      if (!hasCloudBackend || !rawUrl || !vscodeInfo?.provider) {
         return;
       }
 
-      const baseUrl = toMorphXtermBaseUrl(rawMorphUrl);
+      const baseUrl = toXtermBaseUrl(rawUrl, vscodeInfo.provider, vscodeInfo.ports ?? undefined);
       const tabsQueryKey = terminalTabsQueryKey(baseUrl, runId);
 
       const tabs = await queryClient.ensureQueryData(
@@ -248,12 +248,12 @@ function PreviewPage() {
 
   // Terminal setup
   const vscodeInfo = selectedRun?.vscode;
-  const rawMorphUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
-  const isMorphProvider = vscodeInfo?.provider === "morph";
+  const rawUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
+  const hasCloudBackend = vscodeInfo?.provider === "morph" || vscodeInfo?.provider === "docker";
   const baseUrl = useMemo(() => {
-    if (!isMorphProvider || !rawMorphUrl) return null;
-    return toMorphXtermBaseUrl(rawMorphUrl);
-  }, [isMorphProvider, rawMorphUrl]);
+    if (!hasCloudBackend || !rawUrl || !vscodeInfo?.provider) return null;
+    return toXtermBaseUrl(rawUrl, vscodeInfo.provider, vscodeInfo.ports ?? undefined);
+  }, [hasCloudBackend, rawUrl, vscodeInfo?.provider, vscodeInfo?.ports]);
 
   const terminalTabsQuery = useQuery(
     terminalTabsQueryOptions({

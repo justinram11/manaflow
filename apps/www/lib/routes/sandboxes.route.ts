@@ -33,6 +33,7 @@ import {
   envctlLoadCommand,
 } from "./utils/ensure-env-vars";
 import { VM_CLEANUP_COMMANDS } from "./sandboxes/cleanup";
+import { startDockerSandbox } from "./sandboxes/docker-provider";
 
 /**
  * Wait for the VSCode server to be ready by polling the service URL.
@@ -229,6 +230,7 @@ const StartSandboxBody = z
     teamSlugOrId: z.string(),
     environmentId: z.string().optional(),
     snapshotId: z.string().optional(),
+    provider: z.enum(["morph", "docker"]).optional(),
     ttlSeconds: z
       .number()
       .optional()
@@ -250,7 +252,7 @@ const StartSandboxResponse = z
     instanceId: z.string(),
     vscodeUrl: z.string(),
     workerUrl: z.string(),
-    provider: z.enum(["morph"]).default("morph"),
+    provider: z.enum(["morph", "docker"]).default("morph"),
     vscodePersisted: z.boolean().optional(),
   })
   .openapi("StartSandboxResponse");
@@ -412,6 +414,190 @@ sandboxesRouter.openapi(
         },
       );
 
+      // --- Docker provider path ---
+      const resolvedProvider = body.provider ?? env.SANDBOX_PROVIDER ?? "morph";
+      if (resolvedProvider === "docker") {
+        console.log(`[sandboxes.start] Using Docker provider`);
+
+        const dockerResult = await startDockerSandbox({
+          ttlSeconds: body.ttlSeconds ?? 3600,
+          metadata: body.metadata,
+        });
+
+        // Wait for VSCode server to be ready
+        const vscodeReady = await waitForVSCodeReady(dockerResult.vscodeUrl, {
+          timeoutMs: 30_000,
+        });
+        if (!vscodeReady) {
+          console.warn(
+            `[sandboxes.start] Docker VSCode server did not become ready within timeout for ${dockerResult.containerId}, proceeding anyway`,
+          );
+        }
+
+        // Persist VSCode info to Convex
+        let vscodePersisted = false;
+        if (body.taskRunId) {
+          try {
+            await convex.mutation(api.taskRuns.updateVSCodeInstance, {
+              teamSlugOrId: body.teamSlugOrId,
+              id: body.taskRunId as Id<"taskRuns">,
+              vscode: {
+                provider: "docker",
+                containerName: dockerResult.containerName,
+                status: "starting",
+                url: dockerResult.vscodeUrl,
+                workspaceUrl: `${dockerResult.vscodeUrl}/?folder=/root/workspace`,
+                startedAt: Date.now(),
+                ports: {
+                  vscode: dockerResult.hostPorts[39378],
+                  worker: dockerResult.hostPorts[39377],
+                  proxy: dockerResult.hostPorts[39379],
+                  vnc: dockerResult.hostPorts[39380],
+                  pty: dockerResult.hostPorts[39383],
+                },
+              },
+            });
+            vscodePersisted = true;
+          } catch (error) {
+            console.error(
+              "[sandboxes.start] Failed to persist Docker VSCode info:",
+              error,
+            );
+          }
+        }
+
+        // Apply env vars, git config, hydration — same as Morph path
+        const environmentEnvVarsContent = await environmentEnvVarsPromise;
+        let envVarsToApply =
+          environmentEnvVarsContent || workspaceConfig?.envVarsContent || "";
+        if (body.taskRunId) {
+          envVarsToApply += `\nCMUX_TASK_RUN_ID="${body.taskRunId}"`;
+        }
+        if (body.taskRunJwt) {
+          envVarsToApply += `\nCMUX_TASK_RUN_JWT="${body.taskRunJwt}"`;
+        }
+
+        const { githubAccessToken, githubAccessTokenError } =
+          await githubAccessTokenPromise;
+        if (githubAccessTokenError) {
+          console.error(
+            `[sandboxes.start] GitHub access token error: ${githubAccessTokenError}`,
+          );
+          return c.text("Failed to resolve GitHub credentials", 401);
+        }
+
+        const dockerInstance = dockerResult.instance;
+
+        await Promise.all([
+          // Apply env vars
+          envVarsToApply.trim().length > 0
+            ? (async () => {
+                const encodedEnv = encodeEnvContentForEnvctl(envVarsToApply);
+                const loadRes = await dockerInstance.exec(
+                  envctlLoadCommand(encodedEnv),
+                );
+                if (loadRes.exit_code === 0) {
+                  console.log(
+                    `[sandboxes.start] Applied environment variables via envctl (docker)`,
+                  );
+                } else {
+                  console.error(
+                    `[sandboxes.start] Docker env var bootstrap failed exit=${loadRes.exit_code}`,
+                  );
+                }
+              })()
+            : Promise.resolve(),
+          // Configure GitHub access
+          configureGithubAccess(dockerInstance, githubAccessToken),
+          // Configure git identity
+          gitIdentityPromise
+            .then(([who, gh]) => {
+              const { name, email } = selectGitIdentity(who, gh);
+              return configureGitIdentity(dockerInstance, { name, email });
+            })
+            .catch((error) => {
+              console.log(
+                `[sandboxes.start] Failed to configure git identity; continuing...`,
+                error,
+              );
+            }),
+        ]);
+
+        // Hydrate repo if requested
+        if (body.repoUrl) {
+          if (!parsedRepoUrl) {
+            return c.text("Unsupported repo URL; expected GitHub URL", 400);
+          }
+          try {
+            await hydrateWorkspace({
+              instance: dockerInstance,
+              repo: {
+                owner: parsedRepoUrl.owner,
+                name: parsedRepoUrl.repo,
+                repoFull: parsedRepoUrl.fullName,
+                cloneUrl: parsedRepoUrl.gitUrl,
+                maskedCloneUrl: parsedRepoUrl.gitUrl,
+                depth: Math.max(1, Math.floor(body.depth ?? 1)),
+                baseBranch: body.branch || "main",
+                newBranch: body.newBranch ?? "",
+              },
+            });
+          } catch (error) {
+            console.error(`[sandboxes.start] Docker hydration failed:`, error);
+            await dockerInstance.stop().catch(() => {});
+            return c.text("Failed to hydrate sandbox", 500);
+          }
+        }
+
+        // Update status to running
+        if (body.taskRunId && vscodePersisted) {
+          void convex
+            .mutation(api.taskRuns.updateVSCodeStatus, {
+              teamSlugOrId: body.teamSlugOrId,
+              id: body.taskRunId as Id<"taskRuns">,
+              status: "running",
+            })
+            .catch((error) => {
+              console.error(
+                "[sandboxes.start] Failed to update Docker VSCode status:",
+                error,
+              );
+            });
+        }
+
+        // Run maintenance/dev scripts if configured
+        if (maintenanceScript || devScript) {
+          (async () => {
+            await runMaintenanceAndDevScripts({
+              instance: dockerInstance,
+              maintenanceScript: maintenanceScript || undefined,
+              devScript: devScript || undefined,
+              identifiers: scriptIdentifiers ?? undefined,
+              convexUrl: env.NEXT_PUBLIC_CONVEX_URL,
+              taskRunJwt: body.taskRunJwt || undefined,
+              isCloudWorkspace,
+            });
+          })().catch((error) => {
+            console.error(
+              "[sandboxes.start] Docker background script execution failed:",
+              error,
+            );
+          });
+        }
+
+        return c.json({
+          instanceId: dockerResult.containerId,
+          vscodeUrl: dockerResult.vscodeUrl,
+          workerUrl: dockerResult.workerUrl,
+          provider: "docker" as const,
+          vscodePersisted,
+        });
+      }
+
+      // --- Morph provider path ---
+      if (!env.MORPH_API_KEY) {
+        return c.text("MORPH_API_KEY is required when using Morph provider", 500);
+      }
       const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
 
       // Try to claim a prewarmed instance from the warm pool

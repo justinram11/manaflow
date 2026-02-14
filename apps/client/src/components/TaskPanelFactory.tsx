@@ -166,6 +166,8 @@ interface PanelFactoryProps {
   } | null;
   // Terminal panel props
   rawWorkspaceUrl?: string | null;
+  sandboxProvider?: string;
+  sandboxPorts?: { pty?: string; vnc?: string; proxy?: string; vscode?: string; worker?: string };
   // Browser panel props
   browserUrl?: string | null;
   browserPersistKey?: string | null;
@@ -175,7 +177,7 @@ interface PanelFactoryProps {
     title: string;
     description?: string;
   } | null;
-  isMorphProvider?: boolean;
+  hasCloudBackend?: boolean;
   isBrowserBusy?: boolean;
   // Additional components
   TaskRunChatPane?: React.ComponentType<TaskRunChatPaneProps>;
@@ -540,7 +542,7 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
     }
 
     case "terminal": {
-      const { rawWorkspaceUrl, TaskRunTerminalPane } = props;
+      const { rawWorkspaceUrl, sandboxProvider, sandboxPorts, TaskRunTerminalPane } = props;
       if (!TaskRunTerminalPane) return null;
 
       return panelWrapper(
@@ -550,6 +552,8 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
           <TaskRunTerminalPane
             key={rawWorkspaceUrl ?? "no-workspace"}
             workspaceUrl={rawWorkspaceUrl ?? null}
+            provider={sandboxProvider}
+            ports={sandboxPorts}
           />
         </div>
       );
@@ -562,7 +566,7 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
         setBrowserStatus,
         browserPlaceholder,
         selectedRun,
-        isMorphProvider,
+        hasCloudBackend,
         isBrowserBusy,
         PersistentWebView,
         WorkspaceLoadingIndicator,
@@ -571,7 +575,7 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
       } = props;
 
       if (!PersistentWebView || !WorkspaceLoadingIndicator) return null;
-      const shouldShowBrowserLoader = Boolean(selectedRun) && isMorphProvider && (!browserUrl || !browserPersistKey);
+      const shouldShowBrowserLoader = Boolean(selectedRun) && hasCloudBackend && (!browserUrl || !browserPersistKey);
 
       return panelWrapper(
         <Globe2 className="size-3" aria-hidden />,

@@ -680,7 +680,7 @@ export function EnvironmentConfiguration({
         TASK_RUN_IFRAME_SANDBOX={TASK_RUN_IFRAME_SANDBOX}
         browserPlaceholder={browserPlaceholder}
         selectedRun={null}
-        isMorphProvider={Boolean(instanceId)}
+        hasCloudBackend={Boolean(instanceId)}
       />
     );
   };

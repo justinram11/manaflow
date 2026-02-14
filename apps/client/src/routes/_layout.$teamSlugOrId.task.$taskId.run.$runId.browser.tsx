@@ -1,6 +1,6 @@
 import { VncViewer, type VncConnectionStatus } from "@cmux/shared/components/vnc-viewer";
 import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indicator";
-import { toMorphVncWebsocketUrl } from "@/lib/toProxyWorkspaceUrl";
+import { toVncWebsocketUrl } from "@/lib/toProxyWorkspaceUrl";
 import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { createFileRoute } from "@tanstack/react-router";
@@ -42,29 +42,31 @@ function BrowserComponent() {
   });
 
   const vscodeInfo = taskRun?.vscode ?? null;
-  const rawMorphUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
+  const rawUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
+  const provider = vscodeInfo?.provider;
+  const ports = vscodeInfo?.ports;
   const vncWebsocketUrl = useMemo(() => {
-    if (!rawMorphUrl) {
+    if (!rawUrl || !provider) {
       return null;
     }
-    return toMorphVncWebsocketUrl(rawMorphUrl);
-  }, [rawMorphUrl]);
+    return toVncWebsocketUrl(rawUrl, provider, ports ?? undefined);
+  }, [rawUrl, provider, ports]);
 
   const hasBrowserView = Boolean(vncWebsocketUrl);
-  const isMorphProvider = vscodeInfo?.provider === "morph";
-  const showLoader = isMorphProvider && !hasBrowserView;
+  const hasCloudBackend = provider === "morph" || provider === "docker";
+  const showLoader = hasCloudBackend && !hasBrowserView;
 
   const [vncStatus, setVncStatus] = useState<VncConnectionStatus>("disconnected");
 
   const overlayMessage = useMemo(() => {
-    if (!isMorphProvider) {
+    if (!hasCloudBackend) {
       return "Browser preview is loading. Note that browser preview is only supported in cloud mode.";
     }
     if (!hasBrowserView) {
       return "Waiting for the workspace to expose a browser preview...";
     }
     return "Launching browser preview...";
-  }, [hasBrowserView, isMorphProvider]);
+  }, [hasBrowserView, hasCloudBackend]);
 
   const onConnect = useCallback(() => {
     console.log(`Browser VNC connected for task run ${taskRunId}`);

@@ -24,8 +24,8 @@ import {
   getTaskRunPersistKey,
 } from "@/lib/persistent-webview-keys";
 import {
-  toMorphVncUrl,
-  toMorphXtermBaseUrl,
+  toVncUrl,
+  toXtermBaseUrl,
 } from "@/lib/toProxyWorkspaceUrl";
 import { getWorkspaceUrl } from "@/lib/workspace-url";
 import {
@@ -150,21 +150,23 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
           });
         }
       }
-      if (selectedRun && rawBrowserUrl) {
-        const vncUrl = toMorphVncUrl(rawBrowserUrl);
-        if (vncUrl) {
-          void preloadTaskRunBrowserIframe(selectedRun._id, vncUrl).catch(
+      const provider = selectedRun?.vscode?.provider;
+      const ports = selectedRun?.vscode?.ports;
+      if (selectedRun && rawBrowserUrl && provider) {
+        const vncViewUrl = toVncUrl(rawBrowserUrl, provider, ports ?? undefined);
+        if (vncViewUrl) {
+          void preloadTaskRunBrowserIframe(selectedRun._id, vncViewUrl).catch(
             (error) => {
               console.error("Failed to preload browser iframe", error);
             }
           );
         }
       }
-      if (!rawWorkspaceUrl) {
+      if (!rawWorkspaceUrl || !provider) {
         return;
       }
 
-      const baseUrl = toMorphXtermBaseUrl(rawWorkspaceUrl);
+      const baseUrl = toXtermBaseUrl(rawWorkspaceUrl, provider, ports ?? undefined);
       if (!baseUrl) {
         return;
       }
@@ -654,17 +656,19 @@ function TaskDetailPage() {
 
   const rawBrowserUrl =
     selectedRun?.vscode?.url ?? selectedRun?.vscode?.workspaceUrl ?? null;
+  const selectedProvider = selectedRun?.vscode?.provider;
+  const selectedPorts = selectedRun?.vscode?.ports;
   const browserUrl = useMemo(() => {
-    if (!rawBrowserUrl) {
+    if (!rawBrowserUrl || !selectedProvider) {
       return null;
     }
-    return toMorphVncUrl(rawBrowserUrl);
-  }, [rawBrowserUrl]);
+    return toVncUrl(rawBrowserUrl, selectedProvider, selectedPorts ?? undefined);
+  }, [rawBrowserUrl, selectedProvider, selectedPorts]);
   const browserPersistKey = selectedRunId
     ? getTaskRunBrowserPersistKey(selectedRunId)
     : null;
   const hasBrowserView = Boolean(browserUrl);
-  const isMorphProvider = selectedRun?.vscode?.provider === "morph";
+  const hasCloudBackend = selectedProvider === "morph" || selectedProvider === "docker";
 
   const handleBrowserStatusChange = useCallback(
     (status: PersistentIframeStatus) => {
@@ -883,12 +887,14 @@ function TaskDetailPage() {
       isEditorBusy,
       workspacePlaceholder,
       rawWorkspaceUrl,
+      sandboxProvider: selectedProvider,
+      sandboxPorts: selectedPorts ?? undefined,
       browserUrl,
       browserPersistKey,
       browserStatus,
       setBrowserStatus: handleBrowserStatusChange,
       browserPlaceholder,
-      isMorphProvider,
+      hasCloudBackend,
       isBrowserBusy,
       TaskRunChatPane,
       PersistentWebView,
@@ -917,12 +923,14 @@ function TaskDetailPage() {
       isEditorBusy,
       workspacePlaceholder,
       rawWorkspaceUrl,
+      selectedProvider,
+      selectedPorts,
       browserUrl,
       browserPersistKey,
       browserStatus,
       handleBrowserStatusChange,
       browserPlaceholder,
-      isMorphProvider,
+      hasCloudBackend,
       isBrowserBusy,
       handlePanelClose,
       teamSlugOrId,

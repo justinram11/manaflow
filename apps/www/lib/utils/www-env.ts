@@ -11,8 +11,12 @@ export const env = createEnv({
     // GitHub App
     CMUX_GITHUB_APP_ID: z.string().min(1),
     CMUX_GITHUB_APP_PRIVATE_KEY: z.string().min(1),
+    // Sandbox provider
+    SANDBOX_PROVIDER: z.enum(["morph", "docker"]).optional(),
+    SANDBOX_HOST: z.string().optional(),
+    SANDBOX_IMAGE: z.string().optional(),
     // Morph
-    MORPH_API_KEY: z.string().min(1),
+    MORPH_API_KEY: z.string().min(1).optional(),
     OPENAI_API_KEY: z.string().min(1).optional(),
     GEMINI_API_KEY: z.string().min(1).optional(),
     ANTHROPIC_API_KEY: z.string().min(1),

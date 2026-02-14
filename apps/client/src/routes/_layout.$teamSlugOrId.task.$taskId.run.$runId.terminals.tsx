@@ -12,7 +12,7 @@ import {
   TaskRunTerminalSession,
   type TerminalConnectionState,
 } from "@/components/task-run-terminal-session";
-import { toMorphXtermBaseUrl } from "@/lib/toProxyWorkspaceUrl";
+import { toXtermBaseUrl } from "@/lib/toProxyWorkspaceUrl";
 import {
   createTerminalTab,
   deleteTerminalTab,
@@ -58,14 +58,14 @@ export const Route = createFileRoute(
         })
       );
       const vscodeInfo = taskRun?.vscode;
-      const rawMorphUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
-      const isMorphProvider = vscodeInfo?.provider === "morph";
+      const rawUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
+      const hasCloudBackend = vscodeInfo?.provider === "morph" || vscodeInfo?.provider === "docker";
 
-      if (!isMorphProvider || !rawMorphUrl) {
+      if (!hasCloudBackend || !rawUrl) {
         return;
       }
 
-      const baseUrl = toMorphXtermBaseUrl(rawMorphUrl);
+      const baseUrl = toXtermBaseUrl(rawUrl, vscodeInfo.provider, vscodeInfo.ports ?? undefined);
       const tabsQueryKey = terminalTabsQueryKey(baseUrl, runId);
 
       const tabs = await queryClient.ensureQueryData(
@@ -162,17 +162,17 @@ function TaskRunTerminals() {
   });
 
   const vscodeInfo = taskRun?.vscode;
-  const rawMorphUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
-  const isMorphProvider = vscodeInfo?.provider === "morph";
+  const rawUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
+  const hasCloudBackend = vscodeInfo?.provider === "morph" || vscodeInfo?.provider === "docker";
 
   const xtermBaseUrl = useMemo(() => {
-    if (!rawMorphUrl) {
+    if (!rawUrl || !vscodeInfo?.provider) {
       return null;
     }
-    return toMorphXtermBaseUrl(rawMorphUrl);
-  }, [rawMorphUrl]);
+    return toXtermBaseUrl(rawUrl, vscodeInfo.provider, vscodeInfo.ports ?? undefined);
+  }, [rawUrl, vscodeInfo?.provider, vscodeInfo?.ports]);
 
-  const hasTerminalBackend = Boolean(isMorphProvider && xtermBaseUrl);
+  const hasTerminalBackend = Boolean(hasCloudBackend && xtermBaseUrl);
 
   const tabsQuery = useQuery(
     terminalTabsQueryOptions({
@@ -387,7 +387,7 @@ function TaskRunTerminals() {
   }, []);
 
   const renderTerminalArea = () => {
-    if (!isMorphProvider) {
+    if (!hasCloudBackend) {
       return renderMessage(
         "Terminals are only available for Cloud-based runs."
       );

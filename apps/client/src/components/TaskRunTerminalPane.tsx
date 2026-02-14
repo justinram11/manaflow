@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { TaskRunTerminalSession } from "./task-run-terminal-session";
 import { WorkspaceLoadingIndicator } from "./workspace-loading-indicator";
-import { toMorphXtermBaseUrl } from "@/lib/toProxyWorkspaceUrl";
+import { toXtermBaseUrl } from "@/lib/toProxyWorkspaceUrl";
 import {
   createTerminalTab,
   terminalTabsQueryKey,
@@ -12,19 +12,21 @@ import {
 
 export interface TaskRunTerminalPaneProps {
   workspaceUrl: string | null;
+  provider?: string;
+  ports?: { pty?: string; vnc?: string; proxy?: string; vscode?: string; worker?: string };
 }
 
 const INITIAL_AUTO_CREATE_DELAY_MS = 4_000;
 const MAX_AUTO_CREATE_ATTEMPTS = 3;
 const AUTO_RETRY_BASE_DELAY_MS = 4_000;
 
-export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) {
+export function TaskRunTerminalPane({ workspaceUrl, provider, ports }: TaskRunTerminalPaneProps) {
   const baseUrl = useMemo(() => {
-    if (!workspaceUrl) {
+    if (!workspaceUrl || !provider) {
       return null;
     }
-    return toMorphXtermBaseUrl(workspaceUrl);
-  }, [workspaceUrl]);
+    return toXtermBaseUrl(workspaceUrl, provider, ports);
+  }, [workspaceUrl, provider, ports]);
 
   const queryClient = useQueryClient();
 
