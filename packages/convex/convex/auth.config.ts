@@ -1,8 +1,6 @@
 // Use process.env directly to avoid Convex CLI scanning all env vars from convex-env module
 const stackProjectId = process.env.NEXT_PUBLIC_STACK_PROJECT_ID;
-if (!stackProjectId) {
-  throw new Error("NEXT_PUBLIC_STACK_PROJECT_ID environment variable is required");
-}
+const authMode = process.env.AUTH_MODE;
 
 // Production Stack Auth project ID for CLI login via cmux.dev
 const prodStackProjectId = "8a877114-b905-47c5-8b64-3a2d90679577";
@@ -27,11 +25,20 @@ function makeStackAuthProviders(projectId: string) {
   ];
 }
 
-export default {
-  providers: [
+function buildProviders() {
+  // In local auth mode, no JWT providers needed
+  if (authMode === "local" || !stackProjectId) {
+    return [];
+  }
+
+  return [
     // Primary Stack Auth project (from env)
     ...makeStackAuthProviders(stackProjectId),
     // Also accept production Stack Auth tokens (for devbox CLI using cmux.dev login)
     ...(stackProjectId !== prodStackProjectId ? makeStackAuthProviders(prodStackProjectId) : []),
-  ],
+  ];
+}
+
+export default {
+  providers: buildProviders(),
 };

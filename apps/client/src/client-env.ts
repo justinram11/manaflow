@@ -10,8 +10,8 @@ export const env = createEnv({
   clientPrefix: "NEXT_PUBLIC_",
   client: {
     NEXT_PUBLIC_CONVEX_URL: z.string().min(1),
-    NEXT_PUBLIC_STACK_PROJECT_ID: z.string().min(1),
-    NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY: z.string().min(1),
+    NEXT_PUBLIC_STACK_PROJECT_ID: z.string().min(1).optional(),
+    NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY: z.string().min(1).optional(),
     NEXT_PUBLIC_GITHUB_APP_SLUG: z.string().optional(),
     NEXT_PUBLIC_WWW_ORIGIN: z.string().min(1),
     NEXT_PUBLIC_SERVER_ORIGIN: z.string().optional(),
@@ -22,6 +22,8 @@ export const env = createEnv({
       .enum(["true", "false"])
       .optional()
       .transform((v) => v === "true"),
+    // When set to "local", bypasses Stack Auth entirely for self-hosted deployments
+    NEXT_PUBLIC_AUTH_MODE: z.enum(["local", "cloud"]).optional(),
   },
 
   /**

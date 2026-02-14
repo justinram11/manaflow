@@ -11,6 +11,7 @@ import {
   customMutation,
   customQuery,
 } from "convex-helpers/server/customFunctions";
+import { getLocalIdentity, isLocalAuthMode } from "../../../_shared/local-auth";
 
 export const authQuery = customQuery(
   query,
@@ -39,6 +40,9 @@ export async function AuthenticationRequired({
 }): Promise<Identity> {
   const identity = await ctx.auth.getUserIdentity();
   if (identity === null) {
+    if (isLocalAuthMode()) {
+      return getLocalIdentity() as Identity;
+    }
     throw new ConvexError("Not authenticated!");
   }
   return identity;

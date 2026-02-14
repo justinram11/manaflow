@@ -49,9 +49,9 @@ authAnonymousRouter.openapi(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-stack-project-id": env.NEXT_PUBLIC_STACK_PROJECT_ID,
-          "x-stack-publishable-client-key": env.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY,
-          "x-stack-secret-server-key": env.STACK_SECRET_SERVER_KEY,
+          "x-stack-project-id": env.NEXT_PUBLIC_STACK_PROJECT_ID ?? "",
+          "x-stack-publishable-client-key": env.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY ?? "",
+          "x-stack-secret-server-key": env.STACK_SECRET_SERVER_KEY ?? "",
           "x-stack-access-type": "server",
         },
         body: JSON.stringify({}),

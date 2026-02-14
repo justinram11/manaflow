@@ -17,14 +17,16 @@ import { env } from "@/client-env";
 export const Route = createFileRoute("/_layout/$teamSlugOrId")({
   component: LayoutComponentWrapper,
   beforeLoad: async ({ params, location }) => {
-    const user = await cachedGetUser(stackClientApp);
-    if (!user) {
-      throw redirect({
-        to: "/sign-in",
-        search: {
-          after_auth_return_to: location.pathname,
-        },
-      });
+    if (env.NEXT_PUBLIC_AUTH_MODE !== "local") {
+      const user = await cachedGetUser(stackClientApp);
+      if (!user) {
+        throw redirect({
+          to: "/sign-in",
+          search: {
+            after_auth_return_to: location.pathname,
+          },
+        });
+      }
     }
     const { teamSlugOrId } = params;
     const teamMemberships = await convexQueryClient.convexClient.query(

@@ -1,4 +1,5 @@
 import type { MutationCtx, QueryCtx } from "../convex/_generated/server";
+import { isLocalAuthMode, LOCAL_USER_ID } from "./local-auth";
 
 export function isUuid(value: string): boolean {
   // RFC4122 variant UUID v1–v5
@@ -17,7 +18,7 @@ export async function getTeamId(
   teamSlugOrId: string
 ): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
-  const userId = identity?.subject;
+  const userId = identity?.subject ?? (isLocalAuthMode() ? LOCAL_USER_ID : undefined);
 
   let teamId: string;
 

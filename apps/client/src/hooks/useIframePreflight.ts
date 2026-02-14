@@ -134,7 +134,7 @@ export function useIframePreflight({
   url,
   enabled = true,
 }: UseIframePreflightOptions): UseIframePreflightState {
-  const user = useUser({ or: "redirect" });
+  const user = useUser({ or: "return-null" });
   const [phase, setPhase] = useState<IframePreflightPhase>("idle");
   const [phasePayload, setPhasePayload] =
     useState<IframePreflightPhasePayload | null>(null);
@@ -248,7 +248,7 @@ export function useIframePreflight({
       try {
         const requestUrl = new URL("/api/iframe/preflight", WWW_ORIGIN);
         requestUrl.search = new URLSearchParams({ url: stableUrl }).toString();
-        const stackHeaders = await user.getAuthHeaders();
+        const stackHeaders = user ? await user.getAuthHeaders() : {};
 
         const response = await fetch(requestUrl, {
           method: "GET",

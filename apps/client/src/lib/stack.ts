@@ -7,9 +7,13 @@ import { convexQueryClient } from "../contexts/convex/convex-query-client";
 import { cachedGetUser } from "./cachedGetUser";
 import { WWW_ORIGIN } from "./wwwOrigin";
 
+const isLocalAuth = env.NEXT_PUBLIC_AUTH_MODE === "local";
+
+// In local auth mode, create a dummy StackClientApp that won't be used for real auth.
+// We still need the export for type compatibility with callsites.
 export const stackClientApp = new StackClientApp({
-  projectId: env.NEXT_PUBLIC_STACK_PROJECT_ID,
-  publishableClientKey: env.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY,
+  projectId: env.NEXT_PUBLIC_STACK_PROJECT_ID ?? "unused-local",
+  publishableClientKey: env.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY ?? "unused-local",
   tokenStore: "cookie",
   redirectMethod: {
     useNavigate() {
@@ -21,12 +25,17 @@ export const stackClientApp = new StackClientApp({
   },
 });
 
-convexQueryClient.convexClient.setAuth(
-  stackClientApp.getConvexClientAuth({ tokenStore: "cookie" }),
-  (isAuthenticated) => {
-    signalConvexAuthReady(isAuthenticated);
-  },
-);
+if (isLocalAuth) {
+  // In local mode, skip Stack Auth entirely — signal Convex ready immediately
+  signalConvexAuthReady(true);
+} else {
+  convexQueryClient.convexClient.setAuth(
+    stackClientApp.getConvexClientAuth({ tokenStore: "cookie" }),
+    (isAuthenticated) => {
+      signalConvexAuthReady(isAuthenticated);
+    },
+  );
+}
 
 /**
  * Checks if a response indicates an expired/invalid auth token.
@@ -80,85 +89,87 @@ async function refreshAuthToken(): Promise<void> {
   return refreshPromise;
 }
 
-const fetchWithAuth = (async (request: Request) => {
-  // Clone the request upfront for potential retry (request body can only be consumed once)
-  const requestForRetry = request.clone();
+const fetchWithAuth = isLocalAuth
+  ? fetch
+  : ((async (request: Request) => {
+      // Clone the request upfront for potential retry (request body can only be consumed once)
+      const requestForRetry = request.clone();
 
-  const makeRequest = async (req: Request): Promise<Response> => {
-    const user = await cachedGetUser(stackClientApp);
-    if (!user) {
-      throw new Error("User not found");
-    }
-
-    // getAuthHeaders() should return fresh headers - Stack Auth handles refresh internally
-    const authHeaders = await user.getAuthHeaders();
-    const mergedHeaders = new Headers();
-    for (const [key, value] of Object.entries(authHeaders)) {
-      mergedHeaders.set(key, value);
-    }
-    for (const [key, value] of req.headers.entries()) {
-      mergedHeaders.set(key, value);
-    }
-
-    const response = await fetch(req, {
-      headers: mergedHeaders,
-    });
-
-    return response;
-  };
-
-  // First attempt
-  let response = await makeRequest(request);
-
-  // Check if it's an auth error that warrants a retry
-  if (response.status === 401) {
-    const clone = response.clone();
-    let bodyText = "";
-    try {
-      bodyText = await clone.text();
-    } catch (e) {
-      console.error("[APIError] Failed to read error body for retry check", e);
-    }
-
-    if (isTokenExpiredResponse(response.status, bodyText)) {
-      console.warn(
-        "[Auth] Token expired, refreshing and retrying with fresh token..."
-      );
-
-      // Refresh the token (debounced to prevent race conditions)
-      try {
-        await refreshAuthToken();
-
-        // Retry the request with fresh auth headers using the cloned request
-        response = await makeRequest(requestForRetry);
-        if (response.ok) {
-          console.log("[Auth] Retry succeeded with refreshed token");
+      const makeRequest = async (req: Request): Promise<Response> => {
+        const user = await cachedGetUser(stackClientApp);
+        if (!user) {
+          throw new Error("User not found");
         }
-      } catch (retryError) {
-        console.error("[Auth] Retry failed after token refresh:", retryError);
-        // Return the original 401 response if retry fails
+
+        // getAuthHeaders() should return fresh headers - Stack Auth handles refresh internally
+        const authHeaders = await user.getAuthHeaders();
+        const mergedHeaders = new Headers();
+        for (const [key, value] of Object.entries(authHeaders)) {
+          mergedHeaders.set(key, value);
+        }
+        for (const [key, value] of req.headers.entries()) {
+          mergedHeaders.set(key, value);
+        }
+
+        const response = await fetch(req, {
+          headers: mergedHeaders,
+        });
+
+        return response;
+      };
+
+      // First attempt
+      let response = await makeRequest(request);
+
+      // Check if it's an auth error that warrants a retry
+      if (response.status === 401) {
+        const clone = response.clone();
+        let bodyText = "";
+        try {
+          bodyText = await clone.text();
+        } catch (e) {
+          console.error("[APIError] Failed to read error body for retry check", e);
+        }
+
+        if (isTokenExpiredResponse(response.status, bodyText)) {
+          console.warn(
+            "[Auth] Token expired, refreshing and retrying with fresh token..."
+          );
+
+          // Refresh the token (debounced to prevent race conditions)
+          try {
+            await refreshAuthToken();
+
+            // Retry the request with fresh auth headers using the cloned request
+            response = await makeRequest(requestForRetry);
+            if (response.ok) {
+              console.log("[Auth] Retry succeeded with refreshed token");
+            }
+          } catch (retryError) {
+            console.error("[Auth] Retry failed after token refresh:", retryError);
+            // Return the original 401 response if retry fails
+          }
+        }
       }
-    }
-  }
 
-  // Log non-OK responses for debugging
-  if (!response.ok) {
-    try {
-      const clone = response.clone();
-      const bodyText = await clone.text();
-      console.error("[APIError]", {
-        url: response.url,
-        status: response.status,
-        statusText: response.statusText,
-        body: bodyText.slice(0, 2000),
-      });
-    } catch (e) {
-      console.error("[APIError] Failed to read error body", e);
-    }
-  }
+      // Log non-OK responses for debugging
+      if (!response.ok) {
+        try {
+          const clone = response.clone();
+          const bodyText = await clone.text();
+          console.error("[APIError]", {
+            url: response.url,
+            status: response.status,
+            statusText: response.statusText,
+            body: bodyText.slice(0, 2000),
+          });
+        } catch (e) {
+          console.error("[APIError] Failed to read error body", e);
+        }
+      }
 
-  return response;
-}) as typeof fetch; // TODO: remove when bun types dont conflict with node types
+      return response;
+    }) as typeof fetch); // TODO: remove when bun types dont conflict with node types
 
 wwwOpenAPIClient.setConfig({
   baseUrl: WWW_ORIGIN,

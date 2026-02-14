@@ -1,8 +1,16 @@
+import { env } from "@/lib/utils/www-env";
 import { stackServerAppJs } from "@/lib/utils/stack";
+
+const LOCAL_USER_ID = "local-admin-00000000-0000-0000-0000-000000000001";
+const LOCAL_TEAM_ID = "local-team-00000000-0000-0000-0000-000000000001";
 
 export async function getAccessTokenFromRequest(
   req: Request
 ): Promise<string | null> {
+  if (env.AUTH_MODE === "local") {
+    return "local-auth-token";
+  }
+
   // First, try to get user from Stack Auth's token store (cookies)
   try {
     const user = await stackServerAppJs.getUser({ tokenStore: req });
@@ -45,6 +53,16 @@ export async function getAccessTokenFromRequest(
  * which performs cryptographic signature verification.
  */
 export async function getUserFromRequest(req: Request) {
+  if (env.AUTH_MODE === "local") {
+    return {
+      id: LOCAL_USER_ID,
+      getAuthJson: async () => ({ accessToken: "local-auth-token" }),
+      getAuthHeaders: async () => ({}) as Record<string, string>,
+      listTeams: async () => [{ id: LOCAL_TEAM_ID, displayName: "Local" }],
+      getConnectedAccount: async () => null,
+    };
+  }
+
   // First, try cookie-based auth (standard web flow)
   try {
     const user = await stackServerAppJs.getUser({ tokenStore: req });

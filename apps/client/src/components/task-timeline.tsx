@@ -60,7 +60,7 @@ export function TaskTimeline({
   taskRuns,
   crownEvaluation,
 }: TaskTimelineProps) {
-  const user = useUser();
+  const user = useUser({ or: "return-null" });
   const params = useParams({ from: "/_layout/$teamSlugOrId/task/$taskId" });
   const taskComments = useQuery(api.taskComments.listByTask, {
     teamSlugOrId: params.teamSlugOrId,

@@ -556,6 +556,21 @@ CONVEX_DEV_PID=$!
 check_process $CONVEX_DEV_PID "Convex Dev"
 CONVEX_PID=$CONVEX_DEV_PID
 
+# Seed local auth data when AUTH_MODE=local (runs in background after Convex is ready)
+if [ "${AUTH_MODE:-}" = "local" ]; then
+    (
+        # Wait for Convex dev to be ready by checking the log
+        for i in {1..60}; do
+            if [ -f "$LOG_DIR/convex-dev.log" ] && grep -q "Ready" "$LOG_DIR/convex-dev.log" 2>/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+        echo -e "${BLUE}Seeding local auth data...${NC}"
+        cd "$APP_DIR/packages/convex" && bunx convex run seedLocalAuth:seed 2>&1 | prefix_output "SEED" "$MAGENTA"
+    ) &
+fi
+
 # Start the backend server
 echo -e "${GREEN}Starting backend server on port 9776...${NC}"
 (cd "$APP_DIR/apps/server" && exec bash -c 'trap "kill -9 0" EXIT; bun run dev 2>&1 | tee "$LOG_DIR/server.log" | prefix_output "SERVER" "$YELLOW"') &

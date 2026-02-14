@@ -26,6 +26,7 @@ export const env = createEnv({
     CMUX_IS_STAGING: z.string().optional(),
     CONVEX_IS_PRODUCTION: z.string().optional(),
     POSTHOG_API_KEY: z.string().optional(),
+    AUTH_MODE: z.enum(["local", "cloud"]).optional(),
   },
   runtimeEnv: process.env,
   emptyStringAsUndefined: true,

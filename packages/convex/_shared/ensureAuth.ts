@@ -4,6 +4,7 @@ import type {
   GenericQueryCtx,
 } from "convex/server";
 import type { DataModel } from "../convex/_generated/dataModel";
+import { getLocalIdentity, isLocalAuthMode } from "./local-auth";
 
 export async function ensureAuth(
   ctx:
@@ -13,6 +14,10 @@ export async function ensureAuth(
 ) {
   const user = await ctx.auth.getUserIdentity();
   if (!user) {
+    if (isLocalAuthMode()) {
+      const localIdentity = getLocalIdentity();
+      return { ...localIdentity, userId: localIdentity.subject };
+    }
     throw new Error("Unauthorized");
   }
 

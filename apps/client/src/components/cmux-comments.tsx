@@ -668,12 +668,12 @@ export function CmuxComments({ teamSlugOrId }: { teamSlugOrId: string }) {
     };
   }, [isDragging, dragStart]);
 
-  const user = useUser({ or: "redirect" });
-  const userId = user.id;
-  const profileImageUrl = user.profileImageUrl || "https://cmux.dev/rick.png";
+  const user = useUser({ or: "return-null" });
+  const userId = user?.id;
+  const profileImageUrl = user?.profileImageUrl || "https://cmux.dev/rick.png";
 
   const handleSubmitComment = async () => {
-    if (!pendingCommentData || !commentDraft.trim()) return;
+    if (!pendingCommentData || !commentDraft.trim() || !userId) return;
     // const userId = user.id;
 
     // Create the comment in Convex

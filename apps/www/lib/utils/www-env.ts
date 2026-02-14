@@ -4,8 +4,10 @@ import { z } from "zod";
 export const env = createEnv({
   clientPrefix: "NEXT_PUBLIC_",
   server: {
-    // Stack server-side env
-    STACK_SECRET_SERVER_KEY: z.string().min(1),
+    // Auth mode: "local" bypasses Stack Auth for self-hosted deployments
+    AUTH_MODE: z.enum(["local", "cloud"]).optional(),
+    // Stack server-side env (optional in local auth mode)
+    STACK_SECRET_SERVER_KEY: z.string().min(1).optional(),
     STACK_SUPER_SECRET_ADMIN_KEY: z.string().min(1).optional(),
     STACK_DATA_VAULT_SECRET: z.string().min(32).optional(),
     // GitHub App (optional for self-hosted Docker setups using SSH auth)
@@ -26,8 +28,8 @@ export const env = createEnv({
     AWS_REGION: z.string().min(1).optional(),
   },
   client: {
-    NEXT_PUBLIC_STACK_PROJECT_ID: z.string().min(1),
-    NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY: z.string().min(1),
+    NEXT_PUBLIC_STACK_PROJECT_ID: z.string().min(1).optional(),
+    NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY: z.string().min(1).optional(),
     NEXT_PUBLIC_CONVEX_URL: z.string().min(1),
     NEXT_PUBLIC_GITHUB_APP_SLUG: z.string().min(1).optional(),
   },
