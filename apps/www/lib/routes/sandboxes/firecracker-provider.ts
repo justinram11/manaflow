@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { env } from "@/lib/utils/www-env";
 import {
   configureAndBoot,
@@ -67,8 +68,9 @@ function getFirecrackerPaths() {
   };
 }
 
+const __fc_dirname = path.dirname(fileURLToPath(import.meta.url));
 const FC_HELPER_PATH = path.resolve(
-  import.meta.dirname,
+  __fc_dirname,
   "../../../../../../scripts/fc-helper.sh",
 );
 

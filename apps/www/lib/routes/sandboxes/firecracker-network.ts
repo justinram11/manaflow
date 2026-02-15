@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import * as net from "node:net";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * TAP network management for Firecracker VMs.
@@ -9,8 +10,9 @@ import * as path from "node:path";
  * The fc-helper.sh sudo script handles the actual TAP/iptables operations.
  */
 
+const __fc_dirname = path.dirname(fileURLToPath(import.meta.url));
 const FC_HELPER_PATH = path.resolve(
-  import.meta.dirname,
+  __fc_dirname,
   "../../../../../../scripts/fc-helper.sh",
 );
 
