@@ -9,24 +9,19 @@ import { WWW_ORIGIN } from "./wwwOrigin";
 
 export const isLocalAuth = env.NEXT_PUBLIC_AUTH_MODE === "local";
 
-// In local auth mode, skip StackClientApp entirely — its constructor calls
-// crypto.randomUUID() which requires a secure context (HTTPS or localhost).
-// Accessing via http://hostname:port (e.g., Tailscale) would crash.
-export const stackClientApp = isLocalAuth
-  ? (null as unknown as StackClientApp)
-  : new StackClientApp({
-      projectId: env.NEXT_PUBLIC_STACK_PROJECT_ID!,
-      publishableClientKey: env.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY!,
-      tokenStore: "cookie",
-      redirectMethod: {
-        useNavigate() {
-          const navigate = useTanstackNavigate();
-          return (to: string) => {
-            navigate({ to });
-          };
-        },
-      },
-    });
+export const stackClientApp = new StackClientApp({
+  projectId: env.NEXT_PUBLIC_STACK_PROJECT_ID ?? "unused-local",
+  publishableClientKey: env.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY ?? "unused-local",
+  tokenStore: "cookie",
+  redirectMethod: {
+    useNavigate() {
+      const navigate = useTanstackNavigate();
+      return (to: string) => {
+        navigate({ to });
+      };
+    },
+  },
+});
 
 if (isLocalAuth) {
   // In local mode, skip Stack Auth entirely — signal Convex ready immediately

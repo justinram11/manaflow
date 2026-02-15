@@ -15,7 +15,7 @@ const AUTO_UPDATE_TOAST_ID = "auto-update-toast";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
-  auth: StackClientApp<true, string> | null;
+  auth: StackClientApp<true, string>;
 }>()({
   component: RootComponent,
 });

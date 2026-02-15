@@ -8,18 +8,8 @@ import { AntdProvider } from "./components/antd-provider";
 import { OnboardingOverlay } from "./components/onboarding";
 import { OnboardingProvider } from "./contexts/onboarding";
 import { isElectron } from "./lib/electron";
-import { isLocalAuth, stackClientApp } from "./lib/stack";
+import { stackClientApp } from "./lib/stack";
 import { queryClient } from "./query-client";
-
-function MaybeStackProvider({ children }: { children: ReactNode }) {
-  if (isLocalAuth) {
-    return <>{children}</>;
-  }
-  // stackClientApp is guaranteed non-null when !isLocalAuth.
-  // The generic type mismatch (StackClientApp vs StackClientApp<true, string>)
-  // is a @stackframe library quirk — the runtime types are identical.
-  return <StackProvider app={stackClientApp as Parameters<typeof StackProvider>[0]["app"]}>{children}</StackProvider>;
-}
 
 interface ProvidersProps {
   children: ReactNode;
@@ -36,7 +26,7 @@ export function Providers({ children }: ProvidersProps) {
     <ThemeProvider>
       <StackTheme>
         <Suspense fallback={<div>Loading stack...</div>}>
-          <MaybeStackProvider>
+          <StackProvider app={stackClientApp}>
             <QueryClientProvider client={queryClient}>
               <TooltipProvider delayDuration={700} skipDelayDuration={300}>
                 <HeroUIProvider>
@@ -51,7 +41,7 @@ export function Providers({ children }: ProvidersProps) {
                 </HeroUIProvider>
               </TooltipProvider>
             </QueryClientProvider>
-          </MaybeStackProvider>
+          </StackProvider>
         </Suspense>
       </StackTheme>
     </ThemeProvider>
