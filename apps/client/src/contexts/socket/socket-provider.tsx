@@ -38,6 +38,8 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
     return seg;
   }, [location.pathname]);
 
+  const isLocalAuth = env.NEXT_PUBLIC_AUTH_MODE === "local";
+
   useEffect(() => {
     if (!authToken) {
       console.warn("[Socket] No auth token yet; delaying connect");
@@ -47,7 +49,9 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
     let createdSocket: SocketContextType["socket"] | null = null;
     (async () => {
       // Fetch full auth JSON for server to forward as x-stack-auth
-      const user = await cachedGetUser(stackClientApp);
+      const user = isLocalAuth
+        ? null
+        : await cachedGetUser(stackClientApp);
       const authJson = user ? await user.getAuthJson() : undefined;
 
       const query: Record<string, string> = { auth: authToken };
@@ -118,10 +122,10 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
       setGlobalSocket(null);
       socketBoot.reset();
     };
-  }, [url, authToken, teamSlugOrId]);
+  }, [url, authToken, teamSlugOrId, isLocalAuth]);
 
   useEffect(() => {
-    if (!socket) return;
+    if (!socket || isLocalAuth) return;
     let disposed = false;
 
     const refreshAuthentication = async () => {
@@ -151,7 +155,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
       disposed = true;
       window.clearInterval(intervalId);
     };
-  }, [socket]);
+  }, [socket, isLocalAuth]);
 
   const contextValue: SocketContextType = useMemo(
     () => ({
