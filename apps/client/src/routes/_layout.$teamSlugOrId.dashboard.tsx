@@ -852,7 +852,9 @@ function DashboardComponent() {
 
       const repoUrl = envSelected
         ? undefined
-        : `https://github.com/${projectFullName}.git`;
+        : isCloudMode
+          ? `https://github.com/${projectFullName}.git`
+          : `git@github.com:${projectFullName}.git`;
 
       // For socket.io, we need to send the content text (which includes image references) and the images
       const handleStartTaskAck = (

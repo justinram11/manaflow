@@ -5,6 +5,7 @@ import { api, internal } from "./_generated/api";
 import { action } from "./_generated/server";
 import { Octokit } from "octokit";
 import { parseGithubRepoUrl } from "@cmux/shared";
+import { isLocalAuthMode } from "../_shared/local-auth";
 
 // Add a manual repository from a custom URL
 export const addManualRepo = action({
@@ -17,6 +18,43 @@ export const addManualRepo = action({
     const parsed = parseGithubRepoUrl(repoUrl);
     if (!parsed) {
       throw new Error("Invalid GitHub repository URL");
+    }
+
+    // Get the authenticated user
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Not authenticated");
+    }
+
+    // Verify team access by calling an authQuery (this will throw if user is not a team member)
+    await ctx.runQuery(api.github.hasReposForTeam, { teamSlugOrId });
+
+    // Check if repo already exists
+    const existing = await ctx.runQuery(internal.github.getRepoByFullNameInternal, {
+      teamSlugOrId,
+      fullName: parsed.fullName,
+    });
+
+    if (existing) {
+      return { success: true, repoId: existing._id, fullName: parsed.fullName };
+    }
+
+    // In local auth mode, skip GitHub API validation (allows private repos via SSH)
+    if (isLocalAuthMode()) {
+      const repoId = await ctx.runMutation(internal.github.insertManualRepoInternal, {
+        teamSlugOrId,
+        userId: identity.subject,
+        fullName: parsed.fullName,
+        org: parsed.owner,
+        name: parsed.repo,
+        gitRemote: `git@github.com:${parsed.owner}/${parsed.repo}.git`,
+        providerRepoId: 0,
+        ownerLogin: parsed.owner,
+        ownerType: "User" as const,
+        defaultBranch: "main",
+      });
+
+      return { success: true, repoId, fullName: parsed.fullName };
     }
 
     // Check if the repo is public using GitHub API
@@ -36,25 +74,6 @@ export const addManualRepo = action({
 
       if (data.private) {
         throw new Error("Private repositories are not supported for manual addition");
-      }
-
-      // Get the authenticated user
-      const identity = await ctx.auth.getUserIdentity();
-      if (!identity) {
-        throw new Error("Not authenticated");
-      }
-
-      // Verify team access by calling an authQuery (this will throw if user is not a team member)
-      await ctx.runQuery(api.github.hasReposForTeam, { teamSlugOrId });
-
-      // Check if repo already exists
-      const existing = await ctx.runQuery(internal.github.getRepoByFullNameInternal, {
-        teamSlugOrId,
-        fullName: parsed.fullName,
-      });
-
-      if (existing) {
-        return { success: true, repoId: existing._id, fullName: parsed.fullName };
       }
 
       // Validate owner type
