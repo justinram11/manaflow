@@ -34,6 +34,15 @@ import {
 } from "./utils/ensure-env-vars";
 import { VM_CLEANUP_COMMANDS } from "./sandboxes/cleanup";
 import { startDockerSandbox } from "./sandboxes/docker-provider";
+import {
+  startFirecrackerSandbox,
+  listSnapshots as listFirecrackerSnapshots,
+  deleteSnapshot as deleteFirecrackerSnapshot,
+} from "./sandboxes/firecracker-provider";
+import type { FirecrackerSandboxInstance } from "./sandboxes/firecracker-sandbox-instance";
+
+// Track running Firecracker VMs for snapshot operations
+const firecrackerVmRegistry = new Map<string, FirecrackerSandboxInstance>();
 
 /**
  * Wait for the VSCode server to be ready by polling the service URL.
@@ -230,7 +239,7 @@ const StartSandboxBody = z
     teamSlugOrId: z.string(),
     environmentId: z.string().optional(),
     snapshotId: z.string().optional(),
-    provider: z.enum(["morph", "docker"]).optional(),
+    provider: z.enum(["morph", "docker", "firecracker"]).optional(),
     ttlSeconds: z
       .number()
       .optional()
@@ -252,7 +261,7 @@ const StartSandboxResponse = z
     instanceId: z.string(),
     vscodeUrl: z.string(),
     workerUrl: z.string(),
-    provider: z.enum(["morph", "docker"]).default("morph"),
+    provider: z.enum(["morph", "docker", "firecracker"]).default("morph"),
     vscodePersisted: z.boolean().optional(),
   })
   .openapi("StartSandboxResponse");
@@ -586,6 +595,184 @@ sandboxesRouter.openapi(
           vscodeUrl: dockerResult.vscodeUrl,
           workerUrl: dockerResult.workerUrl,
           provider: "docker" as const,
+          vscodePersisted,
+        });
+      }
+
+      // --- Firecracker provider path ---
+      if (resolvedProvider === "firecracker") {
+        console.log(`[sandboxes.start] Using Firecracker provider`);
+
+        const firecrackerResult = await startFirecrackerSandbox({
+          snapshotId: body.snapshotId,
+          ttlSeconds: body.ttlSeconds ?? 3600,
+          metadata: body.metadata,
+        });
+
+        // Wait for VSCode server to be ready
+        const vscodeReady = await waitForVSCodeReady(firecrackerResult.vscodeUrl, {
+          timeoutMs: 30_000,
+        });
+        if (!vscodeReady) {
+          console.warn(
+            `[sandboxes.start] Firecracker VSCode server did not become ready within timeout for ${firecrackerResult.vmId}, proceeding anyway`,
+          );
+        }
+
+        // Persist VSCode info to Convex
+        let vscodePersisted = false;
+        if (body.taskRunId) {
+          try {
+            await convex.mutation(api.taskRuns.updateVSCodeInstance, {
+              teamSlugOrId: body.teamSlugOrId,
+              id: body.taskRunId as Id<"taskRuns">,
+              vscode: {
+                provider: "docker", // Use "docker" provider type in Convex (Firecracker behaves identically)
+                containerName: firecrackerResult.vmId,
+                status: "starting",
+                url: firecrackerResult.vscodeUrl,
+                workspaceUrl: `${firecrackerResult.vscodeUrl}/?folder=/root/workspace`,
+                startedAt: Date.now(),
+                ports: {
+                  vscode: firecrackerResult.hostPorts[39378],
+                  worker: firecrackerResult.hostPorts[39377],
+                  proxy: firecrackerResult.hostPorts[39379],
+                  vnc: firecrackerResult.hostPorts[39380],
+                  pty: firecrackerResult.hostPorts[39383],
+                },
+              },
+            });
+            vscodePersisted = true;
+          } catch (error) {
+            console.error(
+              "[sandboxes.start] Failed to persist Firecracker VSCode info:",
+              error,
+            );
+          }
+        }
+
+        // Apply env vars, git config, hydration — same as Docker path
+        const environmentEnvVarsContent = await environmentEnvVarsPromise;
+        let envVarsToApply =
+          environmentEnvVarsContent || workspaceConfig?.envVarsContent || "";
+        if (body.taskRunId) {
+          envVarsToApply += `\nCMUX_TASK_RUN_ID="${body.taskRunId}"`;
+        }
+        if (body.taskRunJwt) {
+          envVarsToApply += `\nCMUX_TASK_RUN_JWT="${body.taskRunJwt}"`;
+        }
+
+        const { githubAccessToken } = await githubAccessTokenPromise;
+
+        const fcInstance = firecrackerResult.instance;
+
+        await Promise.all([
+          // Apply env vars
+          envVarsToApply.trim().length > 0
+            ? (async () => {
+                const encodedEnv = encodeEnvContentForEnvctl(envVarsToApply);
+                const loadRes = await fcInstance.exec(
+                  envctlLoadCommand(encodedEnv),
+                );
+                if (loadRes.exit_code === 0) {
+                  console.log(
+                    `[sandboxes.start] Applied environment variables via envctl (firecracker)`,
+                  );
+                } else {
+                  console.error(
+                    `[sandboxes.start] Firecracker env var bootstrap failed exit=${loadRes.exit_code}`,
+                  );
+                }
+              })()
+            : Promise.resolve(),
+          // Configure GitHub access (skip if no token)
+          githubAccessToken
+            ? configureGithubAccess(fcInstance, githubAccessToken)
+            : Promise.resolve(),
+          // Configure git identity
+          gitIdentityPromise
+            .then(([who, gh]) => {
+              const { name, email } = selectGitIdentity(who, gh);
+              return configureGitIdentity(fcInstance, { name, email });
+            })
+            .catch((error) => {
+              console.log(
+                `[sandboxes.start] Failed to configure git identity; continuing...`,
+                error,
+              );
+            }),
+        ]);
+
+        // Hydrate repo if requested
+        if (body.repoUrl) {
+          if (!parsedRepoUrl) {
+            return c.text("Unsupported repo URL; expected GitHub URL", 400);
+          }
+          try {
+            await hydrateWorkspace({
+              instance: fcInstance,
+              repo: {
+                owner: parsedRepoUrl.owner,
+                name: parsedRepoUrl.repo,
+                repoFull: parsedRepoUrl.fullName,
+                cloneUrl: parsedRepoUrl.gitUrl,
+                maskedCloneUrl: parsedRepoUrl.gitUrl,
+                depth: Math.max(1, Math.floor(body.depth ?? 1)),
+                baseBranch: body.branch || "main",
+                newBranch: body.newBranch ?? "",
+              },
+            });
+          } catch (error) {
+            console.error(`[sandboxes.start] Firecracker hydration failed:`, error);
+            await fcInstance.stop().catch(() => {});
+            return c.text("Failed to hydrate sandbox", 500);
+          }
+        }
+
+        // Update status to running
+        if (body.taskRunId && vscodePersisted) {
+          void convex
+            .mutation(api.taskRuns.updateVSCodeStatus, {
+              teamSlugOrId: body.teamSlugOrId,
+              id: body.taskRunId as Id<"taskRuns">,
+              status: "running",
+            })
+            .catch((error) => {
+              console.error(
+                "[sandboxes.start] Failed to update Firecracker VSCode status:",
+                error,
+              );
+            });
+        }
+
+        // Run maintenance/dev scripts if configured
+        if (maintenanceScript || devScript) {
+          (async () => {
+            await runMaintenanceAndDevScripts({
+              instance: fcInstance,
+              maintenanceScript: maintenanceScript || undefined,
+              devScript: devScript || undefined,
+              identifiers: scriptIdentifiers ?? undefined,
+              convexUrl: env.NEXT_PUBLIC_CONVEX_URL,
+              taskRunJwt: body.taskRunJwt || undefined,
+              isCloudWorkspace,
+            });
+          })().catch((error) => {
+            console.error(
+              "[sandboxes.start] Firecracker background script execution failed:",
+              error,
+            );
+          });
+        }
+
+        // Register in VM registry for snapshot operations
+        firecrackerVmRegistry.set(firecrackerResult.vmId, fcInstance);
+
+        return c.json({
+          instanceId: firecrackerResult.vmId,
+          vscodeUrl: firecrackerResult.vscodeUrl,
+          workerUrl: firecrackerResult.workerUrl,
+          provider: "firecracker" as const,
           vscodePersisted,
         });
       }
@@ -2120,6 +2307,146 @@ sandboxesRouter.openapi(
       }
       console.error("[sandboxes.resume] Failed to resume sandbox:", error);
       return c.text("Failed to resume sandbox", 500);
+    }
+  },
+);
+
+// ── Firecracker Snapshot Management ──────────────────────────────────
+
+// Snapshot a running Firecracker VM
+sandboxesRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/sandboxes/{id}/snapshot",
+    tags: ["Sandboxes"],
+    summary: "Create a snapshot of a running Firecracker VM",
+    request: {
+      params: z.object({ id: z.string() }),
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              snapshotId: z.string(),
+            }),
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              snapshotId: z.string(),
+              created: z.literal(true),
+            }),
+          },
+        },
+        description: "Snapshot created",
+      },
+      401: { description: "Unauthorized" },
+      404: { description: "VM not found" },
+      500: { description: "Failed to create snapshot" },
+    },
+  }),
+  async (c) => {
+    const token = await getAccessTokenFromRequest(c.req.raw);
+    if (!token) return c.text("Unauthorized", 401);
+
+    const { id } = c.req.valid("param");
+    const { snapshotId } = c.req.valid("json");
+
+    try {
+      // Look up the Firecracker instance from the active VM registry
+      const instance = firecrackerVmRegistry.get(id);
+      if (!instance) {
+        return c.text("Firecracker VM not found or not running", 404);
+      }
+
+      await instance.snapshot(snapshotId);
+      return c.json({ snapshotId, created: true as const });
+    } catch (error) {
+      console.error("[sandboxes.snapshot] Failed to create snapshot:", error);
+      return c.text("Failed to create snapshot", 500);
+    }
+  },
+);
+
+// List Firecracker snapshots
+sandboxesRouter.openapi(
+  createRoute({
+    method: "get" as const,
+    path: "/sandboxes/firecracker/snapshots",
+    tags: ["Sandboxes"],
+    summary: "List available Firecracker snapshots",
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              snapshots: z.array(z.string()),
+            }),
+          },
+        },
+        description: "List of snapshot IDs",
+      },
+      401: { description: "Unauthorized" },
+    },
+  }),
+  async (c) => {
+    const token = await getAccessTokenFromRequest(c.req.raw);
+    if (!token) return c.text("Unauthorized", 401);
+
+    const snapshots = listFirecrackerSnapshots();
+    return c.json({ snapshots });
+  },
+);
+
+// Delete a Firecracker snapshot
+sandboxesRouter.openapi(
+  createRoute({
+    method: "delete" as const,
+    path: "/sandboxes/firecracker/snapshots/{snapshotId}",
+    tags: ["Sandboxes"],
+    summary: "Delete a Firecracker snapshot",
+    request: {
+      params: z.object({ snapshotId: z.string() }),
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              deleted: z.literal(true),
+            }),
+          },
+        },
+        description: "Snapshot deleted",
+      },
+      401: { description: "Unauthorized" },
+      404: { description: "Snapshot not found" },
+      500: { description: "Failed to delete snapshot" },
+    },
+  }),
+  async (c) => {
+    const token = await getAccessTokenFromRequest(c.req.raw);
+    if (!token) return c.text("Unauthorized", 401);
+
+    const { snapshotId } = c.req.valid("param");
+
+    try {
+      deleteFirecrackerSnapshot(snapshotId);
+      return c.json({ deleted: true as const });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.includes("Snapshot not found")
+      ) {
+        return c.text("Snapshot not found", 404);
+      }
+      console.error("[sandboxes.snapshot] Failed to delete snapshot:", error);
+      return c.text("Failed to delete snapshot", 500);
     }
   },
 );

@@ -35,6 +35,7 @@ import { getWwwClient } from "./utils/wwwClient";
 import { getWwwOpenApiModule } from "./utils/wwwOpenApiModule";
 import { CmuxVSCodeInstance } from "./vscode/CmuxVSCodeInstance";
 import { DockerVSCodeInstance } from "./vscode/DockerVSCodeInstance";
+import { FirecrackerVSCodeInstance } from "./vscode/FirecrackerVSCodeInstance";
 import { VSCodeInstance } from "./vscode/VSCodeInstance";
 import { getWorktreePath, setupProjectWorkspace } from "./workspace";
 import { localCloudSyncManager } from "./localCloudSync";
@@ -72,6 +73,7 @@ export async function spawnAgent(
     theme?: "dark" | "light" | "system";
     newBranch?: string; // Optional pre-generated branch name
     taskRunId?: Id<"taskRuns">; // Optional pre-created task run ID
+    firecrackerSnapshotId?: string; // Optional Firecracker snapshot for sub-second resume
   },
   teamSlugOrId: string
 ): Promise<AgentSpawnResult> {
@@ -459,6 +461,24 @@ export async function spawnAgent(
         taskRunJwt,
       });
 
+      worktreePath = "/root/workspace";
+    } else if (options.firecrackerSnapshotId) {
+      // For Firecracker (self-hosted with snapshot), delegate to www API
+      serverLogger.info(
+        `[AgentSpawner] Creating FirecrackerVSCodeInstance for ${agent.name} (snapshot: ${options.firecrackerSnapshotId})`
+      );
+      vscodeInstance = new FirecrackerVSCodeInstance({
+        agentName: agent.name,
+        taskRunId,
+        taskId,
+        theme: options.theme,
+        teamSlugOrId,
+        repoUrl: options.repoUrl,
+        branch: options.branch,
+        newBranch,
+        snapshotId: options.firecrackerSnapshotId,
+        taskRunJwt,
+      });
       worktreePath = "/root/workspace";
     } else {
       // For Docker, set up worktree as before
@@ -1118,6 +1138,12 @@ exit $EXIT_CODE
             const workerUrl = vscodeInstance.getWorkerUrl();
             if (!workerUrl) {
               throw new Error("Worker URL not available for cloud instance");
+            }
+            uploadUrl = `${workerUrl}/upload-image`;
+          } else if (vscodeInstance instanceof FirecrackerVSCodeInstance) {
+            const workerUrl = vscodeInstance.getWorkerUrl();
+            if (!workerUrl) {
+              throw new Error("Worker URL not available for Firecracker instance");
             }
             uploadUrl = `${workerUrl}/upload-image`;
           } else {

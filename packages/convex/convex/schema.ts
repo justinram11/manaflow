@@ -274,6 +274,7 @@ const convexSchema = defineSchema({
           v.literal("docker"),
           v.literal("morph"),
           v.literal("daytona"),
+          v.literal("firecracker"),
           v.literal("other")
         ), // Extensible for future providers
         containerName: v.optional(v.string()), // For Docker provider
@@ -559,6 +560,8 @@ const convexSchema = defineSchema({
     lastPushedAt: v.optional(v.number()),
     // Manual repos (added via custom URL input)
     manual: v.optional(v.boolean()),
+    // Firecracker snapshot ID for sub-second sandbox resume
+    firecrackerSnapshotId: v.optional(v.string()),
   })
     .index("by_org", ["org"])
     .index("by_gitRemote", ["gitRemote"])

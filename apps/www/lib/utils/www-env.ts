@@ -14,9 +14,16 @@ export const env = createEnv({
     CMUX_GITHUB_APP_ID: z.string().min(1).optional(),
     CMUX_GITHUB_APP_PRIVATE_KEY: z.string().min(1).optional(),
     // Sandbox provider
-    SANDBOX_PROVIDER: z.enum(["morph", "docker"]).optional(),
+    SANDBOX_PROVIDER: z.enum(["morph", "docker", "firecracker"]).optional(),
     SANDBOX_HOST: z.string().optional(),
     SANDBOX_IMAGE: z.string().optional(),
+    // Firecracker provider
+    FIRECRACKER_BIN: z.string().optional(),
+    FIRECRACKER_KERNEL: z.string().optional(),
+    FIRECRACKER_BASE_ROOTFS: z.string().optional(),
+    FIRECRACKER_SNAPSHOT_DIR: z.string().optional(),
+    FIRECRACKER_VCPU_COUNT: z.coerce.number().optional(),
+    FIRECRACKER_MEM_SIZE_MIB: z.coerce.number().optional(),
     // Morph
     MORPH_API_KEY: z.string().min(1).optional(),
     OPENAI_API_KEY: z.string().min(1).optional(),

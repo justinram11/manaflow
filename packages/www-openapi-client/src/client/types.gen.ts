@@ -544,7 +544,7 @@ export type StartSandboxResponse = {
     instanceId: string;
     vscodeUrl: string;
     workerUrl: string;
-    provider?: 'morph' | 'docker';
+    provider?: 'morph' | 'docker' | 'firecracker';
     vscodePersisted?: boolean;
 };
 
@@ -552,7 +552,7 @@ export type StartSandboxBody = {
     teamSlugOrId: string;
     environmentId?: string;
     snapshotId?: string;
-    provider?: 'morph' | 'docker';
+    provider?: 'morph' | 'docker' | 'firecracker';
     ttlSeconds?: number;
     metadata?: {
         [key: string]: string;
@@ -2764,6 +2764,104 @@ export type PostApiSandboxesByIdResumeResponses = {
 };
 
 export type PostApiSandboxesByIdResumeResponse = PostApiSandboxesByIdResumeResponses[keyof PostApiSandboxesByIdResumeResponses];
+
+export type PostApiSandboxesByIdSnapshotData = {
+    body: {
+        snapshotId: string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/sandboxes/{id}/snapshot';
+};
+
+export type PostApiSandboxesByIdSnapshotErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * VM not found
+     */
+    404: unknown;
+    /**
+     * Failed to create snapshot
+     */
+    500: unknown;
+};
+
+export type PostApiSandboxesByIdSnapshotResponses = {
+    /**
+     * Snapshot created
+     */
+    200: {
+        snapshotId: string;
+        created: true;
+    };
+};
+
+export type PostApiSandboxesByIdSnapshotResponse = PostApiSandboxesByIdSnapshotResponses[keyof PostApiSandboxesByIdSnapshotResponses];
+
+export type GetApiSandboxesFirecrackerSnapshotsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/sandboxes/firecracker/snapshots';
+};
+
+export type GetApiSandboxesFirecrackerSnapshotsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type GetApiSandboxesFirecrackerSnapshotsResponses = {
+    /**
+     * List of snapshot IDs
+     */
+    200: {
+        snapshots: Array<string>;
+    };
+};
+
+export type GetApiSandboxesFirecrackerSnapshotsResponse = GetApiSandboxesFirecrackerSnapshotsResponses[keyof GetApiSandboxesFirecrackerSnapshotsResponses];
+
+export type DeleteApiSandboxesFirecrackerSnapshotsBySnapshotIdData = {
+    body?: never;
+    path: {
+        snapshotId: string;
+    };
+    query?: never;
+    url: '/api/sandboxes/firecracker/snapshots/{snapshotId}';
+};
+
+export type DeleteApiSandboxesFirecrackerSnapshotsBySnapshotIdErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Snapshot not found
+     */
+    404: unknown;
+    /**
+     * Failed to delete snapshot
+     */
+    500: unknown;
+};
+
+export type DeleteApiSandboxesFirecrackerSnapshotsBySnapshotIdResponses = {
+    /**
+     * Snapshot deleted
+     */
+    200: {
+        deleted: true;
+    };
+};
+
+export type DeleteApiSandboxesFirecrackerSnapshotsBySnapshotIdResponse = DeleteApiSandboxesFirecrackerSnapshotsBySnapshotIdResponses[keyof DeleteApiSandboxesFirecrackerSnapshotsBySnapshotIdResponses];
 
 export type GetApiTeamsData = {
     body?: never;
