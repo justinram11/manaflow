@@ -33,6 +33,7 @@ export interface EnvironmentDraftMetadata {
   instanceId?: string;
   snapshotId?: MorphSnapshotId;
   provider?: SandboxProvider;
+  customGitUrl?: string;
 }
 
 export const createEmptyEnvironmentConfig = (): EnvironmentConfigDraft => ({

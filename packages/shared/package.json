@@ -74,6 +74,10 @@
       "import": "./src/utils/parse-github-repo-url.ts",
       "types": "./src/utils/parse-github-repo-url.ts"
     },
+    "./utils/parse-git-url": {
+      "import": "./src/utils/parse-git-url.ts",
+      "types": "./src/utils/parse-git-url.ts"
+    },
     "./utils/validate-exposed-ports": {
       "import": "./src/utils/validate-exposed-ports.ts",
       "types": "./src/utils/validate-exposed-ports.ts"

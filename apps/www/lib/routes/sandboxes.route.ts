@@ -12,6 +12,7 @@ import type { Doc, Id } from "@cmux/convex/dataModel";
 import { DEFAULT_MORPH_SNAPSHOT_ID } from "@/lib/utils/morph-defaults";
 import { RESERVED_CMUX_PORT_SET } from "@cmux/shared/utils/reserved-cmux-ports";
 import { parseGithubRepoUrl } from "@cmux/shared/utils/parse-github-repo-url";
+import { parseGitUrl } from "@cmux/shared/utils/parse-git-url";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { type Instance, MorphCloudClient } from "morphcloud";
@@ -40,6 +41,7 @@ import {
   deleteSnapshot as deleteFirecrackerSnapshot,
 } from "./sandboxes/firecracker-provider";
 import type { FirecrackerSandboxInstance } from "./sandboxes/firecracker-sandbox-instance";
+import { injectHostSshKeys } from "./sandboxes/ssh-keys";
 
 // Track running Firecracker VMs for snapshot operations
 export const firecrackerVmRegistry = new Map<string, FirecrackerSandboxInstance>();
@@ -310,7 +312,7 @@ sandboxesRouter.openapi(
     },
   }),
   async (c) => {
-    const user = await stackServerAppJs.getUser({ tokenStore: c.req.raw });
+    const user = await getUserFromRequest(c.req.raw);
     if (!user) {
       return c.text("Unauthorized", 401);
     }
@@ -719,22 +721,30 @@ sandboxesRouter.openapi(
                 error,
               );
             }),
+          // Inject host SSH keys for git clone over SSH
+          injectHostSshKeys(fcInstance).catch((error) => {
+            console.log(
+              `[sandboxes.start] Failed to inject SSH keys; continuing...`,
+              error,
+            );
+          }),
         ]);
 
-        // Hydrate repo if requested
+        // Hydrate repo if requested — use parseGitUrl for Firecracker to preserve SSH URLs
         if (body.repoUrl) {
-          if (!parsedRepoUrl) {
-            return c.text("Unsupported repo URL; expected GitHub URL", 400);
+          const fcParsedRepo = parseGitUrl(body.repoUrl);
+          if (!fcParsedRepo) {
+            return c.text("Unsupported repo URL", 400);
           }
           try {
             await hydrateWorkspace({
               instance: fcInstance,
               repo: {
-                owner: parsedRepoUrl.owner,
-                name: parsedRepoUrl.repo,
-                repoFull: parsedRepoUrl.fullName,
-                cloneUrl: parsedRepoUrl.gitUrl,
-                maskedCloneUrl: parsedRepoUrl.gitUrl,
+                owner: fcParsedRepo.owner,
+                name: fcParsedRepo.repo,
+                repoFull: fcParsedRepo.fullName,
+                cloneUrl: fcParsedRepo.cloneUrl,
+                maskedCloneUrl: fcParsedRepo.cloneUrl,
                 depth: Math.max(1, Math.floor(body.depth ?? 1)),
                 baseBranch: body.branch || "main",
                 newBranch: body.newBranch ?? "",

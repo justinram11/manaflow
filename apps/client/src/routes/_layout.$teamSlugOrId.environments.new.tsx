@@ -41,6 +41,7 @@ const searchSchema = z.object({
   repoSearch: z.string().optional(),
   snapshotId: z.enum(morphSnapshotIds).default(DEFAULT_MORPH_SNAPSHOT_ID),
   provider: z.enum(["morph", "firecracker"]).optional(),
+  customGitUrl: z.string().optional(),
 });
 
 const haveSameRepos = (
@@ -96,6 +97,7 @@ function EnvironmentsPage() {
   const activeInstanceId = draft?.instanceId ?? urlInstanceId;
   const activeSnapshotId = draft?.snapshotId ?? searchSnapshotId;
   const activeProvider: SandboxProvider = draft?.provider ?? searchParams.provider ?? "morph";
+  const activeCustomGitUrl = draft?.customGitUrl ?? searchParams.customGitUrl;
 
   // Setup instance mutation for background provisioning
   const setupInstanceMutation = useRQMutation(postApiMorphSetupInstanceMutation());
@@ -137,6 +139,7 @@ function EnvironmentsPage() {
           instanceId,
           snapshotId: activeSnapshotId,
           provider: activeProvider,
+          customGitUrl: activeCustomGitUrl,
         },
         { resetConfig: false },
       );
@@ -144,12 +147,13 @@ function EnvironmentsPage() {
     };
 
     if (activeProvider === "firecracker") {
-      // Firecracker: start a sandbox directly
+      // Firecracker: start a sandbox directly, with optional repo URL
       startSandboxMutation.mutate(
         {
           body: {
             teamSlugOrId,
             provider: "firecracker",
+            repoUrl: activeCustomGitUrl || undefined,
           },
         },
         {
@@ -191,6 +195,7 @@ function EnvironmentsPage() {
     activeSelectedRepos,
     activeSnapshotId,
     activeProvider,
+    activeCustomGitUrl,
     teamSlugOrId,
     navigate,
   ]);
@@ -212,6 +217,7 @@ function EnvironmentsPage() {
         instanceId: activeInstanceId,
         snapshotId: activeSnapshotId,
         provider: activeProvider,
+        customGitUrl: activeCustomGitUrl,
       },
       { resetConfig: false, step: "configure" },
     );
@@ -220,6 +226,7 @@ function EnvironmentsPage() {
     activeSelectedRepos,
     activeSnapshotId,
     activeProvider,
+    activeCustomGitUrl,
     activeStep,
     draft,
     teamSlugOrId,
@@ -231,16 +238,18 @@ function EnvironmentsPage() {
       instanceId?: string;
       snapshotId?: MorphSnapshotId;
       provider?: SandboxProvider;
+      customGitUrl?: string;
     }) => {
       const existingRepos = draft?.selectedRepos ?? [];
       const reposChanged = !haveSameRepos(existingRepos, payload.selectedRepos);
       const snapshotChanged = draft?.snapshotId !== payload.snapshotId;
       const providerChanged = (payload.provider ?? "morph") !== (draft?.provider ?? "morph");
+      const customGitUrlChanged = (payload.customGitUrl ?? "") !== (draft?.customGitUrl ?? "");
       const shouldResetConfig = !draft || reposChanged || snapshotChanged || providerChanged;
 
-      // If repos, snapshot, or provider changed, we need a NEW instance
+      // If repos, snapshot, provider, or custom git URL changed, we need a NEW instance
       // Clear instanceId to trigger re-provisioning
-      const needsNewInstance = reposChanged || snapshotChanged || providerChanged;
+      const needsNewInstance = reposChanged || snapshotChanged || providerChanged || customGitUrlChanged;
       const resolvedInstanceId = needsNewInstance ? undefined : payload.instanceId;
 
       // Also reset the provisioning trigger so the effect will run again
@@ -256,6 +265,7 @@ function EnvironmentsPage() {
           instanceId: resolvedInstanceId,
           snapshotId: payload.snapshotId,
           provider: payload.provider,
+          customGitUrl: payload.customGitUrl,
         },
         { resetConfig: shouldResetConfig, step: "configure" },
       );
@@ -272,6 +282,7 @@ function EnvironmentsPage() {
         instanceId: activeInstanceId,
         snapshotId: activeSnapshotId,
         provider: activeProvider,
+        customGitUrl: activeCustomGitUrl,
       },
       { resetConfig: false, step: "select" },
     );
@@ -282,7 +293,7 @@ function EnvironmentsPage() {
         step: "select",
       }),
     });
-  }, [activeInstanceId, activeSelectedRepos, activeSnapshotId, activeProvider, teamSlugOrId, navigate]);
+  }, [activeInstanceId, activeSelectedRepos, activeSnapshotId, activeProvider, activeCustomGitUrl, teamSlugOrId, navigate]);
 
   const handleResetDraft = useCallback(() => {
     skipDraftHydrationRef.current = true;
@@ -342,6 +353,7 @@ function EnvironmentsPage() {
             instanceId={activeInstanceId}
             initialSelectedRepos={activeSelectedRepos}
             initialSnapshotId={activeSnapshotId}
+            initialCustomGitUrl={activeCustomGitUrl}
             showHeader={true}
             showContinueButton={true}
             showManualConfigOption={true}

@@ -76,6 +76,7 @@ export interface RepositoryPickerProps {
   instanceId?: string;
   initialSelectedRepos?: string[];
   initialSnapshotId?: MorphSnapshotId;
+  initialCustomGitUrl?: string;
   showHeader?: boolean;
   showContinueButton?: boolean;
   showManualConfigOption?: boolean;
@@ -89,6 +90,7 @@ export interface RepositoryPickerProps {
     instanceId?: string;
     snapshotId?: MorphSnapshotId;
     provider?: SandboxProvider;
+    customGitUrl?: string;
   }) => void;
   topAccessory?: ReactNode;
   /**
@@ -105,6 +107,7 @@ export function RepositoryPicker({
   instanceId,
   initialSelectedRepos = [],
   initialSnapshotId,
+  initialCustomGitUrl,
   showHeader = true,
   showContinueButton = true,
   showManualConfigOption = true,
@@ -126,6 +129,7 @@ export function RepositoryPicker({
     initialSnapshotId ?? DEFAULT_MORPH_SNAPSHOT_ID
   );
   const [selectedProvider, setSelectedProvider] = useState<SandboxProvider>("morph");
+  const [customGitUrl, setCustomGitUrl] = useState(initialCustomGitUrl ?? "");
   const [selectedConnectionLogin, setSelectedConnectionLogin] = useState<
     string | null
   >(null);
@@ -238,6 +242,7 @@ export function RepositoryPicker({
         instanceId: needsNewInstance ? undefined : instanceId,
         snapshotId: selectedSnapshotId,
         provider: selectedProvider,
+        customGitUrl: customGitUrl.trim() || undefined,
       });
     },
     [
@@ -249,6 +254,7 @@ export function RepositoryPicker({
       onStartConfigure,
       selectedProvider,
       selectedSnapshotId,
+      customGitUrl,
     ]
   );
 
@@ -407,6 +413,24 @@ export function RepositoryPicker({
           selectedProvider={selectedProvider}
           onProviderChange={setSelectedProvider}
         />
+
+        {selectedProvider === "firecracker" && (
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-neutral-800 dark:text-neutral-200">
+              Custom Git URL
+            </label>
+            <input
+              type="text"
+              value={customGitUrl}
+              onChange={(e) => setCustomGitUrl(e.target.value)}
+              placeholder="git@github.com:owner/repo.git"
+              className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 h-9 text-sm text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
+            />
+            <p className="text-xs text-neutral-500 dark:text-neutral-500">
+              SSH URLs will use your host&apos;s SSH keys. Supports SSH, HTTPS, and owner/repo shorthand.
+            </p>
+          </div>
+        )}
 
         {showContinueButton && (
           <>

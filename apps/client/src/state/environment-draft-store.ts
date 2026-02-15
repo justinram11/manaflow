@@ -173,6 +173,7 @@ const buildDraft = (
   instanceId: metadata.instanceId,
   snapshotId: metadata.snapshotId,
   provider: metadata.provider,
+  customGitUrl: metadata.customGitUrl,
   config,
   lastUpdatedAt: now(),
 });
@@ -205,6 +206,7 @@ export const persistEnvironmentDraftMetadata = (
       instanceId: metadata.instanceId ?? prev?.instanceId,
       snapshotId: metadata.snapshotId ?? prev?.snapshotId,
       provider: metadata.provider ?? prev?.provider,
+      customGitUrl: metadata.customGitUrl ?? prev?.customGitUrl,
     };
     // Preserve current step if not explicitly specified
     const nextStep = options?.step ?? prev?.step ?? "configure";
@@ -218,6 +220,7 @@ export const persistEnvironmentDraftMetadata = (
         instanceId: nextMetadata.instanceId,
         snapshotId: nextMetadata.snapshotId,
         provider: nextMetadata.provider,
+        customGitUrl: nextMetadata.customGitUrl,
         config: nextConfig,
         lastUpdatedAt: now(),
       };
@@ -229,6 +232,7 @@ export const persistEnvironmentDraftMetadata = (
       instanceId: nextMetadata.instanceId,
       snapshotId: nextMetadata.snapshotId,
       provider: nextMetadata.provider,
+      customGitUrl: nextMetadata.customGitUrl,
       config: nextConfig,
       lastUpdatedAt: now(),
     };
@@ -250,13 +254,15 @@ export const updateEnvironmentDraftConfig = (
       metadataFallback?.snapshotId ?? prev?.snapshotId;
     const provider =
       metadataFallback?.provider ?? prev?.provider;
+    const customGitUrl =
+      metadataFallback?.customGitUrl ?? prev?.customGitUrl;
     const baseConfig = prev?.config ?? createEmptyEnvironmentConfig();
     const nextConfig: EnvironmentConfigDraft = {
       ...baseConfig,
       ...partial,
     };
     return buildDraft(
-      { selectedRepos, instanceId, snapshotId, provider },
+      { selectedRepos, instanceId, snapshotId, provider, customGitUrl },
       nextConfig,
       prev?.layoutPhase, // Preserve layoutPhase
       prev?.configStep, // Preserve configStep

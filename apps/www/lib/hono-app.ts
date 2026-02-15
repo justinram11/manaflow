@@ -1,4 +1,4 @@
-import { normalizeOrigin, defaultHostConfig, getHostUrl } from "@cmux/shared";
+import { normalizeOrigin, defaultHostConfig, getHostUrl, isLocalHostname } from "@cmux/shared";
 import { githubPrsBackfillRepoRouter } from "@/lib/routes/github.prs.backfill-repo.route";
 import { githubPrsBackfillRouter } from "@/lib/routes/github.prs.backfill.route";
 import { githubPrsCodeRouter } from "@/lib/routes/github.prs.code.route";
@@ -78,16 +78,32 @@ app.use("*", async (c, next) => {
 // Middleware
 app.use("*", logger());
 app.use("*", prettyJSON());
+const staticCorsOrigins = new Set([
+  getHostUrl(defaultHostConfig.client),
+  getHostUrl(defaultHostConfig.server),
+  "https://cmux.sh",
+  "https://www.cmux.sh",
+  ...(clientPreviewOrigin ? [clientPreviewOrigin] : []),
+]);
+
 app.use(
   "*",
   cors({
-    origin: [
-      getHostUrl(defaultHostConfig.client),
-      getHostUrl(defaultHostConfig.server),
-      "https://cmux.sh",
-      "https://www.cmux.sh",
-      ...(clientPreviewOrigin ? [clientPreviewOrigin] : []),
-    ],
+    origin: (requestOrigin) => {
+      if (staticCorsOrigins.has(requestOrigin)) {
+        return requestOrigin;
+      }
+      // Allow any request from a local/LAN hostname (e.g. http://ubuntu:5173)
+      try {
+        const url = new URL(requestOrigin);
+        if (isLocalHostname(url.hostname)) {
+          return requestOrigin;
+        }
+      } catch {
+        // invalid origin, deny
+      }
+      return "";
+    },
     credentials: true,
     allowHeaders: ["x-stack-auth", "content-type", "authorization"],
   }),

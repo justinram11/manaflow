@@ -135,6 +135,11 @@ export function isLocalHostname(hostname: string | null | undefined): boolean {
     return true;
   }
 
+  // Bare hostnames without a dot (e.g. "ubuntu", "devbox") are local/LAN names
+  if (!lower.includes(".") && !lower.includes(":")) {
+    return true;
+  }
+
   if (isLoopbackIpv4(lower) || isPrivateLanIpv4(lower)) {
     return true;
   }
