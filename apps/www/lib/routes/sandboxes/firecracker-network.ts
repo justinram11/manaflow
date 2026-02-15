@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
+import { execSync } from "node:child_process";
 import * as net from "node:net";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 
 /**
  * TAP network management for Firecracker VMs.
@@ -10,11 +10,11 @@ import { fileURLToPath } from "node:url";
  * The fc-helper.sh sudo script handles the actual TAP/iptables operations.
  */
 
-const __fc_dirname = path.dirname(fileURLToPath(import.meta.url));
-const FC_HELPER_PATH = path.resolve(
-  __fc_dirname,
-  "../../../../../../scripts/fc-helper.sh",
-);
+// Use git to find the project root reliably regardless of bundler output paths
+const PROJECT_ROOT = execSync("git rev-parse --show-toplevel", {
+  encoding: "utf-8",
+}).trim();
+const FC_HELPER_PATH = path.join(PROJECT_ROOT, "scripts/fc-helper.sh");
 
 export interface TapAllocation {
   tapName: string;

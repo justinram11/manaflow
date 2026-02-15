@@ -11,7 +11,7 @@ set -euo pipefail
 # ── Defaults ──────────────────────────────────────────────────────────
 FC_DIR="${HOME}/.cmux/firecracker"
 FC_VERSION="v1.10.1"
-KERNEL_VERSION="6.1"
+KERNEL_VERSION="6.1.102"
 ROOTFS_SIZE="20G"
 DOCKER_IMAGE="docker.io/manaflow/cmux:latest"
 ARCH="$(uname -m)"

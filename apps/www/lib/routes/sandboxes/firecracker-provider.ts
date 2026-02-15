@@ -1,8 +1,7 @@
-import { execFile } from "node:child_process";
+import { execFile, execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { env } from "@/lib/utils/www-env";
 import {
   configureAndBoot,
@@ -68,11 +67,11 @@ function getFirecrackerPaths() {
   };
 }
 
-const __fc_dirname = path.dirname(fileURLToPath(import.meta.url));
-const FC_HELPER_PATH = path.resolve(
-  __fc_dirname,
-  "../../../../../../scripts/fc-helper.sh",
-);
+// Use git to find the project root reliably regardless of bundler output paths
+const PROJECT_ROOT = execSync("git rev-parse --show-toplevel", {
+  encoding: "utf-8",
+}).trim();
+const FC_HELPER_PATH = path.join(PROJECT_ROOT, "scripts/fc-helper.sh");
 
 /**
  * Spawn a Firecracker process via the sudo helper.
