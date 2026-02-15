@@ -449,13 +449,15 @@ export type CreateEnvironmentResponse = {
 export type CreateEnvironmentBody = {
     teamSlugOrId: string;
     name: string;
-    morphInstanceId: string;
+    morphInstanceId?: string;
     envVarsContent: string;
     selectedRepos?: Array<string>;
     description?: string;
     maintenanceScript?: string;
     devScript?: string;
     exposedPorts?: Array<number>;
+    provider?: 'morph' | 'firecracker';
+    firecrackerSandboxId?: string;
 };
 
 export type GetEnvironmentResponse = {
@@ -468,6 +470,8 @@ export type GetEnvironmentResponse = {
     maintenanceScript?: string;
     devScript?: string;
     exposedPorts?: Array<number>;
+    provider?: 'morph' | 'firecracker';
+    firecrackerSnapshotId?: string;
     createdAt: number;
     updatedAt: number;
 };
@@ -506,6 +510,7 @@ export type SnapshotVersionResponse = {
     id: string;
     version: number;
     morphSnapshotId: string;
+    firecrackerSnapshotId?: string;
     createdAt: number;
     createdByUserId: string;
     label?: string;
@@ -524,7 +529,8 @@ export type CreateSnapshotVersionResponse = {
 
 export type CreateSnapshotVersionBody = {
     teamSlugOrId: string;
-    morphInstanceId: string;
+    morphInstanceId?: string;
+    firecrackerSandboxId?: string;
     label?: string;
     activate?: boolean;
     maintenanceScript?: string;

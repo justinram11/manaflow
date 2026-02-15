@@ -824,6 +824,8 @@ const convexSchema = defineSchema({
     maintenanceScript: v.optional(v.string()),
     devScript: v.optional(v.string()),
     exposedPorts: v.optional(v.array(v.number())),
+    provider: v.optional(v.union(v.literal("morph"), v.literal("firecracker"))), // absent = "morph"
+    firecrackerSnapshotId: v.optional(v.string()), // Active Firecracker snapshot ID
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -835,6 +837,7 @@ const convexSchema = defineSchema({
     environmentId: v.id("environments"),
     teamId: v.string(),
     morphSnapshotId: v.string(),
+    firecrackerSnapshotId: v.optional(v.string()), // Firecracker snapshot ID (when provider is firecracker)
     version: v.number(),
     createdAt: v.number(),
     createdByUserId: v.string(),

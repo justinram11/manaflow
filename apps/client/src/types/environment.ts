@@ -2,6 +2,8 @@ import type { MorphSnapshotId } from "@cmux/shared";
 
 export type EnvVar = { name: string; value: string; isSecret: boolean };
 
+export type SandboxProvider = "morph" | "firecracker";
+
 export const ensureInitialEnvVars = (initial?: EnvVar[]): EnvVar[] => {
   const base = (initial ?? []).map((item) => ({
     name: item.name,
@@ -30,6 +32,7 @@ export interface EnvironmentDraftMetadata {
   selectedRepos: string[];
   instanceId?: string;
   snapshotId?: MorphSnapshotId;
+  provider?: SandboxProvider;
 }
 
 export const createEmptyEnvironmentConfig = (): EnvironmentConfigDraft => ({

@@ -50,6 +50,7 @@ interface EnvironmentSetupFlowProps {
   teamSlugOrId: string;
   selectedRepos: string[];
   instanceId?: string;
+  provider?: "morph" | "firecracker";
   initialEnvName?: string;
   initialMaintenanceScript?: string;
   initialDevScript?: string;
@@ -65,6 +66,7 @@ export function EnvironmentSetupFlow({
   teamSlugOrId,
   selectedRepos,
   instanceId,
+  provider = "morph",
   initialEnvName = "",
   initialMaintenanceScript = "",
   initialDevScript = "",
@@ -369,13 +371,15 @@ export function EnvironmentSetupFlow({
         body: {
           teamSlugOrId,
           name: finalEnvName,
-          morphInstanceId: instanceId,
+          morphInstanceId: provider === "morph" ? instanceId : undefined,
           envVarsContent,
           selectedRepos,
           maintenanceScript: requestMaintenanceScript,
           devScript: requestDevScript,
           exposedPorts: ports.length > 0 ? ports : undefined,
           description: undefined,
+          provider: provider !== "morph" ? provider : undefined,
+          firecrackerSandboxId: provider === "firecracker" ? instanceId : undefined,
         },
       },
       {
@@ -417,6 +421,7 @@ export function EnvironmentSetupFlow({
     maintenanceScript,
     navigate,
     onEnvironmentSaved,
+    provider,
     selectedRepos,
     teamSlugOrId,
   ]);

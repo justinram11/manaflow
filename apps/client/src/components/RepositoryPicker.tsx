@@ -23,6 +23,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { isLocalAuth } from "@/lib/stack";
+import type { SandboxProvider } from "@/types/environment";
 import { RepositoryAdvancedOptions } from "./RepositoryAdvancedOptions";
 
 function formatTimeAgo(input?: string | number): string {
@@ -86,6 +88,7 @@ export interface RepositoryPickerProps {
     selectedRepos: string[];
     instanceId?: string;
     snapshotId?: MorphSnapshotId;
+    provider?: SandboxProvider;
   }) => void;
   topAccessory?: ReactNode;
   /**
@@ -122,6 +125,7 @@ export function RepositoryPicker({
   const [selectedSnapshotId, setSelectedSnapshotId] = useState<MorphSnapshotId>(
     initialSnapshotId ?? DEFAULT_MORPH_SNAPSHOT_ID
   );
+  const [selectedProvider, setSelectedProvider] = useState<SandboxProvider>("morph");
   const [selectedConnectionLogin, setSelectedConnectionLogin] = useState<
     string | null
   >(null);
@@ -233,6 +237,7 @@ export function RepositoryPicker({
         selectedRepos: repos,
         instanceId: needsNewInstance ? undefined : instanceId,
         snapshotId: selectedSnapshotId,
+        provider: selectedProvider,
       });
     },
     [
@@ -242,6 +247,7 @@ export function RepositoryPicker({
       initialSnapshotId,
       instanceId,
       onStartConfigure,
+      selectedProvider,
       selectedSnapshotId,
     ]
   );
@@ -397,6 +403,9 @@ export function RepositoryPicker({
         <RepositoryAdvancedOptions
           selectedSnapshotId={selectedSnapshotId}
           onSnapshotChange={updateSnapshotSelection}
+          showFirecrackerOption={isLocalAuth}
+          selectedProvider={selectedProvider}
+          onProviderChange={setSelectedProvider}
         />
 
         {showContinueButton && (

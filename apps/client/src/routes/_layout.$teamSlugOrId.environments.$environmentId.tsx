@@ -503,13 +503,18 @@ function EnvironmentDetailsPage() {
     });
   };
 
+  const isFirecracker = environment.provider === "firecracker";
+
   const handleModifyVm = () => {
     modifyVmMutation.mutate(
       {
         body: {
           teamSlugOrId,
           environmentId: String(environmentId),
-          snapshotId: environment.morphSnapshotId ?? undefined,
+          snapshotId: isFirecracker
+            ? environment.firecrackerSnapshotId ?? undefined
+            : environment.morphSnapshotId ?? undefined,
+          provider: isFirecracker ? "firecracker" : undefined,
           isCloudWorkspace: true,
         },
       },
@@ -521,7 +526,10 @@ function EnvironmentDetailsPage() {
   };
 
   const handleStartSnapshotVersion = () => {
-    if (!environment.morphSnapshotId) {
+    const snapshotId = isFirecracker
+      ? environment.firecrackerSnapshotId
+      : environment.morphSnapshotId;
+    if (!snapshotId) {
       toast.error("Environment is missing a snapshot.");
       return;
     }
@@ -531,7 +539,8 @@ function EnvironmentDetailsPage() {
         body: {
           teamSlugOrId,
           environmentId: String(environmentId),
-          snapshotId: environment.morphSnapshotId,
+          snapshotId,
+          provider: isFirecracker ? "firecracker" : undefined,
           isCloudWorkspace: true,
         },
       },
@@ -579,19 +588,26 @@ function EnvironmentDetailsPage() {
                   <Server className="w-5 h-5 text-neutral-600 dark:text-neutral-400" />
                 </div>
                 <div className="">
-                  <EditableLabel
-                    value={environment.name}
-                    onEditStart={handleRenameStart}
-                    onCancel={handleRenameCancel}
-                    onSubmit={handleRename}
-                    isSaving={updateEnvironmentMutation.isPending}
-                    error={renameError}
-                    className="gap-1"
-                    labelClassName="text-xl font-semibold text-neutral-900 dark:text-neutral-100"
-                    buttonLabel="Rename environment"
-                    placeholder="Environment name"
-                    ariaLabel="Environment name"
-                  />
+                  <div className="flex items-center gap-2">
+                    <EditableLabel
+                      value={environment.name}
+                      onEditStart={handleRenameStart}
+                      onCancel={handleRenameCancel}
+                      onSubmit={handleRename}
+                      isSaving={updateEnvironmentMutation.isPending}
+                      error={renameError}
+                      className="gap-1"
+                      labelClassName="text-xl font-semibold text-neutral-900 dark:text-neutral-100"
+                      buttonLabel="Rename environment"
+                      placeholder="Environment name"
+                      ariaLabel="Environment name"
+                    />
+                    {environment.provider === "firecracker" && (
+                      <span className="inline-flex items-center rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-semibold text-orange-700 dark:bg-orange-900 dark:text-orange-100">
+                        Firecracker
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-2 text-sm text-neutral-500 dark:text-neutral-500">
                     <Calendar className="w-3 h-3" />
                     Created{" "}
@@ -1000,7 +1016,9 @@ function EnvironmentDetailsPage() {
                               )}
                             </p>
                             <p className="text-xs text-neutral-500 dark:text-neutral-500">
-                              Snapshot ID: {version.morphSnapshotId}
+                              Snapshot ID: {isFirecracker && version.firecrackerSnapshotId
+                                ? version.firecrackerSnapshotId
+                                : version.morphSnapshotId}
                             </p>
                           </div>
                           <div className="flex items-center gap-2">

@@ -7,12 +7,16 @@ import {
   persistEnvironmentDraftMetadata,
   useEnvironmentDraft,
 } from "@/state/environment-draft-store";
+import type { SandboxProvider } from "@/types/environment";
 import {
   DEFAULT_MORPH_SNAPSHOT_ID,
   MORPH_SNAPSHOT_PRESETS,
   type MorphSnapshotId,
 } from "@cmux/shared";
-import { postApiMorphSetupInstanceMutation } from "@cmux/www-openapi-client/react-query";
+import {
+  postApiMorphSetupInstanceMutation,
+  postApiSandboxesStartMutation,
+} from "@cmux/www-openapi-client/react-query";
 import { useMutation as useRQMutation } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
@@ -36,6 +40,7 @@ const searchSchema = z.object({
   connectionLogin: z.string().optional(),
   repoSearch: z.string().optional(),
   snapshotId: z.enum(morphSnapshotIds).default(DEFAULT_MORPH_SNAPSHOT_ID),
+  provider: z.enum(["morph", "firecracker"]).optional(),
 });
 
 const haveSameRepos = (
@@ -90,9 +95,11 @@ function EnvironmentsPage() {
   const activeSelectedRepos = draft?.selectedRepos ?? urlSelectedRepos;
   const activeInstanceId = draft?.instanceId ?? urlInstanceId;
   const activeSnapshotId = draft?.snapshotId ?? searchSnapshotId;
+  const activeProvider: SandboxProvider = draft?.provider ?? searchParams.provider ?? "morph";
 
   // Setup instance mutation for background provisioning
   const setupInstanceMutation = useRQMutation(postApiMorphSetupInstanceMutation());
+  const startSandboxMutation = useRQMutation(postApiSandboxesStartMutation());
 
   // Trigger provisioning when on configure step without instanceId
   // Note: setupInstanceMutation is intentionally excluded from deps to prevent infinite loops.
@@ -106,56 +113,84 @@ function EnvironmentsPage() {
 
     // Skip if already have instanceId, already triggered, or mutation is in-flight
     // Note: isPending check prevents duplicate calls when user navigates away and back quickly
-    if (activeInstanceId || provisioningTriggeredRef.current || setupInstanceMutation.isPending) {
+    const isPending = setupInstanceMutation.isPending || startSandboxMutation.isPending;
+    if (activeInstanceId || provisioningTriggeredRef.current || isPending) {
       return;
     }
 
     provisioningTriggeredRef.current = true;
 
-    setupInstanceMutation.mutate(
-      {
-        body: {
-          teamSlugOrId,
+    const onProvisionSuccess = (instanceId: string) => {
+      // Update URL with instanceId
+      void navigate({
+        search: (prev) => ({
+          ...prev,
+          instanceId,
+        }),
+        replace: true,
+      });
+      // Update draft with instanceId (preserves current step)
+      persistEnvironmentDraftMetadata(
+        teamSlugOrId,
+        {
           selectedRepos: activeSelectedRepos,
+          instanceId,
           snapshotId: activeSnapshotId,
+          provider: activeProvider,
         },
-      },
-      {
-        onSuccess: (data) => {
-          // Update URL with instanceId
-          void navigate({
-            search: (prev) => ({
-              ...prev,
-              instanceId: data.instanceId,
-            }),
-            replace: true,
-          });
-          // Update draft with instanceId (preserves current step)
-          persistEnvironmentDraftMetadata(
+        { resetConfig: false },
+      );
+      console.log("Instance provisioned:", instanceId);
+    };
+
+    if (activeProvider === "firecracker") {
+      // Firecracker: start a sandbox directly
+      startSandboxMutation.mutate(
+        {
+          body: {
             teamSlugOrId,
-            {
-              selectedRepos: activeSelectedRepos,
-              instanceId: data.instanceId,
-              snapshotId: activeSnapshotId,
-            },
-            { resetConfig: false },
-          );
-          console.log("Instance provisioned:", data.instanceId);
-          console.log("Cloned repos:", data.clonedRepos);
+            provider: "firecracker",
+          },
         },
-        onError: (error) => {
-          console.error("Failed to provision instance:", error);
-          // Don't reset provisioningTriggeredRef here - it causes infinite retry loops
-          // when combined with effect dependencies. User must navigate away and back to retry.
+        {
+          onSuccess: (data) => {
+            onProvisionSuccess(data.instanceId);
+          },
+          onError: (error) => {
+            console.error("Failed to provision Firecracker instance:", error);
+          },
         },
-      }
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- setupInstanceMutation excluded to prevent infinite loops
+      );
+    } else {
+      // Morph: use the setup instance mutation
+      setupInstanceMutation.mutate(
+        {
+          body: {
+            teamSlugOrId,
+            selectedRepos: activeSelectedRepos,
+            snapshotId: activeSnapshotId,
+          },
+        },
+        {
+          onSuccess: (data) => {
+            onProvisionSuccess(data.instanceId);
+            console.log("Cloned repos:", data.clonedRepos);
+          },
+          onError: (error) => {
+            console.error("Failed to provision instance:", error);
+            // Don't reset provisioningTriggeredRef here - it causes infinite retry loops
+            // when combined with effect dependencies. User must navigate away and back to retry.
+          },
+        }
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mutations excluded to prevent infinite loops
   }, [
     activeStep,
     activeInstanceId,
     activeSelectedRepos,
     activeSnapshotId,
+    activeProvider,
     teamSlugOrId,
     navigate,
   ]);
@@ -176,6 +211,7 @@ function EnvironmentsPage() {
         selectedRepos: activeSelectedRepos,
         instanceId: activeInstanceId,
         snapshotId: activeSnapshotId,
+        provider: activeProvider,
       },
       { resetConfig: false, step: "configure" },
     );
@@ -183,6 +219,7 @@ function EnvironmentsPage() {
     activeInstanceId,
     activeSelectedRepos,
     activeSnapshotId,
+    activeProvider,
     activeStep,
     draft,
     teamSlugOrId,
@@ -193,15 +230,17 @@ function EnvironmentsPage() {
       selectedRepos: string[];
       instanceId?: string;
       snapshotId?: MorphSnapshotId;
+      provider?: SandboxProvider;
     }) => {
       const existingRepos = draft?.selectedRepos ?? [];
       const reposChanged = !haveSameRepos(existingRepos, payload.selectedRepos);
       const snapshotChanged = draft?.snapshotId !== payload.snapshotId;
-      const shouldResetConfig = !draft || reposChanged || snapshotChanged;
+      const providerChanged = (payload.provider ?? "morph") !== (draft?.provider ?? "morph");
+      const shouldResetConfig = !draft || reposChanged || snapshotChanged || providerChanged;
 
-      // If repos or snapshot changed, we need a NEW instance with the new repos
+      // If repos, snapshot, or provider changed, we need a NEW instance
       // Clear instanceId to trigger re-provisioning
-      const needsNewInstance = reposChanged || snapshotChanged;
+      const needsNewInstance = reposChanged || snapshotChanged || providerChanged;
       const resolvedInstanceId = needsNewInstance ? undefined : payload.instanceId;
 
       // Also reset the provisioning trigger so the effect will run again
@@ -216,6 +255,7 @@ function EnvironmentsPage() {
           selectedRepos: payload.selectedRepos,
           instanceId: resolvedInstanceId,
           snapshotId: payload.snapshotId,
+          provider: payload.provider,
         },
         { resetConfig: shouldResetConfig, step: "configure" },
       );
@@ -231,6 +271,7 @@ function EnvironmentsPage() {
         selectedRepos: activeSelectedRepos,
         instanceId: activeInstanceId,
         snapshotId: activeSnapshotId,
+        provider: activeProvider,
       },
       { resetConfig: false, step: "select" },
     );
@@ -241,7 +282,7 @@ function EnvironmentsPage() {
         step: "select",
       }),
     });
-  }, [activeInstanceId, activeSelectedRepos, activeSnapshotId, teamSlugOrId, navigate]);
+  }, [activeInstanceId, activeSelectedRepos, activeSnapshotId, activeProvider, teamSlugOrId, navigate]);
 
   const handleResetDraft = useCallback(() => {
     skipDraftHydrationRef.current = true;
@@ -275,6 +316,7 @@ function EnvironmentsPage() {
             teamSlugOrId={teamSlugOrId}
             selectedRepos={activeSelectedRepos}
             instanceId={activeInstanceId}
+            provider={activeProvider}
             initialEnvName={draft?.config?.envName}
             initialMaintenanceScript={draft?.config?.maintenanceScript}
             initialDevScript={draft?.config?.devScript}

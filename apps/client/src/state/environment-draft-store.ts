@@ -172,6 +172,7 @@ const buildDraft = (
   selectedRepos: metadata.selectedRepos,
   instanceId: metadata.instanceId,
   snapshotId: metadata.snapshotId,
+  provider: metadata.provider,
   config,
   lastUpdatedAt: now(),
 });
@@ -203,6 +204,7 @@ export const persistEnvironmentDraftMetadata = (
       selectedRepos: metadata.selectedRepos,
       instanceId: metadata.instanceId ?? prev?.instanceId,
       snapshotId: metadata.snapshotId ?? prev?.snapshotId,
+      provider: metadata.provider ?? prev?.provider,
     };
     // Preserve current step if not explicitly specified
     const nextStep = options?.step ?? prev?.step ?? "configure";
@@ -215,6 +217,7 @@ export const persistEnvironmentDraftMetadata = (
         selectedRepos: nextMetadata.selectedRepos,
         instanceId: nextMetadata.instanceId,
         snapshotId: nextMetadata.snapshotId,
+        provider: nextMetadata.provider,
         config: nextConfig,
         lastUpdatedAt: now(),
       };
@@ -225,6 +228,7 @@ export const persistEnvironmentDraftMetadata = (
       selectedRepos: nextMetadata.selectedRepos,
       instanceId: nextMetadata.instanceId,
       snapshotId: nextMetadata.snapshotId,
+      provider: nextMetadata.provider,
       config: nextConfig,
       lastUpdatedAt: now(),
     };
@@ -244,13 +248,15 @@ export const updateEnvironmentDraftConfig = (
       metadataFallback?.instanceId ?? prev?.instanceId;
     const snapshotId =
       metadataFallback?.snapshotId ?? prev?.snapshotId;
+    const provider =
+      metadataFallback?.provider ?? prev?.provider;
     const baseConfig = prev?.config ?? createEmptyEnvironmentConfig();
     const nextConfig: EnvironmentConfigDraft = {
       ...baseConfig,
       ...partial,
     };
     return buildDraft(
-      { selectedRepos, instanceId, snapshotId },
+      { selectedRepos, instanceId, snapshotId, provider },
       nextConfig,
       prev?.layoutPhase, // Preserve layoutPhase
       prev?.configStep, // Preserve configStep

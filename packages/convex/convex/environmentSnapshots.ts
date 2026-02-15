@@ -22,9 +22,12 @@ export const list = authQuery({
       .order("desc")
       .collect();
 
+    const isFirecracker = environment.provider === "firecracker";
     return versions.map((version) => ({
       ...version,
-      isActive: version.morphSnapshotId === environment.morphSnapshotId,
+      isActive: isFirecracker
+        ? version.firecrackerSnapshotId === environment.firecrackerSnapshotId
+        : version.morphSnapshotId === environment.morphSnapshotId,
     }));
   },
 });
@@ -34,6 +37,7 @@ export const create = authMutation({
     teamSlugOrId: v.string(),
     environmentId: v.id("environments"),
     morphSnapshotId: v.string(),
+    firecrackerSnapshotId: v.optional(v.string()),
     label: v.optional(v.string()),
     activate: v.optional(v.boolean()),
     maintenanceScript: v.optional(v.string()),
@@ -70,6 +74,7 @@ export const create = authMutation({
         environmentId: args.environmentId,
         teamId,
         morphSnapshotId: args.morphSnapshotId,
+        firecrackerSnapshotId: args.firecrackerSnapshotId,
         version: nextVersion,
         createdAt,
         createdByUserId: userId,
@@ -80,12 +85,16 @@ export const create = authMutation({
     );
 
     if (args.activate ?? true) {
-      await ctx.db.patch(args.environmentId, {
+      const patch: Record<string, unknown> = {
         morphSnapshotId: args.morphSnapshotId,
         maintenanceScript,
         devScript,
         updatedAt: Date.now(),
-      });
+      };
+      if (args.firecrackerSnapshotId !== undefined) {
+        patch.firecrackerSnapshotId = args.firecrackerSnapshotId;
+      }
+      await ctx.db.patch(args.environmentId, patch);
     }
 
     return {
@@ -122,12 +131,16 @@ export const activate = authMutation({
     const devScript =
       versionDoc.devScript ?? environment.devScript ?? undefined;
 
-    await ctx.db.patch(args.environmentId, {
+    const patch: Record<string, unknown> = {
       morphSnapshotId: versionDoc.morphSnapshotId,
       maintenanceScript,
       devScript,
       updatedAt: Date.now(),
-    });
+    };
+    if (versionDoc.firecrackerSnapshotId !== undefined) {
+      patch.firecrackerSnapshotId = versionDoc.firecrackerSnapshotId;
+    }
+    await ctx.db.patch(args.environmentId, patch);
 
     return {
       morphSnapshotId: versionDoc.morphSnapshotId,
@@ -160,7 +173,11 @@ export const remove = authMutation({
       throw new Error("Snapshot version not found");
     }
 
-    if (versionDoc.morphSnapshotId === environment.morphSnapshotId) {
+    const isFirecracker = environment.provider === "firecracker";
+    const isActive = isFirecracker
+      ? versionDoc.firecrackerSnapshotId === environment.firecrackerSnapshotId
+      : versionDoc.morphSnapshotId === environment.morphSnapshotId;
+    if (isActive) {
       throw new Error("Cannot delete the active snapshot version.");
     }
 

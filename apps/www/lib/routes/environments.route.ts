@@ -12,6 +12,7 @@ import { MorphCloudClient } from "morphcloud";
 import { randomBytes } from "node:crypto";
 import { determineHttpServiceUpdates } from "./determine-http-service-updates";
 import { SNAPSHOT_CLEANUP_COMMANDS } from "./sandboxes/cleanup";
+import { firecrackerVmRegistry } from "./sandboxes.route";
 
 /**
  * Helper to detect connection timeout errors from undici
@@ -75,13 +76,15 @@ const CreateEnvironmentBody = z
   .object({
     teamSlugOrId: z.string(),
     name: z.string(),
-    morphInstanceId: z.string(),
+    morphInstanceId: z.string().optional(),
     envVarsContent: z.string(), // The entire .env file content
     selectedRepos: z.array(z.string()).optional(),
     description: z.string().optional(),
     maintenanceScript: z.string().optional(),
     devScript: z.string().optional(),
     exposedPorts: z.array(z.number()).optional(),
+    provider: z.enum(["morph", "firecracker"]).optional(),
+    firecrackerSandboxId: z.string().optional(),
   })
   .openapi("CreateEnvironmentBody");
 
@@ -103,6 +106,8 @@ const GetEnvironmentResponse = z
     maintenanceScript: z.string().optional(),
     devScript: z.string().optional(),
     exposedPorts: z.array(z.number()).optional(),
+    provider: z.enum(["morph", "firecracker"]).optional(),
+    firecrackerSnapshotId: z.string().optional(),
     createdAt: z.number(),
     updatedAt: z.number(),
   })
@@ -163,6 +168,7 @@ const SnapshotVersionResponse = z
     id: z.string(),
     version: z.number(),
     morphSnapshotId: z.string(),
+    firecrackerSnapshotId: z.string().optional(),
     createdAt: z.number(),
     createdByUserId: z.string(),
     label: z.string().optional(),
@@ -179,7 +185,8 @@ const ListSnapshotVersionsResponse = z
 const CreateSnapshotVersionBody = z
   .object({
     teamSlugOrId: z.string(),
-    morphInstanceId: z.string(),
+    morphInstanceId: z.string().optional(),
+    firecrackerSandboxId: z.string().optional(),
     label: z.string().optional(),
     activate: z.boolean().optional(),
     maintenanceScript: z.string().optional(),
@@ -257,10 +264,68 @@ environmentsRouter.openapi(
           ? sanitizePortsOrThrow(body.exposedPorts)
           : [];
 
+      const resolvedProvider = body.provider ?? "morph";
+
+      // --- Firecracker provider path ---
+      if (resolvedProvider === "firecracker") {
+        if (!body.firecrackerSandboxId) {
+          return c.text("firecrackerSandboxId is required for Firecracker provider", 400);
+        }
+
+        const fcInstance = firecrackerVmRegistry.get(body.firecrackerSandboxId);
+        if (!fcInstance) {
+          return c.text("Firecracker VM not found or not running", 404);
+        }
+
+        // Generate a unique snapshot ID
+        const snapshotId = `fc_snap_${randomBytes(8).toString("hex")}`;
+        await fcInstance.snapshot(snapshotId);
+
+        // For Firecracker in local auth mode, store env vars locally with a generated key
+        const dataVaultKey = `env_${randomBytes(16).toString("hex")}`;
+        try {
+          const store = await stackServerAppJs.getDataVaultStore("cmux-snapshot-envs");
+          await store.setValue(dataVaultKey, body.envVarsContent, {
+            secret: env.STACK_DATA_VAULT_SECRET ?? "",
+          });
+        } catch (dvError) {
+          // In local auth mode DataVault may not be available; log and continue
+          console.warn("[environments] DataVault store failed (local auth?), env vars may not persist:", dvError);
+        }
+
+        const convexClient = getConvex({ accessToken });
+        const environmentId = await convexClient.mutation(
+          api.environments.create,
+          {
+            teamSlugOrId: body.teamSlugOrId,
+            name: body.name,
+            morphSnapshotId: "firecracker", // Sentinel value — field is required
+            dataVaultKey,
+            selectedRepos: body.selectedRepos,
+            description: body.description,
+            maintenanceScript: body.maintenanceScript,
+            devScript: body.devScript,
+            exposedPorts: sanitizedPorts.length > 0 ? sanitizedPorts : undefined,
+            provider: "firecracker",
+            firecrackerSnapshotId: snapshotId,
+          }
+        );
+
+        return c.json({
+          id: environmentId,
+          snapshotId,
+        });
+      }
+
+      // --- Morph provider path (default) ---
+      if (!body.morphInstanceId) {
+        return c.text("morphInstanceId is required for Morph provider", 400);
+      }
+
       // Create Morph snapshot from instance
       const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
       const instance = await withMorphRetry(
-        () => client.instances.get({ instanceId: body.morphInstanceId }),
+        () => client.instances.get({ instanceId: body.morphInstanceId! }),
         "instances.get (create environment)"
       );
 
@@ -364,6 +429,8 @@ environmentsRouter.openapi(
         maintenanceScript: env.maintenanceScript,
         devScript: env.devScript,
         exposedPorts: env.exposedPorts,
+        provider: env.provider,
+        firecrackerSnapshotId: env.firecrackerSnapshotId,
         createdAt: env.createdAt,
         updatedAt: env.updatedAt,
       }));
@@ -435,6 +502,8 @@ environmentsRouter.openapi(
         maintenanceScript: environment.maintenanceScript,
         devScript: environment.devScript,
         exposedPorts: environment.exposedPorts,
+        provider: environment.provider,
+        firecrackerSnapshotId: environment.firecrackerSnapshotId,
         createdAt: environment.createdAt,
         updatedAt: environment.updatedAt,
       };
@@ -594,6 +663,8 @@ environmentsRouter.openapi(
         maintenanceScript: updated.maintenanceScript ?? undefined,
         devScript: updated.devScript ?? undefined,
         exposedPorts: updated.exposedPorts ?? undefined,
+        provider: updated.provider ?? undefined,
+        firecrackerSnapshotId: updated.firecrackerSnapshotId ?? undefined,
         createdAt: updated.createdAt,
         updatedAt: updated.updatedAt,
       });
@@ -821,6 +892,7 @@ environmentsRouter.openapi(
         id: String(version._id),
         version: version.version,
         morphSnapshotId: version.morphSnapshotId,
+        firecrackerSnapshotId: version.firecrackerSnapshotId ?? undefined,
         createdAt: version.createdAt,
         createdByUserId: version.createdByUserId,
         label: version.label ?? undefined,
@@ -887,9 +959,59 @@ environmentsRouter.openapi(
       });
 
       const convexClient = getConvex({ accessToken });
+
+      // Look up environment to determine provider
+      const envDoc = await convexClient.query(api.environments.get, {
+        teamSlugOrId: body.teamSlugOrId,
+        id: environmentId,
+      });
+      if (!envDoc) {
+        return c.text("Environment not found", 404);
+      }
+
+      // --- Firecracker provider path ---
+      if (envDoc.provider === "firecracker") {
+        if (!body.firecrackerSandboxId) {
+          return c.text("firecrackerSandboxId is required for Firecracker environments", 400);
+        }
+
+        const fcInstance = firecrackerVmRegistry.get(body.firecrackerSandboxId);
+        if (!fcInstance) {
+          return c.text("Firecracker VM not found or not running", 404);
+        }
+
+        const snapshotId = `fc_snap_${randomBytes(8).toString("hex")}`;
+        await fcInstance.snapshot(snapshotId);
+
+        const creation = await convexClient.mutation(
+          api.environmentSnapshots.create,
+          {
+            teamSlugOrId: body.teamSlugOrId,
+            environmentId,
+            morphSnapshotId: "firecracker", // Sentinel
+            firecrackerSnapshotId: snapshotId,
+            label: body.label,
+            activate: body.activate,
+            maintenanceScript: body.maintenanceScript,
+            devScript: body.devScript,
+          }
+        );
+
+        return c.json({
+          snapshotVersionId: String(creation.snapshotVersionId),
+          snapshotId,
+          version: creation.version,
+        });
+      }
+
+      // --- Morph provider path (default) ---
+      if (!body.morphInstanceId) {
+        return c.text("morphInstanceId is required for Morph environments", 400);
+      }
+
       const morphClient = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
       const instance = await withMorphRetry(
-        () => morphClient.instances.get({ instanceId: body.morphInstanceId }),
+        () => morphClient.instances.get({ instanceId: body.morphInstanceId! }),
         "instances.get (create snapshot)"
       );
 

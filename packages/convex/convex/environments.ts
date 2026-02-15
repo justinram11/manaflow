@@ -63,6 +63,8 @@ export const create = authMutation({
     maintenanceScript: v.optional(v.string()),
     devScript: v.optional(v.string()),
     exposedPorts: v.optional(v.array(v.number())),
+    provider: v.optional(v.union(v.literal("morph"), v.literal("firecracker"))),
+    firecrackerSnapshotId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -95,6 +97,8 @@ export const create = authMutation({
       maintenanceScript,
       devScript,
       exposedPorts: sanitizedPorts.length > 0 ? sanitizedPorts : undefined,
+      provider: args.provider,
+      firecrackerSnapshotId: args.firecrackerSnapshotId,
       createdAt,
       updatedAt: createdAt,
     });
@@ -103,6 +107,7 @@ export const create = authMutation({
       environmentId,
       teamId,
       morphSnapshotId: args.morphSnapshotId,
+      firecrackerSnapshotId: args.firecrackerSnapshotId,
       version: 1,
       createdAt,
       createdByUserId: userId,

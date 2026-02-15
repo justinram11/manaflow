@@ -42,7 +42,7 @@ import {
 import type { FirecrackerSandboxInstance } from "./sandboxes/firecracker-sandbox-instance";
 
 // Track running Firecracker VMs for snapshot operations
-const firecrackerVmRegistry = new Map<string, FirecrackerSandboxInstance>();
+export const firecrackerVmRegistry = new Map<string, FirecrackerSandboxInstance>();
 
 /**
  * Wait for the VSCode server to be ready by polling the service URL.
@@ -423,8 +423,26 @@ sandboxesRouter.openapi(
         },
       );
 
+      // --- Resolve provider ---
+      // If an environment is specified and it uses Firecracker, override the provider
+      let resolvedProvider = body.provider ?? env.SANDBOX_PROVIDER ?? "morph";
+      let environmentFirecrackerSnapshotId: string | undefined;
+      if (body.environmentId && !body.provider) {
+        try {
+          const envDoc = await convex.query(api.environments.get, {
+            teamSlugOrId: body.teamSlugOrId,
+            id: body.environmentId as Id<"environments">,
+          });
+          if (envDoc?.provider === "firecracker") {
+            resolvedProvider = "firecracker";
+            environmentFirecrackerSnapshotId = envDoc.firecrackerSnapshotId ?? undefined;
+          }
+        } catch (lookupErr) {
+          console.warn("[sandboxes.start] Failed to look up environment provider:", lookupErr);
+        }
+      }
+
       // --- Docker provider path ---
-      const resolvedProvider = body.provider ?? env.SANDBOX_PROVIDER ?? "morph";
       if (resolvedProvider === "docker") {
         console.log(`[sandboxes.start] Using Docker provider`);
 
@@ -604,7 +622,7 @@ sandboxesRouter.openapi(
         console.log(`[sandboxes.start] Using Firecracker provider`);
 
         const firecrackerResult = await startFirecrackerSandbox({
-          snapshotId: body.snapshotId,
+          snapshotId: body.snapshotId ?? environmentFirecrackerSnapshotId,
           ttlSeconds: body.ttlSeconds ?? 3600,
           metadata: body.metadata,
         });
