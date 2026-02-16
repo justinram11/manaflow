@@ -195,6 +195,7 @@ export class FirecrackerSandboxInstance implements SandboxInstance {
           tapName: this.tap.tapName,
           guestIp: this.tap.guestIp,
           guestMac: this.tap.guestMac,
+          sandboxdSandboxId: this.sandboxdSandboxId,
         }),
       );
 

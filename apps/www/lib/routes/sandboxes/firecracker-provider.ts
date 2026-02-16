@@ -162,6 +162,39 @@ async function waitForSandboxd(
 }
 
 /**
+ * Wait for the worker Socket.IO endpoint to be ready inside the VM.
+ * Same pattern as Docker provider (DockerVSCodeInstance.ts).
+ */
+async function waitForWorkerReady(
+  guestIp: string,
+  timeoutMs = 30_000,
+): Promise<void> {
+  const start = Date.now();
+  const pollIntervalMs = 500;
+
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const response = await fetch(
+        `http://${guestIp}:${CONTAINER_PORTS.worker}/socket.io/?EIO=4&transport=polling`,
+        { signal: AbortSignal.timeout(3_000) },
+      );
+      if (response.ok) {
+        console.log(
+          `[firecracker-provider] Worker ready at ${guestIp}:${CONTAINER_PORTS.worker}`,
+        );
+        return;
+      }
+    } catch {
+      // Not ready yet
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+  console.warn(
+    `[firecracker-provider] Worker not ready after ${timeoutMs}ms at ${guestIp}:${CONTAINER_PORTS.worker}, continuing anyway`,
+  );
+}
+
+/**
  * Create a sandbox (OCI container) inside the VM via cmux-sandboxd.
  * Returns the sandbox ID.
  */
@@ -223,6 +256,15 @@ export async function startFirecrackerSandbox(options: {
 
   let fcPid: number | undefined;
 
+  // Snapshot metadata — hoisted so it's accessible after the if/else block
+  let snapshotMeta: {
+    originalRootfsPath?: string;
+    tapName?: string;
+    guestIp?: string;
+    guestMac?: string;
+    sandboxdSandboxId?: string;
+  } = {};
+
   try {
     if (options.snapshotId) {
       // ── Snapshot restore flow ──
@@ -239,12 +281,6 @@ export async function startFirecrackerSandbox(options: {
 
       // Read snapshot metadata for original paths
       const metadataPath = path.join(snapshotDir, "metadata.json");
-      let snapshotMeta: {
-        originalRootfsPath?: string;
-        tapName?: string;
-        guestIp?: string;
-        guestMac?: string;
-      } = {};
       try {
         snapshotMeta = JSON.parse(
           fs.readFileSync(metadataPath, "utf-8"),
@@ -353,18 +389,33 @@ export async function startFirecrackerSandbox(options: {
     }
 
     // Wait for cmux-sandboxd to be ready
-    const healthTimeout = options.snapshotId ? 10_000 : 60_000;
+    const isSnapshotRestore = !!options.snapshotId;
+    const healthTimeout = isSnapshotRestore ? 10_000 : 60_000;
     await waitForSandboxd(tap.guestIp, healthTimeout);
 
     console.log(
       `[firecracker-provider] VM ${vmId} ready, sandboxd healthy`,
     );
 
-    // Create a sandbox (OCI container) inside the VM via cmux-sandboxd
-    const sandboxId = await createSandboxdContainer(tap.guestIp);
-    console.log(
-      `[firecracker-provider] VM ${vmId} sandbox created: ${sandboxId}`,
-    );
+    // For snapshot restores with a saved sandbox ID, reuse the existing container.
+    // Creating a new container would interfere with the worker already running in
+    // the restored container.
+    let sandboxId: string;
+    if (isSnapshotRestore && snapshotMeta.sandboxdSandboxId) {
+      sandboxId = snapshotMeta.sandboxdSandboxId;
+      console.log(
+        `[firecracker-provider] VM ${vmId} reusing snapshot sandbox: ${sandboxId}`,
+      );
+    } else {
+      sandboxId = await createSandboxdContainer(tap.guestIp);
+      console.log(
+        `[firecracker-provider] VM ${vmId} sandbox created: ${sandboxId}`,
+      );
+    }
+
+    // Wait for worker Socket.IO endpoint to be ready
+    const workerTimeout = isSnapshotRestore ? 15_000 : 30_000;
+    await waitForWorkerReady(tap.guestIp, workerTimeout);
 
     const instance = new FirecrackerSandboxInstance({
       id: vmId,
