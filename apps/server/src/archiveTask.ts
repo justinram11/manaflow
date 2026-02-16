@@ -10,7 +10,7 @@ import { getWwwBaseUrl } from "./utils/server-env";
 
 const execAsync = promisify(exec);
 
-export type VSCodeProvider = "docker" | "morph" | "daytona" | "other";
+export type VSCodeProvider = "docker" | "morph" | "daytona" | "firecracker" | "other";
 
 export interface StopResult {
   success: boolean;
@@ -37,6 +37,24 @@ async function stopDockerContainer(containerName: string): Promise<void> {
       // ignore check errors and rethrow original
     }
     throw err;
+  }
+}
+
+async function stopFirecrackerVm(vmId: string): Promise<void> {
+  const baseUrl = getWwwBaseUrl();
+  const url = `${baseUrl}/api/sandboxes/firecracker/${encodeURIComponent(vmId)}/destroy`;
+  const token = getAuthToken();
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers["x-stack-auth"] =
+      getAuthHeaderJson() || JSON.stringify({ accessToken: token });
+  }
+  const res = await fetch(url, { method: "POST", headers });
+  // Treat 404 as success (VM already gone or server restarted)
+  if (!res.ok && res.status !== 404) {
+    throw new Error(
+      `Failed destroying Firecracker VM ${vmId}: HTTP ${res.status}`
+    );
   }
 }
 
@@ -116,17 +134,19 @@ export function stopContainersForRunsFromTree(
         ? Reflect.get(Object(vscode), "containerName")
         : undefined;
 
+    if (typeof name !== "string" || typeof runId !== "string") {
+      continue;
+    }
+
+    // Detect Firecracker VMs: explicit "firecracker" provider or legacy "docker" with fc- prefix
     if (
-      provider === "docker" &&
-      typeof name === "string" &&
-      typeof runId === "string"
+      provider === "firecracker" ||
+      (provider === "docker" && name.startsWith("fc-"))
     ) {
+      targets.push({ provider: "firecracker", containerName: name, runId });
+    } else if (provider === "docker") {
       targets.push({ provider: "docker", containerName: name, runId });
-    } else if (
-      provider === "morph" &&
-      typeof name === "string" &&
-      typeof runId === "string"
-    ) {
+    } else if (provider === "morph") {
       targets.push({ provider: "morph", containerName: name, runId });
     }
   }
@@ -137,6 +157,17 @@ export function stopContainersForRunsFromTree(
         serverLogger.info(
           `Stopping ${t.provider} container for run ${t.runId}: ${t.containerName}`
         );
+        if (t.provider === "firecracker") {
+          await stopFirecrackerVm(t.containerName);
+          serverLogger.info(
+            `Successfully destroyed Firecracker VM: ${t.containerName}`
+          );
+          return {
+            success: true,
+            containerName: t.containerName,
+            provider: t.provider,
+          };
+        }
         if (t.provider === "docker") {
           // Remove 'docker-' prefix for actual Docker commands
           const actualContainerName = t.containerName.startsWith("docker-")

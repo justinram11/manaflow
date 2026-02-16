@@ -5,6 +5,17 @@ import { useMutation } from "convex/react";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 
+function hasFirecrackerRuns(task: Doc<"tasks">): boolean {
+  const runs = (task as Record<string, unknown>).taskRuns;
+  if (!Array.isArray(runs)) return false;
+  return runs.some((run: Record<string, unknown>) => {
+    const vscode = run.vscode as { provider?: string; containerName?: string } | undefined;
+    if (vscode?.provider === "firecracker") return true;
+    if (vscode?.provider === "docker" && vscode.containerName?.startsWith("fc-")) return true;
+    return false;
+  });
+}
+
 export function useArchiveTask(teamSlugOrId: string) {
   const { socket } = useSocket();
   const [archivingTaskIds, setArchivingTaskIds] = useState<Set<string>>(
@@ -117,6 +128,14 @@ export function useArchiveTask(teamSlugOrId: string) {
 
   const archiveWithUndo = useCallback(
     async (task: Doc<"tasks">) => {
+      // Warn when archiving Firecracker tasks — VMs will be permanently deleted
+      if (hasFirecrackerRuns(task)) {
+        const confirmed = window.confirm(
+          "This will permanently delete the Firecracker VM(s) and their data. Continue?"
+        );
+        if (!confirmed) return;
+      }
+
       const taskId = task._id;
       setArchivingTaskIds((prev) => new Set(prev).add(taskId));
 

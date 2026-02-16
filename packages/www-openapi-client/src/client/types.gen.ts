@@ -458,6 +458,7 @@ export type CreateEnvironmentBody = {
     exposedPorts?: Array<number>;
     provider?: 'morph' | 'firecracker';
     firecrackerSandboxId?: string;
+    firecrackerVmSize?: 'standard' | 'performance';
 };
 
 export type GetEnvironmentResponse = {
@@ -472,6 +473,7 @@ export type GetEnvironmentResponse = {
     exposedPorts?: Array<number>;
     provider?: 'morph' | 'firecracker';
     firecrackerSnapshotId?: string;
+    firecrackerVmSize?: 'standard' | 'performance';
     createdAt: number;
     updatedAt: number;
 };
@@ -488,6 +490,7 @@ export type UpdateEnvironmentBody = {
     description?: string;
     maintenanceScript?: string;
     devScript?: string;
+    firecrackerVmSize?: 'standard' | 'performance';
 };
 
 export type ExposedService = {
@@ -2868,6 +2871,213 @@ export type DeleteApiSandboxesFirecrackerSnapshotsBySnapshotIdResponses = {
 };
 
 export type DeleteApiSandboxesFirecrackerSnapshotsBySnapshotIdResponse = DeleteApiSandboxesFirecrackerSnapshotsBySnapshotIdResponses[keyof DeleteApiSandboxesFirecrackerSnapshotsBySnapshotIdResponses];
+
+export type PostApiSandboxesFirecrackerByIdPauseData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/sandboxes/firecracker/{id}/pause';
+};
+
+export type PostApiSandboxesFirecrackerByIdPauseErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * VM not found
+     */
+    404: unknown;
+    /**
+     * Failed to pause VM
+     */
+    500: unknown;
+};
+
+export type PostApiSandboxesFirecrackerByIdPauseResponses = {
+    /**
+     * VM paused
+     */
+    200: {
+        paused: true;
+    };
+};
+
+export type PostApiSandboxesFirecrackerByIdPauseResponse = PostApiSandboxesFirecrackerByIdPauseResponses[keyof PostApiSandboxesFirecrackerByIdPauseResponses];
+
+export type PostApiSandboxesFirecrackerByIdResumeData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/sandboxes/firecracker/{id}/resume';
+};
+
+export type PostApiSandboxesFirecrackerByIdResumeErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * VM not found
+     */
+    404: unknown;
+    /**
+     * Failed to resume VM
+     */
+    500: unknown;
+};
+
+export type PostApiSandboxesFirecrackerByIdResumeResponses = {
+    /**
+     * VM resumed
+     */
+    200: {
+        resumed: true;
+    };
+};
+
+export type PostApiSandboxesFirecrackerByIdResumeResponse = PostApiSandboxesFirecrackerByIdResumeResponses[keyof PostApiSandboxesFirecrackerByIdResumeResponses];
+
+export type GetApiSandboxesFirecrackerByIdStatusData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/sandboxes/firecracker/{id}/status';
+};
+
+export type GetApiSandboxesFirecrackerByIdStatusErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * VM not found
+     */
+    404: unknown;
+};
+
+export type GetApiSandboxesFirecrackerByIdStatusResponses = {
+    /**
+     * VM status
+     */
+    200: {
+        running: boolean;
+        paused: boolean;
+    };
+};
+
+export type GetApiSandboxesFirecrackerByIdStatusResponse = GetApiSandboxesFirecrackerByIdStatusResponses[keyof GetApiSandboxesFirecrackerByIdStatusResponses];
+
+export type PostApiSandboxesFirecrackerByIdDestroyData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/sandboxes/firecracker/{id}/destroy';
+};
+
+export type PostApiSandboxesFirecrackerByIdDestroyErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * VM not found
+     */
+    404: unknown;
+    /**
+     * Failed to destroy VM
+     */
+    500: unknown;
+};
+
+export type PostApiSandboxesFirecrackerByIdDestroyResponses = {
+    /**
+     * VM destroyed
+     */
+    200: {
+        destroyed: true;
+    };
+};
+
+export type PostApiSandboxesFirecrackerByIdDestroyResponse = PostApiSandboxesFirecrackerByIdDestroyResponses[keyof PostApiSandboxesFirecrackerByIdDestroyResponses];
+
+export type PostApiSandboxesFirecrackerTaskRunsByTaskRunIdIsPausedData = {
+    body: {
+        teamSlugOrId: string;
+    };
+    path: {
+        taskRunId: string;
+    };
+    query?: never;
+    url: '/api/sandboxes/firecracker/task-runs/{taskRunId}/is-paused';
+};
+
+export type PostApiSandboxesFirecrackerTaskRunsByTaskRunIdIsPausedErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Task run not found
+     */
+    404: unknown;
+};
+
+export type PostApiSandboxesFirecrackerTaskRunsByTaskRunIdIsPausedResponses = {
+    /**
+     * Pause status
+     */
+    200: {
+        paused: boolean;
+    };
+};
+
+export type PostApiSandboxesFirecrackerTaskRunsByTaskRunIdIsPausedResponse = PostApiSandboxesFirecrackerTaskRunsByTaskRunIdIsPausedResponses[keyof PostApiSandboxesFirecrackerTaskRunsByTaskRunIdIsPausedResponses];
+
+export type PostApiSandboxesFirecrackerTaskRunsByTaskRunIdResumeData = {
+    body: {
+        teamSlugOrId: string;
+    };
+    path: {
+        taskRunId: string;
+    };
+    query?: never;
+    url: '/api/sandboxes/firecracker/task-runs/{taskRunId}/resume';
+};
+
+export type PostApiSandboxesFirecrackerTaskRunsByTaskRunIdResumeErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Task run or VM not found
+     */
+    404: unknown;
+    /**
+     * Failed to resume VM
+     */
+    500: unknown;
+};
+
+export type PostApiSandboxesFirecrackerTaskRunsByTaskRunIdResumeResponses = {
+    /**
+     * VM resumed
+     */
+    200: {
+        resumed: true;
+    };
+};
+
+export type PostApiSandboxesFirecrackerTaskRunsByTaskRunIdResumeResponse = PostApiSandboxesFirecrackerTaskRunsByTaskRunIdResumeResponses[keyof PostApiSandboxesFirecrackerTaskRunsByTaskRunIdResumeResponses];
 
 export type GetApiTeamsData = {
     body?: never;

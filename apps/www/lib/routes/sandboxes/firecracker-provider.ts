@@ -245,6 +245,8 @@ export async function startFirecrackerSandbox(options: {
   snapshotId?: string;
   ttlSeconds?: number;
   metadata?: Record<string, string>;
+  vcpuCount?: number;
+  memSizeMib?: number;
 }): Promise<FirecrackerSandboxResult> {
   const paths = getFirecrackerPaths();
   const sandboxHost = env.SANDBOX_HOST ?? "localhost";
@@ -357,8 +359,8 @@ export async function startFirecrackerSandbox(options: {
       await waitForSocket(socketPath);
 
       // Configure and boot
-      const vcpuCount = env.FIRECRACKER_VCPU_COUNT ?? 2;
-      const memSizeMib = env.FIRECRACKER_MEM_SIZE_MIB ?? 4096;
+      const vcpuCount = options.vcpuCount ?? env.FIRECRACKER_VCPU_COUNT ?? 2;
+      const memSizeMib = options.memSizeMib ?? env.FIRECRACKER_MEM_SIZE_MIB ?? 4096;
 
       await configureAndBoot(socketPath, {
         bootSource: {

@@ -65,6 +65,7 @@ export const create = authMutation({
     exposedPorts: v.optional(v.array(v.number())),
     provider: v.optional(v.union(v.literal("morph"), v.literal("firecracker"))),
     firecrackerSnapshotId: v.optional(v.string()),
+    firecrackerVmSize: v.optional(v.union(v.literal("standard"), v.literal("performance"))),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -99,6 +100,7 @@ export const create = authMutation({
       exposedPorts: sanitizedPorts.length > 0 ? sanitizedPorts : undefined,
       provider: args.provider,
       firecrackerSnapshotId: args.firecrackerSnapshotId,
+      firecrackerVmSize: args.firecrackerVmSize,
       createdAt,
       updatedAt: createdAt,
     });
@@ -127,6 +129,7 @@ export const update = authMutation({
     description: v.optional(v.string()),
     maintenanceScript: v.optional(v.string()),
     devScript: v.optional(v.string()),
+    firecrackerVmSize: v.optional(v.union(v.literal("standard"), v.literal("performance"))),
   },
   handler: async (ctx, args) => {
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
@@ -141,6 +144,7 @@ export const update = authMutation({
       description?: string;
       maintenanceScript?: string;
       devScript?: string;
+      firecrackerVmSize?: "standard" | "performance";
       updatedAt: number;
     } = {
       updatedAt: Date.now(),
@@ -164,6 +168,10 @@ export const update = authMutation({
       const trimmedDevScript = args.devScript.trim();
       updates.devScript =
         trimmedDevScript.length > 0 ? trimmedDevScript : undefined;
+    }
+
+    if (args.firecrackerVmSize !== undefined) {
+      updates.firecrackerVmSize = args.firecrackerVmSize;
     }
 
     await ctx.db.patch(args.id, updates);

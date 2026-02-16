@@ -36,6 +36,7 @@ export class FirecrackerSandboxInstance implements SandboxInstance {
   private sandboxdSandboxId: string;
   private proxyCleanups: Array<() => void>;
   private stopped = false;
+  private _paused = false;
 
   constructor(opts: {
     id: string;
@@ -213,6 +214,7 @@ export class FirecrackerSandboxInstance implements SandboxInstance {
    */
   async pause(): Promise<void> {
     await pauseVM(this.socketPath);
+    this._paused = true;
   }
 
   /**
@@ -220,6 +222,25 @@ export class FirecrackerSandboxInstance implements SandboxInstance {
    */
   async resume(): Promise<void> {
     await resumeVM(this.socketPath);
+    this._paused = false;
+  }
+
+  /**
+   * Whether the VM is currently paused.
+   */
+  get isPaused(): boolean {
+    return this._paused;
+  }
+
+  /**
+   * Destroy the VM — stop and delete all disk files.
+   */
+  async destroy(): Promise<void> {
+    await this.stop();
+    // Delete VM directory (rootfs, socket files, etc.)
+    const vmDir = path.dirname(this.rootfsPath);
+    fs.rmSync(vmDir, { recursive: true, force: true });
+    console.log(`[FirecrackerSandboxInstance] VM ${this.id} destroyed (files removed)`);
   }
 
   /**

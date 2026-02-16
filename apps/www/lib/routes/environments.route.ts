@@ -85,6 +85,7 @@ const CreateEnvironmentBody = z
     exposedPorts: z.array(z.number()).optional(),
     provider: z.enum(["morph", "firecracker"]).optional(),
     firecrackerSandboxId: z.string().optional(),
+    firecrackerVmSize: z.enum(["standard", "performance"]).optional(),
   })
   .openapi("CreateEnvironmentBody");
 
@@ -108,6 +109,7 @@ const GetEnvironmentResponse = z
     exposedPorts: z.array(z.number()).optional(),
     provider: z.enum(["morph", "firecracker"]).optional(),
     firecrackerSnapshotId: z.string().optional(),
+    firecrackerVmSize: z.enum(["standard", "performance"]).optional(),
     createdAt: z.number(),
     updatedAt: z.number(),
   })
@@ -130,13 +132,15 @@ const UpdateEnvironmentBody = z
     description: z.string().optional(),
     maintenanceScript: z.string().optional(),
     devScript: z.string().optional(),
+    firecrackerVmSize: z.enum(["standard", "performance"]).optional(),
   })
   .refine(
     (value) =>
       value.name !== undefined ||
       value.description !== undefined ||
       value.maintenanceScript !== undefined ||
-      value.devScript !== undefined,
+      value.devScript !== undefined ||
+      value.firecrackerVmSize !== undefined,
     "At least one field must be provided",
   )
   .openapi("UpdateEnvironmentBody");
@@ -308,6 +312,7 @@ environmentsRouter.openapi(
             exposedPorts: sanitizedPorts.length > 0 ? sanitizedPorts : undefined,
             provider: "firecracker",
             firecrackerSnapshotId: snapshotId,
+            firecrackerVmSize: body.firecrackerVmSize,
           }
         );
 
@@ -431,6 +436,7 @@ environmentsRouter.openapi(
         exposedPorts: env.exposedPorts,
         provider: env.provider,
         firecrackerSnapshotId: env.firecrackerSnapshotId,
+        firecrackerVmSize: env.firecrackerVmSize,
         createdAt: env.createdAt,
         updatedAt: env.updatedAt,
       }));
@@ -504,6 +510,7 @@ environmentsRouter.openapi(
         exposedPorts: environment.exposedPorts,
         provider: environment.provider,
         firecrackerSnapshotId: environment.firecrackerSnapshotId,
+        firecrackerVmSize: environment.firecrackerVmSize,
         createdAt: environment.createdAt,
         updatedAt: environment.updatedAt,
       };
@@ -642,6 +649,7 @@ environmentsRouter.openapi(
         description: body.description,
         maintenanceScript: body.maintenanceScript,
         devScript: body.devScript,
+        firecrackerVmSize: body.firecrackerVmSize,
       });
 
       const updated = await convexClient.query(api.environments.get, {
@@ -665,6 +673,7 @@ environmentsRouter.openapi(
         exposedPorts: updated.exposedPorts ?? undefined,
         provider: updated.provider ?? undefined,
         firecrackerSnapshotId: updated.firecrackerSnapshotId ?? undefined,
+        firecrackerVmSize: updated.firecrackerVmSize ?? undefined,
         createdAt: updated.createdAt,
         updatedAt: updated.updatedAt,
       });

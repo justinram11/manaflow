@@ -37,6 +37,8 @@ import {
   FolderOpen,
   GitBranch,
   GitMerge,
+  Pause,
+  Play,
   RefreshCw,
   Settings,
   Trash2,
@@ -59,6 +61,11 @@ import {
 import type {
   SocketMutationErrorInstance,
 } from "./task-detail-header.mutations";
+import {
+  useFirecrackerPause,
+  useFirecrackerPauseQuery,
+  useResumeFirecrackerWorkspace,
+} from "@/hooks/useFirecrackerWorkspace";
 
 interface TaskDetailHeaderProps {
   task?: Doc<"tasks"> | null;
@@ -276,6 +283,43 @@ export function TaskDetailHeader({
     }));
   }, [repoFullNames, normalizedBaseBranch, normalizedHeadBranch]);
 
+  // Firecracker pause/resume
+  const isFirecracker = useMemo(() => {
+    const provider = selectedRun?.vscode?.provider;
+    const containerName = selectedRun?.vscode?.containerName;
+    if (provider === "firecracker") return true;
+    if (provider === "docker" && containerName?.startsWith("fc-")) return true;
+    return false;
+  }, [selectedRun?.vscode?.provider, selectedRun?.vscode?.containerName]);
+
+  const fcPauseQuery = useFirecrackerPauseQuery({
+    taskRunId,
+    teamSlugOrId,
+    enabled: isFirecracker,
+  });
+
+  const fcPause = useFirecrackerPause({
+    taskRunId,
+    teamSlugOrId,
+  });
+
+  const fcResume = useResumeFirecrackerWorkspace({
+    taskRunId,
+    teamSlugOrId,
+  });
+
+  const fcIsPaused = fcPauseQuery.data?.paused === true;
+  const fcIsBusy = fcPause.isPending || fcResume.isPending;
+
+  const handleFcPauseResume = useCallback(() => {
+    if (fcIsBusy) return;
+    if (fcIsPaused) {
+      fcResume.mutate();
+    } else {
+      fcPause.mutate();
+    }
+  }, [fcIsBusy, fcIsPaused, fcPause, fcResume]);
+
   const dragStyle = isElectron
     ? ({ WebkitAppRegion: "drag" } as CSSProperties)
     : undefined;
@@ -373,6 +417,29 @@ export function TaskDetailHeader({
               title="Open local workspace from this branch"
             >
               <FolderOpen className="w-3.5 h-3.5" />
+            </button>
+          )}
+
+          {isFirecracker && (
+            <button
+              onClick={handleFcPauseResume}
+              disabled={fcIsBusy}
+              className={clsx(
+                "p-1 select-none transition-colors",
+                fcIsBusy
+                  ? "text-neutral-300 dark:text-neutral-600 cursor-wait"
+                  : fcIsPaused
+                    ? "text-amber-500 hover:text-amber-600 dark:text-amber-400 dark:hover:text-amber-300"
+                    : "text-neutral-400 hover:text-neutral-700 dark:hover:text-white"
+              )}
+              aria-label={fcIsPaused ? "Resume VM" : "Pause VM"}
+              title={fcIsBusy ? (fcIsPaused ? "Resuming VM…" : "Pausing VM…") : fcIsPaused ? "Resume VM" : "Pause VM"}
+            >
+              {fcIsPaused ? (
+                <Play className="w-3.5 h-3.5" />
+              ) : (
+                <Pause className="w-3.5 h-3.5" />
+              )}
             </button>
           )}
 

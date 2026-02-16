@@ -43,6 +43,7 @@ import {
   updateEnvironmentDraftLayoutPhase,
 } from "@/state/environment-draft-store";
 import { toast } from "sonner";
+import { FirecrackerVmSizeSelect } from "@/components/FirecrackerVmSizeSelect";
 import { EnvironmentInitialSetup } from "./EnvironmentInitialSetup";
 import { EnvironmentWorkspaceConfig } from "./EnvironmentWorkspaceConfig";
 
@@ -105,6 +106,7 @@ export function EnvironmentSetupFlow({
   const [maintenanceScript, setMaintenanceScript] = useState(initialMaintenanceScript);
   const [devScript, setDevScript] = useState(initialDevScript);
   const [exposedPorts] = useState(initialExposedPorts);
+  const [firecrackerVmSize, setFirecrackerVmSize] = useState<"standard" | "performance">("standard");
 
   // Error state
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -392,6 +394,7 @@ export function EnvironmentSetupFlow({
           description: undefined,
           provider,
           firecrackerSandboxId: instanceId,
+          firecrackerVmSize: provider === "firecracker" ? firecrackerVmSize : undefined,
         },
       },
       {
@@ -429,6 +432,7 @@ export function EnvironmentSetupFlow({
     envName,
     envVars,
     exposedPorts,
+    firecrackerVmSize,
     instanceId,
     maintenanceScript,
     navigate,
@@ -455,6 +459,14 @@ export function EnvironmentSetupFlow({
           onContinue={handleContinueToWorkspaceConfig}
           onBack={onBack}
           backLabel="Back to repository selection"
+          extraContent={
+            provider === "firecracker" ? (
+              <FirecrackerVmSizeSelect
+                value={firecrackerVmSize}
+                onChange={setFirecrackerVmSize}
+              />
+            ) : undefined
+          }
         />
       </div>
     );

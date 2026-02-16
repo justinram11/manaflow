@@ -826,6 +826,7 @@ const convexSchema = defineSchema({
     exposedPorts: v.optional(v.array(v.number())),
     provider: v.optional(v.union(v.literal("morph"), v.literal("firecracker"))), // absent = "morph"
     firecrackerSnapshotId: v.optional(v.string()), // Active Firecracker snapshot ID
+    firecrackerVmSize: v.optional(v.union(v.literal("standard"), v.literal("performance"))),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

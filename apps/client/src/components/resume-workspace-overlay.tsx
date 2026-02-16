@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import clsx from "clsx";
 import { Button } from "@/components/ui/button";
 import type { Doc } from "@cmux/convex/dataModel";
@@ -6,7 +6,20 @@ import {
   useMorphInstancePauseQuery,
   useResumeMorphWorkspace,
 } from "@/hooks/useMorphWorkspace";
+import {
+  useFirecrackerPauseQuery,
+  useResumeFirecrackerWorkspace,
+} from "@/hooks/useFirecrackerWorkspace";
 import { AlertTriangle } from "lucide-react";
+
+/**
+ * Detect if a task run is backed by Firecracker (new or legacy provider value).
+ */
+function isFirecrackerRun(taskRun: Doc<"taskRuns">): boolean {
+  if (taskRun.vscode?.provider === "firecracker") return true;
+  if (taskRun.vscode?.provider === "docker" && taskRun.vscode.containerName?.startsWith("fc-")) return true;
+  return false;
+}
 
 interface ResumeWorkspaceOverlayProps {
   taskRun: Doc<"taskRuns">;
@@ -22,31 +35,54 @@ export function ResumeWorkspaceOverlay({
   onResumed,
 }: ResumeWorkspaceOverlayProps) {
   const taskRunId = taskRun._id;
+  const isFirecracker = useMemo(() => isFirecrackerRun(taskRun), [taskRun]);
 
-  const pauseStatusQuery = useMorphInstancePauseQuery({
+  // Morph hooks (only enabled when not Firecracker)
+  const morphPauseQuery = useMorphInstancePauseQuery({
     taskRunId,
     teamSlugOrId,
+    enabled: !isFirecracker,
   });
 
-  const isPaused = pauseStatusQuery.data?.paused === true;
-  const isStopped = pauseStatusQuery.data?.stopped === true;
-
-  const resumeWorkspace = useResumeMorphWorkspace({
+  const morphResume = useResumeMorphWorkspace({
     taskRunId,
     teamSlugOrId,
     onSuccess: onResumed,
   });
+
+  // Firecracker hooks (only enabled when Firecracker)
+  const fcPauseQuery = useFirecrackerPauseQuery({
+    taskRunId,
+    teamSlugOrId,
+    enabled: isFirecracker,
+  });
+
+  const fcResume = useResumeFirecrackerWorkspace({
+    taskRunId,
+    teamSlugOrId,
+    onSuccess: onResumed,
+  });
+
+  // Unified state
+  const pauseStatusQuery = isFirecracker ? fcPauseQuery : morphPauseQuery;
+  const isPaused = pauseStatusQuery.data?.paused === true;
+  const isStopped = !isFirecracker && (morphPauseQuery.data as { stopped?: boolean } | undefined)?.stopped === true;
+  const isResuming = isFirecracker ? fcResume.isPending : morphResume.isPending;
 
   const handleResume = useCallback(async () => {
     if (!taskRun || !isPaused || isStopped) {
       return;
     }
 
-    await resumeWorkspace.mutateAsync({
-      path: { taskRunId },
-      body: { teamSlugOrId },
-    });
-  }, [resumeWorkspace, isPaused, isStopped, taskRun, taskRunId, teamSlugOrId]);
+    if (isFirecracker) {
+      await fcResume.mutateAsync();
+    } else {
+      await morphResume.mutateAsync({
+        path: { taskRunId },
+        body: { teamSlugOrId },
+      });
+    }
+  }, [fcResume, morphResume, isPaused, isStopped, isFirecracker, taskRun, taskRunId, teamSlugOrId]);
 
   if (!isPaused) {
     return null;
@@ -98,10 +134,10 @@ export function ResumeWorkspaceOverlay({
         <Button
           className="mt-3"
           onClick={handleResume}
-          disabled={resumeWorkspace.isPending}
+          disabled={isResuming}
           variant="default"
         >
-          {resumeWorkspace.isPending ? "Resuming…" : "Resume VM"}
+          {isResuming ? "Resuming…" : "Resume VM"}
         </Button>
       </div>
     </div>

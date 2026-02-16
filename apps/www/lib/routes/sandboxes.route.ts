@@ -46,6 +46,12 @@ import { injectHostSshKeys } from "./sandboxes/ssh-keys";
 // Track running Firecracker VMs for snapshot operations
 export const firecrackerVmRegistry = new Map<string, FirecrackerSandboxInstance>();
 
+// Firecracker VM size presets
+const FC_SIZE_PRESETS = {
+  standard: { vcpuCount: 2, memSizeMib: 4096 },
+  performance: { vcpuCount: 4, memSizeMib: 16384 },
+} as const;
+
 /**
  * Wait for the VSCode server to be ready by polling the service URL.
  * This prevents "upstream connect error" when the iframe loads before the server is ready.
@@ -429,6 +435,7 @@ sandboxesRouter.openapi(
       // If an environment is specified and it uses Firecracker, override the provider
       let resolvedProvider = body.provider ?? env.SANDBOX_PROVIDER ?? "morph";
       let environmentFirecrackerSnapshotId: string | undefined;
+      let environmentFirecrackerVmSize: "standard" | "performance" | undefined;
       if (body.environmentId && !body.provider) {
         try {
           const envDoc = await convex.query(api.environments.get, {
@@ -438,6 +445,7 @@ sandboxesRouter.openapi(
           if (envDoc?.provider === "firecracker") {
             resolvedProvider = "firecracker";
             environmentFirecrackerSnapshotId = envDoc.firecrackerSnapshotId ?? undefined;
+            environmentFirecrackerVmSize = envDoc.firecrackerVmSize ?? undefined;
           }
         } catch (lookupErr) {
           console.warn("[sandboxes.start] Failed to look up environment provider:", lookupErr);
@@ -623,10 +631,16 @@ sandboxesRouter.openapi(
       if (resolvedProvider === "firecracker") {
         console.log(`[sandboxes.start] Using Firecracker provider`);
 
+        const fcSizePreset = environmentFirecrackerVmSize
+          ? FC_SIZE_PRESETS[environmentFirecrackerVmSize]
+          : undefined;
+
         const firecrackerResult = await startFirecrackerSandbox({
           snapshotId: body.snapshotId ?? environmentFirecrackerSnapshotId,
           ttlSeconds: body.ttlSeconds ?? 3600,
           metadata: body.metadata,
+          vcpuCount: fcSizePreset?.vcpuCount,
+          memSizeMib: fcSizePreset?.memSizeMib,
         });
 
         // Wait for VSCode server to be ready
@@ -647,7 +661,7 @@ sandboxesRouter.openapi(
               teamSlugOrId: body.teamSlugOrId,
               id: body.taskRunId as Id<"taskRuns">,
               vscode: {
-                provider: "docker", // Use "docker" provider type in Convex (Firecracker behaves identically)
+                provider: "firecracker",
                 containerName: firecrackerResult.vmId,
                 status: "starting",
                 url: firecrackerResult.vscodeUrl,
@@ -2475,6 +2489,327 @@ sandboxesRouter.openapi(
       }
       console.error("[sandboxes.snapshot] Failed to delete snapshot:", error);
       return c.text("Failed to delete snapshot", 500);
+    }
+  },
+);
+
+// ── Firecracker Pause/Resume/Status/Destroy ──────────────────────────
+
+// Pause a running Firecracker VM
+sandboxesRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/sandboxes/firecracker/{id}/pause",
+    tags: ["Sandboxes"],
+    summary: "Pause a running Firecracker VM",
+    request: {
+      params: z.object({ id: z.string() }),
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({ paused: z.literal(true) }),
+          },
+        },
+        description: "VM paused",
+      },
+      401: { description: "Unauthorized" },
+      404: { description: "VM not found" },
+      500: { description: "Failed to pause VM" },
+    },
+  }),
+  async (c) => {
+    const token = await getAccessTokenFromRequest(c.req.raw);
+    if (!token) return c.text("Unauthorized", 401);
+
+    const { id } = c.req.valid("param");
+    const instance = firecrackerVmRegistry.get(id);
+    if (!instance) {
+      return c.text("Firecracker VM not found or not running", 404);
+    }
+
+    try {
+      await instance.pause();
+      return c.json({ paused: true as const });
+    } catch (error) {
+      console.error("[sandboxes.firecracker] Failed to pause VM:", error);
+      return c.text("Failed to pause VM", 500);
+    }
+  },
+);
+
+// Resume a paused Firecracker VM
+sandboxesRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/sandboxes/firecracker/{id}/resume",
+    tags: ["Sandboxes"],
+    summary: "Resume a paused Firecracker VM",
+    request: {
+      params: z.object({ id: z.string() }),
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({ resumed: z.literal(true) }),
+          },
+        },
+        description: "VM resumed",
+      },
+      401: { description: "Unauthorized" },
+      404: { description: "VM not found" },
+      500: { description: "Failed to resume VM" },
+    },
+  }),
+  async (c) => {
+    const token = await getAccessTokenFromRequest(c.req.raw);
+    if (!token) return c.text("Unauthorized", 401);
+
+    const { id } = c.req.valid("param");
+    const instance = firecrackerVmRegistry.get(id);
+    if (!instance) {
+      return c.text("Firecracker VM not found or not running", 404);
+    }
+
+    try {
+      await instance.resume();
+      return c.json({ resumed: true as const });
+    } catch (error) {
+      console.error("[sandboxes.firecracker] Failed to resume VM:", error);
+      return c.text("Failed to resume VM", 500);
+    }
+  },
+);
+
+// Get Firecracker VM status
+sandboxesRouter.openapi(
+  createRoute({
+    method: "get" as const,
+    path: "/sandboxes/firecracker/{id}/status",
+    tags: ["Sandboxes"],
+    summary: "Get Firecracker VM status",
+    request: {
+      params: z.object({ id: z.string() }),
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              running: z.boolean(),
+              paused: z.boolean(),
+            }),
+          },
+        },
+        description: "VM status",
+      },
+      401: { description: "Unauthorized" },
+      404: { description: "VM not found" },
+    },
+  }),
+  async (c) => {
+    const token = await getAccessTokenFromRequest(c.req.raw);
+    if (!token) return c.text("Unauthorized", 401);
+
+    const { id } = c.req.valid("param");
+    const instance = firecrackerVmRegistry.get(id);
+    if (!instance) {
+      return c.json({ running: false, paused: false });
+    }
+
+    return c.json({ running: true, paused: instance.isPaused });
+  },
+);
+
+// Destroy a Firecracker VM (stop + delete files)
+sandboxesRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/sandboxes/firecracker/{id}/destroy",
+    tags: ["Sandboxes"],
+    summary: "Destroy a Firecracker VM (stop and delete all files)",
+    request: {
+      params: z.object({ id: z.string() }),
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({ destroyed: z.literal(true) }),
+          },
+        },
+        description: "VM destroyed",
+      },
+      401: { description: "Unauthorized" },
+      404: { description: "VM not found" },
+      500: { description: "Failed to destroy VM" },
+    },
+  }),
+  async (c) => {
+    const token = await getAccessTokenFromRequest(c.req.raw);
+    if (!token) return c.text("Unauthorized", 401);
+
+    const { id } = c.req.valid("param");
+    const instance = firecrackerVmRegistry.get(id);
+    if (!instance) {
+      return c.text("Firecracker VM not found", 404);
+    }
+
+    try {
+      await instance.destroy();
+      firecrackerVmRegistry.delete(id);
+      return c.json({ destroyed: true as const });
+    } catch (error) {
+      console.error("[sandboxes.firecracker] Failed to destroy VM:", error);
+      return c.text("Failed to destroy VM", 500);
+    }
+  },
+);
+
+// ── Firecracker Task-Run-Level Pause/Resume ──────────────────────────
+
+// Check if a task run's Firecracker VM is paused
+sandboxesRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/sandboxes/firecracker/task-runs/{taskRunId}/is-paused",
+    tags: ["Sandboxes"],
+    summary: "Check if a task run's Firecracker VM is paused",
+    request: {
+      params: z.object({ taskRunId: z.string() }),
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({ teamSlugOrId: z.string() }),
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({ paused: z.boolean() }),
+          },
+        },
+        description: "Pause status",
+      },
+      401: { description: "Unauthorized" },
+      404: { description: "Task run not found" },
+    },
+  }),
+  async (c) => {
+    const accessToken = await getAccessTokenFromRequest(c.req.raw);
+    if (!accessToken) return c.text("Unauthorized", 401);
+
+    const { taskRunId } = c.req.valid("param");
+    const { teamSlugOrId } = c.req.valid("json");
+
+    try {
+      const convex = getConvex({ accessToken });
+      const taskRun = await convex.query(api.taskRuns.get, {
+        teamSlugOrId,
+        id: taskRunId as Id<"taskRuns">,
+      });
+
+      if (!taskRun?.vscode?.containerName) {
+        return c.text("Task run or VM not found", 404);
+      }
+
+      // Check if this is a Firecracker VM (provider is "firecracker" or legacy "docker" with fc- prefix)
+      const isFirecracker =
+        taskRun.vscode.provider === "firecracker" ||
+        (taskRun.vscode.provider === "docker" && taskRun.vscode.containerName.startsWith("fc-"));
+
+      if (!isFirecracker) {
+        return c.json({ paused: false });
+      }
+
+      const instance = firecrackerVmRegistry.get(taskRun.vscode.containerName);
+      if (!instance) {
+        // VM not in registry — could be server restarted; treat as not paused
+        return c.json({ paused: false });
+      }
+
+      return c.json({ paused: instance.isPaused });
+    } catch (error) {
+      console.error("[sandboxes.firecracker] Failed to check pause status:", error);
+      return c.json({ paused: false });
+    }
+  },
+);
+
+// Resume a task run's Firecracker VM
+sandboxesRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/sandboxes/firecracker/task-runs/{taskRunId}/resume",
+    tags: ["Sandboxes"],
+    summary: "Resume a task run's Firecracker VM",
+    request: {
+      params: z.object({ taskRunId: z.string() }),
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({ teamSlugOrId: z.string() }),
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({ resumed: z.literal(true) }),
+          },
+        },
+        description: "VM resumed",
+      },
+      401: { description: "Unauthorized" },
+      404: { description: "Task run or VM not found" },
+      500: { description: "Failed to resume VM" },
+    },
+  }),
+  async (c) => {
+    const accessToken = await getAccessTokenFromRequest(c.req.raw);
+    if (!accessToken) return c.text("Unauthorized", 401);
+
+    const { taskRunId } = c.req.valid("param");
+    const { teamSlugOrId } = c.req.valid("json");
+
+    try {
+      const convex = getConvex({ accessToken });
+      const taskRun = await convex.query(api.taskRuns.get, {
+        teamSlugOrId,
+        id: taskRunId as Id<"taskRuns">,
+      });
+
+      if (!taskRun?.vscode?.containerName) {
+        return c.text("Task run or VM not found", 404);
+      }
+
+      const isFirecracker =
+        taskRun.vscode.provider === "firecracker" ||
+        (taskRun.vscode.provider === "docker" && taskRun.vscode.containerName.startsWith("fc-"));
+
+      if (!isFirecracker) {
+        return c.text("Not a Firecracker VM", 404);
+      }
+
+      const instance = firecrackerVmRegistry.get(taskRun.vscode.containerName);
+      if (!instance) {
+        return c.text("Firecracker VM not found in registry", 404);
+      }
+
+      await instance.resume();
+      return c.json({ resumed: true as const });
+    } catch (error) {
+      console.error("[sandboxes.firecracker] Failed to resume VM:", error);
+      return c.text("Failed to resume VM", 500);
     }
   },
 );

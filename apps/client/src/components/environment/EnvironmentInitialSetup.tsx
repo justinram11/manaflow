@@ -23,7 +23,7 @@ import {
   Minus,
   Plus,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 interface EnvironmentInitialSetupProps {
   selectedRepos: string[];
@@ -38,6 +38,7 @@ interface EnvironmentInitialSetupProps {
   onContinue: () => void;
   onBack?: () => void;
   backLabel?: string;
+  extraContent?: ReactNode;
 }
 
 export function EnvironmentInitialSetup({
@@ -53,6 +54,7 @@ export function EnvironmentInitialSetup({
   onContinue,
   onBack,
   backLabel = "Back to repository selection",
+  extraContent,
 }: EnvironmentInitialSetupProps) {
   const [areEnvValuesHidden, setAreEnvValuesHidden] = useState(true);
   const [activeEnvValueIndex, setActiveEnvValueIndex] = useState<number | null>(null);
@@ -193,6 +195,9 @@ export function EnvironmentInitialSetup({
             onPaste={handleEnvVarsPaste}
           />
         </div>
+
+      {/* Extra content (e.g., VM size selector) */}
+      {extraContent}
 
       {/* Footer Button */}
       <div className="flex items-center gap-3 pt-6">
