@@ -77,6 +77,29 @@ COPY packages/vscode-extension/src ./src
 COPY packages/vscode-extension/tsconfig.json ./
 RUN bun run compile && vsce package --allow-missing-repository --no-dependencies --allow-star-activation
 
+# Build worker bundle (Socket.IO bridge between web app and VS Code extension)
+FROM node:22-bookworm AS worker-builder
+RUN npm install -g bun
+WORKDIR /workspace
+# Copy package files for dependency installation
+COPY package.json bun.lock ./
+COPY packages/shared/package.json packages/shared/
+COPY packages/convex/package.json packages/convex/
+COPY apps/worker/package.json apps/worker/
+# Install all deps (worker imports from shared/convex)
+RUN bun install --frozen-lockfile || bun install
+# Copy source files needed for the build
+COPY packages/shared/src packages/shared/src
+COPY packages/convex packages/convex
+COPY apps/worker/src apps/worker/src
+# Build worker bundle
+RUN bun build ./apps/worker/src/index.ts \
+      --target node \
+      --outdir /builtins/build \
+      --external @cmux/convex \
+      --external 'node:*' && \
+    echo '{"name":"builtins","type":"module","version":"1.0.0"}' > /builtins/package.json
+
 FROM chef AS builder
 ENV CARGO_TERM_COLOR=never \
   CARGO_PROFILE_RELEASE_STRIP=symbols \
@@ -392,6 +415,9 @@ COPY --from=builder --link /workspace/target/release/cmux /usr/local/bin/cmux
 COPY --from=builder --link /workspace/target/release/cmux-bridge /usr/local/bin/cmux-bridge
 COPY --from=acp-builder --link /workspace/target/release/codex-acp /usr/local/bin/codex-acp
 COPY --from=pty-builder --link /workspace/target/release/cmux-pty /usr/local/bin/cmux-pty
+
+# Install worker bundle (Socket.IO bridge for VS Code extension)
+COPY --from=worker-builder --link /builtins /builtins
 
 # Install cmux VS Code extension
 COPY --from=ext-builder /workspace/packages/vscode-extension/*.vsix /tmp/
