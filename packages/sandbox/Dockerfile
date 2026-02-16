@@ -81,18 +81,29 @@ RUN bun run compile && vsce package --allow-missing-repository --no-dependencies
 FROM node:22-bookworm AS worker-builder
 RUN npm install -g bun
 WORKDIR /workspace
-# Copy package files for dependency installation
+# Copy all package.json files so bun workspace resolution works
 COPY package.json bun.lock ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/convex/package.json packages/convex/
 COPY apps/worker/package.json apps/worker/
-# Install all deps (worker imports from shared/convex)
-RUN bun install --frozen-lockfile || bun install
+# Stub out workspace entries we don't need so bun install succeeds
+RUN node -e "\
+  const p=require('./package.json');\
+  p.workspaces=['packages/shared','packages/convex','apps/worker'];\
+  require('fs').writeFileSync('package.json',JSON.stringify(p,null,2));" && \
+    node -e "\
+  const p=require('./packages/convex/package.json');\
+  delete p.dependencies['@cmux/e2b-client'];\
+  delete p.dependencies['@cmux/morphcloud-openapi-client'];\
+  require('fs').writeFileSync('./packages/convex/package.json',JSON.stringify(p,null,2));"
+RUN bun install --no-frozen-lockfile
 # Copy source files needed for the build
 COPY packages/shared/src packages/shared/src
+COPY packages/shared/tsconfig.json packages/shared/
 COPY packages/convex packages/convex
 COPY apps/worker/src apps/worker/src
-# Build worker bundle
+COPY apps/worker/tsconfig.json apps/worker/
+# Build worker bundle (externalize convex since it's runtime-only, and node builtins)
 RUN bun build ./apps/worker/src/index.ts \
       --target node \
       --outdir /builtins/build \
