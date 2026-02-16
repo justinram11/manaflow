@@ -66,7 +66,7 @@ function firecrackerRequest(
  */
 export async function waitForSocket(
   socketPath: string,
-  timeoutMs = 5000,
+  timeoutMs = 10_000,
 ): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -207,6 +207,61 @@ export async function configureAndBoot(
   if (startRes.statusCode !== 204 && startRes.statusCode !== 200) {
     throw new Error(
       `Failed to start VM: ${startRes.statusCode} ${startRes.body}`,
+    );
+  }
+}
+
+/**
+ * Configure a drive on a Firecracker VM.
+ *
+ * Called after loadSnapshot(resume=false) to override the rootfs path
+ * baked into the snapshot with the new VM-specific copy.
+ */
+export async function configureDrive(
+  socketPath: string,
+  drive: FirecrackerDrive,
+): Promise<void> {
+  const res = await firecrackerRequest(
+    socketPath,
+    "PUT",
+    `/drives/${drive.drive_id}`,
+    {
+      drive_id: drive.drive_id,
+      path_on_host: drive.path_on_host,
+      is_root_device: drive.is_root_device,
+      is_read_only: drive.is_read_only,
+    },
+  );
+  if (res.statusCode !== 204 && res.statusCode !== 200) {
+    throw new Error(
+      `Failed to set drive ${drive.drive_id}: ${res.statusCode} ${res.body}`,
+    );
+  }
+}
+
+/**
+ * Configure a network interface on a Firecracker VM.
+ *
+ * Called after loadSnapshot(resume=false) to override the TAP device
+ * baked into the snapshot with the newly allocated one.
+ */
+export async function configureNetworkInterface(
+  socketPath: string,
+  iface: FirecrackerNetworkInterface,
+): Promise<void> {
+  const res = await firecrackerRequest(
+    socketPath,
+    "PUT",
+    `/network-interfaces/${iface.iface_id}`,
+    {
+      iface_id: iface.iface_id,
+      guest_mac: iface.guest_mac,
+      host_dev_name: iface.host_dev_name,
+    },
+  );
+  if (res.statusCode !== 204 && res.statusCode !== 200) {
+    throw new Error(
+      `Failed to set network interface ${iface.iface_id}: ${res.statusCode} ${res.body}`,
     );
   }
 }

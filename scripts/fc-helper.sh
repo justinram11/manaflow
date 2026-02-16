@@ -112,8 +112,17 @@ case "$COMMAND" in
     rm -f "$SOCKET_PATH"
 
     if [ "$DAEMONIZE" = "--daemonize" ]; then
-      "$FC_BIN" --api-sock "$SOCKET_PATH" &
+      LOG_FILE="${SOCKET_PATH%.sock}.log"
+      "$FC_BIN" --api-sock "$SOCKET_PATH" >"$LOG_FILE" 2>&1 &
       FC_PID=$!
+      # Wait for socket to appear and make it accessible to the calling user
+      for _i in $(seq 1 50); do
+        if [ -S "$SOCKET_PATH" ]; then
+          chmod 0666 "$SOCKET_PATH"
+          break
+        fi
+        sleep 0.1
+      done
       echo "$FC_PID"
     else
       exec "$FC_BIN" --api-sock "$SOCKET_PATH"
@@ -187,8 +196,12 @@ case "$COMMAND" in
     validate_ip "$GUEST_IP"
     validate_port "$GUEST_PORT"
 
-    iptables -t nat -A PREROUTING -i "$OUTBOUND_IFACE" -p tcp --dport "$HOST_PORT" -j DNAT --to-destination "${GUEST_IP}:${GUEST_PORT}"
+    # DNAT incoming traffic from any interface (PREROUTING) and local traffic (OUTPUT)
+    # Note: no -i restriction — traffic may arrive on any interface (LAN, Tailscale, etc.)
+    iptables -t nat -A PREROUTING -p tcp --dport "$HOST_PORT" -j DNAT --to-destination "${GUEST_IP}:${GUEST_PORT}"
     iptables -t nat -A OUTPUT -p tcp --dport "$HOST_PORT" -j DNAT --to-destination "${GUEST_IP}:${GUEST_PORT}"
+    # Allow DNAT'd packets through the FORWARD chain (needed for external connections)
+    iptables -A FORWARD -d "$GUEST_IP" -p tcp --dport "$GUEST_PORT" -j ACCEPT
     echo "Port forward: host:${HOST_PORT} -> ${GUEST_IP}:${GUEST_PORT}"
     ;;
 
@@ -202,8 +215,9 @@ case "$COMMAND" in
     validate_ip "$GUEST_IP"
     validate_port "$GUEST_PORT"
 
-    iptables -t nat -D PREROUTING -i "$OUTBOUND_IFACE" -p tcp --dport "$HOST_PORT" -j DNAT --to-destination "${GUEST_IP}:${GUEST_PORT}" 2>/dev/null || true
+    iptables -t nat -D PREROUTING -p tcp --dport "$HOST_PORT" -j DNAT --to-destination "${GUEST_IP}:${GUEST_PORT}" 2>/dev/null || true
     iptables -t nat -D OUTPUT -p tcp --dport "$HOST_PORT" -j DNAT --to-destination "${GUEST_IP}:${GUEST_PORT}" 2>/dev/null || true
+    iptables -D FORWARD -d "$GUEST_IP" -p tcp --dport "$GUEST_PORT" -j ACCEPT 2>/dev/null || true
     echo "Port forward removed: host:${HOST_PORT} -> ${GUEST_IP}:${GUEST_PORT}"
     ;;
 
@@ -232,6 +246,26 @@ case "$COMMAND" in
 
     cp --reflink=auto --sparse=always "$SRC" "$DST"
     echo "Copied rootfs: $SRC -> $DST"
+    ;;
+
+  iptables-list)
+    echo "=== NAT PREROUTING ==="
+    iptables -t nat -L PREROUTING -n -v --line-numbers 2>/dev/null || echo "(empty)"
+    echo ""
+    echo "=== NAT OUTPUT ==="
+    iptables -t nat -L OUTPUT -n -v --line-numbers 2>/dev/null || echo "(empty)"
+    echo ""
+    echo "=== NAT POSTROUTING ==="
+    iptables -t nat -L POSTROUTING -n -v --line-numbers 2>/dev/null || echo "(empty)"
+    echo ""
+    echo "=== FORWARD ==="
+    iptables -L FORWARD -n -v --line-numbers 2>/dev/null || echo "(empty)"
+    echo ""
+    echo "=== DOCKER-USER ==="
+    iptables -L DOCKER-USER -n -v --line-numbers 2>/dev/null || echo "(empty)"
+    echo ""
+    echo "=== DOCKER-FORWARD ==="
+    iptables -L DOCKER-FORWARD -n -v --line-numbers 2>/dev/null || echo "(empty)"
     ;;
 
   *)

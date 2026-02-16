@@ -171,9 +171,9 @@ const buildDraft = (
   configStep,
   selectedRepos: metadata.selectedRepos,
   instanceId: metadata.instanceId,
-  snapshotId: metadata.snapshotId,
   provider: metadata.provider,
   customGitUrl: metadata.customGitUrl,
+  sandboxVscodeUrl: metadata.sandboxVscodeUrl,
   config,
   lastUpdatedAt: now(),
 });
@@ -204,9 +204,9 @@ export const persistEnvironmentDraftMetadata = (
     const nextMetadata: EnvironmentDraftMetadata = {
       selectedRepos: metadata.selectedRepos,
       instanceId: metadata.instanceId ?? prev?.instanceId,
-      snapshotId: metadata.snapshotId ?? prev?.snapshotId,
       provider: metadata.provider ?? prev?.provider,
       customGitUrl: metadata.customGitUrl ?? prev?.customGitUrl,
+      sandboxVscodeUrl: metadata.sandboxVscodeUrl ?? prev?.sandboxVscodeUrl,
     };
     // Preserve current step if not explicitly specified
     const nextStep = options?.step ?? prev?.step ?? "configure";
@@ -218,9 +218,9 @@ export const persistEnvironmentDraftMetadata = (
         layoutPhase: undefined, // Reset layoutPhase when going back to select
         selectedRepos: nextMetadata.selectedRepos,
         instanceId: nextMetadata.instanceId,
-        snapshotId: nextMetadata.snapshotId,
         provider: nextMetadata.provider,
         customGitUrl: nextMetadata.customGitUrl,
+        sandboxVscodeUrl: nextMetadata.sandboxVscodeUrl,
         config: nextConfig,
         lastUpdatedAt: now(),
       };
@@ -230,9 +230,9 @@ export const persistEnvironmentDraftMetadata = (
       layoutPhase: nextLayoutPhase,
       selectedRepos: nextMetadata.selectedRepos,
       instanceId: nextMetadata.instanceId,
-      snapshotId: nextMetadata.snapshotId,
       provider: nextMetadata.provider,
       customGitUrl: nextMetadata.customGitUrl,
+      sandboxVscodeUrl: nextMetadata.sandboxVscodeUrl,
       config: nextConfig,
       lastUpdatedAt: now(),
     };
@@ -250,19 +250,19 @@ export const updateEnvironmentDraftConfig = (
       [];
     const instanceId =
       metadataFallback?.instanceId ?? prev?.instanceId;
-    const snapshotId =
-      metadataFallback?.snapshotId ?? prev?.snapshotId;
     const provider =
       metadataFallback?.provider ?? prev?.provider;
     const customGitUrl =
       metadataFallback?.customGitUrl ?? prev?.customGitUrl;
+    const sandboxVscodeUrl =
+      metadataFallback?.sandboxVscodeUrl ?? prev?.sandboxVscodeUrl;
     const baseConfig = prev?.config ?? createEmptyEnvironmentConfig();
     const nextConfig: EnvironmentConfigDraft = {
       ...baseConfig,
       ...partial,
     };
     return buildDraft(
-      { selectedRepos, instanceId, snapshotId, provider, customGitUrl },
+      { selectedRepos, instanceId, provider, customGitUrl, sandboxVscodeUrl },
       nextConfig,
       prev?.layoutPhase, // Preserve layoutPhase
       prev?.configStep, // Preserve configStep

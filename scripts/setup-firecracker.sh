@@ -97,8 +97,8 @@ if [ -f "$ROOTFS" ]; then
 else
   echo "Creating base rootfs from Docker image ${DOCKER_IMAGE}..."
 
-  # Pull the image if needed
-  docker pull "$DOCKER_IMAGE"
+  # Pull the image if needed (skip if local-only)
+  docker pull "$DOCKER_IMAGE" 2>/dev/null || echo "  Using local image (pull skipped)"
 
   # Create a temporary container and export its filesystem
   CONTAINER_ID=$(docker create "$DOCKER_IMAGE")
@@ -185,6 +185,91 @@ SCRIPTEOF
   # Enable the network setup service
   sudo ln -sf /etc/systemd/system/fc-net-setup.service \
     "${MOUNT_DIR}/etc/systemd/system/multi-user.target.wants/fc-net-setup.service" 2>/dev/null || true
+
+  # Create a port-forwarding service that DNATs from VM eth0 to sandbox internal IP.
+  # This bridges the gap between the host-to-VM port forwarding and the sandbox container.
+  echo "  Configuring port-forwarding service..."
+  sudo tee "${MOUNT_DIR}/etc/systemd/system/fc-port-forward.service" >/dev/null <<'PFEOF'
+[Unit]
+Description=Firecracker sandbox port forwarding
+After=cmux-sandboxd.service fc-net-setup.service
+Requires=cmux-sandboxd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/fc-port-forward.sh
+
+[Install]
+WantedBy=multi-user.target
+PFEOF
+
+  sudo tee "${MOUNT_DIR}/usr/local/bin/fc-port-forward.sh" >/dev/null <<'PFSCRIPT'
+#!/bin/bash
+# Wait for cmux-sandboxd to create a sandbox, then set up iptables DNAT
+# from the VM's eth0 interface to the sandbox's internal IP for all service ports.
+set -euo pipefail
+
+SANDBOXD_URL="http://127.0.0.1:46831"
+# Ports exposed by the sandbox container (VSCode, worker, proxy, VNC, devtools, PTY, exec)
+PORTS="39375 39377 39378 39379 39380 39381 39383"
+
+# Wait for sandboxd to be healthy
+echo "fc-port-forward: waiting for sandboxd..."
+for _ in $(seq 1 120); do
+  if curl -sf "$SANDBOXD_URL/healthz" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.5
+done
+
+# Wait for a sandbox to be created (provider creates one after health check passes)
+echo "fc-port-forward: waiting for sandbox creation..."
+SANDBOX_IP=""
+for _ in $(seq 1 300); do
+  # Parse first sandbox's IP using grep (no python/jq dependency)
+  SANDBOX_IP=$(curl -sf "$SANDBOXD_URL/sandboxes" 2>/dev/null \
+    | grep -oP '"sandbox_ip"\s*:\s*"\K[^"]+' \
+    | head -1) || true
+  if [ -n "$SANDBOX_IP" ]; then
+    break
+  fi
+  sleep 1
+done
+
+if [ -z "$SANDBOX_IP" ]; then
+  echo "fc-port-forward: no sandbox found after timeout, skipping"
+  exit 0
+fi
+
+# Get VM's eth0 IP for OUTPUT chain rules
+ETH0_IP=$(ip -4 addr show eth0 | grep -oP 'inet \K[\d.]+') || true
+
+# Enable IP forwarding
+sysctl -w net.ipv4.ip_forward=1 >/dev/null
+
+# Set up DNAT for each port
+for port in $PORTS; do
+  # PREROUTING: incoming packets from outside the VM
+  iptables -t nat -A PREROUTING -i eth0 -p tcp --dport "$port" -j DNAT --to "$SANDBOX_IP:$port"
+  # OUTPUT: locally-originated packets (e.g., sandboxd health checks)
+  if [ -n "$ETH0_IP" ]; then
+    iptables -t nat -A OUTPUT -p tcp -d "$ETH0_IP" --dport "$port" -j DNAT --to "$SANDBOX_IP:$port"
+  fi
+done
+
+# Allow forwarded traffic to/from sandbox
+iptables -A FORWARD -d "$SANDBOX_IP" -j ACCEPT
+iptables -A FORWARD -s "$SANDBOX_IP" -j ACCEPT
+
+echo "fc-port-forward: DNAT to $SANDBOX_IP for ports: $PORTS"
+PFSCRIPT
+
+  sudo chmod +x "${MOUNT_DIR}/usr/local/bin/fc-port-forward.sh"
+
+  # Enable the port-forwarding service
+  sudo ln -sf /etc/systemd/system/fc-port-forward.service \
+    "${MOUNT_DIR}/etc/systemd/system/multi-user.target.wants/fc-port-forward.service" 2>/dev/null || true
 
   # Ensure systemd is the init system (create symlink if missing)
   if [ ! -e "${MOUNT_DIR}/sbin/init" ] && [ -e "${MOUNT_DIR}/lib/systemd/systemd" ]; then

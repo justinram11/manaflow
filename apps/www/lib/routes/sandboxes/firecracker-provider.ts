@@ -9,10 +9,10 @@ import {
   waitForSocket,
 } from "./firecracker-api";
 import {
-  allocateEphemeralPort,
   allocateTap,
-  addPortForward,
   copyRootfs,
+  recreateTap,
+  startPortProxy,
 } from "./firecracker-network";
 import {
   FirecrackerSandboxInstance,
@@ -75,14 +75,14 @@ const FC_HELPER_PATH = path.join(PROJECT_ROOT, "scripts/fc-helper.sh");
 
 /**
  * Spawn a Firecracker process via the sudo helper.
- * Returns the child process and the PID.
+ * Returns the PID of the background Firecracker process.
  */
 function spawnFirecracker(
   fcBinary: string,
   socketPath: string,
-): Promise<ReturnType<typeof import("node:child_process").spawn>> {
+): Promise<number> {
   return new Promise((resolve, reject) => {
-    const child = execFile(
+    execFile(
       "sudo",
       [FC_HELPER_PATH, "spawn", fcBinary, socketPath, "--daemonize"],
       { timeout: 10_000 },
@@ -95,18 +95,43 @@ function spawnFirecracker(
           );
           return;
         }
-        // The helper prints the PID
+        // The helper prints the PID of the background Firecracker process
         const pid = parseInt(stdout.trim(), 10);
         if (isNaN(pid)) {
           reject(new Error(`Failed to parse Firecracker PID from: ${stdout}`));
           return;
         }
-        // Attach a simple ChildProcess-like wrapper since we used execFile
-        // The actual process is running in background
-        resolve(child);
+        resolve(pid);
       },
     );
   });
+}
+
+/**
+ * Kill a Firecracker process by PID via the sudo helper.
+ */
+async function killFirecracker(pid: number): Promise<void> {
+  try {
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        "sudo",
+        [FC_HELPER_PATH, "kill", String(pid)],
+        { timeout: 10_000 },
+        (error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        },
+      );
+    });
+  } catch (error) {
+    console.error(
+      `[firecracker-provider] Failed to kill Firecracker PID ${pid}:`,
+      error,
+    );
+  }
 }
 
 /**
@@ -120,7 +145,7 @@ async function waitForSandboxd(
   while (Date.now() - start < timeoutMs) {
     try {
       const response = await fetch(
-        `http://${guestIp}:${SANDBOXD_PORT}/health`,
+        `http://${guestIp}:${SANDBOXD_PORT}/healthz`,
         { signal: AbortSignal.timeout(3_000) },
       );
       if (response.ok) {
@@ -134,6 +159,30 @@ async function waitForSandboxd(
   throw new Error(
     `cmux-sandboxd not healthy after ${timeoutMs}ms at ${guestIp}:${SANDBOXD_PORT}`,
   );
+}
+
+/**
+ * Create a sandbox (OCI container) inside the VM via cmux-sandboxd.
+ * Returns the sandbox ID.
+ */
+async function createSandboxdContainer(guestIp: string): Promise<string> {
+  const response = await fetch(
+    `http://${guestIp}:${SANDBOXD_PORT}/sandboxes`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "workspace" }),
+      signal: AbortSignal.timeout(30_000),
+    },
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(
+      `Failed to create sandboxd container: ${response.status} ${text}`,
+    );
+  }
+  const result = (await response.json()) as { id: string };
+  return result.id;
 }
 
 /**
@@ -165,18 +214,20 @@ export async function startFirecrackerSandbox(options: {
 
   const socketPath = path.join(vmDir, "firecracker.sock");
 
-  // Allocate network
-  const tap = await allocateTap();
+  // Allocate network (may be replaced for snapshot restores)
+  let tap = await allocateTap();
 
   console.log(
     `[firecracker-provider] Starting VM ${vmId}, TAP=${tap.tapName}, guestIp=${tap.guestIp}`,
   );
 
-  let firecrackerProcess: ReturnType<typeof import("node:child_process").spawn>;
+  let fcPid: number | undefined;
 
   try {
     if (options.snapshotId) {
       // ── Snapshot restore flow ──
+      // Firecracker snapshots bake in the TAP name and rootfs path.
+      // We must recreate the EXACT same TAP and place rootfs at the original path.
       const snapshotDir = path.join(paths.snapshotDir, options.snapshotId);
       const snapshotBin = path.join(snapshotDir, "snapshot.bin");
       const memBin = path.join(snapshotDir, "mem.bin");
@@ -186,17 +237,46 @@ export async function startFirecrackerSandbox(options: {
         throw new Error(`Snapshot not found: ${options.snapshotId}`);
       }
 
-      // Copy rootfs for this VM instance
-      const vmRootfs = path.join(vmDir, "rootfs.ext4");
+      // Read snapshot metadata for original paths
+      const metadataPath = path.join(snapshotDir, "metadata.json");
+      let snapshotMeta: {
+        originalRootfsPath?: string;
+        tapName?: string;
+        guestIp?: string;
+        guestMac?: string;
+      } = {};
+      try {
+        snapshotMeta = JSON.parse(
+          fs.readFileSync(metadataPath, "utf-8"),
+        ) as typeof snapshotMeta;
+      } catch {
+        // No metadata (old snapshot)
+      }
+
+      // Release the generic TAP we just allocated — we need the snapshot's TAP instead
+      if (snapshotMeta.tapName && snapshotMeta.guestIp && snapshotMeta.guestMac) {
+        await releaseTapSafe(tap);
+        tap = await recreateTap(
+          snapshotMeta.tapName,
+          snapshotMeta.guestIp,
+          snapshotMeta.guestMac,
+        );
+      }
+
+      // Copy rootfs to the path the snapshot expects
+      const vmRootfs = snapshotMeta.originalRootfsPath ?? path.join(vmDir, "rootfs.ext4");
+      if (snapshotMeta.originalRootfsPath) {
+        fs.mkdirSync(path.dirname(snapshotMeta.originalRootfsPath), { recursive: true });
+      }
       await copyRootfs(snapshotRootfs, vmRootfs);
 
       // Spawn Firecracker
-      firecrackerProcess = await spawnFirecracker(paths.binary, socketPath);
+      fcPid = await spawnFirecracker(paths.binary, socketPath);
 
       // Wait for API socket
       await waitForSocket(socketPath);
 
-      // Load snapshot
+      // Load snapshot and resume — TAP name and rootfs path match the snapshot
       await loadSnapshot(socketPath, snapshotBin, memBin, true);
 
       console.log(
@@ -215,7 +295,7 @@ export async function startFirecrackerSandbox(options: {
       await copyRootfs(paths.baseRootfs, vmRootfs);
 
       // Spawn Firecracker
-      firecrackerProcess = await spawnFirecracker(paths.binary, socketPath);
+      fcPid = await spawnFirecracker(paths.binary, socketPath);
 
       // Wait for API socket
       await waitForSocket(socketPath);
@@ -260,15 +340,16 @@ export async function startFirecrackerSandbox(options: {
       console.log(`[firecracker-provider] VM ${vmId} booted fresh`);
     }
 
-    // Allocate ephemeral host ports and set up port forwarding
+    // Start TCP proxies for each container port (listens on 0.0.0.0)
     const portMappings: FirecrackerPortMapping[] = [];
     const hostPorts: Record<number, string> = {};
+    const proxyCleanups: Array<() => void> = [];
 
     for (const [_name, containerPort] of Object.entries(CONTAINER_PORTS)) {
-      const hostPort = await allocateEphemeralPort();
-      await addPortForward(hostPort, tap.guestIp, containerPort);
-      portMappings.push({ hostPort, guestPort: containerPort });
-      hostPorts[containerPort] = String(hostPort);
+      const proxy = await startPortProxy(tap.guestIp, containerPort);
+      portMappings.push({ hostPort: proxy.hostPort, guestPort: containerPort });
+      hostPorts[containerPort] = String(proxy.hostPort);
+      proxyCleanups.push(proxy.close);
     }
 
     // Wait for cmux-sandboxd to be ready
@@ -279,14 +360,22 @@ export async function startFirecrackerSandbox(options: {
       `[firecracker-provider] VM ${vmId} ready, sandboxd healthy`,
     );
 
+    // Create a sandbox (OCI container) inside the VM via cmux-sandboxd
+    const sandboxId = await createSandboxdContainer(tap.guestIp);
+    console.log(
+      `[firecracker-provider] VM ${vmId} sandbox created: ${sandboxId}`,
+    );
+
     const instance = new FirecrackerSandboxInstance({
       id: vmId,
-      firecrackerProcess,
+      fcPid,
       socketPath,
       tap,
       portMappings,
       rootfsPath: path.join(vmDir, "rootfs.ext4"),
       snapshotDir: paths.snapshotDir,
+      sandboxdSandboxId: sandboxId,
+      proxyCleanups,
     });
 
     const makeUrl = (port: number) =>
@@ -307,8 +396,11 @@ export async function startFirecrackerSandbox(options: {
       },
     };
   } catch (error) {
-    // Clean up on failure
+    // Clean up on failure: kill FC process FIRST so it releases the TAP fd
     console.error(`[firecracker-provider] VM ${vmId} start failed:`, error);
+    if (fcPid !== undefined) {
+      await killFirecracker(fcPid);
+    }
     await releaseTapSafe(tap);
     cleanupVmDir(vmDir, socketPath);
     throw error;

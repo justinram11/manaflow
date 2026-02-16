@@ -24,8 +24,29 @@ export interface TapAllocation {
   subnetIndex: number;
 }
 
-// Track allocated subnets to avoid collisions
+// Track allocated subnets to avoid collisions.
+// Initialized from kernel state so we skip over TAPs left by previous runs.
 const allocatedSubnets = new Set<number>();
+
+// Scan existing fc_tap* devices so we never collide with orphaned TAPs
+try {
+  const tapOutput = execSync("ip -o link show | grep fc_tap || true", {
+    encoding: "utf-8",
+  });
+  for (const line of tapOutput.split("\n")) {
+    const match = line.match(/fc_tap(\d+)/);
+    if (match) {
+      allocatedSubnets.add(parseInt(match[1], 10));
+    }
+  }
+  if (allocatedSubnets.size > 0) {
+    console.log(
+      `[firecracker-network] Found existing TAP devices, reserved indices: ${[...allocatedSubnets].join(", ")}`,
+    );
+  }
+} catch {
+  // Non-fatal: if we can't scan, we'll rely on the stale cleanup path
+}
 
 // Generate a deterministic MAC address from an index
 function generateMac(index: number): string {
@@ -117,6 +138,13 @@ export async function allocateTap(): Promise<TapAllocation> {
   const tapName = `fc_tap${subnetIndex}`;
 
   try {
+    // Delete stale TAP device if it exists from a previous run
+    try {
+      await runFcHelper(["tap-delete", tapName]);
+    } catch {
+      // No stale device to clean up
+    }
+
     // Create TAP device
     await runFcHelper(["tap-create", tapName, hostIp, "30"]);
 
@@ -127,6 +155,60 @@ export async function allocateTap(): Promise<TapAllocation> {
     return { tapName, guestIp, hostIp, guestMac, subnetIndex };
   } catch (error) {
     // Clean up on failure
+    allocatedSubnets.delete(subnetIndex);
+    try {
+      await runFcHelper(["tap-delete", tapName]);
+    } catch {
+      // Ignore cleanup errors
+    }
+    throw error;
+  }
+}
+
+/**
+ * Recreate a TAP device with specific name/IPs for snapshot restore.
+ *
+ * Firecracker snapshots bake in the TAP device name and can't be reconfigured.
+ * We must recreate the exact same TAP the snapshot expects.
+ */
+export async function recreateTap(
+  tapName: string,
+  guestIp: string,
+  guestMac: string,
+): Promise<TapAllocation> {
+  // Parse subnet index from TAP name (fc_tapN)
+  const match = tapName.match(/fc_tap(\d+)/);
+  if (!match) {
+    throw new Error(`Invalid TAP name for recreate: ${tapName}`);
+  }
+  const subnetIndex = parseInt(match[1], 10);
+
+  // Calculate host IP from subnet index
+  const flatOffset = subnetIndex * 4;
+  const octet2 = (flatOffset >> 8) & 0xff;
+  const octet3 = flatOffset & 0xff;
+  const hostIp = `172.16.${octet2}.${octet3 + 1}`;
+
+  // Reserve the index
+  allocatedSubnets.add(subnetIndex);
+
+  try {
+    // Delete stale TAP if it exists
+    try {
+      await runFcHelper(["tap-delete", tapName]);
+    } catch {
+      // No stale device
+    }
+
+    // Create TAP device with the original name/IPs
+    await runFcHelper(["tap-create", tapName, hostIp, "30"]);
+
+    // Set up NAT for outbound internet access
+    const outboundIface = await getDefaultInterface();
+    await runFcHelper(["nat-setup", tapName, guestIp, outboundIface]);
+
+    return { tapName, guestIp, hostIp, guestMac, subnetIndex };
+  } catch (error) {
     allocatedSubnets.delete(subnetIndex);
     try {
       await runFcHelper(["tap-delete", tapName]);
@@ -169,59 +251,71 @@ export async function releaseTap(allocation: TapAllocation): Promise<void> {
 }
 
 /**
- * Set up port forwarding from a host port to a guest IP:port.
+ * Start a TCP proxy that listens on 0.0.0.0:hostPort and forwards to guestIp:guestPort.
+ *
+ * This replaces iptables DNAT which doesn't work reliably across different
+ * network interfaces (Tailscale, Docker bridge, etc.) due to FORWARD chain conflicts.
+ * A userspace proxy works regardless of the network topology.
+ *
+ * Returns the listening port and a cleanup function to stop the proxy.
  */
-export async function addPortForward(
-  hostPort: number,
+export function startPortProxy(
   guestIp: string,
   guestPort: number,
-): Promise<void> {
-  const outboundIface = await getDefaultInterface();
-  await runFcHelper([
-    "port-forward-add",
-    String(hostPort),
-    guestIp,
-    String(guestPort),
-    outboundIface,
-  ]);
-}
-
-/**
- * Remove port forwarding.
- */
-export async function removePortForward(
-  hostPort: number,
-  guestIp: string,
-  guestPort: number,
-): Promise<void> {
-  const outboundIface = await getDefaultInterface();
-  await runFcHelper([
-    "port-forward-del",
-    String(hostPort),
-    guestIp,
-    String(guestPort),
-    outboundIface,
-  ]);
-}
-
-/**
- * Allocate an ephemeral port on the host.
- * Binds to port 0, reads the assigned port, and releases the socket.
- */
-export function allocateEphemeralPort(): Promise<number> {
+): Promise<{ hostPort: number; close: () => void }> {
   return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.listen(0, "127.0.0.1", () => {
+    const server = net.createServer((clientSocket) => {
+      const targetSocket = net.createConnection(
+        { host: guestIp, port: guestPort },
+        () => {
+          clientSocket.pipe(targetSocket);
+          targetSocket.pipe(clientSocket);
+        },
+      );
+
+      targetSocket.on("error", (err) => {
+        console.error(
+          `[port-proxy] Connection to ${guestIp}:${guestPort} failed:`,
+          err.message,
+        );
+        clientSocket.destroy();
+      });
+
+      clientSocket.on("error", () => {
+        targetSocket.destroy();
+      });
+
+      clientSocket.on("close", () => {
+        targetSocket.destroy();
+      });
+
+      targetSocket.on("close", () => {
+        clientSocket.destroy();
+      });
+    });
+
+    server.listen(0, "0.0.0.0", () => {
       const addr = server.address();
       if (!addr || typeof addr === "string") {
         server.close();
-        reject(new Error("Failed to allocate ephemeral port"));
+        reject(new Error("Failed to allocate proxy port"));
         return;
       }
-      const port = addr.port;
-      server.close(() => resolve(port));
+      const hostPort = addr.port;
+      console.log(
+        `[port-proxy] Listening on 0.0.0.0:${hostPort} → ${guestIp}:${guestPort}`,
+      );
+      resolve({
+        hostPort,
+        close: () => {
+          server.close();
+        },
+      });
     });
-    server.on("error", reject);
+
+    server.on("error", (err) => {
+      reject(new Error(`Failed to start port proxy: ${err.message}`));
+    });
   });
 }
 

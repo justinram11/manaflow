@@ -50,7 +50,9 @@ interface EnvironmentSetupFlowProps {
   teamSlugOrId: string;
   selectedRepos: string[];
   instanceId?: string;
-  provider?: "morph" | "firecracker";
+  provider?: "firecracker";
+  /** Direct VSCode URL from sandbox provider (used for non-Morph providers) */
+  sandboxVscodeUrl?: string;
   initialEnvName?: string;
   initialMaintenanceScript?: string;
   initialDevScript?: string;
@@ -66,7 +68,8 @@ export function EnvironmentSetupFlow({
   teamSlugOrId,
   selectedRepos,
   instanceId,
-  provider = "morph",
+  provider = "firecracker",
+  sandboxVscodeUrl,
   initialEnvName = "",
   initialMaintenanceScript = "",
   initialDevScript = "",
@@ -106,15 +109,25 @@ export function EnvironmentSetupFlow({
   // Error state
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Derived URLs
+  // Derived URLs — use direct URL from sandbox provider when available,
+  // fall back to Morph-style derivation for Morph instances
   const vscodeUrl = useMemo((): string | undefined => {
+    if (sandboxVscodeUrl) {
+      const sep = sandboxVscodeUrl.includes("?") ? "&" : "?";
+      const url = `${sandboxVscodeUrl}${sep}folder=${encodeURIComponent("/root/workspace")}`;
+      console.log("[EnvironmentSetupFlow] Using direct sandboxVscodeUrl:", url);
+      return url;
+    }
     if (!instanceId) return undefined;
-    return deriveVscodeUrl(instanceId) ?? undefined;
-  }, [instanceId]);
+    const derived = deriveVscodeUrl(instanceId) ?? undefined;
+    console.log("[EnvironmentSetupFlow] Derived vscodeUrl from instanceId:", derived, "instanceId:", instanceId);
+    return derived;
+  }, [instanceId, sandboxVscodeUrl]);
 
   const vncWebsocketUrl = useMemo((): string | undefined => {
+    if (sandboxVscodeUrl) return undefined; // VNC derivation is Morph-specific
     return deriveVncWebsocketUrl(instanceId, vscodeUrl) ?? undefined;
-  }, [instanceId, vscodeUrl]);
+  }, [instanceId, sandboxVscodeUrl, vscodeUrl]);
 
   // Script detection from framework (only fetch if we have repos)
   const hasUserEditedScriptsRef = useRef(false);
@@ -371,15 +384,14 @@ export function EnvironmentSetupFlow({
         body: {
           teamSlugOrId,
           name: finalEnvName,
-          morphInstanceId: provider === "morph" ? instanceId : undefined,
           envVarsContent,
           selectedRepos,
           maintenanceScript: requestMaintenanceScript,
           devScript: requestDevScript,
           exposedPorts: ports.length > 0 ? ports : undefined,
           description: undefined,
-          provider: provider !== "morph" ? provider : undefined,
-          firecrackerSandboxId: provider === "firecracker" ? instanceId : undefined,
+          provider,
+          firecrackerSandboxId: instanceId,
         },
       },
       {

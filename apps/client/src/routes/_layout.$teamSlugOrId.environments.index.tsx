@@ -36,7 +36,7 @@ function EnvironmentsListPage() {
           step: draft.step,
           selectedRepos: draft.selectedRepos,
           instanceId: draft.instanceId,
-          snapshotId: draft.snapshotId,
+          snapshotId: undefined,
           connectionLogin: undefined,
           repoSearch: undefined,
         },

@@ -2,7 +2,6 @@ import { env } from "@/client-env";
 import { GitHubIcon } from "@/components/icons/github";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@cmux/convex/api";
-import { DEFAULT_MORPH_SNAPSHOT_ID, type MorphSnapshotId } from "@cmux/shared";
 import { getElectronBridge, isElectron } from "@/lib/electron";
 import {
   consumeGitHubAppInstallIntent,
@@ -23,9 +22,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { isLocalAuth } from "@/lib/stack";
 import type { SandboxProvider } from "@/types/environment";
-import { RepositoryAdvancedOptions } from "./RepositoryAdvancedOptions";
 
 function formatTimeAgo(input?: string | number): string {
   if (!input) return "";
@@ -75,7 +72,6 @@ export interface RepositoryPickerProps {
   teamSlugOrId: string;
   instanceId?: string;
   initialSelectedRepos?: string[];
-  initialSnapshotId?: MorphSnapshotId;
   initialCustomGitUrl?: string;
   showHeader?: boolean;
   showContinueButton?: boolean;
@@ -88,7 +84,6 @@ export interface RepositoryPickerProps {
   onStartConfigure?: (payload: {
     selectedRepos: string[];
     instanceId?: string;
-    snapshotId?: MorphSnapshotId;
     provider?: SandboxProvider;
     customGitUrl?: string;
   }) => void;
@@ -106,7 +101,6 @@ export function RepositoryPicker({
   teamSlugOrId,
   instanceId,
   initialSelectedRepos = [],
-  initialSnapshotId,
   initialCustomGitUrl,
   showHeader = true,
   showContinueButton = true,
@@ -125,10 +119,7 @@ export function RepositoryPicker({
   const [selectedRepos, setSelectedRepos] = useState<string[]>(() =>
     Array.from(new Set(initialSelectedRepos))
   );
-  const [selectedSnapshotId, setSelectedSnapshotId] = useState<MorphSnapshotId>(
-    initialSnapshotId ?? DEFAULT_MORPH_SNAPSHOT_ID
-  );
-  const [selectedProvider, setSelectedProvider] = useState<SandboxProvider>("morph");
+  const [selectedProvider] = useState<SandboxProvider>("firecracker");
   const [customGitUrl, setCustomGitUrl] = useState(initialCustomGitUrl ?? "");
   const [selectedConnectionLogin, setSelectedConnectionLogin] = useState<
     string | null
@@ -141,14 +132,6 @@ export function RepositoryPicker({
     }
   );
 
-
-  useEffect(() => {
-    if (initialSnapshotId) {
-      setSelectedSnapshotId(initialSnapshotId);
-    } else {
-      setSelectedSnapshotId(DEFAULT_MORPH_SNAPSHOT_ID);
-    }
-  }, [initialSnapshotId]);
 
   const handleConnectionsInvalidated = useCallback((): void => {
     void queryClient.invalidateQueries();
@@ -210,7 +193,7 @@ export function RepositoryPicker({
               instanceId: resolvedInstanceId,
               connectionLogin: prev.connectionLogin,
               repoSearch: prev.repoSearch,
-              snapshotId: selectedSnapshotId,
+              snapshotId: prev.snapshotId,
             };
           },
           ...navOptions,
@@ -223,24 +206,19 @@ export function RepositoryPicker({
     [
       navigate,
       resolveInstanceId,
-      selectedSnapshotId,
       teamSlugOrId,
     ]
   );
 
   const handleContinue = useCallback(
     (repos: string[]): void => {
-      // Check if repos or snapshot changed - if so, we need a new VM
       const reposChanged = !haveSameRepos(initialSelectedRepos, repos);
-      const snapshotChanged = initialSnapshotId !== selectedSnapshotId;
-      const needsNewInstance = reposChanged || snapshotChanged;
 
       // Navigate immediately - provisioning will happen on the configure page
-      void goToConfigure(repos, { clearInstanceId: needsNewInstance });
+      void goToConfigure(repos, { clearInstanceId: reposChanged });
       onStartConfigure?.({
         selectedRepos: repos,
-        instanceId: needsNewInstance ? undefined : instanceId,
-        snapshotId: selectedSnapshotId,
+        instanceId: reposChanged ? undefined : instanceId,
         provider: selectedProvider,
         customGitUrl: customGitUrl.trim() || undefined,
       });
@@ -249,34 +227,11 @@ export function RepositoryPicker({
       goToConfigure,
       haveSameRepos,
       initialSelectedRepos,
-      initialSnapshotId,
       instanceId,
       onStartConfigure,
       selectedProvider,
-      selectedSnapshotId,
       customGitUrl,
     ]
-  );
-
-  const updateSnapshotSelection = useCallback(
-    (nextSnapshotId: MorphSnapshotId) => {
-      const shouldResetInstanceId = nextSnapshotId !== selectedSnapshotId;
-      setSelectedSnapshotId(nextSnapshotId);
-      void navigate({
-        to: "/$teamSlugOrId/environments/new",
-        params: { teamSlugOrId },
-        search: (prev) => ({
-          step: prev.step ?? "select",
-          selectedRepos: prev.selectedRepos ?? [],
-          instanceId: shouldResetInstanceId ? undefined : prev.instanceId,
-          connectionLogin: prev.connectionLogin,
-          repoSearch: prev.repoSearch,
-          snapshotId: nextSnapshotId,
-        }),
-        replace: true,
-      });
-    },
-    [navigate, selectedSnapshotId, teamSlugOrId]
   );
 
   const toggleRepo = useCallback((repo: string) => {
@@ -406,31 +361,21 @@ export function RepositoryPicker({
           </div>
         ) : null}
 
-        <RepositoryAdvancedOptions
-          selectedSnapshotId={selectedSnapshotId}
-          onSnapshotChange={updateSnapshotSelection}
-          showFirecrackerOption={isLocalAuth}
-          selectedProvider={selectedProvider}
-          onProviderChange={setSelectedProvider}
-        />
-
-        {selectedProvider === "firecracker" && (
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-neutral-800 dark:text-neutral-200">
-              Custom Git URL
-            </label>
-            <input
-              type="text"
-              value={customGitUrl}
-              onChange={(e) => setCustomGitUrl(e.target.value)}
-              placeholder="git@github.com:owner/repo.git"
-              className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 h-9 text-sm text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
-            />
-            <p className="text-xs text-neutral-500 dark:text-neutral-500">
-              SSH URLs will use your host&apos;s SSH keys. Supports SSH, HTTPS, and owner/repo shorthand.
-            </p>
-          </div>
-        )}
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-neutral-800 dark:text-neutral-200">
+            Custom Git URL
+          </label>
+          <input
+            type="text"
+            value={customGitUrl}
+            onChange={(e) => setCustomGitUrl(e.target.value)}
+            placeholder="git@github.com:owner/repo.git"
+            className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 h-9 text-sm text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
+          />
+          <p className="text-xs text-neutral-500 dark:text-neutral-500">
+            SSH URLs will use your host&apos;s SSH keys. Supports SSH, HTTPS, and owner/repo shorthand.
+          </p>
+        </div>
 
         {showContinueButton && (
           <>

@@ -1,16 +1,24 @@
-import type { ChildProcess } from "node:child_process";
+import { execFile } from "node:child_process";
 import * as fs from "node:fs";
+import * as path from "node:path";
+import { execSync } from "node:child_process";
 import {
   pauseVM,
   resumeVM,
   createSnapshot as fcCreateSnapshot,
 } from "./firecracker-api";
 import type { TapAllocation } from "./firecracker-network";
-import { releaseTap, removePortForward } from "./firecracker-network";
+import { releaseTap } from "./firecracker-network";
 import type { SandboxExecResult, SandboxInstance } from "./sandbox-instance";
 
 // Port inside the VM where cmux-sandboxd listens
 const SANDBOXD_PORT = 46831;
+
+// Use git to find the project root reliably
+const PROJECT_ROOT = execSync("git rev-parse --show-toplevel", {
+  encoding: "utf-8",
+}).trim();
+const FC_HELPER_PATH = path.join(PROJECT_ROOT, "scripts/fc-helper.sh");
 
 export interface FirecrackerPortMapping {
   hostPort: number;
@@ -19,45 +27,53 @@ export interface FirecrackerPortMapping {
 
 export class FirecrackerSandboxInstance implements SandboxInstance {
   readonly id: string;
-  private firecrackerProcess: ChildProcess;
+  private fcPid: number;
   private socketPath: string;
   private tap: TapAllocation;
   private portMappings: FirecrackerPortMapping[];
   private rootfsPath: string;
   private snapshotDir: string;
+  private sandboxdSandboxId: string;
+  private proxyCleanups: Array<() => void>;
   private stopped = false;
 
   constructor(opts: {
     id: string;
-    firecrackerProcess: ChildProcess;
+    fcPid: number;
     socketPath: string;
     tap: TapAllocation;
     portMappings: FirecrackerPortMapping[];
     rootfsPath: string;
     snapshotDir: string;
+    sandboxdSandboxId: string;
+    proxyCleanups: Array<() => void>;
   }) {
     this.id = opts.id;
-    this.firecrackerProcess = opts.firecrackerProcess;
+    this.fcPid = opts.fcPid;
     this.socketPath = opts.socketPath;
     this.tap = opts.tap;
     this.portMappings = opts.portMappings;
     this.rootfsPath = opts.rootfsPath;
     this.snapshotDir = opts.snapshotDir;
+    this.sandboxdSandboxId = opts.sandboxdSandboxId;
+    this.proxyCleanups = opts.proxyCleanups;
   }
 
   /**
    * Execute a command inside the VM via cmux-sandboxd HTTP API.
    *
-   * cmux-sandboxd runs on port 46831 inside the VM — the same service
-   * used by Docker sandboxes. We reach it via the guest IP.
+   * cmux-sandboxd manages OCI containers inside the VM. We exec into
+   * the pre-created sandbox container using its ID.
    */
   async exec(command: string): Promise<SandboxExecResult> {
-    const url = `http://${this.tap.guestIp}:${SANDBOXD_PORT}/exec`;
+    const url = `http://${this.tap.guestIp}:${SANDBOXD_PORT}/sandboxes/${this.sandboxdSandboxId}/exec`;
     try {
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command }),
+        body: JSON.stringify({
+          command: ["/bin/sh", "-c", command],
+        }),
         signal: AbortSignal.timeout(120_000),
       });
 
@@ -90,38 +106,36 @@ export class FirecrackerSandboxInstance implements SandboxInstance {
 
     console.log(`[FirecrackerSandboxInstance] Stopping VM ${this.id}`);
 
-    // Kill the Firecracker process
+    // Kill the Firecracker process via sudo helper
     try {
-      this.firecrackerProcess.kill("SIGTERM");
-      // Wait briefly for graceful shutdown
-      await new Promise<void>((resolve) => {
-        const timeout = setTimeout(() => {
-          this.firecrackerProcess.kill("SIGKILL");
-          resolve();
-        }, 5000);
-        this.firecrackerProcess.on("exit", () => {
-          clearTimeout(timeout);
-          resolve();
-        });
+      await new Promise<void>((resolve, reject) => {
+        execFile(
+          "sudo",
+          [FC_HELPER_PATH, "kill", String(this.fcPid)],
+          { timeout: 10_000 },
+          (error) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+            resolve();
+          },
+        );
       });
     } catch (error) {
       console.error(
-        `[FirecrackerSandboxInstance] Error killing FC process:`,
+        `[FirecrackerSandboxInstance] Error killing FC process (PID ${this.fcPid}):`,
         error,
       );
     }
 
-    // Remove port forwards
-    for (const mapping of this.portMappings) {
+    // Close TCP proxies
+    for (const cleanup of this.proxyCleanups) {
       try {
-        await removePortForward(
-          mapping.hostPort,
-          this.tap.guestIp,
-          mapping.guestPort,
-        );
+        cleanup();
       } catch (error) {
         console.error(
-          `[FirecrackerSandboxInstance] Error removing port forward:`,
+          `[FirecrackerSandboxInstance] Error closing proxy:`,
           error,
         );
       }
@@ -172,6 +186,17 @@ export class FirecrackerSandboxInstance implements SandboxInstance {
 
       // Copy the rootfs (sparse-aware)
       fs.copyFileSync(this.rootfsPath, rootfsDst);
+
+      // Store metadata so restore knows the original paths baked into the snapshot
+      fs.writeFileSync(
+        `${snapshotDir}/metadata.json`,
+        JSON.stringify({
+          originalRootfsPath: this.rootfsPath,
+          tapName: this.tap.tapName,
+          guestIp: this.tap.guestIp,
+          guestMac: this.tap.guestMac,
+        }),
+      );
 
       console.log(
         `[FirecrackerSandboxInstance] Snapshot ${snapshotId} created at ${snapshotDir}`,
