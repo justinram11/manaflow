@@ -436,6 +436,78 @@ async fn start_cmux_pty_background(
     Ok(())
 }
 
+/// Start the cmux-worker (Socket.IO server for VS Code extension) inside the sandbox.
+/// The worker provides the communication bridge between the VS Code extension and the
+/// main cmux server.
+async fn start_worker_background(
+    nsenter_path: &str,
+    inner_pid: u32,
+    worker_port: u16,
+) -> Result<(), String> {
+    use tokio::time::timeout;
+    let cmd_timeout = Duration::from_secs(10);
+
+    // Start the worker using the pre-built bundle at /builtins/build/index.js
+    // Use nohup to prevent SIGHUP when nsenter shell exits
+    let worker_cmd = vec![
+        "/bin/sh".to_string(),
+        "-c".to_string(),
+        format!(
+            "WORKER_PORT={} nohup /usr/bin/node /builtins/build/index.js > /tmp/cmux-worker.log 2>&1 &",
+            worker_port
+        ),
+    ];
+
+    let result = timeout(
+        cmd_timeout,
+        Command::new(nsenter_path)
+            .args(nsenter_args(inner_pid, None, &worker_cmd))
+            .output(),
+    )
+    .await;
+
+    match result {
+        Ok(Ok(output)) => {
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                debug!("cmux-worker start warning: {}", stderr);
+            }
+        }
+        Ok(Err(e)) => return Err(format!("cmux-worker command error: {}", e)),
+        Err(_) => {
+            debug!("cmux-worker command timed out (expected for backgrounded process)");
+        }
+    }
+
+    // Wait for worker to start listening
+    sleep(Duration::from_millis(500)).await;
+
+    // Verify worker is running by checking if it's listening on the port
+    let verify_cmd = vec![
+        "/bin/sh".to_string(),
+        "-c".to_string(),
+        format!("pgrep -f 'node.*/builtins/build/index.js'"),
+    ];
+    let verify_result = timeout(
+        Duration::from_secs(5),
+        Command::new(nsenter_path)
+            .args(nsenter_args(inner_pid, None, &verify_cmd))
+            .output(),
+    )
+    .await;
+
+    let worker_running = matches!(verify_result, Ok(Ok(ref output)) if output.status.success());
+    if !worker_running {
+        return Err(format!(
+            "cmux-worker failed to start on port {}",
+            worker_port
+        ));
+    }
+
+    info!(worker_port = worker_port, "cmux-worker started");
+    Ok(())
+}
+
 impl BubblewrapService {
     pub async fn new(workspace_root: PathBuf, port: u16) -> SandboxResult<Self> {
         if !workspace_root.exists() {
@@ -940,7 +1012,14 @@ fi
         // Make common paths available inside the sandbox
         // /opt, /home/linuxbrew, /snap for credential helpers
         // /app for cmux-code (VS Code server)
-        for path_str in ["/opt", "/home/linuxbrew/.linuxbrew", "/snap", "/app"] {
+        // /builtins for cmux-worker (built worker bundle)
+        for path_str in [
+            "/opt",
+            "/home/linuxbrew/.linuxbrew",
+            "/snap",
+            "/app",
+            "/builtins",
+        ] {
             let path = Path::new(path_str);
             if path.exists() {
                 command.args(["--ro-bind", path_str, path_str]);
@@ -1473,6 +1552,7 @@ impl SandboxService for BubblewrapService {
         let cdp_port = 39381_u16; // Fixed port, accessed via subdomain routing
         let vscode_port = 39378_u16; // Fixed port for cmux-code
         let pty_port = 39383_u16; // Fixed port for cmux-pty
+        let worker_port = 39377_u16; // Fixed port for cmux-worker
 
         // Display config is set immediately (ports are known upfront)
         // Services start in background - use await_services_ready to wait for VNC/VS Code/PTY
@@ -1483,6 +1563,7 @@ impl SandboxService for BubblewrapService {
             cdp_port,
             vscode_port,
             pty_port,
+            worker_port,
         });
 
         // Create readiness watch channel for this sandbox
@@ -1537,6 +1618,7 @@ impl SandboxService for BubblewrapService {
                         vnc: vnc_ready,
                         vscode: false,
                         pty: false,
+                        worker: false,
                     });
                 }
 
@@ -1563,16 +1645,40 @@ impl SandboxService for BubblewrapService {
                     }
                 };
 
-                // Update readiness with VNC and PTY status
+                // Start cmux-worker AFTER cmux-pty (worker should be up before VS Code extension activates)
+                let worker_result =
+                    start_worker_background(&nsenter_path, inner_pid, worker_port).await;
+
+                let worker_ready = match worker_result {
+                    Ok(()) => {
+                        info!(
+                            sandbox_id = %sandbox_id,
+                            worker_port = worker_port,
+                            "cmux-worker ready (background)"
+                        );
+                        true
+                    }
+                    Err(e) => {
+                        warn!(
+                            sandbox_id = %sandbox_id,
+                            error = %e,
+                            "cmux-worker failed in background - worker will be unavailable"
+                        );
+                        false
+                    }
+                };
+
+                // Update readiness with VNC, PTY, and worker status
                 if let Some(ref tx) = readiness {
                     let _ = tx.send(ServiceReadiness {
                         vnc: vnc_ready,
                         vscode: false,
                         pty: pty_ready,
+                        worker: worker_ready,
                     });
                 }
 
-                // Start cmux-code (VS Code server) AFTER cmux-pty is ready
+                // Start cmux-code (VS Code server) AFTER cmux-pty and cmux-worker are ready
                 let vscode_result =
                     start_vscode_background(&nsenter_path, inner_pid, vscode_port, workspace_path)
                         .await;
@@ -1602,6 +1708,7 @@ impl SandboxService for BubblewrapService {
                         vnc: vnc_ready,
                         vscode: vscode_ready,
                         pty: pty_ready,
+                        worker: worker_ready,
                     });
                 }
             });

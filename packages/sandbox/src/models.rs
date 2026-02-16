@@ -60,6 +60,8 @@ pub struct SandboxDisplay {
     pub vscode_port: u16,
     /// cmux-pty port (always 39383 inside sandbox, accessed via subdomain routing)
     pub pty_port: u16,
+    /// cmux-worker port (always 39377 inside sandbox, accessed via subdomain routing)
+    pub worker_port: u16,
 }
 
 /// Readiness status for sandbox services.
@@ -75,6 +77,9 @@ pub struct ServiceReadiness {
     /// PTY server is ready
     #[serde(default)]
     pub pty: bool,
+    /// Worker server is ready
+    #[serde(default)]
+    pub worker: bool,
 }
 
 /// Request to await service readiness

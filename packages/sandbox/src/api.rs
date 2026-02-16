@@ -1199,6 +1199,7 @@ mod tests {
                     vnc: true,
                     vscode: false,
                     pty: false,
+                    worker: false,
                 },
                 timed_out: vec![],
             })

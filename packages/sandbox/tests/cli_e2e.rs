@@ -188,6 +188,7 @@ impl SandboxService for MockService {
                 vnc: true,
                 vscode: false,
                 pty: false,
+                worker: false,
             },
             timed_out: vec![],
         })
