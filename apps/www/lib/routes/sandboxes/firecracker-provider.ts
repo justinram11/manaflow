@@ -195,6 +195,26 @@ async function waitForWorkerReady(
 }
 
 /**
+ * List existing sandboxes inside the VM via cmux-sandboxd.
+ * Returns sandbox IDs, or empty array if none exist.
+ */
+async function listSandboxdContainers(
+  guestIp: string,
+): Promise<Array<{ id: string; name: string }>> {
+  try {
+    const response = await fetch(
+      `http://${guestIp}:${SANDBOXD_PORT}/sandboxes`,
+      { signal: AbortSignal.timeout(5_000) },
+    );
+    if (!response.ok) return [];
+    const result = (await response.json()) as Array<{ id: string; name: string }>;
+    return result;
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Create a sandbox (OCI container) inside the VM via cmux-sandboxd.
  * Returns the sandbox ID.
  */
@@ -397,15 +417,31 @@ export async function startFirecrackerSandbox(options: {
       `[firecracker-provider] VM ${vmId} ready, sandboxd healthy`,
     );
 
-    // For snapshot restores with a saved sandbox ID, reuse the existing container.
-    // Creating a new container would interfere with the worker already running in
-    // the restored container.
+    // For snapshot restores, reuse the existing container from the snapshot.
+    // Creating a new container would interfere with the worker already running
+    // in the restored container.
     let sandboxId: string;
     if (isSnapshotRestore && snapshotMeta.sandboxdSandboxId) {
+      // New snapshots include the sandbox ID in metadata
       sandboxId = snapshotMeta.sandboxdSandboxId;
       console.log(
-        `[firecracker-provider] VM ${vmId} reusing snapshot sandbox: ${sandboxId}`,
+        `[firecracker-provider] VM ${vmId} reusing snapshot sandbox (from metadata): ${sandboxId}`,
       );
+    } else if (isSnapshotRestore) {
+      // Old snapshots without sandbox ID in metadata — query sandboxd for
+      // existing containers that survived the snapshot restore
+      const existing = await listSandboxdContainers(tap.guestIp);
+      if (existing.length > 0) {
+        sandboxId = existing[0].id;
+        console.log(
+          `[firecracker-provider] VM ${vmId} reusing snapshot sandbox (discovered): ${sandboxId}`,
+        );
+      } else {
+        sandboxId = await createSandboxdContainer(tap.guestIp);
+        console.log(
+          `[firecracker-provider] VM ${vmId} sandbox created (no existing found): ${sandboxId}`,
+        );
+      }
     } else {
       sandboxId = await createSandboxdContainer(tap.guestIp);
       console.log(
