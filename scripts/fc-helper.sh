@@ -150,6 +150,8 @@ case "$COMMAND" in
 
     ip link set "$TAP_NAME" down 2>/dev/null || true
     ip tuntap del dev "$TAP_NAME" mode tap 2>/dev/null || true
+    # Fallback: ip link delete handles persistent TAP devices
+    ip link delete "$TAP_NAME" 2>/dev/null || true
     echo "Deleted TAP device $TAP_NAME"
     ;;
 
@@ -266,6 +268,17 @@ case "$COMMAND" in
     echo ""
     echo "=== DOCKER-FORWARD ==="
     iptables -L DOCKER-FORWARD -n -v --line-numbers 2>/dev/null || echo "(empty)"
+    ;;
+
+  iptables-flush-fc)
+    # Remove all iptables rules targeting the 172.16.0.0/24 Firecracker subnet.
+    # Safe to run when no VMs are active — only deletes rules for the FC guest IPs.
+    # Uses iptables-save/restore for atomic, efficient cleanup.
+    echo "Flushing stale Firecracker iptables rules..."
+    BEFORE=$(iptables-save 2>/dev/null | grep -c '172\.16\.0\.' || true)
+    iptables-save 2>/dev/null | grep -v '172\.16\.0\.' | iptables-restore 2>/dev/null
+    AFTER=$(iptables-save 2>/dev/null | grep -c '172\.16\.0\.' || true)
+    echo "Flushed $((BEFORE - AFTER)) stale Firecracker iptables rules ($AFTER remaining)"
     ;;
 
   *)

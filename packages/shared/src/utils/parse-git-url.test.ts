@@ -77,6 +77,36 @@ describe("parseGitUrl", () => {
     });
   });
 
+  it("parses SSH URLs with nested GitLab groups", () => {
+    const result = parseGitUrl("git@gitlab.com:moneydolly1/code/mono.git");
+    expect(result).toEqual({
+      owner: "moneydolly1/code",
+      repo: "mono",
+      fullName: "moneydolly1/code/mono",
+      cloneUrl: "git@gitlab.com:moneydolly1/code/mono.git",
+    });
+  });
+
+  it("parses HTTPS URLs with nested GitLab groups", () => {
+    const result = parseGitUrl("https://gitlab.com/group/subgroup/repo");
+    expect(result).toEqual({
+      owner: "group/subgroup",
+      repo: "repo",
+      fullName: "group/subgroup/repo",
+      cloneUrl: "https://gitlab.com/group/subgroup/repo",
+    });
+  });
+
+  it("parses deeply nested GitLab groups", () => {
+    const result = parseGitUrl("git@gitlab.com:a/b/c/repo.git");
+    expect(result).toEqual({
+      owner: "a/b/c",
+      repo: "repo",
+      fullName: "a/b/c/repo",
+      cloneUrl: "git@gitlab.com:a/b/c/repo.git",
+    });
+  });
+
   it("returns null for empty input", () => {
     expect(parseGitUrl("")).toBeNull();
   });

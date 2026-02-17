@@ -523,6 +523,7 @@ export function EnvironmentConfiguration({
           body: {
             teamSlugOrId,
             morphInstanceId: instanceId,
+            firecrackerSandboxId: instanceId,
             label: envName.trim(),
             activate: true,
             maintenanceScript: requestMaintenanceScript,

@@ -90,6 +90,21 @@ export async function injectHostSshKeys(
     }
   }
 
+  // Ensure StrictHostKeyChecking is set so SSH clones don't fail on unknown hosts
+  promises.push(
+    instance
+      .exec(
+        `grep -q 'StrictHostKeyChecking' /root/.ssh/config 2>/dev/null || printf '\\nHost *\\n  StrictHostKeyChecking accept-new\\n' >> /root/.ssh/config && chmod 644 /root/.ssh/config`,
+      )
+      .then((res) => {
+        if (res.exit_code !== 0) {
+          console.error(
+            `[ssh-keys] Failed to configure StrictHostKeyChecking: ${res.stderr}`,
+          );
+        }
+      }),
+  );
+
   await Promise.all(promises);
   console.log(
     `[ssh-keys] Injected ${promises.length} SSH/git config files into sandbox`,

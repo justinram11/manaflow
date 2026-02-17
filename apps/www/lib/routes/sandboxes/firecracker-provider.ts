@@ -278,6 +278,9 @@ export async function startFirecrackerSandbox(options: {
 
   let fcPid: number | undefined;
 
+  // Track the actual rootfs path (differs between fresh boot and snapshot restore)
+  let actualRootfsPath = path.join(vmDir, "rootfs.ext4");
+
   // Snapshot metadata — hoisted so it's accessible after the if/else block
   let snapshotMeta: {
     originalRootfsPath?: string;
@@ -327,6 +330,7 @@ export async function startFirecrackerSandbox(options: {
         fs.mkdirSync(path.dirname(snapshotMeta.originalRootfsPath), { recursive: true });
       }
       await copyRootfs(snapshotRootfs, vmRootfs);
+      actualRootfsPath = vmRootfs;
 
       // Spawn Firecracker
       fcPid = await spawnFirecracker(paths.binary, socketPath);
@@ -461,7 +465,7 @@ export async function startFirecrackerSandbox(options: {
       socketPath,
       tap,
       portMappings,
-      rootfsPath: path.join(vmDir, "rootfs.ext4"),
+      rootfsPath: actualRootfsPath,
       snapshotDir: paths.snapshotDir,
       sandboxdSandboxId: sandboxId,
       proxyCleanups,

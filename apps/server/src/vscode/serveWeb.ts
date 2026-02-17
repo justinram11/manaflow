@@ -72,7 +72,7 @@ export async function ensureVSCodeServeWeb(
 ): Promise<VSCodeServeWebHandle | null> {
   logger.info("Ensuring VS Code serve-web availability...");
 
-  const executable = await getVSCodeExecutable(logger);
+  const { executable, useCodeServer } = await resolveServeWebExecutable(logger);
   if (!executable) {
     logger.warn(
       "VS Code CLI executable unavailable; serve-web will not be launched."
@@ -86,21 +86,24 @@ export async function ensureVSCodeServeWeb(
     await syncLocalVSCodeSettingsForServeWeb(logger);
 
     const port = await claimServeWebPort(logger);
+    // code-server is invoked directly (no "serve-web" subcommand needed);
+    // the standalone `code` CLI uses the "serve-web" subcommand.
+    const args = [
+      ...(useCodeServer ? [] : ["serve-web"]),
+      "--accept-server-license-terms",
+      "--without-connection-token",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      String(port),
+    ];
     logger.info(
-      `Starting VS Code serve-web using executable ${executable} on port ${port}...`
+      `Starting VS Code serve-web using ${executable} ${args[0]} on port ${port}...`
     );
 
     child = spawn(
       executable,
-      [
-        "serve-web",
-        "--accept-server-license-terms",
-        "--without-connection-token",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        String(port),
-      ],
+      args,
       {
         detached: false,
         stdio: ["ignore", "pipe", "pipe"],
@@ -425,6 +428,43 @@ async function syncLocalVSCodeSettingsForServeWeb(logger: Logger): Promise<void>
 
 // Store the last detection result for error reporting
 let lastDetectionResult: VSCodeDetectionResult | null = null;
+
+/**
+ * Resolve the executable to use for serve-web.
+ *
+ * When the detected `code` binary is the VS Code Remote SSH helper
+ * (`remote-cli/code`), it silently ignores `serve-web` and exits 0.
+ * In that case, look for the sibling `code-server` binary which IS the
+ * web server and is invoked directly (without the `serve-web` subcommand).
+ */
+async function resolveServeWebExecutable(
+  logger: Logger
+): Promise<{ executable: string | null; useCodeServer: boolean }> {
+  const executable = await getVSCodeExecutable(logger);
+  if (!executable) {
+    return { executable: null, useCodeServer: false };
+  }
+
+  // Check if this is the remote-cli helper (doesn't support serve-web)
+  if (executable.includes("/remote-cli/")) {
+    // Try to find code-server in the same VS Code server installation
+    // remote-cli/code → ../../bin/code-server
+    const serverBin = path.resolve(path.dirname(executable), "..", "..", "bin", "code-server");
+    try {
+      await access(serverBin, fsConstants.X_OK);
+      logger.info(
+        `Detected remote-cli helper; using code-server instead: ${serverBin}`
+      );
+      return { executable: serverBin, useCodeServer: true };
+    } catch {
+      logger.warn(
+        `Detected remote-cli helper at ${executable} but could not find code-server at ${serverBin}`
+      );
+    }
+  }
+
+  return { executable, useCodeServer: false };
+}
 
 /**
  * Get the VS Code executable path using comprehensive detection.

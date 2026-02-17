@@ -7,6 +7,7 @@
  * - Simple: owner/repo (assumes GitHub HTTPS)
  * - HTTPS: https://github.com/owner/repo or https://gitlab.com/owner/repo.git
  * - SSH: git@github.com:owner/repo.git or git@gitlab.com:owner/repo.git
+ * - Nested groups: git@gitlab.com:group/subgroup/repo.git or https://gitlab.com/group/subgroup/repo
  *
  * @param input - The git repository URL or identifier
  * @returns Parsed repository information or null if invalid
@@ -23,9 +24,9 @@ export function parseGitUrl(input: string): {
 
   const trimmed = input.trim();
 
-  // SSH format: git@host:owner/repo.git
+  // SSH format: git@host:owner/repo.git (supports nested groups like group/subgroup/repo)
   const sshMatch = trimmed.match(
-    /^git@[a-zA-Z0-9._-]+:([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+?)(?:\.git)?$/
+    /^git@[a-zA-Z0-9._-]+:([a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)*)\/([a-zA-Z0-9_.-]+?)(?:\.git)?$/
   );
   if (sshMatch) {
     const [, owner, repo] = sshMatch;
@@ -39,9 +40,9 @@ export function parseGitUrl(input: string): {
     };
   }
 
-  // HTTPS format: https://host/owner/repo(.git)?
+  // HTTPS format: https://host/owner/repo(.git)? (supports nested groups like group/subgroup/repo)
   const httpsMatch = trimmed.match(
-    /^https?:\/\/[a-zA-Z0-9._-]+\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+?)(?:\.git)?(?:\/)?$/i
+    /^https?:\/\/[a-zA-Z0-9._-]+\/([a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)*)\/([a-zA-Z0-9_.-]+?)(?:\.git)?(?:\/)?$/i
   );
   if (httpsMatch) {
     const [, owner, repo] = httpsMatch;
