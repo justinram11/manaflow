@@ -9,7 +9,7 @@ export interface RepositoryAdvancedOptionsProps {
 }
 
 export function RepositoryAdvancedOptions({
-  selectedProvider = "firecracker",
+  selectedProvider = "incus",
   onProviderChange,
 }: RepositoryAdvancedOptionsProps) {
   return (
@@ -42,7 +42,7 @@ export function RepositoryAdvancedOptions({
                 </Label>
                 <div className="grid gap-3 sm:grid-cols-2 pt-1.5">
                   <Radio
-                    value="firecracker"
+                    value="incus"
                     className={({ isSelected, isFocusVisible }) => {
                       const baseClasses =
                         "relative flex h-full cursor-pointer flex-col justify-between rounded-lg border px-4 py-3 text-left transition-colors focus:outline-none";
@@ -63,10 +63,10 @@ export function RepositoryAdvancedOptions({
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                            Firecracker (Local)
+                            Incus (Local)
                           </p>
                           <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-                            Self-hosted microVM with sub-second resume
+                            Self-hosted container with sub-second resume
                           </p>
                         </div>
                         <span

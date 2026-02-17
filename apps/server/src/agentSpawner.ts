@@ -35,7 +35,7 @@ import { getWwwClient } from "./utils/wwwClient";
 import { getWwwOpenApiModule } from "./utils/wwwOpenApiModule";
 import { CmuxVSCodeInstance } from "./vscode/CmuxVSCodeInstance";
 import { DockerVSCodeInstance } from "./vscode/DockerVSCodeInstance";
-import { FirecrackerVSCodeInstance } from "./vscode/FirecrackerVSCodeInstance";
+import { IncusVSCodeInstance } from "./vscode/IncusVSCodeInstance";
 import { VSCodeInstance } from "./vscode/VSCodeInstance";
 import { getWorktreePath, setupProjectWorkspace } from "./workspace";
 import { localCloudSyncManager } from "./localCloudSync";
@@ -73,7 +73,7 @@ export async function spawnAgent(
     theme?: "dark" | "light" | "system";
     newBranch?: string; // Optional pre-generated branch name
     taskRunId?: Id<"taskRuns">; // Optional pre-created task run ID
-    firecrackerSnapshotId?: string; // Optional Firecracker snapshot for sub-second resume
+    incusSnapshotId?: string; // Optional Incus snapshot for sub-second resume
   },
   teamSlugOrId: string
 ): Promise<AgentSpawnResult> {
@@ -462,12 +462,12 @@ export async function spawnAgent(
       });
 
       worktreePath = "/root/workspace";
-    } else if (options.firecrackerSnapshotId) {
-      // For Firecracker (self-hosted with snapshot), delegate to www API
+    } else if (options.incusSnapshotId) {
+      // For Incus (self-hosted with snapshot), delegate to www API
       serverLogger.info(
-        `[AgentSpawner] Creating FirecrackerVSCodeInstance for ${agent.name} (snapshot: ${options.firecrackerSnapshotId})`
+        `[AgentSpawner] Creating IncusVSCodeInstance for ${agent.name} (snapshot: ${options.incusSnapshotId})`
       );
-      vscodeInstance = new FirecrackerVSCodeInstance({
+      vscodeInstance = new IncusVSCodeInstance({
         agentName: agent.name,
         taskRunId,
         taskId,
@@ -476,7 +476,7 @@ export async function spawnAgent(
         repoUrl: options.repoUrl,
         branch: options.branch,
         newBranch,
-        snapshotId: options.firecrackerSnapshotId,
+        snapshotId: options.incusSnapshotId,
         taskRunJwt,
       });
       worktreePath = "/root/workspace";
@@ -1140,10 +1140,10 @@ exit $EXIT_CODE
               throw new Error("Worker URL not available for cloud instance");
             }
             uploadUrl = `${workerUrl}/upload-image`;
-          } else if (vscodeInstance instanceof FirecrackerVSCodeInstance) {
+          } else if (vscodeInstance instanceof IncusVSCodeInstance) {
             const workerUrl = vscodeInstance.getWorkerUrl();
             if (!workerUrl) {
-              throw new Error("Worker URL not available for Firecracker instance");
+              throw new Error("Worker URL not available for Incus instance");
             }
             uploadUrl = `${workerUrl}/upload-image`;
           } else {

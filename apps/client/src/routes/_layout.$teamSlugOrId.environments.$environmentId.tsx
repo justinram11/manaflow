@@ -503,7 +503,7 @@ function EnvironmentDetailsPage() {
     });
   };
 
-  const isFirecracker = environment.provider === "firecracker";
+  const isIncus = environment.provider === "incus";
 
   const handleModifyVm = () => {
     modifyVmMutation.mutate(
@@ -511,10 +511,10 @@ function EnvironmentDetailsPage() {
         body: {
           teamSlugOrId,
           environmentId: String(environmentId),
-          snapshotId: isFirecracker
-            ? environment.firecrackerSnapshotId ?? undefined
+          snapshotId: isIncus
+            ? environment.incusSnapshotId ?? undefined
             : environment.morphSnapshotId ?? undefined,
-          provider: isFirecracker ? "firecracker" : undefined,
+          provider: isIncus ? "incus" : undefined,
           isCloudWorkspace: true,
         },
       },
@@ -526,8 +526,8 @@ function EnvironmentDetailsPage() {
   };
 
   const handleStartSnapshotVersion = () => {
-    const snapshotId = isFirecracker
-      ? environment.firecrackerSnapshotId
+    const snapshotId = isIncus
+      ? environment.incusSnapshotId
       : environment.morphSnapshotId;
     if (!snapshotId) {
       toast.error("Environment is missing a snapshot.");
@@ -540,7 +540,7 @@ function EnvironmentDetailsPage() {
           teamSlugOrId,
           environmentId: String(environmentId),
           snapshotId,
-          provider: isFirecracker ? "firecracker" : undefined,
+          provider: isIncus ? "incus" : undefined,
           isCloudWorkspace: true,
         },
       },
@@ -602,9 +602,9 @@ function EnvironmentDetailsPage() {
                       placeholder="Environment name"
                       ariaLabel="Environment name"
                     />
-                    {environment.provider === "firecracker" && (
-                      <span className="inline-flex items-center rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-semibold text-orange-700 dark:bg-orange-900 dark:text-orange-100">
-                        Firecracker
+                    {environment.provider === "incus" && (
+                      <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-900 dark:text-blue-100">
+                        Incus
                       </span>
                     )}
                   </div>
@@ -1016,8 +1016,8 @@ function EnvironmentDetailsPage() {
                               )}
                             </p>
                             <p className="text-xs text-neutral-500 dark:text-neutral-500">
-                              Snapshot ID: {isFirecracker && version.firecrackerSnapshotId
-                                ? version.firecrackerSnapshotId
+                              Snapshot ID: {isIncus && version.incusSnapshotId
+                                ? version.incusSnapshotId
                                 : version.morphSnapshotId}
                             </p>
                           </div>

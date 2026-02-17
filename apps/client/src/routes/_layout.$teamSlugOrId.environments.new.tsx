@@ -30,7 +30,7 @@ const searchSchema = z.object({
   connectionLogin: z.string().optional(),
   repoSearch: z.string().optional(),
   snapshotId: z.string().optional(),
-  provider: z.enum(["firecracker"]).optional(),
+  provider: z.enum(["incus"]).optional(),
   customGitUrl: z.string().optional(),
 });
 
@@ -83,7 +83,7 @@ function EnvironmentsPage() {
   const activeStep = draft?.step ?? stepFromSearch;
   const activeSelectedRepos = draft?.selectedRepos ?? urlSelectedRepos;
   const activeInstanceId = draft?.instanceId ?? urlInstanceId;
-  const activeProvider: SandboxProvider = draft?.provider ?? searchParams.provider ?? "firecracker";
+  const activeProvider: SandboxProvider = draft?.provider ?? searchParams.provider ?? "incus";
   const activeCustomGitUrl = draft?.customGitUrl ?? searchParams.customGitUrl;
 
   // Sandbox start mutation for background provisioning
@@ -153,7 +153,7 @@ function EnvironmentsPage() {
       {
         body: {
           teamSlugOrId,
-          provider: "firecracker",
+          provider: "incus",
           repoUrl: activeCustomGitUrl || undefined,
         },
       },
@@ -162,7 +162,7 @@ function EnvironmentsPage() {
           onProvisionSuccess(data.instanceId, data.vscodeUrl);
         },
         onError: (error) => {
-          console.error("Failed to provision Firecracker instance:", error);
+          console.error("Failed to provision Incus instance:", error);
         },
       },
     );
@@ -216,7 +216,7 @@ function EnvironmentsPage() {
     }) => {
       const existingRepos = draft?.selectedRepos ?? [];
       const reposChanged = !haveSameRepos(existingRepos, payload.selectedRepos);
-      const providerChanged = (payload.provider ?? "firecracker") !== (draft?.provider ?? "firecracker");
+      const providerChanged = (payload.provider ?? "incus") !== (draft?.provider ?? "incus");
       const customGitUrlChanged = (payload.customGitUrl ?? "") !== (draft?.customGitUrl ?? "");
       const shouldResetConfig = !draft || reposChanged || providerChanged;
 

@@ -1,6 +1,6 @@
 export type EnvVar = { name: string; value: string; isSecret: boolean };
 
-export type SandboxProvider = "firecracker";
+export type SandboxProvider = "incus";
 
 export const ensureInitialEnvVars = (initial?: EnvVar[]): EnvVar[] => {
   const base = (initial ?? []).map((item) => ({

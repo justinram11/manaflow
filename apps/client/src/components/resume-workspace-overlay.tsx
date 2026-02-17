@@ -7,17 +7,17 @@ import {
   useResumeMorphWorkspace,
 } from "@/hooks/useMorphWorkspace";
 import {
-  useFirecrackerPauseQuery,
-  useResumeFirecrackerWorkspace,
-} from "@/hooks/useFirecrackerWorkspace";
+  useIncusPauseQuery,
+  useResumeIncusWorkspace,
+} from "@/hooks/useIncusWorkspace";
 import { AlertTriangle } from "lucide-react";
 
 /**
- * Detect if a task run is backed by Firecracker (new or legacy provider value).
+ * Detect if a task run is backed by Incus (new or legacy provider value).
  */
-function isFirecrackerRun(taskRun: Doc<"taskRuns">): boolean {
-  if (taskRun.vscode?.provider === "firecracker") return true;
-  if (taskRun.vscode?.provider === "docker" && taskRun.vscode.containerName?.startsWith("fc-")) return true;
+function isIncusRun(taskRun: Doc<"taskRuns">): boolean {
+  if (taskRun.vscode?.provider === "incus") return true;
+  if (taskRun.vscode?.provider === "docker" && taskRun.vscode.containerName?.startsWith("cmux-")) return true;
   return false;
 }
 
@@ -35,13 +35,13 @@ export function ResumeWorkspaceOverlay({
   onResumed,
 }: ResumeWorkspaceOverlayProps) {
   const taskRunId = taskRun._id;
-  const isFirecracker = useMemo(() => isFirecrackerRun(taskRun), [taskRun]);
+  const isIncus = useMemo(() => isIncusRun(taskRun), [taskRun]);
 
-  // Morph hooks (only enabled when not Firecracker)
+  // Morph hooks (only enabled when not Incus)
   const morphPauseQuery = useMorphInstancePauseQuery({
     taskRunId,
     teamSlugOrId,
-    enabled: !isFirecracker,
+    enabled: !isIncus,
   });
 
   const morphResume = useResumeMorphWorkspace({
@@ -50,39 +50,39 @@ export function ResumeWorkspaceOverlay({
     onSuccess: onResumed,
   });
 
-  // Firecracker hooks (only enabled when Firecracker)
-  const fcPauseQuery = useFirecrackerPauseQuery({
+  // Incus hooks (only enabled when Incus)
+  const incusPauseQuery = useIncusPauseQuery({
     taskRunId,
     teamSlugOrId,
-    enabled: isFirecracker,
+    enabled: isIncus,
   });
 
-  const fcResume = useResumeFirecrackerWorkspace({
+  const incusResume = useResumeIncusWorkspace({
     taskRunId,
     teamSlugOrId,
     onSuccess: onResumed,
   });
 
   // Unified state
-  const pauseStatusQuery = isFirecracker ? fcPauseQuery : morphPauseQuery;
+  const pauseStatusQuery = isIncus ? incusPauseQuery : morphPauseQuery;
   const isPaused = pauseStatusQuery.data?.paused === true;
-  const isStopped = !isFirecracker && (morphPauseQuery.data as { stopped?: boolean } | undefined)?.stopped === true;
-  const isResuming = isFirecracker ? fcResume.isPending : morphResume.isPending;
+  const isStopped = !isIncus && (morphPauseQuery.data as { stopped?: boolean } | undefined)?.stopped === true;
+  const isResuming = isIncus ? incusResume.isPending : morphResume.isPending;
 
   const handleResume = useCallback(async () => {
     if (!taskRun || !isPaused || isStopped) {
       return;
     }
 
-    if (isFirecracker) {
-      await fcResume.mutateAsync();
+    if (isIncus) {
+      await incusResume.mutateAsync();
     } else {
       await morphResume.mutateAsync({
         path: { taskRunId },
         body: { teamSlugOrId },
       });
     }
-  }, [fcResume, morphResume, isPaused, isStopped, isFirecracker, taskRun, taskRunId, teamSlugOrId]);
+  }, [incusResume, morphResume, isPaused, isStopped, isIncus, taskRun, taskRunId, teamSlugOrId]);
 
   if (!isPaused) {
     return null;

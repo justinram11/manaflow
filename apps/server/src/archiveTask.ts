@@ -10,7 +10,7 @@ import { getWwwBaseUrl } from "./utils/server-env";
 
 const execAsync = promisify(exec);
 
-export type VSCodeProvider = "docker" | "morph" | "daytona" | "firecracker" | "other";
+export type VSCodeProvider = "docker" | "morph" | "daytona" | "incus" | "other";
 
 export interface StopResult {
   success: boolean;
@@ -40,9 +40,9 @@ async function stopDockerContainer(containerName: string): Promise<void> {
   }
 }
 
-async function stopFirecrackerVm(vmId: string): Promise<void> {
+async function stopIncusContainer(containerId: string): Promise<void> {
   const baseUrl = getWwwBaseUrl();
-  const url = `${baseUrl}/api/sandboxes/firecracker/${encodeURIComponent(vmId)}/destroy`;
+  const url = `${baseUrl}/api/sandboxes/incus/${encodeURIComponent(containerId)}/destroy`;
   const token = getAuthToken();
   const headers: Record<string, string> = {};
   if (token) {
@@ -50,10 +50,10 @@ async function stopFirecrackerVm(vmId: string): Promise<void> {
       getAuthHeaderJson() || JSON.stringify({ accessToken: token });
   }
   const res = await fetch(url, { method: "POST", headers });
-  // Treat 404 as success (VM already gone or server restarted)
+  // Treat 404 as success (container already gone or server restarted)
   if (!res.ok && res.status !== 404) {
     throw new Error(
-      `Failed destroying Firecracker VM ${vmId}: HTTP ${res.status}`
+      `Failed destroying Incus container ${containerId}: HTTP ${res.status}`
     );
   }
 }
@@ -138,12 +138,12 @@ export function stopContainersForRunsFromTree(
       continue;
     }
 
-    // Detect Firecracker VMs: explicit "firecracker" provider or legacy "docker" with fc- prefix
+    // Detect Incus containers: explicit "incus" provider or legacy "docker" with cmux- prefix
     if (
-      provider === "firecracker" ||
-      (provider === "docker" && name.startsWith("fc-"))
+      provider === "incus" ||
+      (provider === "docker" && name.startsWith("cmux-"))
     ) {
-      targets.push({ provider: "firecracker", containerName: name, runId });
+      targets.push({ provider: "incus", containerName: name, runId });
     } else if (provider === "docker") {
       targets.push({ provider: "docker", containerName: name, runId });
     } else if (provider === "morph") {
@@ -157,10 +157,10 @@ export function stopContainersForRunsFromTree(
         serverLogger.info(
           `Stopping ${t.provider} container for run ${t.runId}: ${t.containerName}`
         );
-        if (t.provider === "firecracker") {
-          await stopFirecrackerVm(t.containerName);
+        if (t.provider === "incus") {
+          await stopIncusContainer(t.containerName);
           serverLogger.info(
-            `Successfully destroyed Firecracker VM: ${t.containerName}`
+            `Successfully destroyed Incus container: ${t.containerName}`
           );
           return {
             success: true,

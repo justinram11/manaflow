@@ -62,10 +62,10 @@ import type {
   SocketMutationErrorInstance,
 } from "./task-detail-header.mutations";
 import {
-  useFirecrackerPause,
-  useFirecrackerPauseQuery,
-  useResumeFirecrackerWorkspace,
-} from "@/hooks/useFirecrackerWorkspace";
+  useIncusPause,
+  useIncusPauseQuery,
+  useResumeIncusWorkspace,
+} from "@/hooks/useIncusWorkspace";
 
 interface TaskDetailHeaderProps {
   task?: Doc<"tasks"> | null;
@@ -283,42 +283,42 @@ export function TaskDetailHeader({
     }));
   }, [repoFullNames, normalizedBaseBranch, normalizedHeadBranch]);
 
-  // Firecracker pause/resume
-  const isFirecracker = useMemo(() => {
+  // Incus pause/resume
+  const isIncus = useMemo(() => {
     const provider = selectedRun?.vscode?.provider;
     const containerName = selectedRun?.vscode?.containerName;
-    if (provider === "firecracker") return true;
-    if (provider === "docker" && containerName?.startsWith("fc-")) return true;
+    if (provider === "incus") return true;
+    if (provider === "docker" && containerName?.startsWith("cmux-")) return true;
     return false;
   }, [selectedRun?.vscode?.provider, selectedRun?.vscode?.containerName]);
 
-  const fcPauseQuery = useFirecrackerPauseQuery({
+  const incusPauseQuery = useIncusPauseQuery({
     taskRunId,
     teamSlugOrId,
-    enabled: isFirecracker,
+    enabled: isIncus,
   });
 
-  const fcPause = useFirecrackerPause({
-    taskRunId,
-    teamSlugOrId,
-  });
-
-  const fcResume = useResumeFirecrackerWorkspace({
+  const incusPause = useIncusPause({
     taskRunId,
     teamSlugOrId,
   });
 
-  const fcIsPaused = fcPauseQuery.data?.paused === true;
-  const fcIsBusy = fcPause.isPending || fcResume.isPending;
+  const incusResume = useResumeIncusWorkspace({
+    taskRunId,
+    teamSlugOrId,
+  });
 
-  const handleFcPauseResume = useCallback(() => {
-    if (fcIsBusy) return;
-    if (fcIsPaused) {
-      fcResume.mutate();
+  const incusIsPaused = incusPauseQuery.data?.paused === true;
+  const incusIsBusy = incusPause.isPending || incusResume.isPending;
+
+  const handleIncusPauseResume = useCallback(() => {
+    if (incusIsBusy) return;
+    if (incusIsPaused) {
+      incusResume.mutate();
     } else {
-      fcPause.mutate();
+      incusPause.mutate();
     }
-  }, [fcIsBusy, fcIsPaused, fcPause, fcResume]);
+  }, [incusIsBusy, incusIsPaused, incusPause, incusResume]);
 
   const dragStyle = isElectron
     ? ({ WebkitAppRegion: "drag" } as CSSProperties)
@@ -420,22 +420,22 @@ export function TaskDetailHeader({
             </button>
           )}
 
-          {isFirecracker && (
+          {isIncus && (
             <button
-              onClick={handleFcPauseResume}
-              disabled={fcIsBusy}
+              onClick={handleIncusPauseResume}
+              disabled={incusIsBusy}
               className={clsx(
                 "p-1 select-none transition-colors",
-                fcIsBusy
+                incusIsBusy
                   ? "text-neutral-300 dark:text-neutral-600 cursor-wait"
-                  : fcIsPaused
+                  : incusIsPaused
                     ? "text-amber-500 hover:text-amber-600 dark:text-amber-400 dark:hover:text-amber-300"
                     : "text-neutral-400 hover:text-neutral-700 dark:hover:text-white"
               )}
-              aria-label={fcIsPaused ? "Resume VM" : "Pause VM"}
-              title={fcIsBusy ? (fcIsPaused ? "Resuming VM…" : "Pausing VM…") : fcIsPaused ? "Resume VM" : "Pause VM"}
+              aria-label={incusIsPaused ? "Resume VM" : "Pause VM"}
+              title={incusIsBusy ? (incusIsPaused ? "Resuming VM…" : "Pausing VM…") : incusIsPaused ? "Resume VM" : "Pause VM"}
             >
-              {fcIsPaused ? (
+              {incusIsPaused ? (
                 <Play className="w-3.5 h-3.5" />
               ) : (
                 <Pause className="w-3.5 h-3.5" />

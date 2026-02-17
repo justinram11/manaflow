@@ -13,14 +13,7 @@ const {
   postApiSandboxesStart,
 } = await getWwwOpenApiModule();
 
-/**
- * VSCodeInstance implementation for Firecracker-backed sandboxes.
- *
- * This delegates to the www API's /sandboxes/start endpoint with
- * provider="firecracker" and an optional snapshotId. It follows
- * the same pattern as CmuxVSCodeInstance.
- */
-export class FirecrackerVSCodeInstance extends VSCodeInstance {
+export class IncusVSCodeInstance extends VSCodeInstance {
   private sandboxId: string | null = null;
   private workerUrl: string | null = null;
   private vscodeBaseUrl: string | null = null;
@@ -49,14 +42,14 @@ export class FirecrackerVSCodeInstance extends VSCodeInstance {
 
   async start(): Promise<VSCodeInstanceInfo> {
     dockerLogger.info(
-      `[FirecrackerVSCodeInstance ${this.instanceId}] Requesting sandbox start via www API (provider=firecracker)`,
+      `[IncusVSCodeInstance ${this.instanceId}] Requesting sandbox start via www API (provider=incus)`,
     );
 
     const startRes = await postApiSandboxesStart({
       client: getWwwClient(),
       body: {
         teamSlugOrId: this.teamSlugOrId,
-        provider: "firecracker",
+        provider: "incus",
         ttlSeconds: 60 * 60,
         metadata: {
           instance: `cmux-${this.taskRunId}`,
@@ -88,23 +81,13 @@ export class FirecrackerVSCodeInstance extends VSCodeInstance {
     const vscodePersisted = data.vscodePersisted ?? false;
 
     const workspaceUrl = this.getWorkspaceUrl(this.vscodeBaseUrl);
-    dockerLogger.info(
-      `[FirecrackerVSCodeInstance] VS Code URL: ${workspaceUrl}`,
-    );
-    dockerLogger.info(
-      `[FirecrackerVSCodeInstance] Worker URL: ${this.workerUrl}`,
-    );
 
-    // Connect to the worker if available
     if (this.workerUrl) {
       try {
         await this.connectToWorker(this.workerUrl);
-        dockerLogger.info(
-          `[FirecrackerVSCodeInstance ${this.instanceId}] Connected to worker`,
-        );
       } catch (error) {
         dockerLogger.error(
-          `[FirecrackerVSCodeInstance ${this.instanceId}] Failed to connect to worker`,
+          `[IncusVSCodeInstance ${this.instanceId}] Failed to connect to worker`,
           error,
         );
       }
@@ -115,7 +98,7 @@ export class FirecrackerVSCodeInstance extends VSCodeInstance {
       workspaceUrl,
       instanceId: this.instanceId,
       taskRunId: this.taskRunId,
-      provider: "docker", // Use "docker" provider in VSCodeInstanceInfo (Firecracker behaves identically from the UI perspective)
+      provider: "docker",
       vscodePersisted,
     };
   }
@@ -129,7 +112,7 @@ export class FirecrackerVSCodeInstance extends VSCodeInstance {
           path: { id: this.sandboxId },
         });
       } catch (e) {
-        dockerLogger.warn(`[FirecrackerVSCodeInstance] stop failed`, e);
+        dockerLogger.warn(`[IncusVSCodeInstance] stop failed`, e);
       }
     }
     await this.baseStop();
@@ -137,7 +120,6 @@ export class FirecrackerVSCodeInstance extends VSCodeInstance {
 
   async getStatus(): Promise<{ running: boolean; info?: VSCodeInstanceInfo }> {
     if (!this.sandboxId) return { running: false };
-    // Firecracker VMs don't have a status endpoint yet; return based on local state
     if (this.vscodeBaseUrl) {
       return {
         running: true,

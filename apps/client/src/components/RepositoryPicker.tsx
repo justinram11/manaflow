@@ -119,7 +119,7 @@ export function RepositoryPicker({
   const [selectedRepos, setSelectedRepos] = useState<string[]>(() =>
     Array.from(new Set(initialSelectedRepos))
   );
-  const [selectedProvider] = useState<SandboxProvider>("firecracker");
+  const [selectedProvider] = useState<SandboxProvider>("incus");
   const [customGitUrl, setCustomGitUrl] = useState(initialCustomGitUrl ?? "");
   const [selectedConnectionLogin, setSelectedConnectionLogin] = useState<
     string | null

@@ -22,11 +22,11 @@ export const list = authQuery({
       .order("desc")
       .collect();
 
-    const isFirecracker = environment.provider === "firecracker";
+    const isIncus = environment.provider === "incus";
     return versions.map((version) => ({
       ...version,
-      isActive: isFirecracker
-        ? version.firecrackerSnapshotId === environment.firecrackerSnapshotId
+      isActive: isIncus
+        ? version.incusSnapshotId === environment.incusSnapshotId
         : version.morphSnapshotId === environment.morphSnapshotId,
     }));
   },
@@ -37,7 +37,7 @@ export const create = authMutation({
     teamSlugOrId: v.string(),
     environmentId: v.id("environments"),
     morphSnapshotId: v.string(),
-    firecrackerSnapshotId: v.optional(v.string()),
+    incusSnapshotId: v.optional(v.string()),
     label: v.optional(v.string()),
     activate: v.optional(v.boolean()),
     maintenanceScript: v.optional(v.string()),
@@ -74,7 +74,7 @@ export const create = authMutation({
         environmentId: args.environmentId,
         teamId,
         morphSnapshotId: args.morphSnapshotId,
-        firecrackerSnapshotId: args.firecrackerSnapshotId,
+        incusSnapshotId: args.incusSnapshotId,
         version: nextVersion,
         createdAt,
         createdByUserId: userId,
@@ -91,8 +91,8 @@ export const create = authMutation({
         devScript,
         updatedAt: Date.now(),
       };
-      if (args.firecrackerSnapshotId !== undefined) {
-        patch.firecrackerSnapshotId = args.firecrackerSnapshotId;
+      if (args.incusSnapshotId !== undefined) {
+        patch.incusSnapshotId = args.incusSnapshotId;
       }
       await ctx.db.patch(args.environmentId, patch);
     }
@@ -137,8 +137,8 @@ export const activate = authMutation({
       devScript,
       updatedAt: Date.now(),
     };
-    if (versionDoc.firecrackerSnapshotId !== undefined) {
-      patch.firecrackerSnapshotId = versionDoc.firecrackerSnapshotId;
+    if (versionDoc.incusSnapshotId !== undefined) {
+      patch.incusSnapshotId = versionDoc.incusSnapshotId;
     }
     await ctx.db.patch(args.environmentId, patch);
 
@@ -173,9 +173,9 @@ export const remove = authMutation({
       throw new Error("Snapshot version not found");
     }
 
-    const isFirecracker = environment.provider === "firecracker";
-    const isActive = isFirecracker
-      ? versionDoc.firecrackerSnapshotId === environment.firecrackerSnapshotId
+    const isIncus = environment.provider === "incus";
+    const isActive = isIncus
+      ? versionDoc.incusSnapshotId === environment.incusSnapshotId
       : versionDoc.morphSnapshotId === environment.morphSnapshotId;
     if (isActive) {
       throw new Error("Cannot delete the active snapshot version.");

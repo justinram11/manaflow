@@ -12,7 +12,7 @@ import { MorphCloudClient } from "morphcloud";
 import { randomBytes } from "node:crypto";
 import { determineHttpServiceUpdates } from "./determine-http-service-updates";
 import { SNAPSHOT_CLEANUP_COMMANDS } from "./sandboxes/cleanup";
-import { firecrackerVmRegistry } from "./sandboxes.route";
+import { incusVmRegistry } from "./sandboxes.route";
 
 /**
  * Helper to detect connection timeout errors from undici
@@ -83,9 +83,8 @@ const CreateEnvironmentBody = z
     maintenanceScript: z.string().optional(),
     devScript: z.string().optional(),
     exposedPorts: z.array(z.number()).optional(),
-    provider: z.enum(["morph", "firecracker"]).optional(),
-    firecrackerSandboxId: z.string().optional(),
-    firecrackerVmSize: z.enum(["standard", "performance"]).optional(),
+    provider: z.enum(["morph", "incus"]).optional(),
+    incusSandboxId: z.string().optional(),
   })
   .openapi("CreateEnvironmentBody");
 
@@ -107,9 +106,8 @@ const GetEnvironmentResponse = z
     maintenanceScript: z.string().optional(),
     devScript: z.string().optional(),
     exposedPorts: z.array(z.number()).optional(),
-    provider: z.enum(["morph", "firecracker"]).optional(),
-    firecrackerSnapshotId: z.string().optional(),
-    firecrackerVmSize: z.enum(["standard", "performance"]).optional(),
+    provider: z.enum(["morph", "incus"]).optional(),
+    incusSnapshotId: z.string().optional(),
     createdAt: z.number(),
     updatedAt: z.number(),
   })
@@ -132,15 +130,13 @@ const UpdateEnvironmentBody = z
     description: z.string().optional(),
     maintenanceScript: z.string().optional(),
     devScript: z.string().optional(),
-    firecrackerVmSize: z.enum(["standard", "performance"]).optional(),
   })
   .refine(
     (value) =>
       value.name !== undefined ||
       value.description !== undefined ||
       value.maintenanceScript !== undefined ||
-      value.devScript !== undefined ||
-      value.firecrackerVmSize !== undefined,
+      value.devScript !== undefined,
     "At least one field must be provided",
   )
   .openapi("UpdateEnvironmentBody");
@@ -172,7 +168,7 @@ const SnapshotVersionResponse = z
     id: z.string(),
     version: z.number(),
     morphSnapshotId: z.string(),
-    firecrackerSnapshotId: z.string().optional(),
+    incusSnapshotId: z.string().optional(),
     createdAt: z.number(),
     createdByUserId: z.string(),
     label: z.string().optional(),
@@ -190,7 +186,7 @@ const CreateSnapshotVersionBody = z
   .object({
     teamSlugOrId: z.string(),
     morphInstanceId: z.string().optional(),
-    firecrackerSandboxId: z.string().optional(),
+    incusSandboxId: z.string().optional(),
     label: z.string().optional(),
     activate: z.boolean().optional(),
     maintenanceScript: z.string().optional(),
@@ -270,22 +266,22 @@ environmentsRouter.openapi(
 
       const resolvedProvider = body.provider ?? "morph";
 
-      // --- Firecracker provider path ---
-      if (resolvedProvider === "firecracker") {
-        if (!body.firecrackerSandboxId) {
-          return c.text("firecrackerSandboxId is required for Firecracker provider", 400);
+      // --- Incus provider path ---
+      if (resolvedProvider === "incus") {
+        if (!body.incusSandboxId) {
+          return c.text("incusSandboxId is required for Incus provider", 400);
         }
 
-        const fcInstance = firecrackerVmRegistry.get(body.firecrackerSandboxId);
-        if (!fcInstance) {
-          return c.text("Firecracker VM not found or not running", 404);
+        const incusInstance = incusVmRegistry.get(body.incusSandboxId);
+        if (!incusInstance) {
+          return c.text("Incus container not found or not running", 404);
         }
 
         // Generate a unique snapshot ID
-        const snapshotId = `fc_snap_${randomBytes(8).toString("hex")}`;
-        await fcInstance.snapshot(snapshotId);
+        const snapshotId = `incus_snap_${randomBytes(8).toString("hex")}`;
+        await incusInstance.snapshot(snapshotId);
 
-        // For Firecracker in local auth mode, store env vars locally with a generated key
+        // For Incus in local auth mode, store env vars locally with a generated key
         const dataVaultKey = `env_${randomBytes(16).toString("hex")}`;
         try {
           const store = await stackServerAppJs.getDataVaultStore("cmux-snapshot-envs");
@@ -303,16 +299,15 @@ environmentsRouter.openapi(
           {
             teamSlugOrId: body.teamSlugOrId,
             name: body.name,
-            morphSnapshotId: "firecracker", // Sentinel value — field is required
+            morphSnapshotId: "incus", // Sentinel value — field is required
             dataVaultKey,
             selectedRepos: body.selectedRepos,
             description: body.description,
             maintenanceScript: body.maintenanceScript,
             devScript: body.devScript,
             exposedPorts: sanitizedPorts.length > 0 ? sanitizedPorts : undefined,
-            provider: "firecracker",
-            firecrackerSnapshotId: snapshotId,
-            firecrackerVmSize: body.firecrackerVmSize,
+            provider: "incus",
+            incusSnapshotId: snapshotId,
           }
         );
 
@@ -435,8 +430,7 @@ environmentsRouter.openapi(
         devScript: env.devScript,
         exposedPorts: env.exposedPorts,
         provider: env.provider,
-        firecrackerSnapshotId: env.firecrackerSnapshotId,
-        firecrackerVmSize: env.firecrackerVmSize,
+        incusSnapshotId: env.incusSnapshotId,
         createdAt: env.createdAt,
         updatedAt: env.updatedAt,
       }));
@@ -509,8 +503,7 @@ environmentsRouter.openapi(
         devScript: environment.devScript,
         exposedPorts: environment.exposedPorts,
         provider: environment.provider,
-        firecrackerSnapshotId: environment.firecrackerSnapshotId,
-        firecrackerVmSize: environment.firecrackerVmSize,
+        incusSnapshotId: environment.incusSnapshotId,
         createdAt: environment.createdAt,
         updatedAt: environment.updatedAt,
       };
@@ -649,7 +642,6 @@ environmentsRouter.openapi(
         description: body.description,
         maintenanceScript: body.maintenanceScript,
         devScript: body.devScript,
-        firecrackerVmSize: body.firecrackerVmSize,
       });
 
       const updated = await convexClient.query(api.environments.get, {
@@ -672,8 +664,7 @@ environmentsRouter.openapi(
         devScript: updated.devScript ?? undefined,
         exposedPorts: updated.exposedPorts ?? undefined,
         provider: updated.provider ?? undefined,
-        firecrackerSnapshotId: updated.firecrackerSnapshotId ?? undefined,
-        firecrackerVmSize: updated.firecrackerVmSize ?? undefined,
+        incusSnapshotId: updated.incusSnapshotId ?? undefined,
         createdAt: updated.createdAt,
         updatedAt: updated.updatedAt,
       });
@@ -901,7 +892,7 @@ environmentsRouter.openapi(
         id: String(version._id),
         version: version.version,
         morphSnapshotId: version.morphSnapshotId,
-        firecrackerSnapshotId: version.firecrackerSnapshotId ?? undefined,
+        incusSnapshotId: version.incusSnapshotId ?? undefined,
         createdAt: version.createdAt,
         createdByUserId: version.createdByUserId,
         label: version.label ?? undefined,
@@ -978,27 +969,27 @@ environmentsRouter.openapi(
         return c.text("Environment not found", 404);
       }
 
-      // --- Firecracker provider path ---
-      if (envDoc.provider === "firecracker") {
-        if (!body.firecrackerSandboxId) {
-          return c.text("firecrackerSandboxId is required for Firecracker environments", 400);
+      // --- Incus provider path ---
+      if (envDoc.provider === "incus") {
+        if (!body.incusSandboxId) {
+          return c.text("incusSandboxId is required for Incus environments", 400);
         }
 
-        const fcInstance = firecrackerVmRegistry.get(body.firecrackerSandboxId);
-        if (!fcInstance) {
-          return c.text("Firecracker VM not found or not running", 404);
+        const incusInstance = incusVmRegistry.get(body.incusSandboxId);
+        if (!incusInstance) {
+          return c.text("Incus container not found or not running", 404);
         }
 
-        const snapshotId = `fc_snap_${randomBytes(8).toString("hex")}`;
-        await fcInstance.snapshot(snapshotId);
+        const snapshotId = `incus_snap_${randomBytes(8).toString("hex")}`;
+        await incusInstance.snapshot(snapshotId);
 
         const creation = await convexClient.mutation(
           api.environmentSnapshots.create,
           {
             teamSlugOrId: body.teamSlugOrId,
             environmentId,
-            morphSnapshotId: "firecracker", // Sentinel
-            firecrackerSnapshotId: snapshotId,
+            morphSnapshotId: "incus", // Sentinel
+            incusSnapshotId: snapshotId,
             label: body.label,
             activate: body.activate,
             maintenanceScript: body.maintenanceScript,

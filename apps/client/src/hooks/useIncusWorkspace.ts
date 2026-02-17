@@ -5,53 +5,53 @@ import type { Id } from "@cmux/convex/dataModel";
 import { toast } from "sonner";
 import { queryClient } from "@/query-client";
 
-interface FirecrackerWorkspaceQueryArgs {
+interface IncusWorkspaceQueryArgs {
   taskRunId: Id<"taskRuns">;
   teamSlugOrId: string;
   enabled?: boolean;
 }
 
-interface UseResumeFirecrackerWorkspaceArgs {
+interface UseResumeIncusWorkspaceArgs {
   taskRunId: Id<"taskRuns">;
   teamSlugOrId: string;
   onSuccess?: () => void;
   onError?: (error: unknown) => void;
 }
 
-export function firecrackerPauseQueryKey(taskRunId: string, teamSlugOrId: string) {
-  return ["firecracker", "task-run", taskRunId, "paused", teamSlugOrId] as const;
+export function incusPauseQueryKey(taskRunId: string, teamSlugOrId: string) {
+  return ["incus", "task-run", taskRunId, "paused", teamSlugOrId] as const;
 }
 
 /**
- * Check whether a task run is backed by Firecracker.
- * Handles both the new "firecracker" provider and legacy "docker" with fc- prefix.
+ * Check whether a task run is backed by Incus.
+ * Handles both the new "incus" provider and legacy "docker" with cmux- prefix.
  */
-function isFirecrackerProvider(provider?: string, containerName?: string): boolean {
-  if (provider === "firecracker") return true;
-  if (provider === "docker" && containerName?.startsWith("fc-")) return true;
+function isIncusProvider(provider?: string, containerName?: string): boolean {
+  if (provider === "incus") return true;
+  if (provider === "docker" && containerName?.startsWith("cmux-")) return true;
   return false;
 }
 
-export function useFirecrackerPauseQuery({
+export function useIncusPauseQuery({
   taskRunId,
   teamSlugOrId,
   enabled,
-}: FirecrackerWorkspaceQueryArgs) {
+}: IncusWorkspaceQueryArgs) {
   const taskRun = useConvexQuery(api.taskRuns.get, {
     teamSlugOrId,
     id: taskRunId,
   });
-  const canQuery = isFirecrackerProvider(
+  const canQuery = isIncusProvider(
     taskRun?.vscode?.provider,
     taskRun?.vscode?.containerName ?? undefined,
   );
 
   return useQuery({
     enabled: canQuery && enabled !== false,
-    queryKey: firecrackerPauseQueryKey(taskRunId, teamSlugOrId),
+    queryKey: incusPauseQueryKey(taskRunId, teamSlugOrId),
     queryFn: async ({ signal }) => {
       const res = await fetch(
-        `/api/sandboxes/firecracker/task-runs/${encodeURIComponent(taskRunId)}/is-paused`,
+        `/api/sandboxes/incus/task-runs/${encodeURIComponent(taskRunId)}/is-paused`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -67,7 +67,7 @@ export function useFirecrackerPauseQuery({
   });
 }
 
-export function useFirecrackerPause({
+export function useIncusPause({
   taskRunId,
   teamSlugOrId,
 }: {
@@ -80,27 +80,27 @@ export function useFirecrackerPause({
   });
 
   return useMutation<{ paused: true }, Error, void, { toastId: string | number }>({
-    mutationKey: ["firecracker", "pause", taskRunId],
+    mutationKey: ["incus", "pause", taskRunId],
     mutationFn: async () => {
       const containerName = taskRun?.vscode?.containerName;
-      if (!containerName) throw new Error("No VM found");
+      if (!containerName) throw new Error("No container found");
 
       const res = await fetch(
-        `/api/sandboxes/firecracker/${encodeURIComponent(containerName)}/pause`,
+        `/api/sandboxes/incus/${encodeURIComponent(containerName)}/pause`,
         { method: "POST" },
       );
       if (!res.ok) {
-        throw new Error(`Failed to pause VM: ${res.status}`);
+        throw new Error(`Failed to pause container: ${res.status}`);
       }
       return (await res.json()) as { paused: true };
     },
     onMutate: () => {
-      const toastId = toast.loading("Pausing VM…");
+      const toastId = toast.loading("Pausing container…");
       return { toastId };
     },
     onSuccess: (_data, _vars, context) => {
-      toast.success("VM paused", { id: context?.toastId });
-      queryClient.setQueryData(firecrackerPauseQueryKey(taskRunId, teamSlugOrId), {
+      toast.success("Container paused", { id: context?.toastId });
+      queryClient.setQueryData(incusPauseQueryKey(taskRunId, teamSlugOrId), {
         paused: true,
       });
     },
@@ -109,23 +109,23 @@ export function useFirecrackerPause({
     },
     onSettled: () => {
       void queryClient.invalidateQueries({
-        queryKey: firecrackerPauseQueryKey(taskRunId, teamSlugOrId),
+        queryKey: incusPauseQueryKey(taskRunId, teamSlugOrId),
       });
     },
   });
 }
 
-export function useResumeFirecrackerWorkspace({
+export function useResumeIncusWorkspace({
   taskRunId,
   teamSlugOrId,
   onSuccess,
   onError,
-}: UseResumeFirecrackerWorkspaceArgs) {
+}: UseResumeIncusWorkspaceArgs) {
   return useMutation<{ resumed: true }, Error, void, { toastId: string | number }>({
-    mutationKey: ["firecracker", "resume", taskRunId],
+    mutationKey: ["incus", "resume", taskRunId],
     mutationFn: async () => {
       const res = await fetch(
-        `/api/sandboxes/firecracker/task-runs/${encodeURIComponent(taskRunId)}/resume`,
+        `/api/sandboxes/incus/task-runs/${encodeURIComponent(taskRunId)}/resume`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -133,17 +133,17 @@ export function useResumeFirecrackerWorkspace({
         },
       );
       if (!res.ok) {
-        throw new Error(`Failed to resume VM: ${res.status}`);
+        throw new Error(`Failed to resume container: ${res.status}`);
       }
       return (await res.json()) as { resumed: true };
     },
     onMutate: () => {
-      const toastId = toast.loading("Resuming VM…");
+      const toastId = toast.loading("Resuming container…");
       return { toastId };
     },
     onSuccess: (_data, _vars, context) => {
-      toast.success("VM resumed", { id: context?.toastId });
-      queryClient.setQueryData(firecrackerPauseQueryKey(taskRunId, teamSlugOrId), {
+      toast.success("Container resumed", { id: context?.toastId });
+      queryClient.setQueryData(incusPauseQueryKey(taskRunId, teamSlugOrId), {
         paused: false,
       });
       onSuccess?.();
@@ -154,7 +154,7 @@ export function useResumeFirecrackerWorkspace({
     },
     onSettled: () => {
       void queryClient.invalidateQueries({
-        queryKey: firecrackerPauseQueryKey(taskRunId, teamSlugOrId),
+        queryKey: incusPauseQueryKey(taskRunId, teamSlugOrId),
       });
     },
   });

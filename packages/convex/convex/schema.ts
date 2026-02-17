@@ -274,7 +274,7 @@ const convexSchema = defineSchema({
           v.literal("docker"),
           v.literal("morph"),
           v.literal("daytona"),
-          v.literal("firecracker"),
+          v.literal("incus"),
           v.literal("other")
         ), // Extensible for future providers
         containerName: v.optional(v.string()), // For Docker provider
@@ -560,8 +560,8 @@ const convexSchema = defineSchema({
     lastPushedAt: v.optional(v.number()),
     // Manual repos (added via custom URL input)
     manual: v.optional(v.boolean()),
-    // Firecracker snapshot ID for sub-second sandbox resume
-    firecrackerSnapshotId: v.optional(v.string()),
+    // Incus snapshot ID for sub-second sandbox resume
+    incusSnapshotId: v.optional(v.string()),
   })
     .index("by_org", ["org"])
     .index("by_gitRemote", ["gitRemote"])
@@ -824,9 +824,8 @@ const convexSchema = defineSchema({
     maintenanceScript: v.optional(v.string()),
     devScript: v.optional(v.string()),
     exposedPorts: v.optional(v.array(v.number())),
-    provider: v.optional(v.union(v.literal("morph"), v.literal("firecracker"))), // absent = "morph"
-    firecrackerSnapshotId: v.optional(v.string()), // Active Firecracker snapshot ID
-    firecrackerVmSize: v.optional(v.union(v.literal("standard"), v.literal("performance"))),
+    provider: v.optional(v.union(v.literal("morph"), v.literal("incus"))), // absent = "morph"
+    incusSnapshotId: v.optional(v.string()), // Active Incus snapshot ID
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -838,7 +837,7 @@ const convexSchema = defineSchema({
     environmentId: v.id("environments"),
     teamId: v.string(),
     morphSnapshotId: v.string(),
-    firecrackerSnapshotId: v.optional(v.string()), // Firecracker snapshot ID (when provider is firecracker)
+    incusSnapshotId: v.optional(v.string()), // Incus snapshot ID (when provider is incus)
     version: v.number(),
     createdAt: v.number(),
     createdByUserId: v.string(),

@@ -36,21 +36,15 @@ import {
 import { VM_CLEANUP_COMMANDS } from "./sandboxes/cleanup";
 import { startDockerSandbox } from "./sandboxes/docker-provider";
 import {
-  startFirecrackerSandbox,
-  listSnapshots as listFirecrackerSnapshots,
-  deleteSnapshot as deleteFirecrackerSnapshot,
-} from "./sandboxes/firecracker-provider";
-import type { FirecrackerSandboxInstance } from "./sandboxes/firecracker-sandbox-instance";
+  startIncusSandbox,
+  listSnapshots as listIncusSnapshots,
+  deleteSnapshot as deleteIncusSnapshot,
+} from "./sandboxes/incus-provider";
+import type { IncusSandboxInstance } from "./sandboxes/incus-sandbox-instance";
 import { injectHostSshKeys } from "./sandboxes/ssh-keys";
 
-// Track running Firecracker VMs for snapshot operations
-export const firecrackerVmRegistry = new Map<string, FirecrackerSandboxInstance>();
-
-// Firecracker VM size presets
-const FC_SIZE_PRESETS = {
-  standard: { vcpuCount: 2, memSizeMib: 4096 },
-  performance: { vcpuCount: 4, memSizeMib: 16384 },
-} as const;
+// Track running Incus containers for snapshot operations
+export const incusVmRegistry = new Map<string, IncusSandboxInstance>();
 
 /**
  * Wait for the VSCode server to be ready by polling the service URL.
@@ -247,7 +241,7 @@ const StartSandboxBody = z
     teamSlugOrId: z.string(),
     environmentId: z.string().optional(),
     snapshotId: z.string().optional(),
-    provider: z.enum(["morph", "docker", "firecracker"]).optional(),
+    provider: z.enum(["morph", "docker", "incus"]).optional(),
     ttlSeconds: z
       .number()
       .optional()
@@ -269,7 +263,7 @@ const StartSandboxResponse = z
     instanceId: z.string(),
     vscodeUrl: z.string(),
     workerUrl: z.string(),
-    provider: z.enum(["morph", "docker", "firecracker"]).default("morph"),
+    provider: z.enum(["morph", "docker", "incus"]).default("morph"),
     vscodePersisted: z.boolean().optional(),
   })
   .openapi("StartSandboxResponse");
@@ -432,20 +426,18 @@ sandboxesRouter.openapi(
       );
 
       // --- Resolve provider ---
-      // If an environment is specified and it uses Firecracker, override the provider
+      // If an environment is specified and it uses Incus, override the provider
       let resolvedProvider = body.provider ?? env.SANDBOX_PROVIDER ?? "morph";
-      let environmentFirecrackerSnapshotId: string | undefined;
-      let environmentFirecrackerVmSize: "standard" | "performance" | undefined;
+      let environmentIncusSnapshotId: string | undefined;
       if (body.environmentId && !body.provider) {
         try {
           const envDoc = await convex.query(api.environments.get, {
             teamSlugOrId: body.teamSlugOrId,
             id: body.environmentId as Id<"environments">,
           });
-          if (envDoc?.provider === "firecracker") {
-            resolvedProvider = "firecracker";
-            environmentFirecrackerSnapshotId = envDoc.firecrackerSnapshotId ?? undefined;
-            environmentFirecrackerVmSize = envDoc.firecrackerVmSize ?? undefined;
+          if (envDoc?.provider === "incus") {
+            resolvedProvider = "incus";
+            environmentIncusSnapshotId = envDoc.incusSnapshotId ?? undefined;
           }
         } catch (lookupErr) {
           console.warn("[sandboxes.start] Failed to look up environment provider:", lookupErr);
@@ -627,29 +619,23 @@ sandboxesRouter.openapi(
         });
       }
 
-      // --- Firecracker provider path ---
-      if (resolvedProvider === "firecracker") {
-        console.log(`[sandboxes.start] Using Firecracker provider`);
+      // --- Incus provider path ---
+      if (resolvedProvider === "incus") {
+        console.log(`[sandboxes.start] Using Incus provider`);
 
-        const fcSizePreset = environmentFirecrackerVmSize
-          ? FC_SIZE_PRESETS[environmentFirecrackerVmSize]
-          : undefined;
-
-        const firecrackerResult = await startFirecrackerSandbox({
-          snapshotId: body.snapshotId ?? environmentFirecrackerSnapshotId,
+        const incusResult = await startIncusSandbox({
+          snapshotId: body.snapshotId ?? environmentIncusSnapshotId,
           ttlSeconds: body.ttlSeconds ?? 3600,
           metadata: body.metadata,
-          vcpuCount: fcSizePreset?.vcpuCount,
-          memSizeMib: fcSizePreset?.memSizeMib,
         });
 
         // Wait for VSCode server to be ready
-        const vscodeReady = await waitForVSCodeReady(firecrackerResult.vscodeUrl, {
+        const vscodeReady = await waitForVSCodeReady(incusResult.vscodeUrl, {
           timeoutMs: 30_000,
         });
         if (!vscodeReady) {
           console.warn(
-            `[sandboxes.start] Firecracker VSCode server did not become ready within timeout for ${firecrackerResult.vmId}, proceeding anyway`,
+            `[sandboxes.start] Incus VSCode server did not become ready within timeout for ${incusResult.containerId}, proceeding anyway`,
           );
         }
 
@@ -661,25 +647,25 @@ sandboxesRouter.openapi(
               teamSlugOrId: body.teamSlugOrId,
               id: body.taskRunId as Id<"taskRuns">,
               vscode: {
-                provider: "firecracker",
-                containerName: firecrackerResult.vmId,
+                provider: "incus",
+                containerName: incusResult.containerId,
                 status: "starting",
-                url: firecrackerResult.vscodeUrl,
-                workspaceUrl: `${firecrackerResult.vscodeUrl}/?folder=/root/workspace`,
+                url: incusResult.vscodeUrl,
+                workspaceUrl: `${incusResult.vscodeUrl}/?folder=/root/workspace`,
                 startedAt: Date.now(),
                 ports: {
-                  vscode: firecrackerResult.hostPorts[39378],
-                  worker: firecrackerResult.hostPorts[39377],
-                  proxy: firecrackerResult.hostPorts[39379],
-                  vnc: firecrackerResult.hostPorts[39380],
-                  pty: firecrackerResult.hostPorts[39383],
+                  vscode: incusResult.hostPorts[39378],
+                  worker: incusResult.hostPorts[39377],
+                  proxy: incusResult.hostPorts[39379],
+                  vnc: incusResult.hostPorts[39380],
+                  pty: incusResult.hostPorts[39383],
                 },
               },
             });
             vscodePersisted = true;
           } catch (error) {
             console.error(
-              "[sandboxes.start] Failed to persist Firecracker VSCode info:",
+              "[sandboxes.start] Failed to persist Incus VSCode info:",
               error,
             );
           }
@@ -698,36 +684,36 @@ sandboxesRouter.openapi(
 
         const { githubAccessToken } = await githubAccessTokenPromise;
 
-        const fcInstance = firecrackerResult.instance;
+        const incusInstance = incusResult.instance;
 
         await Promise.all([
           // Apply env vars
           envVarsToApply.trim().length > 0
             ? (async () => {
                 const encodedEnv = encodeEnvContentForEnvctl(envVarsToApply);
-                const loadRes = await fcInstance.exec(
+                const loadRes = await incusInstance.exec(
                   envctlLoadCommand(encodedEnv),
                 );
                 if (loadRes.exit_code === 0) {
                   console.log(
-                    `[sandboxes.start] Applied environment variables via envctl (firecracker)`,
+                    `[sandboxes.start] Applied environment variables via envctl (incus)`,
                   );
                 } else {
                   console.error(
-                    `[sandboxes.start] Firecracker env var bootstrap failed exit=${loadRes.exit_code}`,
+                    `[sandboxes.start] Incus env var bootstrap failed exit=${loadRes.exit_code}`,
                   );
                 }
               })()
             : Promise.resolve(),
           // Configure GitHub access (skip if no token)
           githubAccessToken
-            ? configureGithubAccess(fcInstance, githubAccessToken)
+            ? configureGithubAccess(incusInstance, githubAccessToken)
             : Promise.resolve(),
           // Configure git identity
           gitIdentityPromise
             .then(([who, gh]) => {
               const { name, email } = selectGitIdentity(who, gh);
-              return configureGitIdentity(fcInstance, { name, email });
+              return configureGitIdentity(incusInstance, { name, email });
             })
             .catch((error) => {
               console.log(
@@ -736,7 +722,7 @@ sandboxesRouter.openapi(
               );
             }),
           // Inject host SSH keys for git clone over SSH
-          injectHostSshKeys(fcInstance).catch((error) => {
+          injectHostSshKeys(incusInstance).catch((error) => {
             console.log(
               `[sandboxes.start] Failed to inject SSH keys; continuing...`,
               error,
@@ -744,29 +730,29 @@ sandboxesRouter.openapi(
           }),
         ]);
 
-        // Hydrate repo if requested — use parseGitUrl for Firecracker to preserve SSH URLs
+        // Hydrate repo if requested — use parseGitUrl for Incus to preserve SSH URLs
         if (body.repoUrl) {
-          const fcParsedRepo = parseGitUrl(body.repoUrl);
-          if (!fcParsedRepo) {
+          const incusParsedRepo = parseGitUrl(body.repoUrl);
+          if (!incusParsedRepo) {
             return c.text("Unsupported repo URL", 400);
           }
           try {
             await hydrateWorkspace({
-              instance: fcInstance,
+              instance: incusInstance,
               repo: {
-                owner: fcParsedRepo.owner,
-                name: fcParsedRepo.repo,
-                repoFull: fcParsedRepo.fullName,
-                cloneUrl: fcParsedRepo.cloneUrl,
-                maskedCloneUrl: fcParsedRepo.cloneUrl,
+                owner: incusParsedRepo.owner,
+                name: incusParsedRepo.repo,
+                repoFull: incusParsedRepo.fullName,
+                cloneUrl: incusParsedRepo.cloneUrl,
+                maskedCloneUrl: incusParsedRepo.cloneUrl,
                 depth: Math.max(1, Math.floor(body.depth ?? 1)),
                 baseBranch: body.branch || "main",
                 newBranch: body.newBranch ?? "",
               },
             });
           } catch (error) {
-            console.error(`[sandboxes.start] Firecracker hydration failed:`, error);
-            await fcInstance.stop().catch(() => {});
+            console.error(`[sandboxes.start] Incus hydration failed:`, error);
+            await incusInstance.stop().catch(() => {});
             return c.text("Failed to hydrate sandbox", 500);
           }
         }
@@ -781,7 +767,7 @@ sandboxesRouter.openapi(
             })
             .catch((error) => {
               console.error(
-                "[sandboxes.start] Failed to update Firecracker VSCode status:",
+                "[sandboxes.start] Failed to update Incus VSCode status:",
                 error,
               );
             });
@@ -791,7 +777,7 @@ sandboxesRouter.openapi(
         if (maintenanceScript || devScript) {
           (async () => {
             await runMaintenanceAndDevScripts({
-              instance: fcInstance,
+              instance: incusInstance,
               maintenanceScript: maintenanceScript || undefined,
               devScript: devScript || undefined,
               identifiers: scriptIdentifiers ?? undefined,
@@ -801,20 +787,20 @@ sandboxesRouter.openapi(
             });
           })().catch((error) => {
             console.error(
-              "[sandboxes.start] Firecracker background script execution failed:",
+              "[sandboxes.start] Incus background script execution failed:",
               error,
             );
           });
         }
 
-        // Register in VM registry for snapshot operations
-        firecrackerVmRegistry.set(firecrackerResult.vmId, fcInstance);
+        // Register in container registry for snapshot operations
+        incusVmRegistry.set(incusResult.containerId, incusInstance);
 
         return c.json({
-          instanceId: firecrackerResult.vmId,
-          vscodeUrl: firecrackerResult.vscodeUrl,
-          workerUrl: firecrackerResult.workerUrl,
-          provider: "firecracker" as const,
+          instanceId: incusResult.containerId,
+          vscodeUrl: incusResult.vscodeUrl,
+          workerUrl: incusResult.workerUrl,
+          provider: "incus" as const,
           vscodePersisted,
         });
       }
@@ -2353,15 +2339,15 @@ sandboxesRouter.openapi(
   },
 );
 
-// ── Firecracker Snapshot Management ──────────────────────────────────
+// ── Incus Snapshot Management ────────────────────────────────────────
 
-// Snapshot a running Firecracker VM
+// Snapshot a running Incus container
 sandboxesRouter.openapi(
   createRoute({
     method: "post" as const,
     path: "/sandboxes/{id}/snapshot",
     tags: ["Sandboxes"],
-    summary: "Create a snapshot of a running Firecracker VM",
+    summary: "Create a snapshot of a running Incus container",
     request: {
       params: z.object({ id: z.string() }),
       body: {
@@ -2388,7 +2374,7 @@ sandboxesRouter.openapi(
         description: "Snapshot created",
       },
       401: { description: "Unauthorized" },
-      404: { description: "VM not found" },
+      404: { description: "Container not found" },
       500: { description: "Failed to create snapshot" },
     },
   }),
@@ -2400,10 +2386,9 @@ sandboxesRouter.openapi(
     const { snapshotId } = c.req.valid("json");
 
     try {
-      // Look up the Firecracker instance from the active VM registry
-      const instance = firecrackerVmRegistry.get(id);
+      const instance = incusVmRegistry.get(id);
       if (!instance) {
-        return c.text("Firecracker VM not found or not running", 404);
+        return c.text("Incus container not found or not running", 404);
       }
 
       await instance.snapshot(snapshotId);
@@ -2415,13 +2400,13 @@ sandboxesRouter.openapi(
   },
 );
 
-// List Firecracker snapshots
+// List Incus snapshots
 sandboxesRouter.openapi(
   createRoute({
     method: "get" as const,
-    path: "/sandboxes/firecracker/snapshots",
+    path: "/sandboxes/incus/snapshots",
     tags: ["Sandboxes"],
-    summary: "List available Firecracker snapshots",
+    summary: "List available Incus snapshots",
     responses: {
       200: {
         content: {
@@ -2440,18 +2425,18 @@ sandboxesRouter.openapi(
     const token = await getAccessTokenFromRequest(c.req.raw);
     if (!token) return c.text("Unauthorized", 401);
 
-    const snapshots = listFirecrackerSnapshots();
+    const snapshots = await listIncusSnapshots();
     return c.json({ snapshots });
   },
 );
 
-// Delete a Firecracker snapshot
+// Delete an Incus snapshot
 sandboxesRouter.openapi(
   createRoute({
     method: "delete" as const,
-    path: "/sandboxes/firecracker/snapshots/{snapshotId}",
+    path: "/sandboxes/incus/snapshots/{snapshotId}",
     tags: ["Sandboxes"],
-    summary: "Delete a Firecracker snapshot",
+    summary: "Delete an Incus snapshot",
     request: {
       params: z.object({ snapshotId: z.string() }),
     },
@@ -2478,7 +2463,7 @@ sandboxesRouter.openapi(
     const { snapshotId } = c.req.valid("param");
 
     try {
-      deleteFirecrackerSnapshot(snapshotId);
+      await deleteIncusSnapshot(snapshotId);
       return c.json({ deleted: true as const });
     } catch (error) {
       if (
@@ -2493,15 +2478,15 @@ sandboxesRouter.openapi(
   },
 );
 
-// ── Firecracker Pause/Resume/Status/Destroy ──────────────────────────
+// ── Incus Pause/Resume/Status/Destroy ────────────────────────────────
 
-// Pause a running Firecracker VM
+// Pause a running Incus container
 sandboxesRouter.openapi(
   createRoute({
     method: "post" as const,
-    path: "/sandboxes/firecracker/{id}/pause",
+    path: "/sandboxes/incus/{id}/pause",
     tags: ["Sandboxes"],
-    summary: "Pause a running Firecracker VM",
+    summary: "Pause a running Incus container",
     request: {
       params: z.object({ id: z.string() }),
     },
@@ -2512,11 +2497,11 @@ sandboxesRouter.openapi(
             schema: z.object({ paused: z.literal(true) }),
           },
         },
-        description: "VM paused",
+        description: "Container paused",
       },
       401: { description: "Unauthorized" },
-      404: { description: "VM not found" },
-      500: { description: "Failed to pause VM" },
+      404: { description: "Container not found" },
+      500: { description: "Failed to pause container" },
     },
   }),
   async (c) => {
@@ -2524,28 +2509,28 @@ sandboxesRouter.openapi(
     if (!token) return c.text("Unauthorized", 401);
 
     const { id } = c.req.valid("param");
-    const instance = firecrackerVmRegistry.get(id);
+    const instance = incusVmRegistry.get(id);
     if (!instance) {
-      return c.text("Firecracker VM not found or not running", 404);
+      return c.text("Incus container not found or not running", 404);
     }
 
     try {
       await instance.pause();
       return c.json({ paused: true as const });
     } catch (error) {
-      console.error("[sandboxes.firecracker] Failed to pause VM:", error);
-      return c.text("Failed to pause VM", 500);
+      console.error("[sandboxes.incus] Failed to pause container:", error);
+      return c.text("Failed to pause container", 500);
     }
   },
 );
 
-// Resume a paused Firecracker VM
+// Resume a paused Incus container
 sandboxesRouter.openapi(
   createRoute({
     method: "post" as const,
-    path: "/sandboxes/firecracker/{id}/resume",
+    path: "/sandboxes/incus/{id}/resume",
     tags: ["Sandboxes"],
-    summary: "Resume a paused Firecracker VM",
+    summary: "Resume a paused Incus container",
     request: {
       params: z.object({ id: z.string() }),
     },
@@ -2556,11 +2541,11 @@ sandboxesRouter.openapi(
             schema: z.object({ resumed: z.literal(true) }),
           },
         },
-        description: "VM resumed",
+        description: "Container resumed",
       },
       401: { description: "Unauthorized" },
-      404: { description: "VM not found" },
-      500: { description: "Failed to resume VM" },
+      404: { description: "Container not found" },
+      500: { description: "Failed to resume container" },
     },
   }),
   async (c) => {
@@ -2568,28 +2553,28 @@ sandboxesRouter.openapi(
     if (!token) return c.text("Unauthorized", 401);
 
     const { id } = c.req.valid("param");
-    const instance = firecrackerVmRegistry.get(id);
+    const instance = incusVmRegistry.get(id);
     if (!instance) {
-      return c.text("Firecracker VM not found or not running", 404);
+      return c.text("Incus container not found or not running", 404);
     }
 
     try {
       await instance.resume();
       return c.json({ resumed: true as const });
     } catch (error) {
-      console.error("[sandboxes.firecracker] Failed to resume VM:", error);
-      return c.text("Failed to resume VM", 500);
+      console.error("[sandboxes.incus] Failed to resume container:", error);
+      return c.text("Failed to resume container", 500);
     }
   },
 );
 
-// Get Firecracker VM status
+// Get Incus container status
 sandboxesRouter.openapi(
   createRoute({
     method: "get" as const,
-    path: "/sandboxes/firecracker/{id}/status",
+    path: "/sandboxes/incus/{id}/status",
     tags: ["Sandboxes"],
-    summary: "Get Firecracker VM status",
+    summary: "Get Incus container status",
     request: {
       params: z.object({ id: z.string() }),
     },
@@ -2603,10 +2588,10 @@ sandboxesRouter.openapi(
             }),
           },
         },
-        description: "VM status",
+        description: "Container status",
       },
       401: { description: "Unauthorized" },
-      404: { description: "VM not found" },
+      404: { description: "Container not found" },
     },
   }),
   async (c) => {
@@ -2614,7 +2599,7 @@ sandboxesRouter.openapi(
     if (!token) return c.text("Unauthorized", 401);
 
     const { id } = c.req.valid("param");
-    const instance = firecrackerVmRegistry.get(id);
+    const instance = incusVmRegistry.get(id);
     if (!instance) {
       return c.json({ running: false, paused: false });
     }
@@ -2623,13 +2608,13 @@ sandboxesRouter.openapi(
   },
 );
 
-// Destroy a Firecracker VM (stop + delete files)
+// Destroy an Incus container
 sandboxesRouter.openapi(
   createRoute({
     method: "post" as const,
-    path: "/sandboxes/firecracker/{id}/destroy",
+    path: "/sandboxes/incus/{id}/destroy",
     tags: ["Sandboxes"],
-    summary: "Destroy a Firecracker VM (stop and delete all files)",
+    summary: "Destroy an Incus container",
     request: {
       params: z.object({ id: z.string() }),
     },
@@ -2640,11 +2625,11 @@ sandboxesRouter.openapi(
             schema: z.object({ destroyed: z.literal(true) }),
           },
         },
-        description: "VM destroyed",
+        description: "Container destroyed",
       },
       401: { description: "Unauthorized" },
-      404: { description: "VM not found" },
-      500: { description: "Failed to destroy VM" },
+      404: { description: "Container not found" },
+      500: { description: "Failed to destroy container" },
     },
   }),
   async (c) => {
@@ -2652,31 +2637,31 @@ sandboxesRouter.openapi(
     if (!token) return c.text("Unauthorized", 401);
 
     const { id } = c.req.valid("param");
-    const instance = firecrackerVmRegistry.get(id);
+    const instance = incusVmRegistry.get(id);
     if (!instance) {
-      return c.text("Firecracker VM not found", 404);
+      return c.text("Incus container not found", 404);
     }
 
     try {
       await instance.destroy();
-      firecrackerVmRegistry.delete(id);
+      incusVmRegistry.delete(id);
       return c.json({ destroyed: true as const });
     } catch (error) {
-      console.error("[sandboxes.firecracker] Failed to destroy VM:", error);
-      return c.text("Failed to destroy VM", 500);
+      console.error("[sandboxes.incus] Failed to destroy container:", error);
+      return c.text("Failed to destroy container", 500);
     }
   },
 );
 
-// ── Firecracker Task-Run-Level Pause/Resume ──────────────────────────
+// ── Incus Task-Run-Level Pause/Resume ────────────────────────────────
 
-// Check if a task run's Firecracker VM is paused
+// Check if a task run's Incus container is paused
 sandboxesRouter.openapi(
   createRoute({
     method: "post" as const,
-    path: "/sandboxes/firecracker/task-runs/{taskRunId}/is-paused",
+    path: "/sandboxes/incus/task-runs/{taskRunId}/is-paused",
     tags: ["Sandboxes"],
-    summary: "Check if a task run's Firecracker VM is paused",
+    summary: "Check if a task run's Incus container is paused",
     request: {
       params: z.object({ taskRunId: z.string() }),
       body: {
@@ -2716,39 +2701,39 @@ sandboxesRouter.openapi(
       });
 
       if (!taskRun?.vscode?.containerName) {
-        return c.text("Task run or VM not found", 404);
+        return c.text("Task run or container not found", 404);
       }
 
-      // Check if this is a Firecracker VM (provider is "firecracker" or legacy "docker" with fc- prefix)
-      const isFirecracker =
-        taskRun.vscode.provider === "firecracker" ||
-        (taskRun.vscode.provider === "docker" && taskRun.vscode.containerName.startsWith("fc-"));
+      // Check if this is an Incus container (provider is "incus" or legacy "docker" with cmux- prefix)
+      const isIncus =
+        taskRun.vscode.provider === "incus" ||
+        (taskRun.vscode.provider === "docker" && taskRun.vscode.containerName.startsWith("cmux-"));
 
-      if (!isFirecracker) {
+      if (!isIncus) {
         return c.json({ paused: false });
       }
 
-      const instance = firecrackerVmRegistry.get(taskRun.vscode.containerName);
+      const instance = incusVmRegistry.get(taskRun.vscode.containerName);
       if (!instance) {
-        // VM not in registry — could be server restarted; treat as not paused
+        // Container not in registry — could be server restarted; treat as not paused
         return c.json({ paused: false });
       }
 
       return c.json({ paused: instance.isPaused });
     } catch (error) {
-      console.error("[sandboxes.firecracker] Failed to check pause status:", error);
+      console.error("[sandboxes.incus] Failed to check pause status:", error);
       return c.json({ paused: false });
     }
   },
 );
 
-// Resume a task run's Firecracker VM
+// Resume a task run's Incus container
 sandboxesRouter.openapi(
   createRoute({
     method: "post" as const,
-    path: "/sandboxes/firecracker/task-runs/{taskRunId}/resume",
+    path: "/sandboxes/incus/task-runs/{taskRunId}/resume",
     tags: ["Sandboxes"],
-    summary: "Resume a task run's Firecracker VM",
+    summary: "Resume a task run's Incus container",
     request: {
       params: z.object({ taskRunId: z.string() }),
       body: {
@@ -2767,11 +2752,11 @@ sandboxesRouter.openapi(
             schema: z.object({ resumed: z.literal(true) }),
           },
         },
-        description: "VM resumed",
+        description: "Container resumed",
       },
       401: { description: "Unauthorized" },
-      404: { description: "Task run or VM not found" },
-      500: { description: "Failed to resume VM" },
+      404: { description: "Task run or container not found" },
+      500: { description: "Failed to resume container" },
     },
   }),
   async (c) => {
@@ -2789,27 +2774,27 @@ sandboxesRouter.openapi(
       });
 
       if (!taskRun?.vscode?.containerName) {
-        return c.text("Task run or VM not found", 404);
+        return c.text("Task run or container not found", 404);
       }
 
-      const isFirecracker =
-        taskRun.vscode.provider === "firecracker" ||
-        (taskRun.vscode.provider === "docker" && taskRun.vscode.containerName.startsWith("fc-"));
+      const isIncus =
+        taskRun.vscode.provider === "incus" ||
+        (taskRun.vscode.provider === "docker" && taskRun.vscode.containerName.startsWith("cmux-"));
 
-      if (!isFirecracker) {
-        return c.text("Not a Firecracker VM", 404);
+      if (!isIncus) {
+        return c.text("Not an Incus container", 404);
       }
 
-      const instance = firecrackerVmRegistry.get(taskRun.vscode.containerName);
+      const instance = incusVmRegistry.get(taskRun.vscode.containerName);
       if (!instance) {
-        return c.text("Firecracker VM not found in registry", 404);
+        return c.text("Incus container not found in registry", 404);
       }
 
       await instance.resume();
       return c.json({ resumed: true as const });
     } catch (error) {
-      console.error("[sandboxes.firecracker] Failed to resume VM:", error);
-      return c.text("Failed to resume VM", 500);
+      console.error("[sandboxes.incus] Failed to resume container:", error);
+      return c.text("Failed to resume container", 500);
     }
   },
 );

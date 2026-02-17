@@ -43,7 +43,6 @@ import {
   updateEnvironmentDraftLayoutPhase,
 } from "@/state/environment-draft-store";
 import { toast } from "sonner";
-import { FirecrackerVmSizeSelect } from "@/components/FirecrackerVmSizeSelect";
 import { EnvironmentInitialSetup } from "./EnvironmentInitialSetup";
 import { EnvironmentWorkspaceConfig } from "./EnvironmentWorkspaceConfig";
 
@@ -51,7 +50,7 @@ interface EnvironmentSetupFlowProps {
   teamSlugOrId: string;
   selectedRepos: string[];
   instanceId?: string;
-  provider?: "firecracker";
+  provider?: "incus";
   /** Direct VSCode URL from sandbox provider (used for non-Morph providers) */
   sandboxVscodeUrl?: string;
   initialEnvName?: string;
@@ -69,7 +68,7 @@ export function EnvironmentSetupFlow({
   teamSlugOrId,
   selectedRepos,
   instanceId,
-  provider = "firecracker",
+  provider = "incus",
   sandboxVscodeUrl,
   initialEnvName = "",
   initialMaintenanceScript = "",
@@ -106,8 +105,6 @@ export function EnvironmentSetupFlow({
   const [maintenanceScript, setMaintenanceScript] = useState(initialMaintenanceScript);
   const [devScript, setDevScript] = useState(initialDevScript);
   const [exposedPorts] = useState(initialExposedPorts);
-  const [firecrackerVmSize, setFirecrackerVmSize] = useState<"standard" | "performance">("standard");
-
   // Error state
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -393,8 +390,7 @@ export function EnvironmentSetupFlow({
           exposedPorts: ports.length > 0 ? ports : undefined,
           description: undefined,
           provider,
-          firecrackerSandboxId: instanceId,
-          firecrackerVmSize: provider === "firecracker" ? firecrackerVmSize : undefined,
+          incusSandboxId: instanceId,
         },
       },
       {
@@ -432,7 +428,6 @@ export function EnvironmentSetupFlow({
     envName,
     envVars,
     exposedPorts,
-    firecrackerVmSize,
     instanceId,
     maintenanceScript,
     navigate,
@@ -459,14 +454,7 @@ export function EnvironmentSetupFlow({
           onContinue={handleContinueToWorkspaceConfig}
           onBack={onBack}
           backLabel="Back to repository selection"
-          extraContent={
-            provider === "firecracker" ? (
-              <FirecrackerVmSizeSelect
-                value={firecrackerVmSize}
-                onChange={setFirecrackerVmSize}
-              />
-            ) : undefined
-          }
+          extraContent={undefined}
         />
       </div>
     );

@@ -456,9 +456,8 @@ export type CreateEnvironmentBody = {
     maintenanceScript?: string;
     devScript?: string;
     exposedPorts?: Array<number>;
-    provider?: 'morph' | 'firecracker';
-    firecrackerSandboxId?: string;
-    firecrackerVmSize?: 'standard' | 'performance';
+    provider?: 'morph' | 'incus';
+    incusSandboxId?: string;
 };
 
 export type GetEnvironmentResponse = {
@@ -471,9 +470,8 @@ export type GetEnvironmentResponse = {
     maintenanceScript?: string;
     devScript?: string;
     exposedPorts?: Array<number>;
-    provider?: 'morph' | 'firecracker';
-    firecrackerSnapshotId?: string;
-    firecrackerVmSize?: 'standard' | 'performance';
+    provider?: 'morph' | 'incus';
+    incusSnapshotId?: string;
     createdAt: number;
     updatedAt: number;
 };
@@ -490,7 +488,6 @@ export type UpdateEnvironmentBody = {
     description?: string;
     maintenanceScript?: string;
     devScript?: string;
-    firecrackerVmSize?: 'standard' | 'performance';
 };
 
 export type ExposedService = {
@@ -513,7 +510,7 @@ export type SnapshotVersionResponse = {
     id: string;
     version: number;
     morphSnapshotId: string;
-    firecrackerSnapshotId?: string;
+    incusSnapshotId?: string;
     createdAt: number;
     createdByUserId: string;
     label?: string;
@@ -533,7 +530,7 @@ export type CreateSnapshotVersionResponse = {
 export type CreateSnapshotVersionBody = {
     teamSlugOrId: string;
     morphInstanceId?: string;
-    firecrackerSandboxId?: string;
+    incusSandboxId?: string;
     label?: string;
     activate?: boolean;
     maintenanceScript?: string;
@@ -553,7 +550,7 @@ export type StartSandboxResponse = {
     instanceId: string;
     vscodeUrl: string;
     workerUrl: string;
-    provider?: 'morph' | 'docker' | 'firecracker';
+    provider?: 'morph' | 'docker' | 'incus';
     vscodePersisted?: boolean;
 };
 
@@ -561,7 +558,7 @@ export type StartSandboxBody = {
     teamSlugOrId: string;
     environmentId?: string;
     snapshotId?: string;
-    provider?: 'morph' | 'docker' | 'firecracker';
+    provider?: 'morph' | 'docker' | 'incus';
     ttlSeconds?: number;
     metadata?: {
         [key: string]: string;
@@ -2791,7 +2788,7 @@ export type PostApiSandboxesByIdSnapshotErrors = {
      */
     401: unknown;
     /**
-     * VM not found
+     * Container not found
      */
     404: unknown;
     /**
@@ -2812,21 +2809,21 @@ export type PostApiSandboxesByIdSnapshotResponses = {
 
 export type PostApiSandboxesByIdSnapshotResponse = PostApiSandboxesByIdSnapshotResponses[keyof PostApiSandboxesByIdSnapshotResponses];
 
-export type GetApiSandboxesFirecrackerSnapshotsData = {
+export type GetApiSandboxesIncusSnapshotsData = {
     body?: never;
     path?: never;
     query?: never;
-    url: '/api/sandboxes/firecracker/snapshots';
+    url: '/api/sandboxes/incus/snapshots';
 };
 
-export type GetApiSandboxesFirecrackerSnapshotsErrors = {
+export type GetApiSandboxesIncusSnapshotsErrors = {
     /**
      * Unauthorized
      */
     401: unknown;
 };
 
-export type GetApiSandboxesFirecrackerSnapshotsResponses = {
+export type GetApiSandboxesIncusSnapshotsResponses = {
     /**
      * List of snapshot IDs
      */
@@ -2835,18 +2832,18 @@ export type GetApiSandboxesFirecrackerSnapshotsResponses = {
     };
 };
 
-export type GetApiSandboxesFirecrackerSnapshotsResponse = GetApiSandboxesFirecrackerSnapshotsResponses[keyof GetApiSandboxesFirecrackerSnapshotsResponses];
+export type GetApiSandboxesIncusSnapshotsResponse = GetApiSandboxesIncusSnapshotsResponses[keyof GetApiSandboxesIncusSnapshotsResponses];
 
-export type DeleteApiSandboxesFirecrackerSnapshotsBySnapshotIdData = {
+export type DeleteApiSandboxesIncusSnapshotsBySnapshotIdData = {
     body?: never;
     path: {
         snapshotId: string;
     };
     query?: never;
-    url: '/api/sandboxes/firecracker/snapshots/{snapshotId}';
+    url: '/api/sandboxes/incus/snapshots/{snapshotId}';
 };
 
-export type DeleteApiSandboxesFirecrackerSnapshotsBySnapshotIdErrors = {
+export type DeleteApiSandboxesIncusSnapshotsBySnapshotIdErrors = {
     /**
      * Unauthorized
      */
@@ -2861,7 +2858,7 @@ export type DeleteApiSandboxesFirecrackerSnapshotsBySnapshotIdErrors = {
     500: unknown;
 };
 
-export type DeleteApiSandboxesFirecrackerSnapshotsBySnapshotIdResponses = {
+export type DeleteApiSandboxesIncusSnapshotsBySnapshotIdResponses = {
     /**
      * Snapshot deleted
      */
@@ -2870,101 +2867,101 @@ export type DeleteApiSandboxesFirecrackerSnapshotsBySnapshotIdResponses = {
     };
 };
 
-export type DeleteApiSandboxesFirecrackerSnapshotsBySnapshotIdResponse = DeleteApiSandboxesFirecrackerSnapshotsBySnapshotIdResponses[keyof DeleteApiSandboxesFirecrackerSnapshotsBySnapshotIdResponses];
+export type DeleteApiSandboxesIncusSnapshotsBySnapshotIdResponse = DeleteApiSandboxesIncusSnapshotsBySnapshotIdResponses[keyof DeleteApiSandboxesIncusSnapshotsBySnapshotIdResponses];
 
-export type PostApiSandboxesFirecrackerByIdPauseData = {
+export type PostApiSandboxesIncusByIdPauseData = {
     body?: never;
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/sandboxes/firecracker/{id}/pause';
+    url: '/api/sandboxes/incus/{id}/pause';
 };
 
-export type PostApiSandboxesFirecrackerByIdPauseErrors = {
+export type PostApiSandboxesIncusByIdPauseErrors = {
     /**
      * Unauthorized
      */
     401: unknown;
     /**
-     * VM not found
+     * Container not found
      */
     404: unknown;
     /**
-     * Failed to pause VM
+     * Failed to pause container
      */
     500: unknown;
 };
 
-export type PostApiSandboxesFirecrackerByIdPauseResponses = {
+export type PostApiSandboxesIncusByIdPauseResponses = {
     /**
-     * VM paused
+     * Container paused
      */
     200: {
         paused: true;
     };
 };
 
-export type PostApiSandboxesFirecrackerByIdPauseResponse = PostApiSandboxesFirecrackerByIdPauseResponses[keyof PostApiSandboxesFirecrackerByIdPauseResponses];
+export type PostApiSandboxesIncusByIdPauseResponse = PostApiSandboxesIncusByIdPauseResponses[keyof PostApiSandboxesIncusByIdPauseResponses];
 
-export type PostApiSandboxesFirecrackerByIdResumeData = {
+export type PostApiSandboxesIncusByIdResumeData = {
     body?: never;
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/sandboxes/firecracker/{id}/resume';
+    url: '/api/sandboxes/incus/{id}/resume';
 };
 
-export type PostApiSandboxesFirecrackerByIdResumeErrors = {
+export type PostApiSandboxesIncusByIdResumeErrors = {
     /**
      * Unauthorized
      */
     401: unknown;
     /**
-     * VM not found
+     * Container not found
      */
     404: unknown;
     /**
-     * Failed to resume VM
+     * Failed to resume container
      */
     500: unknown;
 };
 
-export type PostApiSandboxesFirecrackerByIdResumeResponses = {
+export type PostApiSandboxesIncusByIdResumeResponses = {
     /**
-     * VM resumed
+     * Container resumed
      */
     200: {
         resumed: true;
     };
 };
 
-export type PostApiSandboxesFirecrackerByIdResumeResponse = PostApiSandboxesFirecrackerByIdResumeResponses[keyof PostApiSandboxesFirecrackerByIdResumeResponses];
+export type PostApiSandboxesIncusByIdResumeResponse = PostApiSandboxesIncusByIdResumeResponses[keyof PostApiSandboxesIncusByIdResumeResponses];
 
-export type GetApiSandboxesFirecrackerByIdStatusData = {
+export type GetApiSandboxesIncusByIdStatusData = {
     body?: never;
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/sandboxes/firecracker/{id}/status';
+    url: '/api/sandboxes/incus/{id}/status';
 };
 
-export type GetApiSandboxesFirecrackerByIdStatusErrors = {
+export type GetApiSandboxesIncusByIdStatusErrors = {
     /**
      * Unauthorized
      */
     401: unknown;
     /**
-     * VM not found
+     * Container not found
      */
     404: unknown;
 };
 
-export type GetApiSandboxesFirecrackerByIdStatusResponses = {
+export type GetApiSandboxesIncusByIdStatusResponses = {
     /**
-     * VM status
+     * Container status
      */
     200: {
         running: boolean;
@@ -2972,44 +2969,44 @@ export type GetApiSandboxesFirecrackerByIdStatusResponses = {
     };
 };
 
-export type GetApiSandboxesFirecrackerByIdStatusResponse = GetApiSandboxesFirecrackerByIdStatusResponses[keyof GetApiSandboxesFirecrackerByIdStatusResponses];
+export type GetApiSandboxesIncusByIdStatusResponse = GetApiSandboxesIncusByIdStatusResponses[keyof GetApiSandboxesIncusByIdStatusResponses];
 
-export type PostApiSandboxesFirecrackerByIdDestroyData = {
+export type PostApiSandboxesIncusByIdDestroyData = {
     body?: never;
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/sandboxes/firecracker/{id}/destroy';
+    url: '/api/sandboxes/incus/{id}/destroy';
 };
 
-export type PostApiSandboxesFirecrackerByIdDestroyErrors = {
+export type PostApiSandboxesIncusByIdDestroyErrors = {
     /**
      * Unauthorized
      */
     401: unknown;
     /**
-     * VM not found
+     * Container not found
      */
     404: unknown;
     /**
-     * Failed to destroy VM
+     * Failed to destroy container
      */
     500: unknown;
 };
 
-export type PostApiSandboxesFirecrackerByIdDestroyResponses = {
+export type PostApiSandboxesIncusByIdDestroyResponses = {
     /**
-     * VM destroyed
+     * Container destroyed
      */
     200: {
         destroyed: true;
     };
 };
 
-export type PostApiSandboxesFirecrackerByIdDestroyResponse = PostApiSandboxesFirecrackerByIdDestroyResponses[keyof PostApiSandboxesFirecrackerByIdDestroyResponses];
+export type PostApiSandboxesIncusByIdDestroyResponse = PostApiSandboxesIncusByIdDestroyResponses[keyof PostApiSandboxesIncusByIdDestroyResponses];
 
-export type PostApiSandboxesFirecrackerTaskRunsByTaskRunIdIsPausedData = {
+export type PostApiSandboxesIncusTaskRunsByTaskRunIdIsPausedData = {
     body: {
         teamSlugOrId: string;
     };
@@ -3017,10 +3014,10 @@ export type PostApiSandboxesFirecrackerTaskRunsByTaskRunIdIsPausedData = {
         taskRunId: string;
     };
     query?: never;
-    url: '/api/sandboxes/firecracker/task-runs/{taskRunId}/is-paused';
+    url: '/api/sandboxes/incus/task-runs/{taskRunId}/is-paused';
 };
 
-export type PostApiSandboxesFirecrackerTaskRunsByTaskRunIdIsPausedErrors = {
+export type PostApiSandboxesIncusTaskRunsByTaskRunIdIsPausedErrors = {
     /**
      * Unauthorized
      */
@@ -3031,7 +3028,7 @@ export type PostApiSandboxesFirecrackerTaskRunsByTaskRunIdIsPausedErrors = {
     404: unknown;
 };
 
-export type PostApiSandboxesFirecrackerTaskRunsByTaskRunIdIsPausedResponses = {
+export type PostApiSandboxesIncusTaskRunsByTaskRunIdIsPausedResponses = {
     /**
      * Pause status
      */
@@ -3040,9 +3037,9 @@ export type PostApiSandboxesFirecrackerTaskRunsByTaskRunIdIsPausedResponses = {
     };
 };
 
-export type PostApiSandboxesFirecrackerTaskRunsByTaskRunIdIsPausedResponse = PostApiSandboxesFirecrackerTaskRunsByTaskRunIdIsPausedResponses[keyof PostApiSandboxesFirecrackerTaskRunsByTaskRunIdIsPausedResponses];
+export type PostApiSandboxesIncusTaskRunsByTaskRunIdIsPausedResponse = PostApiSandboxesIncusTaskRunsByTaskRunIdIsPausedResponses[keyof PostApiSandboxesIncusTaskRunsByTaskRunIdIsPausedResponses];
 
-export type PostApiSandboxesFirecrackerTaskRunsByTaskRunIdResumeData = {
+export type PostApiSandboxesIncusTaskRunsByTaskRunIdResumeData = {
     body: {
         teamSlugOrId: string;
     };
@@ -3050,34 +3047,34 @@ export type PostApiSandboxesFirecrackerTaskRunsByTaskRunIdResumeData = {
         taskRunId: string;
     };
     query?: never;
-    url: '/api/sandboxes/firecracker/task-runs/{taskRunId}/resume';
+    url: '/api/sandboxes/incus/task-runs/{taskRunId}/resume';
 };
 
-export type PostApiSandboxesFirecrackerTaskRunsByTaskRunIdResumeErrors = {
+export type PostApiSandboxesIncusTaskRunsByTaskRunIdResumeErrors = {
     /**
      * Unauthorized
      */
     401: unknown;
     /**
-     * Task run or VM not found
+     * Task run or container not found
      */
     404: unknown;
     /**
-     * Failed to resume VM
+     * Failed to resume container
      */
     500: unknown;
 };
 
-export type PostApiSandboxesFirecrackerTaskRunsByTaskRunIdResumeResponses = {
+export type PostApiSandboxesIncusTaskRunsByTaskRunIdResumeResponses = {
     /**
-     * VM resumed
+     * Container resumed
      */
     200: {
         resumed: true;
     };
 };
 
-export type PostApiSandboxesFirecrackerTaskRunsByTaskRunIdResumeResponse = PostApiSandboxesFirecrackerTaskRunsByTaskRunIdResumeResponses[keyof PostApiSandboxesFirecrackerTaskRunsByTaskRunIdResumeResponses];
+export type PostApiSandboxesIncusTaskRunsByTaskRunIdResumeResponse = PostApiSandboxesIncusTaskRunsByTaskRunIdResumeResponses[keyof PostApiSandboxesIncusTaskRunsByTaskRunIdResumeResponses];
 
 export type GetApiTeamsData = {
     body?: never;
