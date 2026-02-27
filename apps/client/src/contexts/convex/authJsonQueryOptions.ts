@@ -13,14 +13,16 @@ export interface StackUserLike {
 export const defaultAuthJsonRefreshInterval = 9 * 60 * 1000;
 const missingAuthJsonRefreshInterval = 2 * 1000;
 
-const LOCAL_AUTH_JSON: AuthJson = { accessToken: "local-auth-token" };
+// For local JWT auth: refresh every 50 minutes to beat the 1hr expiry
+const localAuthRefreshInterval = 50 * 60 * 1000;
 
 export function authJsonQueryOptions() {
   return queryOptions<AuthJson>({
     queryKey: ["authJson"],
     queryFn: async () => {
       if (env.NEXT_PUBLIC_AUTH_MODE === "local") {
-        return LOCAL_AUTH_JSON;
+        const jwt = localStorage.getItem("cmux-local-jwt");
+        return jwt ? { accessToken: jwt } : null;
       }
       const user = await cachedGetUser(stackClientApp);
       if (!user) return null;
@@ -28,12 +30,15 @@ export function authJsonQueryOptions() {
       return authJson ?? null;
     },
     refetchInterval: (query) => {
-      if (env.NEXT_PUBLIC_AUTH_MODE === "local") return false;
+      if (env.NEXT_PUBLIC_AUTH_MODE === "local") {
+        const jwt = query.state.data?.accessToken;
+        return jwt ? localAuthRefreshInterval : missingAuthJsonRefreshInterval;
+      }
       const accessToken = query.state.data?.accessToken;
       return accessToken
         ? defaultAuthJsonRefreshInterval
         : missingAuthJsonRefreshInterval;
     },
-    refetchIntervalInBackground: env.NEXT_PUBLIC_AUTH_MODE !== "local",
+    refetchIntervalInBackground: true,
   });
 }

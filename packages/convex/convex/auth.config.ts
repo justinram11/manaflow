@@ -25,9 +25,23 @@ function makeStackAuthProviders(projectId: string) {
   ];
 }
 
+// Port where www dev server runs locally
+const wwwPort = process.env.NEXT_PUBLIC_WWW_PORT || "9779";
+
 function buildProviders() {
-  // In local auth mode, no JWT providers needed
-  if (authMode === "local" || !stackProjectId) {
+  if (authMode === "local") {
+    return [
+      {
+        type: "customJwt" as const,
+        applicationID: "cmux-local-auth",
+        issuer: "cmux-local-auth",
+        jwks: `http://localhost:${wwwPort}/api/local-auth/.well-known/jwks.json`,
+        algorithm: "ES256" as const,
+      },
+    ];
+  }
+
+  if (!stackProjectId) {
     return [];
   }
 

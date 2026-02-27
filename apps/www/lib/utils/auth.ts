@@ -1,14 +1,13 @@
 import { env } from "@/lib/utils/www-env";
 import { stackServerAppJs } from "@/lib/utils/stack";
-
-const LOCAL_USER_ID = "local-admin-00000000-0000-0000-0000-000000000001";
-const LOCAL_TEAM_ID = "local-team-00000000-0000-0000-0000-000000000001";
+import { LOCAL_USERS, LOCAL_AUTH_ISSUER } from "@/lib/utils/local-jwt";
+import { decodeJwt } from "jose";
 
 export async function getAccessTokenFromRequest(
   req: Request
 ): Promise<string | null> {
   if (env.AUTH_MODE === "local") {
-    return "local-auth-token";
+    return getLocalAccessToken(req);
   }
 
   // First, try to get user from Stack Auth's token store (cookies)
@@ -54,13 +53,7 @@ export async function getAccessTokenFromRequest(
  */
 export async function getUserFromRequest(req: Request) {
   if (env.AUTH_MODE === "local") {
-    return {
-      id: LOCAL_USER_ID,
-      getAuthJson: async () => ({ accessToken: "local-auth-token" }),
-      getAuthHeaders: async () => ({}) as Record<string, string>,
-      listTeams: async () => [{ id: LOCAL_TEAM_ID, displayName: "Local" }],
-      getConnectedAccount: async () => null,
-    };
+    return getLocalUser(req);
   }
 
   // First, try cookie-based auth (standard web flow)
@@ -92,4 +85,56 @@ export async function getUserFromRequest(req: Request) {
   }
 
   return null;
+}
+
+/**
+ * Extract JWT from Authorization header, decode it, and look up the local user.
+ */
+function getLocalAccessToken(req: Request): string | null {
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    return null;
+  }
+  const token = authHeader.slice(7);
+  try {
+    const claims = decodeJwt(token);
+    if (claims.iss !== LOCAL_AUTH_ISSUER || !claims.sub) {
+      return null;
+    }
+    const user = LOCAL_USERS.find((u) => u.id === claims.sub);
+    if (!user) return null;
+    return token;
+  } catch {
+    return null;
+  }
+}
+
+function getLocalUser(req: Request) {
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    return null;
+  }
+  const token = authHeader.slice(7);
+  try {
+    const claims = decodeJwt(token);
+    if (claims.iss !== LOCAL_AUTH_ISSUER || !claims.sub) {
+      return null;
+    }
+    const user = LOCAL_USERS.find((u) => u.id === claims.sub);
+    if (!user) return null;
+
+    return {
+      id: user.id,
+      getAuthJson: async () => ({ accessToken: token }),
+      getAuthHeaders: async () => ({
+        Authorization: `Bearer ${token}`,
+      }) as Record<string, string>,
+      listTeams: async () => [
+        { id: user.teamId, displayName: user.displayName },
+      ],
+      getConnectedAccount: async () => null,
+    };
+  } catch {
+    return null;
+  }
 }

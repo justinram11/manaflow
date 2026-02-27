@@ -41,6 +41,11 @@ export async function AuthenticationRequired({
   const identity = await ctx.auth.getUserIdentity();
   if (identity === null) {
     if (isLocalAuthMode()) {
+      // Safety net: if JWT validation hasn't kicked in yet (e.g. during seed),
+      // fall back to the legacy local identity. Log a warning so we know.
+      console.warn(
+        "[LocalAuth] Falling back to hardcoded local identity — JWT auth may not be configured yet"
+      );
       return getLocalIdentity() as Identity;
     }
     throw new ConvexError("Not authenticated!");

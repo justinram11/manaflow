@@ -5,10 +5,17 @@ import { getLastTeamSlugOrId } from "@/lib/lastTeam";
 export const Route = createFileRoute("/")({
   beforeLoad: () => {
     if (env.NEXT_PUBLIC_AUTH_MODE === "local") {
-      throw redirect({
-        to: "/$teamSlugOrId/dashboard",
-        params: { teamSlugOrId: "local" },
-      });
+      const jwt = localStorage.getItem("cmux-local-jwt");
+      const userJson = localStorage.getItem("cmux-local-user");
+      if (jwt && userJson) {
+        const user = JSON.parse(userJson) as { teamSlug: string };
+        throw redirect({
+          to: "/$teamSlugOrId/dashboard",
+          params: { teamSlugOrId: user.teamSlug },
+        });
+      }
+      // No JWT — redirect to sign-in
+      throw redirect({ to: "/sign-in" });
     }
     if (typeof window !== "undefined") {
       const last = getLastTeamSlugOrId();

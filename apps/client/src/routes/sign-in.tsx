@@ -1,4 +1,5 @@
 import { env } from "@/client-env";
+import { LocalSignInForm } from "@/components/local-sign-in-form";
 import { SignInComponent } from "@/components/sign-in-component";
 import { stackClientApp } from "@/lib/stack";
 import { createFileRoute, redirect } from "@tanstack/react-router";
@@ -10,7 +11,20 @@ export const Route = createFileRoute("/sign-in")({
   }),
   beforeLoad: async ({ search }) => {
     if (env.NEXT_PUBLIC_AUTH_MODE === "local") {
-      throw redirect({ to: "/$teamSlugOrId/dashboard", params: { teamSlugOrId: "local" } });
+      // If already logged in, redirect to their team dashboard
+      const jwt = localStorage.getItem("cmux-local-jwt");
+      if (jwt) {
+        const userJson = localStorage.getItem("cmux-local-user");
+        if (userJson) {
+          const user = JSON.parse(userJson) as { teamSlug: string };
+          throw redirect({
+            to: "/$teamSlugOrId/dashboard",
+            params: { teamSlugOrId: user.teamSlug },
+          });
+        }
+      }
+      // Otherwise, show the login form (component below)
+      return;
     }
     const user = await stackClientApp.getUser();
     if (user) {
@@ -18,5 +32,12 @@ export const Route = createFileRoute("/sign-in")({
       throw redirect({ to: after_auth_redirect_to });
     }
   },
-  component: SignInComponent,
+  component: SignInPage,
 });
+
+function SignInPage() {
+  if (env.NEXT_PUBLIC_AUTH_MODE === "local") {
+    return <LocalSignInForm />;
+  }
+  return <SignInComponent />;
+}

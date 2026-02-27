@@ -24,8 +24,44 @@ export const stackClientApp = new StackClientApp({
 });
 
 if (isLocalAuth) {
-  // In local mode, skip Stack Auth entirely — signal Convex ready immediately
-  signalConvexAuthReady(true);
+  // In local mode, use JWT-based auth with Convex
+  const localJwt = localStorage.getItem("cmux-local-jwt");
+  if (localJwt) {
+    convexQueryClient.convexClient.setAuth(
+      async () => {
+        const jwt = localStorage.getItem("cmux-local-jwt");
+        if (!jwt) return null;
+
+        // Refresh if token is near expiry (50 min into 1hr token)
+        try {
+          const payload = JSON.parse(atob(jwt.split(".")[1]));
+          const expiresAt = (payload.exp as number) * 1000;
+          const refreshThreshold = 50 * 60 * 1000; // 50 minutes
+          if (expiresAt - Date.now() < refreshThreshold) {
+            const res = await fetch(`${WWW_ORIGIN}/api/local-auth/refresh`, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${jwt}` },
+            });
+            if (res.ok) {
+              const data = (await res.json()) as { token: string };
+              localStorage.setItem("cmux-local-jwt", data.token);
+              return data.token;
+            }
+          }
+        } catch (e) {
+          console.error("[LocalAuth] Token refresh failed:", e);
+        }
+
+        return jwt;
+      },
+      (isAuthenticated) => {
+        signalConvexAuthReady(isAuthenticated);
+      },
+    );
+  } else {
+    // No JWT — user needs to log in. Don't signal ready so auth guards redirect to sign-in.
+    signalConvexAuthReady(false);
+  }
 } else {
   convexQueryClient.convexClient.setAuth(
     stackClientApp.getConvexClientAuth({ tokenStore: "cookie" }),
@@ -88,7 +124,41 @@ async function refreshAuthToken(): Promise<void> {
 }
 
 const fetchWithAuth = isLocalAuth
-  ? fetch
+  ? ((async (request: Request) => {
+      const jwt = localStorage.getItem("cmux-local-jwt");
+      if (!jwt) {
+        // No JWT — redirect to sign-in
+        window.location.href = "/sign-in";
+        throw new Error("Not authenticated");
+      }
+
+      const headers = new Headers(request.headers);
+      headers.set("Authorization", `Bearer ${jwt}`);
+
+      const response = await fetch(request, { headers });
+
+      // If 401, try refreshing the token once
+      if (response.status === 401) {
+        const refreshRes = await fetch(`${WWW_ORIGIN}/api/local-auth/refresh`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${jwt}` },
+        });
+        if (refreshRes.ok) {
+          const data = (await refreshRes.json()) as { token: string };
+          localStorage.setItem("cmux-local-jwt", data.token);
+
+          const retryHeaders = new Headers(request.headers);
+          retryHeaders.set("Authorization", `Bearer ${data.token}`);
+          return fetch(request, { headers: retryHeaders });
+        }
+        // Refresh failed — redirect to sign-in
+        localStorage.removeItem("cmux-local-jwt");
+        localStorage.removeItem("cmux-local-user");
+        window.location.href = "/sign-in";
+      }
+
+      return response;
+    }) as typeof fetch)
   : ((async (request: Request) => {
       // Clone the request upfront for potential retry (request body can only be consumed once)
       const requestForRetry = request.clone();

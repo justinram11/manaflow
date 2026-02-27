@@ -17,7 +17,17 @@ import { env } from "@/client-env";
 export const Route = createFileRoute("/_layout/$teamSlugOrId")({
   component: LayoutComponentWrapper,
   beforeLoad: async ({ params, location }) => {
-    if (env.NEXT_PUBLIC_AUTH_MODE !== "local") {
+    if (env.NEXT_PUBLIC_AUTH_MODE === "local") {
+      const jwt = localStorage.getItem("cmux-local-jwt");
+      if (!jwt) {
+        throw redirect({
+          to: "/sign-in",
+          search: {
+            after_auth_return_to: location.pathname,
+          },
+        });
+      }
+    } else {
       const user = await cachedGetUser(stackClientApp);
       if (!user) {
         throw redirect({

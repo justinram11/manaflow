@@ -24,7 +24,17 @@ import { useEffect, useMemo, useRef } from "react";
 export const Route = createFileRoute("/_layout")({
   component: Layout,
   beforeLoad: async ({ context }) => {
-    if (env.NEXT_PUBLIC_AUTH_MODE !== "local") {
+    if (env.NEXT_PUBLIC_AUTH_MODE === "local") {
+      const jwt = localStorage.getItem("cmux-local-jwt");
+      if (!jwt) {
+        throw redirect({
+          to: "/sign-in",
+          search: {
+            after_auth_return_to: location.pathname,
+          },
+        });
+      }
+    } else {
       const user = await cachedGetUser(stackClientApp);
       if (!user) {
         throw redirect({

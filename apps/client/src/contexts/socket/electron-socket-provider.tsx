@@ -1,3 +1,4 @@
+import { env } from "@/client-env";
 import { CmuxIpcSocketClient } from "@/lib/cmux-ipc-socket-client";
 import type { AvailableEditors } from "@cmux/shared";
 import { useQuery } from "@tanstack/react-query";
@@ -39,7 +40,10 @@ export const ElectronSocketProvider: React.FC<React.PropsWithChildren> = ({
     let createdSocket: CmuxIpcSocketClient | null = null;
 
     (async () => {
-      const user = await cachedGetUser(stackClientApp);
+      const isLocalAuth = env.NEXT_PUBLIC_AUTH_MODE === "local";
+      const user = isLocalAuth
+        ? null
+        : await cachedGetUser(stackClientApp);
       const authJson = user ? await user.getAuthJson() : undefined;
 
       const query: Record<string, string> = { auth: authToken };
