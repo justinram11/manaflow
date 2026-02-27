@@ -6,9 +6,9 @@ import { SignJWT, importJWK } from "jose";
 const PRIVATE_JWK = {
   kty: "EC",
   crv: "P-256",
-  x: "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
-  y: "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0",
-  d: "jpsQnnGQmL-YBIffS1BSyVKhrlRhMTpIRNH0t2duouc",
+  x: "76CPjpS1ByLFfctbNa5xUTpXfuE9zcoAtpMhejrevdk",
+  y: "L6nMxvNetyEzEVGfNYXWy3fYm02pO3qKsuooeu8pd0s",
+  d: "x31ZeNPbxzTg0vLeZeCvOarUq7L3iE83vpKRA4nymDE",
   kid: "cmux-local-1",
 } as const;
 
