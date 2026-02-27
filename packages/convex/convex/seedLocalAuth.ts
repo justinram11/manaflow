@@ -99,7 +99,7 @@ export const seed = internalMutation({
         console.log(`Seeded local team: ${localUser.teamSlug}`);
       }
 
-      // Seed membership
+      // Seed membership for the user's own account
       const existingMembership = await ctx.db
         .query("teamMemberships")
         .withIndex("by_team_user", (q) =>
@@ -115,6 +115,25 @@ export const seed = internalMutation({
           updatedAt: now,
         });
         console.log(`Seeded local team membership: ${localUser.displayName} → ${localUser.teamSlug}`);
+      }
+
+      // Also add the legacy local-admin to this team so the Convex identity fallback
+      // (which uses LOCAL_USER_ID) can access all local teams.
+      const legacyAdminMembership = await ctx.db
+        .query("teamMemberships")
+        .withIndex("by_team_user", (q) =>
+          q.eq("teamId", localUser.teamId).eq("userId", LOCAL_USER_ID)
+        )
+        .first();
+      if (!legacyAdminMembership) {
+        await ctx.db.insert("teamMemberships", {
+          teamId: localUser.teamId,
+          userId: LOCAL_USER_ID,
+          role: "owner",
+          createdAt: now,
+          updatedAt: now,
+        });
+        console.log(`Seeded legacy admin membership in team: ${localUser.teamSlug}`);
       }
     }
   },

@@ -24,44 +24,10 @@ export const stackClientApp = new StackClientApp({
 });
 
 if (isLocalAuth) {
-  // In local mode, use JWT-based auth with Convex
-  const localJwt = localStorage.getItem("cmux-local-jwt");
-  if (localJwt) {
-    convexQueryClient.convexClient.setAuth(
-      async () => {
-        const jwt = localStorage.getItem("cmux-local-jwt");
-        if (!jwt) return null;
-
-        // Refresh if token is near expiry (50 min into 1hr token)
-        try {
-          const payload = JSON.parse(atob(jwt.split(".")[1]));
-          const expiresAt = (payload.exp as number) * 1000;
-          const refreshThreshold = 50 * 60 * 1000; // 50 minutes
-          if (expiresAt - Date.now() < refreshThreshold) {
-            const res = await fetch(`${WWW_ORIGIN}/api/local-auth/refresh`, {
-              method: "POST",
-              headers: { Authorization: `Bearer ${jwt}` },
-            });
-            if (res.ok) {
-              const data = (await res.json()) as { token: string };
-              localStorage.setItem("cmux-local-jwt", data.token);
-              return data.token;
-            }
-          }
-        } catch (e) {
-          console.error("[LocalAuth] Token refresh failed:", e);
-        }
-
-        return jwt;
-      },
-      (isAuthenticated) => {
-        signalConvexAuthReady(isAuthenticated);
-      },
-    );
-  } else {
-    // No JWT — user needs to log in. Don't signal ready so auth guards redirect to sign-in.
-    signalConvexAuthReady(false);
-  }
+  // In local mode, Convex cloud can't validate JWTs (can't reach localhost JWKS).
+  // Signal ready immediately — Convex uses the local identity fallback.
+  // JWT auth is handled by the www API and socket server directly.
+  signalConvexAuthReady(true);
 } else {
   convexQueryClient.convexClient.setAuth(
     stackClientApp.getConvexClientAuth({ tokenStore: "cookie" }),

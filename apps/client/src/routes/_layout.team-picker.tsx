@@ -1,3 +1,4 @@
+import { env } from "@/client-env";
 import { CreateTeamDialog, type CreateTeamFormValues } from "@/components/team/CreateTeamDialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,13 +14,28 @@ import { api } from "@cmux/convex/api";
 import { postApiTeams } from "@cmux/www-openapi-client";
 import { Skeleton } from "@heroui/react";
 import { useStackApp, useUser, type Team } from "@stackframe/react";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
 import { setLastTeamSlugOrId } from "@/lib/lastTeam";
 import { useQuery as useConvexQuery, useMutation } from "convex/react";
 import { useCallback, useState } from "react";
 import type React from "react";
 
 export const Route = createFileRoute("/_layout/team-picker")({
+  beforeLoad: () => {
+    // In local mode, team-picker relies on Stack Auth hooks that don't work.
+    // Redirect to the user's team dashboard or sign-in instead.
+    if (env.NEXT_PUBLIC_AUTH_MODE === "local") {
+      const userJson = localStorage.getItem("cmux-local-user");
+      if (userJson) {
+        const user = JSON.parse(userJson) as { teamSlug: string };
+        throw redirect({
+          to: "/$teamSlugOrId/dashboard",
+          params: { teamSlugOrId: user.teamSlug },
+        });
+      }
+      throw redirect({ to: "/sign-in" });
+    }
+  },
   component: TeamPicker,
 });
 
