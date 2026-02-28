@@ -11,3 +11,4 @@ export * from "./pull-requests";
 export * from "./warm-pool";
 export * from "./morph-instances";
 export * from "./preview";
+export * from "./resource-providers";

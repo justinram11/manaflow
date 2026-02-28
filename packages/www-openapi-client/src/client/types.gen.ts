@@ -1151,6 +1151,65 @@ export type StorageErrorResponse = {
     message: string;
 };
 
+export type ResourceProviderErrorResponse = {
+    code: number;
+    message: string;
+};
+
+export type CreateResourceProviderBody = {
+    teamSlugOrId: string;
+    name: string;
+    platform?: string;
+    arch?: string;
+};
+
+export type ResourceProvider = {
+    id: string;
+    name: string;
+    teamId: string;
+    userId: string;
+    platform: string;
+    arch: string;
+    osVersion?: string | null;
+    hostname?: string | null;
+    capabilities?: Array<string> | null;
+    maxConcurrentBuilds?: number | null;
+    status: string;
+    lastHeartbeatAt?: number | null;
+    xcodeVersion?: string | null;
+    createdAt: number;
+    updatedAt: number;
+};
+
+export type ResourceAllocation = {
+    id: string;
+    resourceProviderId: string;
+    taskRunId?: string | null;
+    teamId: string;
+    userId: string;
+    status: string;
+    buildDir?: string | null;
+    simulatorUdid?: string | null;
+    simulatorDeviceType?: string | null;
+    simulatorRuntime?: string | null;
+    platform: string;
+    createdAt: number;
+    releasedAt?: number | null;
+};
+
+export type UpdateResourceProviderBody = {
+    name?: string;
+    maxConcurrentBuilds?: number;
+};
+
+export type AllocateResourceBody = {
+    taskRunId?: string;
+    teamSlugOrId: string;
+    simulatorDeviceType?: string;
+    simulatorRuntime?: string;
+    platform?: string;
+};
+
 export type GetApiHealthData = {
     body?: never;
     path?: never;
@@ -5845,6 +5904,286 @@ export type GetApiStorageByIdResponses = {
      */
     200: unknown;
 };
+
+export type GetApiResourceProvidersData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/resource-providers';
+};
+
+export type GetApiResourceProvidersErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ResourceProviderErrorResponse;
+};
+
+export type GetApiResourceProvidersError = GetApiResourceProvidersErrors[keyof GetApiResourceProvidersErrors];
+
+export type GetApiResourceProvidersResponses = {
+    /**
+     * List of resource providers
+     */
+    200: {
+        providers: Array<ResourceProvider & {
+            activeAllocations: number;
+        }>;
+    };
+};
+
+export type GetApiResourceProvidersResponse = GetApiResourceProvidersResponses[keyof GetApiResourceProvidersResponses];
+
+export type PostApiResourceProvidersData = {
+    body: CreateResourceProviderBody;
+    path?: never;
+    query?: never;
+    url: '/api/resource-providers';
+};
+
+export type PostApiResourceProvidersErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ResourceProviderErrorResponse;
+};
+
+export type PostApiResourceProvidersError = PostApiResourceProvidersErrors[keyof PostApiResourceProvidersErrors];
+
+export type PostApiResourceProvidersResponses = {
+    /**
+     * Resource provider created
+     */
+    201: {
+        id: string;
+        /**
+         * Raw token - shown once
+         */
+        token: string;
+    };
+};
+
+export type PostApiResourceProvidersResponse = PostApiResourceProvidersResponses[keyof PostApiResourceProvidersResponses];
+
+export type DeleteApiResourceProvidersByIdData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/resource-providers/{id}';
+};
+
+export type DeleteApiResourceProvidersByIdErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ResourceProviderErrorResponse;
+    /**
+     * Not found
+     */
+    404: ResourceProviderErrorResponse;
+};
+
+export type DeleteApiResourceProvidersByIdError = DeleteApiResourceProvidersByIdErrors[keyof DeleteApiResourceProvidersByIdErrors];
+
+export type DeleteApiResourceProvidersByIdResponses = {
+    /**
+     * Provider deleted
+     */
+    204: void;
+};
+
+export type DeleteApiResourceProvidersByIdResponse = DeleteApiResourceProvidersByIdResponses[keyof DeleteApiResourceProvidersByIdResponses];
+
+export type GetApiResourceProvidersByIdData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/resource-providers/{id}';
+};
+
+export type GetApiResourceProvidersByIdErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ResourceProviderErrorResponse;
+    /**
+     * Not found
+     */
+    404: ResourceProviderErrorResponse;
+};
+
+export type GetApiResourceProvidersByIdError = GetApiResourceProvidersByIdErrors[keyof GetApiResourceProvidersByIdErrors];
+
+export type GetApiResourceProvidersByIdResponses = {
+    /**
+     * Resource provider details
+     */
+    200: {
+        provider: ResourceProvider;
+        allocations: Array<ResourceAllocation>;
+    };
+};
+
+export type GetApiResourceProvidersByIdResponse = GetApiResourceProvidersByIdResponses[keyof GetApiResourceProvidersByIdResponses];
+
+export type PatchApiResourceProvidersByIdData = {
+    body: UpdateResourceProviderBody;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/resource-providers/{id}';
+};
+
+export type PatchApiResourceProvidersByIdErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ResourceProviderErrorResponse;
+    /**
+     * Not found
+     */
+    404: ResourceProviderErrorResponse;
+};
+
+export type PatchApiResourceProvidersByIdError = PatchApiResourceProvidersByIdErrors[keyof PatchApiResourceProvidersByIdErrors];
+
+export type PatchApiResourceProvidersByIdResponses = {
+    /**
+     * Provider updated
+     */
+    200: {
+        success: boolean;
+    };
+};
+
+export type PatchApiResourceProvidersByIdResponse = PatchApiResourceProvidersByIdResponses[keyof PatchApiResourceProvidersByIdResponses];
+
+export type PostApiResourceProvidersByIdAllocateData = {
+    body: AllocateResourceBody;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/resource-providers/{id}/allocate';
+};
+
+export type PostApiResourceProvidersByIdAllocateErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ResourceProviderErrorResponse;
+    /**
+     * Provider not found
+     */
+    404: ResourceProviderErrorResponse;
+    /**
+     * Provider at capacity
+     */
+    409: ResourceProviderErrorResponse;
+};
+
+export type PostApiResourceProvidersByIdAllocateError = PostApiResourceProvidersByIdAllocateErrors[keyof PostApiResourceProvidersByIdAllocateErrors];
+
+export type PostApiResourceProvidersByIdAllocateResponses = {
+    /**
+     * Allocation created
+     */
+    201: {
+        allocationId: string;
+        buildDir: string;
+    };
+};
+
+export type PostApiResourceProvidersByIdAllocateResponse = PostApiResourceProvidersByIdAllocateResponses[keyof PostApiResourceProvidersByIdAllocateResponses];
+
+export type PostApiResourceProvidersAllocationsByAllocationIdReleaseData = {
+    body?: never;
+    path: {
+        allocationId: string;
+    };
+    query?: never;
+    url: '/api/resource-providers/allocations/{allocationId}/release';
+};
+
+export type PostApiResourceProvidersAllocationsByAllocationIdReleaseErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ResourceProviderErrorResponse;
+    /**
+     * Allocation not found
+     */
+    404: ResourceProviderErrorResponse;
+};
+
+export type PostApiResourceProvidersAllocationsByAllocationIdReleaseError = PostApiResourceProvidersAllocationsByAllocationIdReleaseErrors[keyof PostApiResourceProvidersAllocationsByAllocationIdReleaseErrors];
+
+export type PostApiResourceProvidersAllocationsByAllocationIdReleaseResponses = {
+    /**
+     * Allocation released
+     */
+    200: {
+        success: boolean;
+    };
+};
+
+export type PostApiResourceProvidersAllocationsByAllocationIdReleaseResponse = PostApiResourceProvidersAllocationsByAllocationIdReleaseResponses[keyof PostApiResourceProvidersAllocationsByAllocationIdReleaseResponses];
+
+export type PostApiResourceProvidersAllocationsByAllocationIdMcpData = {
+    body: {
+        jsonrpc: string;
+        method: string;
+        params?: unknown;
+        id: string | number;
+    };
+    path: {
+        allocationId: string;
+    };
+    query?: never;
+    url: '/api/resource-providers/allocations/{allocationId}/mcp';
+};
+
+export type PostApiResourceProvidersAllocationsByAllocationIdMcpErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ResourceProviderErrorResponse;
+    /**
+     * Allocation not found
+     */
+    404: ResourceProviderErrorResponse;
+    /**
+     * Provider unavailable
+     */
+    502: ResourceProviderErrorResponse;
+};
+
+export type PostApiResourceProvidersAllocationsByAllocationIdMcpError = PostApiResourceProvidersAllocationsByAllocationIdMcpErrors[keyof PostApiResourceProvidersAllocationsByAllocationIdMcpErrors];
+
+export type PostApiResourceProvidersAllocationsByAllocationIdMcpResponses = {
+    /**
+     * MCP JSON-RPC response
+     */
+    200: {
+        jsonrpc: string;
+        result?: unknown;
+        error?: {
+            code: number;
+            message: string;
+            data?: unknown;
+        };
+        id: string | number;
+    };
+};
+
+export type PostApiResourceProvidersAllocationsByAllocationIdMcpResponse = PostApiResourceProvidersAllocationsByAllocationIdMcpResponses[keyof PostApiResourceProvidersAllocationsByAllocationIdMcpResponses];
 
 export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});

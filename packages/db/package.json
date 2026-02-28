@@ -43,10 +43,15 @@
     "./queries/preview-test-jobs": "./src/queries/preview-test-jobs.ts",
     "./mutations/preview-configs": "./src/mutations/preview-configs.ts",
     "./mutations/preview-test-jobs": "./src/mutations/preview-test-jobs.ts",
+    "./queries/resource-providers": "./src/queries/resource-providers.ts",
+    "./mutations/resource-providers": "./src/mutations/resource-providers.ts",
     "./schema": "./src/schema/index.ts"
   },
   "dependencies": {
     "@cmux/shared": "workspace:*",
+    "@libsql/client": "^0.17.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "better-sqlite3": "^12.6.2",
     "drizzle-orm": "^0.44.2"
   },
   "devDependencies": {

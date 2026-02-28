@@ -15,6 +15,13 @@
       "when": 1772259940224,
       "tag": "0001_wandering_kid_colt",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1772314750697,
+      "tag": "0002_next_hellion",
+      "breakpoints": true
     }
   ]
 }

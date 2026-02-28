@@ -30,4 +30,5 @@ export type EnvironmentContext = {
   taskRunJwt: string;
   apiKeys?: Record<string, string>;
   callbackUrl: string;
+  iosResourceAllocationId?: string;
 };

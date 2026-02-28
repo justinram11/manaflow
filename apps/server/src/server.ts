@@ -1,11 +1,12 @@
 import { upsertRepo } from "@cmux/db/mutations/repos";
 import { exec } from "node:child_process";
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { promisify } from "node:util";
 import { GitDiffManager } from "./gitDiff";
 
 import { setupSocketHandlers } from "./socket-handlers";
 import { createSocketIOTransport } from "./transports/socketio-transport";
+import { setupResourceProviderWS, sendMcpRequest, sendSetupAllocation, sendCleanupAllocation } from "./resource-provider-ws";
 import { getDb, getUserId } from "./utils/dbClient";
 import { dockerLogger, serverLogger } from "./utils/fileLogger";
 import { DockerVSCodeInstance } from "./vscode/DockerVSCodeInstance";
@@ -51,8 +52,22 @@ export async function startServer({
   // Git diff manager instance
   const gitDiffManager = new GitDiffManager();
 
-  // Create HTTP server for socket connections (no HTTP proxying)
-  const httpServer = createServer((_, res) => {
+  // Create HTTP server for socket connections and internal API
+  const httpServer = createServer(async (req, res) => {
+    const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
+
+    // Internal API for resource provider communication (from www app)
+    if (url.pathname.startsWith("/internal/resource-provider/")) {
+      try {
+        await handleInternalResourceProviderRequest(url, req, res);
+      } catch (error) {
+        console.error("Internal resource provider request error:", error);
+        res.statusCode = 500;
+        res.end(JSON.stringify({ error: "Internal server error" }));
+      }
+      return;
+    }
+
     res.statusCode = 404;
     res.end("Not found");
   });
@@ -62,6 +77,9 @@ export async function startServer({
 
   // Set up all socket handlers
   setupSocketHandlers(rt, gitDiffManager, defaultRepo);
+
+  // Set up resource provider WebSocket handler
+  setupResourceProviderWS(httpServer);
 
   let vscodeServeHandle: VSCodeServeWebHandle | null = null;
 
@@ -232,4 +250,106 @@ export async function startServer({
   }
 
   return { cleanup };
+}
+
+/**
+ * Handle internal API requests from the www app for resource provider communication.
+ * Routes:
+ *   POST /internal/resource-provider/:providerId/mcp
+ *   POST /internal/resource-provider/:providerId/setup-allocation
+ *   POST /internal/resource-provider/:providerId/cleanup-allocation
+ */
+async function handleInternalResourceProviderRequest(
+  url: URL,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  if (req.method !== "POST") {
+    res.statusCode = 405;
+    res.end(JSON.stringify({ error: "Method not allowed" }));
+    return;
+  }
+
+  // Parse path: /internal/resource-provider/:providerId/:action
+  const parts = url.pathname.split("/");
+  // parts: ["", "internal", "resource-provider", providerId, action]
+  const providerId = parts[3];
+  const action = parts[4];
+
+  if (!providerId || !action) {
+    res.statusCode = 400;
+    res.end(JSON.stringify({ error: "Invalid path" }));
+    return;
+  }
+
+  // Read request body
+  const body = await new Promise<string>((resolve) => {
+    let data = "";
+    req.on("data", (chunk: Buffer) => {
+      data += chunk.toString();
+    });
+    req.on("end", () => resolve(data));
+  });
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    res.statusCode = 400;
+    res.end(JSON.stringify({ error: "Invalid JSON" }));
+    return;
+  }
+
+  res.setHeader("Content-Type", "application/json");
+
+  try {
+    switch (action) {
+      case "mcp": {
+        const result = await sendMcpRequest(providerId, {
+          jsonrpc: "2.0",
+          method: (parsed.request as Record<string, unknown>).method as string,
+          params: {
+            ...(parsed.request as Record<string, unknown>).params as Record<string, unknown> ?? {},
+            _allocationId: parsed.allocationId,
+          },
+          id: (parsed.request as Record<string, unknown>).id as string | number,
+        });
+        res.statusCode = 200;
+        res.end(JSON.stringify(result));
+        break;
+      }
+      case "setup-allocation": {
+        const result = await sendSetupAllocation(providerId, {
+          allocationId: parsed.allocationId as string,
+          buildDir: parsed.buildDir as string,
+          simulatorDeviceType: parsed.simulatorDeviceType as string,
+          simulatorRuntime: parsed.simulatorRuntime as string,
+        });
+        res.statusCode = 200;
+        res.end(JSON.stringify(result));
+        break;
+      }
+      case "cleanup-allocation": {
+        const result = await sendCleanupAllocation(providerId, {
+          allocationId: parsed.allocationId as string,
+          buildDir: parsed.buildDir as string | undefined,
+          simulatorUdid: parsed.simulatorUdid as string | undefined,
+        });
+        res.statusCode = 200;
+        res.end(JSON.stringify(result));
+        break;
+      }
+      default:
+        res.statusCode = 404;
+        res.end(JSON.stringify({ error: `Unknown action: ${action}` }));
+    }
+  } catch (error) {
+    console.error(`Internal resource provider error (${action}):`, error);
+    res.statusCode = 502;
+    res.end(
+      JSON.stringify({
+        error: error instanceof Error ? error.message : "Unknown error",
+      }),
+    );
+  }
 }

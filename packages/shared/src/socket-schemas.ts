@@ -86,6 +86,7 @@ export const CreateCloudWorkspaceSchema = z
     taskId: typedZid("tasks").optional(),
     taskRunId: typedZid("taskRuns").optional(),
     theme: z.enum(["dark", "light", "system"]).optional(),
+    resourceProviderId: z.string().optional(),
   })
   .refine(
     (value) => Boolean(value.environmentId || value.projectFullName),

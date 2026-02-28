@@ -47,7 +47,18 @@ export async function getClaudeEnvironment(
           allowedTools: [],
           history: [],
           mcpContextUris: [],
-          mcpServers: {},
+          mcpServers: ctx.iosResourceAllocationId
+            ? {
+                ios: {
+                  command: "node",
+                  args: ["/root/lifecycle/mcp/ios-resource-proxy.mjs"],
+                  env: {
+                    CMUX_MCP_PROXY_URL: `${ctx.callbackUrl}/api/resource-providers/allocations/${ctx.iosResourceAllocationId}/mcp`,
+                    CMUX_TASK_RUN_JWT: ctx.taskRunJwt,
+                  },
+                },
+              }
+            : {},
           enabledMcpjsonServers: [],
           disabledMcpjsonServers: [],
           hasTrustDialogAccepted: true,
@@ -62,8 +73,9 @@ export async function getClaudeEnvironment(
       hasAcknowledgedCostThreshold: true,
     };
 
+    // Write to ~/.claude/.claude.json (the canonical location Claude Code checks)
     files.push({
-      destinationPath: "$HOME/.claude.json",
+      destinationPath: "$HOME/.claude/.claude.json",
       contentBase64: Buffer.from(JSON.stringify(config, null, 2)).toString(
         "base64",
       ),
@@ -116,9 +128,38 @@ export async function getClaudeEnvironment(
   //   }
   // }
 
+  // Add iOS resource MCP proxy if allocation is present
+  if (ctx.iosResourceAllocationId) {
+    const { readFileSync } = await import("node:fs");
+    const { resolve, dirname } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+
+    try {
+      // Read the proxy script from the shared package
+      const proxyScriptPath = resolve(
+        dirname(fileURLToPath(import.meta.url)),
+        "../mcp/ios-resource-proxy.mjs",
+      );
+      const proxyScript = readFileSync(proxyScriptPath, "utf-8");
+
+      files.push({
+        destinationPath: "/root/lifecycle/mcp/ios-resource-proxy.mjs",
+        contentBase64: Buffer.from(proxyScript).toString("base64"),
+        mode: "755",
+      });
+    } catch (error) {
+      console.error("Failed to read iOS resource proxy script:", error);
+    }
+  }
+
   // Ensure directories exist
   startupCommands.unshift("mkdir -p ~/.claude");
+  // Symlink ~/.claude.json → ~/.claude/.claude.json so Claude Code finds it
+  startupCommands.push("ln -sf ~/.claude/.claude.json ~/.claude.json");
   startupCommands.push(`mkdir -p ${claudeLifecycleDir}`);
+  if (ctx.iosResourceAllocationId) {
+    startupCommands.push("mkdir -p /root/lifecycle/mcp");
+  }
   startupCommands.push(`mkdir -p ${claudeSecretsDir}`);
 
   // Clean up any previous Claude completion markers

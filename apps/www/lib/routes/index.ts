@@ -34,3 +34,4 @@ export { dbAnalyticsRouter } from "./db-analytics.route";
 export { dbApiKeysRouter } from "./db-api-keys.route";
 export { dbCommentsRouter } from "./db-comments.route";
 export { storageRouter } from "./storage.route";
+export { resourceProvidersRouter } from "./resource-providers.route";
