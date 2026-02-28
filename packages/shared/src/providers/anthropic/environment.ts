@@ -53,7 +53,7 @@ export async function getClaudeEnvironment(
                   command: "node",
                   args: ["/root/lifecycle/mcp/ios-resource-proxy.mjs"],
                   env: {
-                    CMUX_MCP_PROXY_URL: `${ctx.callbackUrl}/api/resource-providers/allocations/${ctx.iosResourceAllocationId}/mcp`,
+                    CMUX_MCP_PROXY_URL: `${ctx.callbackUrl}/api/providers/allocations/${ctx.iosResourceAllocationId}/json-rpc`,
                     CMUX_TASK_RUN_JWT: ctx.taskRunJwt,
                   },
                 },

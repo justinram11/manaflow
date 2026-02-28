@@ -14,10 +14,14 @@ export const environments = sqliteTable(
     maintenanceScript: text("maintenanceScript"),
     devScript: text("devScript"),
     exposedPorts: text("exposedPorts", { mode: "json" }),
+    // Legacy columns (kept for backward compat, cleaned up in Phase 7)
     provider: text("provider"),
     incusSnapshotId: text("incusSnapshotId"),
     firecrackerSnapshotId: text("firecrackerSnapshotId"),
     firecrackerVmSize: text("firecrackerVmSize"),
+    // New unified provider columns
+    providerId: text("providerId"), // FK to providers; null = Morph
+    snapshotId: text("snapshotId"), // FK to providerSnapshots
     createdAt: integer("createdAt").notNull(),
     updatedAt: integer("updatedAt").notNull(),
   },
@@ -35,8 +39,11 @@ export const environmentSnapshotVersions = sqliteTable(
     environmentId: text("environmentId").notNull(),
     teamId: text("teamId").notNull(),
     morphSnapshotId: text("morphSnapshotId").notNull(),
+    // Legacy columns (kept for backward compat, cleaned up in Phase 7)
     incusSnapshotId: text("incusSnapshotId"),
     firecrackerSnapshotId: text("firecrackerSnapshotId"),
+    // New unified provider column
+    snapshotId: text("snapshotId"), // FK to providerSnapshots
     version: integer("version").notNull(),
     createdAt: integer("createdAt").notNull(),
     createdByUserId: text("createdByUserId").notNull(),

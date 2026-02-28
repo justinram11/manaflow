@@ -1,9 +1,9 @@
 import { eq } from "drizzle-orm";
 import type { DbClient } from "../connection";
-import { resourceProviders, resourceAllocations } from "../schema/resource-providers";
+import { providers, providerAllocations } from "../schema/providers";
 import { resolveTeamId } from "../queries/teams";
 
-export function createResourceProvider(
+export function createProvider(
   db: DbClient,
   opts: {
     teamSlugOrId: string;
@@ -15,15 +15,15 @@ export function createResourceProvider(
     osVersion?: string;
     hostname?: string;
     capabilities?: string[];
-    maxConcurrentBuilds?: number;
-    xcodeVersion?: string;
+    maxConcurrentSlots?: number;
+    metadata?: Record<string, string>;
   },
 ) {
   const teamId = resolveTeamId(db, opts.teamSlugOrId);
   const now = Date.now();
   const id = crypto.randomUUID();
 
-  db.insert(resourceProviders)
+  db.insert(providers)
     .values({
       id,
       name: opts.name,
@@ -35,9 +35,9 @@ export function createResourceProvider(
       osVersion: opts.osVersion,
       hostname: opts.hostname,
       capabilities: opts.capabilities,
-      maxConcurrentBuilds: opts.maxConcurrentBuilds ?? 2,
+      maxConcurrentSlots: opts.maxConcurrentSlots ?? 4,
       status: "offline",
-      xcodeVersion: opts.xcodeVersion,
+      metadata: opts.metadata,
       createdAt: now,
       updatedAt: now,
     })
@@ -46,27 +46,27 @@ export function createResourceProvider(
   return { id };
 }
 
-export function updateResourceProvider(
+export function updateProvider(
   db: DbClient,
   id: string,
   patch: {
     name?: string;
-    maxConcurrentBuilds?: number;
+    maxConcurrentSlots?: number;
     osVersion?: string;
     hostname?: string;
     capabilities?: string[];
-    xcodeVersion?: string;
+    metadata?: Record<string, string>;
     arch?: string;
   },
 ) {
-  db.update(resourceProviders)
+  db.update(providers)
     .set({ ...patch, updatedAt: Date.now() })
-    .where(eq(resourceProviders.id, id))
+    .where(eq(providers.id, id))
     .run();
 }
 
-export function deleteResourceProvider(db: DbClient, id: string) {
-  db.delete(resourceProviders).where(eq(resourceProviders.id, id)).run();
+export function deleteProvider(db: DbClient, id: string) {
+  db.delete(providers).where(eq(providers.id, id)).run();
 }
 
 export function updateProviderStatus(
@@ -74,80 +74,65 @@ export function updateProviderStatus(
   id: string,
   status: "online" | "offline",
 ) {
-  db.update(resourceProviders)
+  db.update(providers)
     .set({
       status,
       lastHeartbeatAt: Date.now(),
       updatedAt: Date.now(),
     })
-    .where(eq(resourceProviders.id, id))
+    .where(eq(providers.id, id))
     .run();
 }
 
 export function updateProviderHeartbeat(db: DbClient, id: string) {
-  db.update(resourceProviders)
+  db.update(providers)
     .set({ lastHeartbeatAt: Date.now(), updatedAt: Date.now() })
-    .where(eq(resourceProviders.id, id))
+    .where(eq(providers.id, id))
     .run();
 }
 
 export function createAllocation(
   db: DbClient,
   opts: {
-    resourceProviderId: string;
+    providerId: string;
     taskRunId?: string;
     teamSlugOrId: string;
     userId: string;
-    platform?: string;
-    simulatorDeviceType?: string;
-    simulatorRuntime?: string;
+    type: "compute" | "resource";
+    data?: Record<string, unknown>;
   },
 ) {
   const teamId = resolveTeamId(db, opts.teamSlugOrId);
   const now = Date.now();
   const id = crypto.randomUUID();
-  const buildDir = `/tmp/cmux-builds/${id}`;
 
-  db.insert(resourceAllocations)
+  db.insert(providerAllocations)
     .values({
       id,
-      resourceProviderId: opts.resourceProviderId,
+      providerId: opts.providerId,
       taskRunId: opts.taskRunId,
       teamId,
       userId: opts.userId,
+      type: opts.type,
       status: "active",
-      buildDir,
-      platform: opts.platform ?? "ios",
-      simulatorDeviceType: opts.simulatorDeviceType,
-      simulatorRuntime: opts.simulatorRuntime,
+      data: opts.data,
       createdAt: now,
     })
     .run();
 
-  return { id, buildDir };
-}
-
-export function updateAllocationSimulator(
-  db: DbClient,
-  id: string,
-  simulatorUdid: string,
-) {
-  db.update(resourceAllocations)
-    .set({ simulatorUdid })
-    .where(eq(resourceAllocations.id, id))
-    .run();
+  return { id };
 }
 
 export function releaseAllocation(db: DbClient, id: string) {
-  db.update(resourceAllocations)
+  db.update(providerAllocations)
     .set({ status: "released", releasedAt: Date.now() })
-    .where(eq(resourceAllocations.id, id))
+    .where(eq(providerAllocations.id, id))
     .run();
 }
 
 export function failAllocation(db: DbClient, id: string) {
-  db.update(resourceAllocations)
+  db.update(providerAllocations)
     .set({ status: "failed", releasedAt: Date.now() })
-    .where(eq(resourceAllocations.id, id))
+    .where(eq(providerAllocations.id, id))
     .run();
 }

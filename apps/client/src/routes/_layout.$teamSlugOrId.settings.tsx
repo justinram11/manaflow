@@ -1,7 +1,7 @@
 import { env } from "@/client-env";
 import { ContainerSettings } from "@/components/ContainerSettings";
 import { EditorSettingsSection } from "@/components/EditorSettingsSection";
-import { ResourceProviderSettings } from "@/components/ResourceProviderSettings";
+import { ProviderSettings } from "@/components/ProviderSettings";
 import { FloatingPane } from "@/components/floating-pane";
 import { ProviderStatusSettings } from "@/components/provider-status-settings";
 import { useTheme } from "@/components/theme/use-theme";
@@ -1859,7 +1859,7 @@ function SettingsComponent() {
             )}
 
             {/* Resource Providers (Mac) */}
-            <ResourceProviderSettings teamSlugOrId={teamSlugOrId} />
+            <ProviderSettings teamSlugOrId={teamSlugOrId} />
 
             {/* Notifications */}
             <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800 hidden">

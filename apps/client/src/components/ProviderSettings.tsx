@@ -1,52 +1,69 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getApiResourceProvidersOptions } from "@cmux/www-openapi-client/react-query";
 import { useState, useCallback } from "react";
 import { toast } from "sonner";
-import { Trash2, Plus, Copy, Monitor } from "lucide-react";
+import { Trash2, Plus, Copy, Server } from "lucide-react";
 
-interface ResourceProviderSettingsProps {
+interface Provider {
+  id: string;
+  name: string;
+  platform: string;
+  arch: string;
+  status: string;
+  capabilities: string[] | null;
+  maxConcurrentSlots: number | null;
+  metadata: Record<string, string> | null;
+  activeAllocations: number;
+}
+
+interface ProviderSettingsProps {
   teamSlugOrId: string;
 }
 
-export function ResourceProviderSettings({
-  teamSlugOrId,
-}: ResourceProviderSettingsProps) {
+const API_BASE = "/api";
+
+export function ProviderSettings({ teamSlugOrId }: ProviderSettingsProps) {
   const queryClient = useQueryClient();
   const [showRegisterDialog, setShowRegisterDialog] = useState(false);
   const [newProviderName, setNewProviderName] = useState("");
+  const [newProviderPlatform, setNewProviderPlatform] = useState<"linux" | "macos">("linux");
   const [generatedToken, setGeneratedToken] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
-  const [editMaxBuilds, setEditMaxBuilds] = useState(2);
+  const [editMaxSlots, setEditMaxSlots] = useState(4);
+
+  const queryKey = ["providers", teamSlugOrId];
 
   const providersQuery = useQuery({
-    ...getApiResourceProvidersOptions({ query: { teamSlugOrId } }),
+    queryKey,
+    queryFn: async () => {
+      const res = await fetch(
+        `${API_BASE}/providers?teamSlugOrId=${encodeURIComponent(teamSlugOrId)}`,
+      );
+      if (!res.ok) throw new Error("Failed to fetch providers");
+      return res.json() as Promise<{ providers: Provider[] }>;
+    },
     enabled: Boolean(teamSlugOrId),
-    refetchInterval: 10000, // Poll every 10s for status updates
+    refetchInterval: 10000,
   });
 
   const registerMutation = useMutation({
-    mutationFn: async (name: string) => {
-      const { postApiResourceProviders } = await import(
-        "@cmux/www-openapi-client"
-      );
-      return await postApiResourceProviders({
-        body: {
+    mutationFn: async (opts: { name: string; platform: string }) => {
+      const res = await fetch(`${API_BASE}/providers/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
           teamSlugOrId,
-          name,
-          platform: "macos",
+          name: opts.name,
+          platform: opts.platform,
           arch: "arm64",
-        },
+        }),
       });
+      if (!res.ok) throw new Error("Failed to register provider");
+      return res.json() as Promise<{ id: string; token: string }>;
     },
     onSuccess: (data) => {
-      if (data.data) {
-        setGeneratedToken(data.data.token);
-      }
-      queryClient.invalidateQueries({
-        queryKey: getApiResourceProvidersOptions({ query: { teamSlugOrId } })
-          .queryKey,
-      });
+      setGeneratedToken(data.token);
+      queryClient.invalidateQueries({ queryKey });
     },
     onError: (error) => {
       toast.error("Failed to register provider");
@@ -56,17 +73,14 @@ export function ResourceProviderSettings({
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const { deleteApiResourceProvidersById } = await import(
-        "@cmux/www-openapi-client"
-      );
-      return await deleteApiResourceProvidersById({ path: { id } });
+      const res = await fetch(`${API_BASE}/providers/${id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Failed to delete provider");
     },
     onSuccess: () => {
       toast.success("Provider removed");
-      queryClient.invalidateQueries({
-        queryKey: getApiResourceProvidersOptions({ query: { teamSlugOrId } })
-          .queryKey,
-      });
+      queryClient.invalidateQueries({ queryKey });
     },
     onError: (error) => {
       toast.error("Failed to remove provider");
@@ -75,30 +89,25 @@ export function ResourceProviderSettings({
   });
 
   const updateMutation = useMutation({
-    mutationFn: async ({
-      id,
-      name,
-      maxConcurrentBuilds,
-    }: {
+    mutationFn: async (opts: {
       id: string;
       name?: string;
-      maxConcurrentBuilds?: number;
+      maxConcurrentSlots?: number;
     }) => {
-      const { patchApiResourceProvidersById } = await import(
-        "@cmux/www-openapi-client"
-      );
-      return await patchApiResourceProvidersById({
-        path: { id },
-        body: { name, maxConcurrentBuilds },
+      const res = await fetch(`${API_BASE}/providers/${opts.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: opts.name,
+          maxConcurrentSlots: opts.maxConcurrentSlots,
+        }),
       });
+      if (!res.ok) throw new Error("Failed to update provider");
     },
     onSuccess: () => {
       toast.success("Provider updated");
       setEditingId(null);
-      queryClient.invalidateQueries({
-        queryKey: getApiResourceProvidersOptions({ query: { teamSlugOrId } })
-          .queryKey,
-      });
+      queryClient.invalidateQueries({ queryKey });
     },
     onError: (error) => {
       toast.error("Failed to update provider");
@@ -111,8 +120,11 @@ export function ResourceProviderSettings({
       toast.error("Name is required");
       return;
     }
-    registerMutation.mutate(newProviderName.trim());
-  }, [newProviderName, registerMutation]);
+    registerMutation.mutate({
+      name: newProviderName.trim(),
+      platform: newProviderPlatform,
+    });
+  }, [newProviderName, newProviderPlatform, registerMutation]);
 
   const handleCopyToken = useCallback(() => {
     if (generatedToken) {
@@ -124,7 +136,7 @@ export function ResourceProviderSettings({
   const handleCopySetupCommand = useCallback(() => {
     if (generatedToken) {
       const serverUrl = window.location.origin;
-      const cmd = `curl -fsSL ${serverUrl}/api/resource-providers/setup | bash -s -- --token ${generatedToken} --server ${serverUrl}`;
+      const cmd = `curl -fsSL ${serverUrl}/api/providers/setup | bash -s -- --token ${generatedToken} --server ${serverUrl}`;
       navigator.clipboard.writeText(cmd);
       toast.success("Setup command copied to clipboard");
     }
@@ -132,16 +144,31 @@ export function ResourceProviderSettings({
 
   const providers = providersQuery.data?.providers ?? [];
 
+  const capabilityBadge = (cap: string) => {
+    const colors: Record<string, string> = {
+      "compute:incus": "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
+      "resource:ios-simulator": "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
+    };
+    return (
+      <span
+        key={cap}
+        className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${colors[cap] ?? "bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"}`}
+      >
+        {cap}
+      </span>
+    );
+  };
+
   return (
     <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
       <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800 flex items-center justify-between">
         <div>
           <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-            Resource Providers
+            Providers
           </h2>
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-            Register Mac machines for iOS builds and simulator access in
-            workspaces.
+            Register machines to run workspaces and iOS builds. Capabilities are
+            auto-detected.
           </p>
         </div>
         <button
@@ -154,7 +181,7 @@ export function ResourceProviderSettings({
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 hover:opacity-90"
         >
           <Plus className="w-3.5 h-3.5" />
-          Register Mac
+          Register Provider
         </button>
       </div>
 
@@ -165,8 +192,8 @@ export function ResourceProviderSettings({
           </p>
         ) : providers.length === 0 ? (
           <p className="text-xs text-neutral-500 dark:text-neutral-400">
-            No resource providers registered. Register a Mac to enable iOS
-            development in workspaces.
+            No providers registered. Register a machine to run sandboxed
+            workspaces.
           </p>
         ) : (
           <div className="space-y-3">
@@ -176,7 +203,7 @@ export function ResourceProviderSettings({
                 className="flex items-center justify-between p-3 rounded-lg border border-neutral-200 dark:border-neutral-800"
               >
                 <div className="flex items-center gap-3">
-                  <Monitor className="w-5 h-5 text-neutral-500 dark:text-neutral-400" />
+                  <Server className="w-5 h-5 text-neutral-500 dark:text-neutral-400" />
                   <div>
                     {editingId === provider.id ? (
                       <div className="flex items-center gap-2">
@@ -190,12 +217,12 @@ export function ResourceProviderSettings({
                           type="number"
                           min={1}
                           max={20}
-                          value={editMaxBuilds}
+                          value={editMaxSlots}
                           onChange={(e) =>
-                            setEditMaxBuilds(parseInt(e.target.value, 10))
+                            setEditMaxSlots(parseInt(e.target.value, 10))
                           }
                           className="px-2 py-1 text-sm border border-neutral-300 dark:border-neutral-700 rounded bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 w-16"
-                          title="Max concurrent builds"
+                          title="Max concurrent slots"
                         />
                         <button
                           type="button"
@@ -203,7 +230,7 @@ export function ResourceProviderSettings({
                             updateMutation.mutate({
                               id: provider.id,
                               name: editName,
-                              maxConcurrentBuilds: editMaxBuilds,
+                              maxConcurrentSlots: editMaxSlots,
                             })
                           }
                           className="px-2 py-1 text-xs rounded bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
@@ -229,8 +256,8 @@ export function ResourceProviderSettings({
                             onClick={() => {
                               setEditingId(provider.id);
                               setEditName(provider.name);
-                              setEditMaxBuilds(
-                                provider.maxConcurrentBuilds ?? 2,
+                              setEditMaxSlots(
+                                provider.maxConcurrentSlots ?? 4,
                               );
                             }}
                             className="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:underline"
@@ -238,14 +265,21 @@ export function ResourceProviderSettings({
                             {provider.name}
                           </button>
                         </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          {provider.capabilities?.map((cap) =>
+                            capabilityBadge(cap),
+                          )}
+                        </div>
                         <div className="flex items-center gap-3 mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
-                          <span>{provider.platform}</span>
-                          {provider.xcodeVersion && (
-                            <span>Xcode {provider.xcodeVersion}</span>
+                          <span>{provider.platform}/{provider.arch}</span>
+                          {provider.metadata?.xcodeVersion && (
+                            <span>
+                              Xcode {provider.metadata.xcodeVersion}
+                            </span>
                           )}
                           <span>
                             {provider.activeAllocations}/
-                            {provider.maxConcurrentBuilds ?? 2} builds
+                            {provider.maxConcurrentSlots ?? 4} slots
                           </span>
                         </div>
                       </>
@@ -280,11 +314,11 @@ export function ResourceProviderSettings({
             {generatedToken ? (
               <div className="space-y-3">
                 <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                  Mac registered! Run this command on your Mac:
+                  Provider registered! Run this command on your machine:
                 </p>
                 <div className="relative">
                   <pre className="p-3 rounded-md bg-neutral-900 dark:bg-neutral-950 text-green-400 text-xs font-mono overflow-x-auto whitespace-pre-wrap">
-                    {`curl -fsSL ${window.location.origin}/api/resource-providers/setup | bash -s -- --token ${generatedToken} --server ${window.location.origin}`}
+                    {`curl -fsSL ${window.location.origin}/api/providers/setup | bash -s -- --token ${generatedToken} --server ${window.location.origin}`}
                   </pre>
                   <button
                     type="button"
@@ -297,7 +331,7 @@ export function ResourceProviderSettings({
                 </div>
                 <p className="text-xs text-neutral-500 dark:text-neutral-400">
                   This token is shown only once. The setup script will install
-                  the daemon as a launchd service.
+                  the provider daemon as a systemd/launchd service.
                 </p>
                 <div className="flex items-center gap-2">
                   <button
@@ -320,7 +354,7 @@ export function ResourceProviderSettings({
             ) : (
               <div className="space-y-3">
                 <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                  Register a new Mac
+                  Register a new provider
                 </p>
                 <div>
                   <label
@@ -334,12 +368,41 @@ export function ResourceProviderSettings({
                     type="text"
                     value={newProviderName}
                     onChange={(e) => setNewProviderName(e.target.value)}
-                    placeholder="e.g. Mac Studio"
+                    placeholder="e.g. Build Server 1"
                     className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-sm"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") handleRegister();
                     }}
                   />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                    Platform
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setNewProviderPlatform("linux")}
+                      className={`px-3 py-1.5 text-xs rounded-md border ${
+                        newProviderPlatform === "linux"
+                          ? "border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
+                          : "border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300"
+                      }`}
+                    >
+                      Linux
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewProviderPlatform("macos")}
+                      className={`px-3 py-1.5 text-xs rounded-md border ${
+                        newProviderPlatform === "macos"
+                          ? "border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
+                          : "border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300"
+                      }`}
+                    >
+                      macOS
+                    </button>
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <button

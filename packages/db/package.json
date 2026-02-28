@@ -43,8 +43,10 @@
     "./queries/preview-test-jobs": "./src/queries/preview-test-jobs.ts",
     "./mutations/preview-configs": "./src/mutations/preview-configs.ts",
     "./mutations/preview-test-jobs": "./src/mutations/preview-test-jobs.ts",
-    "./queries/resource-providers": "./src/queries/resource-providers.ts",
-    "./mutations/resource-providers": "./src/mutations/resource-providers.ts",
+    "./queries/providers": "./src/queries/providers.ts",
+    "./mutations/providers": "./src/mutations/providers.ts",
+    "./queries/provider-snapshots": "./src/queries/provider-snapshots.ts",
+    "./mutations/provider-snapshots": "./src/mutations/provider-snapshots.ts",
     "./schema": "./src/schema/index.ts"
   },
   "dependencies": {

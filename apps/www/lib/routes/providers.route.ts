@@ -5,38 +5,36 @@ import {
   getById,
   listActiveAllocationsByProvider,
   getAllocationById,
-} from "@cmux/db/queries/resource-providers";
+} from "@cmux/db/queries/providers";
 import {
-  createResourceProvider,
-  updateResourceProvider,
-  deleteResourceProvider,
+  createProvider,
+  updateProvider,
+  deleteProvider,
   createAllocation,
   releaseAllocation,
-} from "@cmux/db/mutations/resource-providers";
+} from "@cmux/db/mutations/providers";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { createHash, randomBytes } from "node:crypto";
 
-// Import the WS hub send function (will be provided by the server app)
-// For MCP proxying, we need a way to reach the WebSocket hub running in apps/server
-// We do this by forwarding MCP requests to the server via an internal HTTP call
+// For proxying JSON-RPC requests to the WebSocket hub in apps/server
 const CMUX_SERVER_URL = process.env.CMUX_SERVER_INTERNAL_URL ?? "http://localhost:3001";
 
-export const resourceProvidersRouter = new OpenAPIHono();
+export const providersRouter = new OpenAPIHono();
 
 const ErrorResponse = z
   .object({
     code: z.number(),
     message: z.string(),
   })
-  .openapi("ResourceProviderErrorResponse");
+  .openapi("ProviderErrorResponse");
 
 const TeamQuery = z
   .object({
     teamSlugOrId: z.string(),
   })
-  .openapi("ResourceProviderTeamQuery");
+  .openapi("ProviderTeamQuery");
 
-const ResourceProviderSchema = z
+const ProviderSchema = z
   .object({
     id: z.string(),
     name: z.string(),
@@ -47,79 +45,75 @@ const ResourceProviderSchema = z
     osVersion: z.string().nullable().optional(),
     hostname: z.string().nullable().optional(),
     capabilities: z.array(z.string()).nullable().optional(),
-    maxConcurrentBuilds: z.number().nullable().optional(),
+    maxConcurrentSlots: z.number().nullable().optional(),
     status: z.string(),
     lastHeartbeatAt: z.number().nullable().optional(),
-    xcodeVersion: z.string().nullable().optional(),
+    metadata: z.record(z.string(), z.string()).nullable().optional(),
     createdAt: z.number(),
     updatedAt: z.number(),
   })
-  .openapi("ResourceProvider");
+  .openapi("Provider");
 
-const ResourceAllocationSchema = z
+const ProviderAllocationSchema = z
   .object({
     id: z.string(),
-    resourceProviderId: z.string(),
+    providerId: z.string(),
     taskRunId: z.string().nullable().optional(),
     teamId: z.string(),
     userId: z.string(),
+    type: z.string(),
     status: z.string(),
-    buildDir: z.string().nullable().optional(),
-    simulatorUdid: z.string().nullable().optional(),
-    simulatorDeviceType: z.string().nullable().optional(),
-    simulatorRuntime: z.string().nullable().optional(),
-    platform: z.string(),
+    data: z.record(z.string(), z.unknown()).nullable().optional(),
     createdAt: z.number(),
     releasedAt: z.number().nullable().optional(),
   })
-  .openapi("ResourceAllocation");
+  .openapi("ProviderAllocation");
 
-const CreateResourceProviderBody = z
+const CreateProviderBody = z
   .object({
     teamSlugOrId: z.string(),
     name: z.string().min(1).max(200),
-    platform: z.string().default("macos"),
+    platform: z.string().default("linux"),
     arch: z.string().default("arm64"),
   })
-  .openapi("CreateResourceProviderBody");
+  .openapi("CreateProviderBody");
 
-const UpdateResourceProviderBody = z
+const UpdateProviderBody = z
   .object({
     name: z.string().min(1).max(200).optional(),
-    maxConcurrentBuilds: z.number().int().min(1).max(20).optional(),
+    maxConcurrentSlots: z.number().int().min(1).max(20).optional(),
   })
-  .openapi("UpdateResourceProviderBody");
+  .openapi("UpdateProviderBody");
 
 const AllocateBody = z
   .object({
     taskRunId: z.string().optional(),
     teamSlugOrId: z.string(),
-    simulatorDeviceType: z.string().optional(),
-    simulatorRuntime: z.string().optional(),
-    platform: z.string().optional(),
+    type: z.enum(["compute", "resource"]),
+    data: z.record(z.string(), z.unknown()).optional(),
   })
-  .openapi("AllocateResourceBody");
+  .openapi("AllocateProviderBody");
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
-// POST /resource-providers - Register new provider
-resourceProvidersRouter.openapi(
+// POST /providers/register - Register new provider
+providersRouter.openapi(
   createRoute({
     method: "post",
-    path: "/resource-providers",
-    tags: ["ResourceProviders"],
-    summary: "Register a new resource provider",
+    path: "/providers/register",
+    tags: ["Providers"],
+    summary: "Register a new provider",
     request: {
       body: {
-        content: { "application/json": { schema: CreateResourceProviderBody } },
+        content: { "application/json": { schema: CreateProviderBody } },
         required: true,
       },
     },
     responses: {
       201: {
-        description: "Resource provider created",
+        description: "Provider created",
         content: {
           "application/json": {
             schema: z.object({
@@ -144,7 +138,7 @@ resourceProvidersRouter.openapi(
     const hashedToken = hashToken(rawToken);
     const db = getDb();
 
-    const { id } = createResourceProvider(db, {
+    const { id } = createProvider(db, {
       teamSlugOrId: body.teamSlugOrId,
       userId: user.id,
       name: body.name,
@@ -157,22 +151,26 @@ resourceProvidersRouter.openapi(
   },
 );
 
-// GET /resource-providers - List providers for team
-resourceProvidersRouter.openapi(
+// GET /providers - List providers for team
+providersRouter.openapi(
   createRoute({
     method: "get",
-    path: "/resource-providers",
-    tags: ["ResourceProviders"],
-    summary: "List resource providers for team",
-    request: { query: TeamQuery },
+    path: "/providers",
+    tags: ["Providers"],
+    summary: "List providers for team",
+    request: {
+      query: TeamQuery.extend({
+        capability: z.string().optional(),
+      }),
+    },
     responses: {
       200: {
-        description: "List of resource providers",
+        description: "List of providers",
         content: {
           "application/json": {
             schema: z.object({
               providers: z.array(
-                ResourceProviderSchema.extend({
+                ProviderSchema.extend({
                   activeAllocations: z.number(),
                 }),
               ),
@@ -192,9 +190,17 @@ resourceProvidersRouter.openapi(
 
     const query = c.req.valid("query");
     const db = getDb();
-    const providers = listByTeam(db, query.teamSlugOrId);
+    let providerList = listByTeam(db, query.teamSlugOrId);
 
-    const providersWithCounts = providers.map((p: { id: string; [key: string]: unknown }) => {
+    // Filter by capability if specified
+    if (query.capability) {
+      const cap = query.capability;
+      providerList = providerList.filter((p: { capabilities: string[] | null }) =>
+        p.capabilities?.includes(cap),
+      );
+    }
+
+    const providersWithCounts = providerList.map((p: { id: string; [key: string]: unknown }) => {
       const active = listActiveAllocationsByProvider(db, p.id);
       return { ...p, activeAllocations: active.length };
     });
@@ -203,24 +209,24 @@ resourceProvidersRouter.openapi(
   },
 );
 
-// GET /resource-providers/:id - Provider details
-resourceProvidersRouter.openapi(
+// GET /providers/:id - Provider details
+providersRouter.openapi(
   createRoute({
     method: "get",
-    path: "/resource-providers/{id}",
-    tags: ["ResourceProviders"],
-    summary: "Get resource provider details",
+    path: "/providers/{id}",
+    tags: ["Providers"],
+    summary: "Get provider details",
     request: {
       params: z.object({ id: z.string() }),
     },
     responses: {
       200: {
-        description: "Resource provider details",
+        description: "Provider details",
         content: {
           "application/json": {
             schema: z.object({
-              provider: ResourceProviderSchema,
-              allocations: z.array(ResourceAllocationSchema),
+              provider: ProviderSchema,
+              allocations: z.array(ProviderAllocationSchema),
             }),
           },
         },
@@ -249,17 +255,17 @@ resourceProvidersRouter.openapi(
   },
 );
 
-// PATCH /resource-providers/:id - Update provider
-resourceProvidersRouter.openapi(
+// PATCH /providers/:id - Update provider
+providersRouter.openapi(
   createRoute({
     method: "patch",
-    path: "/resource-providers/{id}",
-    tags: ["ResourceProviders"],
-    summary: "Update resource provider",
+    path: "/providers/{id}",
+    tags: ["Providers"],
+    summary: "Update provider",
     request: {
       params: z.object({ id: z.string() }),
       body: {
-        content: { "application/json": { schema: UpdateResourceProviderBody } },
+        content: { "application/json": { schema: UpdateProviderBody } },
         required: true,
       },
     },
@@ -291,18 +297,18 @@ resourceProvidersRouter.openapi(
     const provider = getById(db, id);
     if (!provider) return c.json({ code: 404, message: "Provider not found" }, 404);
 
-    updateResourceProvider(db, id, body);
+    updateProvider(db, id, body);
     return c.json({ success: true }, 200);
   },
 );
 
-// DELETE /resource-providers/:id - Deregister provider
-resourceProvidersRouter.openapi(
+// DELETE /providers/:id - Deregister provider
+providersRouter.openapi(
   createRoute({
     method: "delete",
-    path: "/resource-providers/{id}",
-    tags: ["ResourceProviders"],
-    summary: "Deregister resource provider",
+    path: "/providers/{id}",
+    tags: ["Providers"],
+    summary: "Deregister provider",
     request: {
       params: z.object({ id: z.string() }),
     },
@@ -328,18 +334,18 @@ resourceProvidersRouter.openapi(
     const provider = getById(db, id);
     if (!provider) return c.json({ code: 404, message: "Provider not found" }, 404);
 
-    deleteResourceProvider(db, id);
+    deleteProvider(db, id);
     return c.body(null, 204);
   },
 );
 
-// POST /resource-providers/:id/allocate - Allocate for workspace
-resourceProvidersRouter.openapi(
+// POST /providers/:id/allocate - Create allocation slot
+providersRouter.openapi(
   createRoute({
     method: "post",
-    path: "/resource-providers/{id}/allocate",
-    tags: ["ResourceProviders"],
-    summary: "Allocate resource provider for a workspace",
+    path: "/providers/{id}/allocate",
+    tags: ["Providers"],
+    summary: "Allocate a provider slot for a workspace",
     request: {
       params: z.object({ id: z.string() }),
       body: {
@@ -354,7 +360,6 @@ resourceProvidersRouter.openapi(
           "application/json": {
             schema: z.object({
               allocationId: z.string(),
-              buildDir: z.string(),
             }),
           },
         },
@@ -389,53 +394,54 @@ resourceProvidersRouter.openapi(
     }
 
     const activeAllocations = listActiveAllocationsByProvider(db, id);
-    if (activeAllocations.length >= (provider.maxConcurrentBuilds ?? 2)) {
+    if (activeAllocations.length >= (provider.maxConcurrentSlots ?? 4)) {
       return c.json({ code: 409, message: "Provider at maximum capacity" }, 409);
     }
 
-    const { id: allocationId, buildDir } = createAllocation(db, {
-      resourceProviderId: id,
+    const { id: allocationId } = createAllocation(db, {
+      providerId: id,
       taskRunId: body.taskRunId,
       teamSlugOrId: body.teamSlugOrId,
       userId: user.id,
-      platform: body.platform,
-      simulatorDeviceType: body.simulatorDeviceType,
-      simulatorRuntime: body.simulatorRuntime,
+      type: body.type,
+      data: body.data,
     });
 
-    // Notify the Mac daemon to set up the workspace (build dir + simulator)
-    try {
-      const setupRes = await fetch(
-        `${CMUX_SERVER_URL}/internal/resource-provider/${id}/setup-allocation`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            allocationId,
-            buildDir,
-            simulatorDeviceType: body.simulatorDeviceType ?? "iPhone 16 Pro",
-            simulatorRuntime: body.simulatorRuntime ?? "iOS-18-6",
-          }),
-        },
-      );
-      if (!setupRes.ok) {
-        console.error("Failed to setup allocation on Mac daemon:", await setupRes.text());
+    // For resource allocations, notify the daemon to set up the workspace
+    if (body.type === "resource" && body.data) {
+      try {
+        const setupRes = await fetch(
+          `${CMUX_SERVER_URL}/internal/provider/${id}/setup-allocation`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              allocationId,
+              buildDir: body.data.buildDir ?? `/tmp/cmux-builds/${allocationId}`,
+              simulatorDeviceType: body.data.simulatorDeviceType ?? "iPhone 16 Pro",
+              simulatorRuntime: body.data.simulatorRuntime ?? "iOS-18-6",
+            }),
+          },
+        );
+        if (!setupRes.ok) {
+          console.error("Failed to setup allocation on daemon:", await setupRes.text());
+        }
+      } catch (error) {
+        console.error("Failed to reach server for allocation setup:", error);
       }
-    } catch (error) {
-      console.error("Failed to reach server for allocation setup:", error);
     }
 
-    return c.json({ allocationId, buildDir }, 201);
+    return c.json({ allocationId }, 201);
   },
 );
 
-// POST /resource-providers/allocations/:allocationId/release - Release allocation
-resourceProvidersRouter.openapi(
+// POST /providers/allocations/:id/release - Release allocation
+providersRouter.openapi(
   createRoute({
     method: "post",
-    path: "/resource-providers/allocations/{allocationId}/release",
-    tags: ["ResourceProviders"],
-    summary: "Release a resource allocation",
+    path: "/providers/allocations/{allocationId}/release",
+    tags: ["Providers"],
+    summary: "Release a provider allocation",
     request: {
       params: z.object({ allocationId: z.string() }),
     },
@@ -468,35 +474,38 @@ resourceProvidersRouter.openapi(
 
     releaseAllocation(db, allocationId);
 
-    // Notify Mac daemon to clean up
-    try {
-      await fetch(
-        `${CMUX_SERVER_URL}/internal/resource-provider/${allocation.resourceProviderId}/cleanup-allocation`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            allocationId,
-            buildDir: allocation.buildDir,
-            simulatorUdid: allocation.simulatorUdid,
-          }),
-        },
-      );
-    } catch (error) {
-      console.error("Failed to notify cleanup:", error);
+    // Notify daemon to clean up
+    if (allocation.type === "resource" && allocation.data) {
+      try {
+        const data = allocation.data as Record<string, unknown>;
+        await fetch(
+          `${CMUX_SERVER_URL}/internal/provider/${allocation.providerId}/cleanup-allocation`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              allocationId,
+              buildDir: data.buildDir,
+              simulatorUdid: data.simulatorUdid,
+            }),
+          },
+        );
+      } catch (error) {
+        console.error("Failed to notify cleanup:", error);
+      }
     }
 
     return c.json({ success: true }, 200);
   },
 );
 
-// POST /resource-providers/allocations/:allocationId/mcp - Proxy MCP JSON-RPC
-resourceProvidersRouter.openapi(
+// POST /providers/allocations/:id/json-rpc - Proxy JSON-RPC to provider
+providersRouter.openapi(
   createRoute({
     method: "post",
-    path: "/resource-providers/allocations/{allocationId}/mcp",
-    tags: ["ResourceProviders"],
-    summary: "Proxy MCP JSON-RPC request to Mac daemon",
+    path: "/providers/allocations/{allocationId}/json-rpc",
+    tags: ["Providers"],
+    summary: "Proxy JSON-RPC request to provider daemon",
     request: {
       params: z.object({ allocationId: z.string() }),
       body: {
@@ -515,7 +524,7 @@ resourceProvidersRouter.openapi(
     },
     responses: {
       200: {
-        description: "MCP JSON-RPC response",
+        description: "JSON-RPC response",
         content: {
           "application/json": {
             schema: z.object({
@@ -565,15 +574,15 @@ resourceProvidersRouter.openapi(
       return c.json({ code: 404, message: "Allocation is not active" }, 404);
     }
 
-    const provider = getById(db, allocation.resourceProviderId);
+    const provider = getById(db, allocation.providerId);
     if (!provider || provider.status !== "online") {
-      return c.json({ code: 502, message: "Resource provider is offline" }, 502);
+      return c.json({ code: 502, message: "Provider is offline" }, 502);
     }
 
     // Forward to the WebSocket hub in apps/server
     try {
       const res = await fetch(
-        `${CMUX_SERVER_URL}/internal/resource-provider/${provider.id}/mcp`,
+        `${CMUX_SERVER_URL}/internal/provider/${provider.id}/json-rpc`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -586,15 +595,15 @@ resourceProvidersRouter.openapi(
 
       if (!res.ok) {
         const errorText = await res.text();
-        console.error("MCP proxy error:", errorText);
-        return c.json({ code: 502, message: "Failed to reach resource provider" }, 502);
+        console.error("JSON-RPC proxy error:", errorText);
+        return c.json({ code: 502, message: "Failed to reach provider" }, 502);
       }
 
       const response = await res.json();
       return c.json(response, 200);
     } catch (error) {
-      console.error("MCP proxy error:", error);
-      return c.json({ code: 502, message: "Failed to reach resource provider" }, 502);
+      console.error("JSON-RPC proxy error:", error);
+      return c.json({ code: 502, message: "Failed to reach provider" }, 502);
     }
   },
 );

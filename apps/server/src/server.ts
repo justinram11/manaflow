@@ -6,7 +6,7 @@ import { GitDiffManager } from "./gitDiff";
 
 import { setupSocketHandlers } from "./socket-handlers";
 import { createSocketIOTransport } from "./transports/socketio-transport";
-import { setupResourceProviderWS, sendMcpRequest, sendSetupAllocation, sendCleanupAllocation } from "./resource-provider-ws";
+import { setupProviderWS, sendJsonRpcRequest, sendSetupAllocation, sendCleanupAllocation } from "./provider-ws";
 import { getDb, getUserId } from "./utils/dbClient";
 import { dockerLogger, serverLogger } from "./utils/fileLogger";
 import { DockerVSCodeInstance } from "./vscode/DockerVSCodeInstance";
@@ -56,12 +56,12 @@ export async function startServer({
   const httpServer = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
 
-    // Internal API for resource provider communication (from www app)
-    if (url.pathname.startsWith("/internal/resource-provider/")) {
+    // Internal API for provider communication (from www app)
+    if (url.pathname.startsWith("/internal/provider/")) {
       try {
-        await handleInternalResourceProviderRequest(url, req, res);
+        await handleInternalProviderRequest(url, req, res);
       } catch (error) {
-        console.error("Internal resource provider request error:", error);
+        console.error("Internal provider request error:", error);
         res.statusCode = 500;
         res.end(JSON.stringify({ error: "Internal server error" }));
       }
@@ -78,8 +78,8 @@ export async function startServer({
   // Set up all socket handlers
   setupSocketHandlers(rt, gitDiffManager, defaultRepo);
 
-  // Set up resource provider WebSocket handler
-  setupResourceProviderWS(httpServer);
+  // Set up provider WebSocket handler
+  setupProviderWS(httpServer);
 
   let vscodeServeHandle: VSCodeServeWebHandle | null = null;
 
@@ -253,13 +253,13 @@ export async function startServer({
 }
 
 /**
- * Handle internal API requests from the www app for resource provider communication.
+ * Handle internal API requests from the www app for provider communication.
  * Routes:
- *   POST /internal/resource-provider/:providerId/mcp
- *   POST /internal/resource-provider/:providerId/setup-allocation
- *   POST /internal/resource-provider/:providerId/cleanup-allocation
+ *   POST /internal/provider/:providerId/json-rpc   — generic JSON-RPC forwarder
+ *   POST /internal/provider/:providerId/setup-allocation
+ *   POST /internal/provider/:providerId/cleanup-allocation
  */
-async function handleInternalResourceProviderRequest(
+async function handleInternalProviderRequest(
   url: URL,
   req: IncomingMessage,
   res: ServerResponse,
@@ -270,9 +270,9 @@ async function handleInternalResourceProviderRequest(
     return;
   }
 
-  // Parse path: /internal/resource-provider/:providerId/:action
+  // Parse path: /internal/provider/:providerId/:action
   const parts = url.pathname.split("/");
-  // parts: ["", "internal", "resource-provider", providerId, action]
+  // parts: ["", "internal", "provider", providerId, action]
   const providerId = parts[3];
   const action = parts[4];
 
@@ -304,15 +304,16 @@ async function handleInternalResourceProviderRequest(
 
   try {
     switch (action) {
-      case "mcp": {
-        const result = await sendMcpRequest(providerId, {
+      case "json-rpc": {
+        const request = parsed.request as Record<string, unknown>;
+        const result = await sendJsonRpcRequest(providerId, {
           jsonrpc: "2.0",
-          method: (parsed.request as Record<string, unknown>).method as string,
+          method: request.method as string,
           params: {
-            ...(parsed.request as Record<string, unknown>).params as Record<string, unknown> ?? {},
-            _allocationId: parsed.allocationId,
+            ...request.params as Record<string, unknown> ?? {},
+            ...(parsed.allocationId ? { _allocationId: parsed.allocationId } : {}),
           },
-          id: (parsed.request as Record<string, unknown>).id as string | number,
+          id: request.id as string | number,
         });
         res.statusCode = 200;
         res.end(JSON.stringify(result));
@@ -344,7 +345,7 @@ async function handleInternalResourceProviderRequest(
         res.end(JSON.stringify({ error: `Unknown action: ${action}` }));
     }
   } catch (error) {
-    console.error(`Internal resource provider error (${action}):`, error);
+    console.error(`Internal provider error (${action}):`, error);
     res.statusCode = 502;
     res.end(
       JSON.stringify({

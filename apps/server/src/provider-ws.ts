@@ -3,12 +3,12 @@ import type { Server as HttpServer, IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { createHash } from "node:crypto";
 import { getDb } from "./utils/dbClient";
-import { getByToken } from "@cmux/db/queries/resource-providers";
+import { getByToken } from "@cmux/db/queries/providers";
 import {
   updateProviderStatus,
   updateProviderHeartbeat,
-  updateResourceProvider,
-} from "@cmux/db/mutations/resource-providers";
+  updateProvider,
+} from "@cmux/db/mutations/providers";
 import { serverLogger } from "./utils/fileLogger";
 
 interface PendingRequest {
@@ -28,11 +28,12 @@ interface ProviderConnection {
 const connections = new Map<string, ProviderConnection>();
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 min
+const LONG_RUNNING_TIMEOUT_MS = 5 * 60 * 1000; // 5 min (compute.launch, compute.createSnapshot)
 const BUILD_TIMEOUT_MS = 30 * 60 * 1000; // 30 min
 const HEARTBEAT_INTERVAL_MS = 30 * 1000;
 const HEARTBEAT_TIMEOUT_MS = 60 * 1000;
 
-// Methods that trigger builds and need longer timeouts
+// Methods that trigger builds and need longer timeouts (30 min)
 const BUILD_METHODS = new Set([
   "ios_build",
   "ios_build_and_run",
@@ -40,16 +41,28 @@ const BUILD_METHODS = new Set([
   "ios_sync_code",
 ]);
 
+// Methods that are long-running compute operations (5 min)
+const LONG_RUNNING_METHODS = new Set([
+  "compute.launch",
+  "compute.createSnapshot",
+]);
+
+function getTimeoutForMethod(method: string): number {
+  if (BUILD_METHODS.has(method)) return BUILD_TIMEOUT_MS;
+  if (LONG_RUNNING_METHODS.has(method)) return LONG_RUNNING_TIMEOUT_MS;
+  return DEFAULT_TIMEOUT_MS;
+}
+
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
-export function setupResourceProviderWS(httpServer: HttpServer): void {
+export function setupProviderWS(httpServer: HttpServer): void {
   const wss = new WebSocketServer({ noServer: true });
 
   httpServer.on("upgrade", (request: IncomingMessage, socket: Duplex, head: Buffer) => {
     const url = new URL(request.url ?? "/", `http://${request.headers.host}`);
-    if (url.pathname !== "/resource-provider-ws") return;
+    if (url.pathname !== "/provider-ws") return;
 
     wss.handleUpgrade(request, socket, head, (ws) => {
       wss.emit("connection", ws, request);
@@ -71,7 +84,7 @@ export function setupResourceProviderWS(httpServer: HttpServer): void {
         authenticated = true;
         providerId = provider.id;
         registerConnection(ws, provider.id);
-        serverLogger.info(`Resource provider connected: ${provider.name} (${provider.id})`);
+        serverLogger.info(`Provider connected: ${provider.name} (${provider.id})`);
       }
     }
 
@@ -90,18 +103,19 @@ export function setupResourceProviderWS(httpServer: HttpServer): void {
               registerConnection(ws, provider.id);
               ws.send(JSON.stringify({ type: "auth_ok", providerId: provider.id }));
               serverLogger.info(
-                `Resource provider authenticated via message: ${provider.name} (${provider.id})`,
+                `Provider authenticated via message: ${provider.name} (${provider.id})`,
               );
 
-              // Update provider info if sent
+              // Update provider info if sent (capabilities, metadata, etc.)
               if (msg.info) {
-                updateResourceProvider(db, provider.id, {
-                  osVersion: msg.info.osVersion,
-                  hostname: msg.info.hostname,
-                  capabilities: msg.info.capabilities,
-                  xcodeVersion: msg.info.xcodeVersion,
-                  arch: msg.info.arch,
-                });
+                const patch: Parameters<typeof updateProvider>[2] = {};
+                if (msg.info.osVersion) patch.osVersion = msg.info.osVersion;
+                if (msg.info.hostname) patch.hostname = msg.info.hostname;
+                if (msg.info.capabilities) patch.capabilities = msg.info.capabilities;
+                if (msg.info.arch) patch.arch = msg.info.arch;
+                if (msg.info.metadata) patch.metadata = msg.info.metadata;
+
+                updateProvider(db, provider.id, patch);
               }
               return;
             }
@@ -133,7 +147,7 @@ export function setupResourceProviderWS(httpServer: HttpServer): void {
     });
 
     ws.on("error", (error) => {
-      console.error(`Resource provider WS error (${providerId}):`, error);
+      console.error(`Provider WS error (${providerId}):`, error);
       if (providerId) {
         cleanupConnection(providerId);
       }
@@ -172,7 +186,7 @@ function registerConnection(ws: WebSocket, providerId: string): void {
       if (ws.readyState === WebSocket.OPEN) {
         // Check if pong was received recently
         if (Date.now() - conn.lastPong > HEARTBEAT_TIMEOUT_MS) {
-          serverLogger.warn(`Resource provider ${providerId} heartbeat timeout, closing`);
+          serverLogger.warn(`Provider ${providerId} heartbeat timeout, closing`);
           ws.terminate();
           cleanupConnection(providerId);
           return;
@@ -225,7 +239,7 @@ function cleanupConnection(providerId: string): void {
     console.error("Failed to update provider status:", error);
   }
 
-  serverLogger.info(`Resource provider disconnected: ${providerId}`);
+  serverLogger.info(`Provider disconnected: ${providerId}`);
 }
 
 function handleProviderMessage(providerId: string, msg: Record<string, unknown>): void {
@@ -269,7 +283,11 @@ export interface JsonRpcResponse {
   id: string | number;
 }
 
-export function sendMcpRequest(
+/**
+ * Send a JSON-RPC request to a provider.
+ * Timeout is determined by the method type.
+ */
+export function sendJsonRpcRequest(
   providerId: string,
   request: JsonRpcRequest,
 ): Promise<JsonRpcResponse> {
@@ -278,7 +296,7 @@ export function sendMcpRequest(
     return Promise.reject(new Error("Provider not connected"));
   }
 
-  const timeoutMs = BUILD_METHODS.has(request.method) ? BUILD_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
+  const timeoutMs = getTimeoutForMethod(request.method);
   const requestId = String(request.id);
 
   return new Promise((resolve, reject) => {
@@ -303,7 +321,7 @@ export function isProviderConnected(providerId: string): boolean {
 }
 
 /**
- * Send a setup-allocation command to the Mac daemon
+ * Send a setup-allocation command to a provider daemon
  */
 export function sendSetupAllocation(
   providerId: string,
@@ -314,7 +332,7 @@ export function sendSetupAllocation(
     simulatorRuntime: string;
   },
 ): Promise<JsonRpcResponse> {
-  return sendMcpRequest(providerId, {
+  return sendJsonRpcRequest(providerId, {
     jsonrpc: "2.0",
     method: "setup_allocation",
     params: data,
@@ -323,7 +341,7 @@ export function sendSetupAllocation(
 }
 
 /**
- * Send a cleanup-allocation command to the Mac daemon
+ * Send a cleanup-allocation command to a provider daemon
  */
 export function sendCleanupAllocation(
   providerId: string,
@@ -333,7 +351,7 @@ export function sendCleanupAllocation(
     simulatorUdid?: string | null;
   },
 ): Promise<JsonRpcResponse> {
-  return sendMcpRequest(providerId, {
+  return sendJsonRpcRequest(providerId, {
     jsonrpc: "2.0",
     method: "cleanup_allocation",
     params: data,

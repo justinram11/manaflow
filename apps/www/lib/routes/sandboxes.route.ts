@@ -52,18 +52,36 @@ import { VM_CLEANUP_COMMANDS } from "./sandboxes/cleanup";
 import { startDockerSandbox } from "./sandboxes/docker-provider";
 import {
   startIncusSandbox,
-  listSnapshots as listIncusSnapshots,
-  deleteSnapshot as deleteIncusSnapshot,
+  listProviderSnapshots,
+  deleteProviderSnapshot,
   RemoteIncusSandboxInstance,
 } from "./sandboxes/incus-provider";
-import { getComputeProviderClient } from "@/lib/utils/compute-provider";
+import { sendProviderRequest } from "@/lib/utils/provider-client";
+import { getOnlineByCapability } from "@cmux/db/queries/providers";
 import { injectClaudeCredentials } from "./sandboxes/claude-credentials";
 import { injectHostSshKeys } from "./sandboxes/ssh-keys";
 
 // Track running Incus containers for snapshot operations.
-// State now also lives in compute-provider, but we keep a local map
-// for quick lookups without HTTP round-trips during the same session.
+// State now also lives in the provider daemon, but we keep a local map
+// for quick lookups without round-trips during the same session.
 export const incusVmRegistry = new Map<string, RemoteIncusSandboxInstance>();
+
+/**
+ * Resolve the providerId for Incus operations. Falls back to the first online
+ * provider with compute:incus capability.
+ */
+function resolveIncusProviderId(
+  db: ReturnType<typeof getDb>,
+  teamSlugOrId: string,
+  vscode?: Record<string, unknown> | null,
+): string | null {
+  // Try providerId from vscode metadata
+  if (vscode?.providerId) return vscode.providerId as string;
+
+  // Find first online provider with compute:incus capability
+  const providers = getOnlineByCapability(db, teamSlugOrId, "compute:incus");
+  return providers[0]?.id ?? null;
+}
 
 /**
  * Wait for the VSCode server to be ready by polling the service URL.
@@ -454,9 +472,10 @@ sandboxesRouter.openapi(
       gitIdentityPromise.catch(() => {});
 
       // --- Resolve provider ---
-      // If an environment is specified and it uses Incus, override the provider
+      // If an environment is specified and it uses a provider, override the provider
       let resolvedProvider = body.provider ?? env.SANDBOX_PROVIDER ?? "morph";
-      let environmentIncusSnapshotId: string | undefined;
+      let environmentSnapshotId: string | undefined;
+      let resolvedProviderId: string | undefined;
       if (body.environmentId && !body.provider) {
         try {
           const envDoc = getEnvironmentByTeam(
@@ -464,12 +483,25 @@ sandboxesRouter.openapi(
             body.teamSlugOrId,
             body.environmentId,
           );
-          if (envDoc?.provider === "incus") {
+          if (envDoc?.providerId) {
+            // Environment is linked to a unified provider
             resolvedProvider = "incus";
-            environmentIncusSnapshotId = envDoc.incusSnapshotId ?? undefined;
+            resolvedProviderId = envDoc.providerId;
+            environmentSnapshotId = envDoc.snapshotId ?? envDoc.incusSnapshotId ?? undefined;
+          } else if (envDoc?.provider === "incus") {
+            // Legacy: environment uses old provider column
+            resolvedProvider = "incus";
+            environmentSnapshotId = envDoc.incusSnapshotId ?? undefined;
           }
         } catch (lookupErr) {
           console.warn("[sandboxes.start] Failed to look up environment provider:", lookupErr);
+        }
+      }
+      // If incus provider selected but no providerId yet, find one
+      if (resolvedProvider === "incus" && !resolvedProviderId) {
+        const onlineProviders = getOnlineByCapability(db, body.teamSlugOrId, "compute:incus");
+        if (onlineProviders.length > 0) {
+          resolvedProviderId = onlineProviders[0].id;
         }
       }
 
@@ -535,6 +567,7 @@ sandboxesRouter.openapi(
           await Promise.all([githubAccessTokenPromise, apiKeysPromise]);
 
         const effectiveGithubToken = githubAccessToken || userApiKeys.GITHUB_PAT || null;
+        const dockerClaudeCredentials = userApiKeys.CLAUDE_CREDENTIALS_JSON;
 
         const dockerInstance = dockerResult.instance;
 
@@ -560,6 +593,15 @@ sandboxesRouter.openapi(
           // Configure GitHub access (OAuth token or PAT fallback)
           effectiveGithubToken
             ? configureGithubAccess(dockerInstance, effectiveGithubToken)
+            : Promise.resolve(),
+          // Inject Claude credentials (.credentials.json for MCP OAuth tokens)
+          dockerClaudeCredentials
+            ? injectClaudeCredentials(dockerInstance, dockerClaudeCredentials).catch((error) => {
+                console.log(
+                  `[sandboxes.start] Failed to inject Claude credentials (docker); continuing...`,
+                  error,
+                );
+              })
             : Promise.resolve(),
           // Configure git identity
           gitIdentityPromise
@@ -644,10 +686,18 @@ sandboxesRouter.openapi(
 
       // --- Incus provider path ---
       if (resolvedProvider === "incus") {
-        console.log(`[sandboxes.start] Using Incus provider`);
+        if (!resolvedProviderId) {
+          return c.json({
+            code: 409,
+            message: "No online Incus provider available. Register a provider in Settings.",
+          }, 409);
+        }
+
+        console.log(`[sandboxes.start] Using Incus provider ${resolvedProviderId}`);
 
         const incusResult = await startIncusSandbox({
-          snapshotId: body.snapshotId ?? environmentIncusSnapshotId,
+          providerId: resolvedProviderId,
+          snapshotId: body.snapshotId ?? environmentSnapshotId,
           ttlSeconds: body.ttlSeconds ?? 3600,
           metadata: body.metadata,
           displays: body.displays,
@@ -669,6 +719,7 @@ sandboxesRouter.openapi(
             updateTaskRunVSCode(db, body.taskRunId, {
               provider: "incus",
               containerName: incusContainerId,
+              providerId: resolvedProviderId,
               status: "starting",
               url: incusVscodeUrl,
               workspaceUrl: `${incusVscodeUrl}/?folder=/root/workspace`,
@@ -2374,8 +2425,11 @@ sandboxesRouter.openapi(
     try {
       let instance = incusVmRegistry.get(id);
       if (!instance) {
-        // Registry lost — create remote instance to snapshot via compute-provider
-        instance = new RemoteIncusSandboxInstance({ id });
+        // Registry lost — find a provider to route to
+        const db = getDb();
+        const providerId = resolveIncusProviderId(db, "default");
+        if (!providerId) return c.text("No Incus provider available", 502);
+        instance = new RemoteIncusSandboxInstance({ id, providerId });
       }
 
       await instance.snapshot(snapshotId);
@@ -2412,7 +2466,12 @@ sandboxesRouter.openapi(
     const token = await getAccessTokenFromRequest(c.req.raw);
     if (!token) return c.text("Unauthorized", 401);
 
-    const snapshots = await listIncusSnapshots();
+    // List snapshots from the first online Incus provider
+    const db = getDb();
+    const providerId = resolveIncusProviderId(db, "default");
+    if (!providerId) return c.json({ snapshots: [] });
+
+    const snapshots = await listProviderSnapshots(providerId);
     return c.json({ snapshots });
   },
 );
@@ -2450,7 +2509,10 @@ sandboxesRouter.openapi(
     const { snapshotId } = c.req.valid("param");
 
     try {
-      await deleteIncusSnapshot(snapshotId);
+      const db = getDb();
+      const providerId = resolveIncusProviderId(db, "default");
+      if (!providerId) return c.text("No Incus provider available", 502);
+      await deleteProviderSnapshot(providerId, snapshotId);
       return c.json({ deleted: true as const });
     } catch (error) {
       if (
@@ -2498,8 +2560,10 @@ sandboxesRouter.openapi(
     const { id } = c.req.valid("param");
     let instance = incusVmRegistry.get(id);
     if (!instance) {
-      // Registry lost — create remote instance to pause via compute-provider
-      instance = new RemoteIncusSandboxInstance({ id });
+      const db = getDb();
+      const providerId = resolveIncusProviderId(db, "default");
+      if (!providerId) return c.text("No Incus provider available", 502);
+      instance = new RemoteIncusSandboxInstance({ id, providerId });
     }
 
     try {
@@ -2543,8 +2607,10 @@ sandboxesRouter.openapi(
     const { id } = c.req.valid("param");
     let instance = incusVmRegistry.get(id);
     if (!instance) {
-      // Registry lost — create remote instance to resume via compute-provider
-      instance = new RemoteIncusSandboxInstance({ id });
+      const db = getDb();
+      const providerId = resolveIncusProviderId(db, "default");
+      if (!providerId) return c.text("No Incus provider available", 502);
+      instance = new RemoteIncusSandboxInstance({ id, providerId });
     }
 
     try {
@@ -2593,19 +2659,19 @@ sandboxesRouter.openapi(
       return c.json({ running: true, paused: instance.isPaused });
     }
 
-    // Registry lost — query compute-provider
+    // Registry lost — query provider daemon for status
     try {
-      const cpClient = getComputeProviderClient();
-      const statusResult = await cpClient.get({
-        url: "/api/instances/{id}",
-        path: { id },
-      });
-      if (statusResult.data) {
-        const data = statusResult.data as { status: string; paused: boolean };
+      const db = getDb();
+      const providerId = resolveIncusProviderId(db, "default");
+      if (providerId) {
+        const data = await sendProviderRequest(providerId, "compute.getStatus", { id }) as {
+          status: string;
+          paused: boolean;
+        };
         return c.json({ running: data.status === "running", paused: data.paused });
       }
     } catch {
-      // Compute provider unavailable
+      // Provider unavailable
     }
     return c.json({ running: false, paused: false });
   },
@@ -2646,8 +2712,11 @@ sandboxesRouter.openapi(
         await instance.destroy();
         incusVmRegistry.delete(id);
       } else {
-        // Registry lost (server restart / HMR) — delete via compute-provider
-        const remoteInstance = new RemoteIncusSandboxInstance({ id });
+        // Registry lost (server restart / HMR) — delete via provider daemon
+        const db = getDb();
+        const providerId = resolveIncusProviderId(db, "default");
+        if (!providerId) return c.text("No Incus provider available", 502);
+        const remoteInstance = new RemoteIncusSandboxInstance({ id, providerId });
         await remoteInstance.destroy();
       }
       return c.json({ destroyed: true as const });
@@ -2723,19 +2792,17 @@ sandboxesRouter.openapi(
         return c.json({ paused: instance.isPaused });
       }
 
-      // Registry lost — query compute-provider for status
+      // Registry lost — query provider daemon for status
       try {
-        const cpClient = getComputeProviderClient();
-        const statusResult = await cpClient.get({
-          url: "/api/instances/{id}",
-          path: { id: containerName },
-        });
-        if (statusResult.data) {
-          const data = statusResult.data as { paused: boolean };
+        const providerId = resolveIncusProviderId(db, _teamSlugOrId, vscode);
+        if (providerId) {
+          const data = await sendProviderRequest(providerId, "compute.getStatus", {
+            id: containerName,
+          }) as { paused: boolean };
           return c.json({ paused: data.paused });
         }
       } catch {
-        // Compute provider unavailable — fall through
+        // Provider unavailable — fall through
       }
       return c.json({ paused: false });
     } catch (error) {
@@ -2805,8 +2872,10 @@ sandboxesRouter.openapi(
 
       let instance = incusVmRegistry.get(containerName);
       if (!instance) {
-        // Registry lost — create a remote instance to resume via compute-provider
-        instance = new RemoteIncusSandboxInstance({ id: containerName });
+        // Registry lost — find provider to route to
+        const providerId = resolveIncusProviderId(db, _teamSlugOrId, vscode);
+        if (!providerId) return c.text("No Incus provider available", 502);
+        instance = new RemoteIncusSandboxInstance({ id: containerName, providerId });
       }
 
       await instance.resume();

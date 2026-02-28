@@ -1,17 +1,12 @@
-import { getComputeProviderClient } from "@/lib/utils/compute-provider";
+import { sendProviderRequest } from "@/lib/utils/provider-client";
 import { env } from "@/lib/utils/www-env";
 import type { SandboxExecResult, SandboxInstance } from "./sandbox-instance";
-import type {
-  PostApiInstancesResponse,
-  GetApiSnapshotsResponse,
-} from "@cmux/compute-provider-client";
 
 /**
- * Incus provider for cmux sandboxes — thin HTTP client wrapper.
+ * Incus provider for cmux sandboxes — routes through WebSocket via provider daemon.
  *
- * Delegates all container operations to the compute-provider service via HTTP.
- * The compute-provider service handles the actual Incus CLI operations, port
- * allocation, networking, and graphical service setup.
+ * All container operations are sent as JSON-RPC to the provider daemon
+ * through the server's WebSocket hub.
  */
 
 export interface IncusSandboxResult {
@@ -31,68 +26,63 @@ export interface IncusSandboxResult {
   };
 }
 
+interface LaunchResult {
+  id: string;
+  status: string;
+  ports: {
+    exec: number;
+    worker: number;
+    vscode: number;
+    proxy: number;
+    vnc: number;
+    devtools: number;
+    pty: number;
+    androidVnc?: number;
+  };
+  host: string;
+}
+
 /**
- * SandboxInstance implementation that delegates to the compute-provider HTTP API.
+ * SandboxInstance implementation that delegates to the provider daemon via JSON-RPC.
  */
 export class RemoteIncusSandboxInstance implements SandboxInstance {
   readonly id: string;
+  private providerId: string;
   private _paused = false;
 
-  constructor(opts: { id: string }) {
+  constructor(opts: { id: string; providerId: string }) {
     this.id = opts.id;
+    this.providerId = opts.providerId;
   }
 
   async exec(command: string): Promise<SandboxExecResult> {
-    const client = getComputeProviderClient();
-    const result = await client.post({
-      url: "/api/instances/{id}/exec",
-      path: { id: this.id },
-      body: { command },
-    });
-    if (result.error) {
-      console.error("[RemoteIncusSandboxInstance] exec failed:", result.error);
-      return { exit_code: 1, stdout: "", stderr: String(result.error) };
+    try {
+      const result = await sendProviderRequest(this.providerId, "compute.exec", {
+        id: this.id,
+        command,
+      }) as { exitCode: number; stdout: string; stderr: string };
+      return {
+        exit_code: result.exitCode,
+        stdout: result.stdout,
+        stderr: result.stderr,
+      };
+    } catch (error) {
+      console.error("[RemoteIncusSandboxInstance] exec failed:", error);
+      return { exit_code: 1, stdout: "", stderr: String(error) };
     }
-    const data = result.data as { exitCode: number; stdout: string; stderr: string };
-    return {
-      exit_code: data.exitCode,
-      stdout: data.stdout,
-      stderr: data.stderr,
-    };
   }
 
   async stop(): Promise<void> {
-    const client = getComputeProviderClient();
-    const result = await client.post({
-      url: "/api/instances/{id}/stop",
-      path: { id: this.id },
-    });
-    if (result.error) {
-      throw new Error(`Failed to stop instance ${this.id}: ${JSON.stringify(result.error)}`);
-    }
+    await sendProviderRequest(this.providerId, "compute.stop", { id: this.id });
   }
 
   async pause(): Promise<void> {
-    const client = getComputeProviderClient();
-    const result = await client.post({
-      url: "/api/instances/{id}/pause",
-      path: { id: this.id },
-    });
-    if (result.error) {
-      throw new Error(`Failed to pause instance ${this.id}: ${JSON.stringify(result.error)}`);
-    }
+    await sendProviderRequest(this.providerId, "compute.pause", { id: this.id });
     this._paused = true;
   }
 
   async resume(): Promise<void> {
-    const client = getComputeProviderClient();
-    const result = await client.post({
-      url: "/api/instances/{id}/resume",
-      path: { id: this.id },
-    });
-    if (result.error) {
-      throw new Error(`Failed to resume instance ${this.id}: ${JSON.stringify(result.error)}`);
-    }
+    await sendProviderRequest(this.providerId, "compute.resume", { id: this.id });
     this._paused = false;
   }
 
@@ -100,27 +90,16 @@ export class RemoteIncusSandboxInstance implements SandboxInstance {
     return this._paused;
   }
 
-  async snapshot(snapshotName: string): Promise<void> {
-    const client = getComputeProviderClient();
-    const result = await client.post({
-      url: "/api/instances/{id}/snapshots",
-      path: { id: this.id },
-      body: { name: snapshotName },
-    });
-    if (result.error) {
-      throw new Error(`Failed to create snapshot for ${this.id}: ${JSON.stringify(result.error)}`);
-    }
+  async snapshot(snapshotName: string): Promise<string> {
+    const result = await sendProviderRequest(this.providerId, "compute.createSnapshot", {
+      id: this.id,
+      name: snapshotName,
+    }) as { snapshotId: string };
+    return result.snapshotId;
   }
 
   async destroy(): Promise<void> {
-    const client = getComputeProviderClient();
-    const result = await client.delete({
-      url: "/api/instances/{id}",
-      path: { id: this.id },
-    });
-    if (result.error) {
-      throw new Error(`Failed to destroy instance ${this.id}: ${JSON.stringify(result.error)}`);
-    }
+    await sendProviderRequest(this.providerId, "compute.destroy", { id: this.id });
   }
 
   getContainerName(): string {
@@ -129,36 +108,25 @@ export class RemoteIncusSandboxInstance implements SandboxInstance {
 }
 
 /**
- * Start an Incus sandbox via the compute-provider HTTP API.
- *
- * Calls POST /api/instances, then wraps the result in a RemoteIncusSandboxInstance.
+ * Start an Incus sandbox via the provider daemon's WebSocket connection.
  */
-export async function startIncusSandbox(options?: {
+export async function startIncusSandbox(options: {
+  providerId: string;
   snapshotId?: string;
   ttlSeconds?: number;
   metadata?: Record<string, string>;
   displays?: Array<"android">;
 }): Promise<IncusSandboxResult> {
-  const client = getComputeProviderClient();
   const sandboxHost = env.SANDBOX_HOST ?? "localhost";
 
-  const result = await client.post({
-    url: "/api/instances",
-    body: {
-      snapshotId: options?.snapshotId,
-      displays: options?.displays,
-      metadata: options?.metadata,
-      ttlSeconds: options?.ttlSeconds,
-    },
-  });
+  const data = await sendProviderRequest(options.providerId, "compute.launch", {
+    snapshotId: options.snapshotId,
+    displays: options.displays,
+    metadata: options.metadata,
+    ttlSeconds: options.ttlSeconds,
+  }) as LaunchResult;
 
-  if (result.error) {
-    throw new Error(`Failed to launch Incus instance: ${JSON.stringify(result.error)}`);
-  }
-
-  const data = result.data as PostApiInstancesResponse;
   const host = data.host || sandboxHost;
-
   const makeUrl = (port: number) => `http://${host}:${port}`;
 
   // Build hostPorts map in the legacy format (container port → host port string)
@@ -173,7 +141,10 @@ export async function startIncusSandbox(options?: {
     hostPorts[39384] = String(data.ports.androidVnc);
   }
 
-  const instance = new RemoteIncusSandboxInstance({ id: data.id });
+  const instance = new RemoteIncusSandboxInstance({
+    id: data.id,
+    providerId: options.providerId,
+  });
 
   return {
     instance,
@@ -196,9 +167,9 @@ export async function startIncusSandbox(options?: {
 }
 
 /**
- * List all snapshots via the compute-provider HTTP API.
+ * List all snapshots for a provider via JSON-RPC.
  */
-export async function listSnapshots(): Promise<
+export async function listProviderSnapshots(providerId: string): Promise<
   Array<{
     id: string;
     containerName: string;
@@ -207,31 +178,29 @@ export async function listSnapshots(): Promise<
     stateful: boolean;
   }>
 > {
-  const client = getComputeProviderClient();
-  const result = await client.get({
-    url: "/api/snapshots",
-  });
-
-  if (result.error) {
-    console.error("[incus-provider] Failed to list snapshots:", result.error);
+  try {
+    const result = await sendProviderRequest(providerId, "compute.listSnapshots", {}) as {
+      snapshots: Array<{
+        id: string;
+        containerName: string;
+        snapshotName: string;
+        createdAt: string;
+        stateful: boolean;
+      }>;
+    };
+    return result.snapshots;
+  } catch (error) {
+    console.error("[incus-provider] Failed to list snapshots:", error);
     return [];
   }
-
-  const data = result.data as GetApiSnapshotsResponse;
-  return data.snapshots;
 }
 
 /**
- * Delete a specific snapshot via the compute-provider HTTP API.
+ * Delete a specific snapshot via JSON-RPC.
  */
-export async function deleteSnapshot(snapshotId: string): Promise<void> {
-  const client = getComputeProviderClient();
-  const result = await client.delete({
-    url: "/api/snapshots/{id}",
-    path: { id: snapshotId },
-  });
-
-  if (result.error) {
-    throw new Error(`Failed to delete snapshot ${snapshotId}: ${JSON.stringify(result.error)}`);
-  }
+export async function deleteProviderSnapshot(
+  providerId: string,
+  snapshotId: string,
+): Promise<void> {
+  await sendProviderRequest(providerId, "compute.deleteSnapshot", { id: snapshotId });
 }

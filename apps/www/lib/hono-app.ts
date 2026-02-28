@@ -37,7 +37,7 @@ import {
   dbApiKeysRouter,
   dbCommentsRouter,
   storageRouter,
-  resourceProvidersRouter,
+  providersRouter,
 } from "@/lib/routes/index";
 import { authAnonymousRouter } from "@/lib/routes/auth.anonymous.route";
 import { stackServerApp } from "@/lib/utils/stack";
@@ -179,7 +179,7 @@ app.route("/", dbAnalyticsRouter);
 app.route("/", dbApiKeysRouter);
 app.route("/", dbCommentsRouter);
 app.route("/", storageRouter);
-app.route("/", resourceProvidersRouter);
+app.route("/", providersRouter);
 
 // OpenAPI documentation
 app.doc("/doc", {
