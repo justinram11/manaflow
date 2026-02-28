@@ -60,14 +60,29 @@ function hashToken(token: string): string {
 export function setupProviderWS(httpServer: HttpServer): void {
   const wss = new WebSocketServer({ noServer: true });
 
-  httpServer.on("upgrade", (request: IncomingMessage, socket: Duplex, head: Buffer) => {
-    const url = new URL(request.url ?? "/", `http://${request.headers.host}`);
-    if (url.pathname !== "/provider-ws") return;
+  // We must intercept upgrade events BEFORE Socket.IO claims them.
+  // Socket.IO also listens for 'upgrade' on the httpServer and will close
+  // WebSocket connections it doesn't recognize. We use a raw listener on the
+  // underlying server that captures the upgrade event and prevents propagation
+  // to other listeners (including Socket.IO) for /provider-ws paths.
 
-    wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit("connection", ws, request);
-    });
-  });
+  // Store a reference so we can monkey-patch the emit
+  const origEmit = httpServer.emit.bind(httpServer);
+  httpServer.emit = function (event: string, ...args: unknown[]) {
+    if (event === "upgrade") {
+      const request = args[0] as IncomingMessage;
+      const url = new URL(request.url ?? "/", `http://${request.headers.host}`);
+      if (url.pathname === "/provider-ws") {
+        const socket = args[1] as Duplex;
+        const head = args[2] as Buffer;
+        wss.handleUpgrade(request, socket, head, (ws) => {
+          wss.emit("connection", ws, request);
+        });
+        return true; // Prevent other listeners from firing
+      }
+    }
+    return origEmit(event, ...args);
+  } as typeof httpServer.emit;
 
   wss.on("connection", (ws: WebSocket, request: IncomingMessage) => {
     let authenticated = false;
@@ -254,6 +269,24 @@ function handleProviderMessage(providerId: string, msg: Record<string, unknown>)
       clearTimeout(pending.timeout);
       conn.pending.delete(requestId);
       pending.resolve(msg);
+    }
+    return;
+  }
+
+  // Handle provider info update (sent after header-based auth)
+  if (msg.type === "auth" && msg.info) {
+    try {
+      const db = getDb();
+      const info = msg.info as Record<string, unknown>;
+      const patch: Parameters<typeof updateProvider>[2] = {};
+      if (info.osVersion) patch.osVersion = info.osVersion as string;
+      if (info.hostname) patch.hostname = info.hostname as string;
+      if (info.capabilities) patch.capabilities = info.capabilities as string[];
+      if (info.arch) patch.arch = info.arch as string;
+      if (info.metadata) patch.metadata = info.metadata as Record<string, string>;
+      updateProvider(db, providerId, patch);
+    } catch (error) {
+      console.error("Failed to update provider info:", error);
     }
     return;
   }

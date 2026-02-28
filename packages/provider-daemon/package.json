@@ -17,7 +17,7 @@
   "devDependencies": {
     "@types/bun": "^1.2.11",
     "@types/node": "^24.9.1",
-    "@types/ws": "^8.18.3",
+    "@types/ws": "^8.5.0",
     "typescript": "^5.9.3"
   }
 }

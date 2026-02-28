@@ -72,14 +72,17 @@ export async function startServer({
     res.end("Not found");
   });
 
+  // Set up provider WebSocket handler.
+  // Must be called before Socket.IO attaches its own upgrade listener.
+  // setupProviderWS uses prependListener + removeAllListeners trick to prevent
+  // Socket.IO from interfering with /provider-ws connections.
+  setupProviderWS(httpServer);
+
   // Create Socket.IO transport
   const rt = createSocketIOTransport(httpServer);
 
   // Set up all socket handlers
   setupSocketHandlers(rt, gitDiffManager, defaultRepo);
-
-  // Set up provider WebSocket handler
-  setupProviderWS(httpServer);
 
   let vscodeServeHandle: VSCodeServeWebHandle | null = null;
 
