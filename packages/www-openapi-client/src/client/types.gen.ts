@@ -570,6 +570,7 @@ export type StartSandboxBody = {
     branch?: string;
     newBranch?: string;
     depth?: number;
+    displays?: Array<'android'>;
 };
 
 export type PrewarmSandboxResponse = {
@@ -657,7 +658,7 @@ export type CreateTeamResponse = {
      */
     displayName: string;
     /**
-     * Slug stored in Convex
+     * Slug stored in the database
      */
     slug: string;
     /**
@@ -838,6 +839,316 @@ export type EditorSettingsBody = {
         content: string;
     }>;
     extensions?: string;
+};
+
+export type DbTask = {
+    id: string;
+    text: string;
+    isCompleted?: boolean | null;
+    isArchived?: boolean | null;
+    pinned?: boolean | null;
+    isPreview?: boolean | null;
+    isLocalWorkspace?: boolean | null;
+    isCloudWorkspace?: boolean | null;
+    linkedFromCloudTaskRunId?: string | null;
+    description?: string | null;
+    pullRequestTitle?: string | null;
+    pullRequestDescription?: string | null;
+    projectFullName?: string | null;
+    baseBranch?: string | null;
+    worktreePath?: string | null;
+    generatedBranchName?: string | null;
+    createdAt?: number | null;
+    updatedAt?: number | null;
+    lastActivityAt?: number | null;
+    userId: string;
+    teamId: string;
+    environmentId?: string | null;
+    mergeStatus?: string | null;
+    hasUnread?: boolean;
+};
+
+export type DbTaskListResponse = {
+    tasks: Array<DbTask>;
+};
+
+export type DbTasksErrorResponse = {
+    code: number;
+    message: string;
+};
+
+export type DbCreateTaskResponse = {
+    taskId: string;
+    taskRunIds?: Array<string>;
+};
+
+export type DbCreateTaskBody = {
+    teamSlugOrId: string;
+    text: string;
+    description?: string;
+    projectFullName?: string;
+    baseBranch?: string;
+    worktreePath?: string;
+    environmentId?: string;
+    isCloudWorkspace?: boolean;
+    selectedAgents?: Array<string>;
+};
+
+export type DbTasksSuccessResponse = {
+    success: boolean;
+};
+
+export type DbUpdateTaskBody = {
+    teamSlugOrId: string;
+    text: string;
+};
+
+export type DbTeamSlugOrIdBody = {
+    teamSlugOrId: string;
+};
+
+export type DbTaskRunsErrorResponse = {
+    code: number;
+    message: string;
+};
+
+export type DbCreateTaskRunBody = {
+    teamSlugOrId: string;
+    taskId: string;
+    prompt: string;
+    agentName?: string;
+    status?: string;
+    environmentId?: string;
+    isCloudWorkspace?: boolean;
+    isLocalWorkspace?: boolean;
+    isPreviewJob?: boolean;
+    parentRunId?: string;
+};
+
+export type DbNotification = {
+    id: string;
+    taskId: string;
+    taskRunId?: string | null;
+    teamId: string;
+    userId: string;
+    type: string;
+    message?: string | null;
+    readAt?: number | null;
+    createdAt: number;
+};
+
+export type DbNotificationsErrorResponse = {
+    code: number;
+    message: string;
+};
+
+export type DbUnreadTaskRun = {
+    id: string;
+    taskRunId: string;
+    taskId?: string | null;
+    userId: string;
+    teamId: string;
+};
+
+export type DbWorkspaceSettings = {
+    id: string;
+    worktreePath?: string | null;
+    autoPrEnabled?: boolean | null;
+    autoSyncEnabled?: boolean | null;
+    nextLocalWorkspaceSequence?: number | null;
+    heatmapModel?: string | null;
+    heatmapThreshold?: number | null;
+    heatmapTooltipLanguage?: string | null;
+    heatmapColors?: unknown;
+    createdAt: number;
+    updatedAt: number;
+    userId: string;
+    teamId: string;
+} | null;
+
+export type DbSettingsErrorResponse = {
+    code: number;
+    message: string;
+};
+
+export type DbUpdateWorkspaceSettingsBody = {
+    teamSlugOrId: string;
+    worktreePath?: string;
+    autoPrEnabled?: boolean;
+    autoSyncEnabled?: boolean;
+    nextLocalWorkspaceSequence?: number;
+    heatmapModel?: string;
+    heatmapThreshold?: number;
+    heatmapTooltipLanguage?: string;
+    heatmapColors?: unknown;
+};
+
+export type DbContainerSettings = {
+    id: string;
+    maxRunningContainers?: number | null;
+    reviewPeriodMinutes?: number | null;
+    autoCleanupEnabled?: boolean | null;
+    stopImmediatelyOnCompletion?: boolean | null;
+    minContainersToKeep?: number | null;
+    createdAt: number;
+    updatedAt: number;
+    userId: string;
+    teamId: string;
+} | null;
+
+export type DbUpdateContainerSettingsBody = {
+    teamSlugOrId: string;
+    maxRunningContainers?: number;
+    reviewPeriodMinutes?: number;
+    autoCleanupEnabled?: boolean;
+    stopImmediatelyOnCompletion?: boolean;
+    minContainersToKeep?: number;
+};
+
+export type DbEditorSettings = {
+    id: string;
+    teamId: string;
+    userId: string;
+    settingsJson?: string | null;
+    keybindingsJson?: string | null;
+    snippets?: unknown;
+    extensions?: string | null;
+    updatedAt: number;
+} | null;
+
+export type DbUpdateEditorSettingsBody = {
+    teamSlugOrId: string;
+    settingsJson?: string;
+    keybindingsJson?: string;
+    snippets?: Array<{
+        name: string;
+        content: string;
+    }>;
+    extensions?: string;
+};
+
+export type DbDashboardStats = {
+    totalTasks: number;
+    completedTasks: number;
+    archivedTasks: number;
+    totalRuns: number;
+    runsByStatus: {
+        [key: string]: number;
+    };
+};
+
+export type DbAnalyticsErrorResponse = {
+    code: number;
+    message: string;
+};
+
+export type DbApiKey = {
+    id: string;
+    envVar: string;
+    value: string;
+    displayName: string;
+    description?: string | null;
+    createdAt: number;
+    updatedAt: number;
+    userId: string;
+    teamId: string;
+};
+
+export type DbApiKeysErrorResponse = {
+    code: number;
+    message: string;
+};
+
+export type DbUpsertApiKeyBody = {
+    teamSlugOrId: string;
+    value: string;
+    displayName: string;
+    description?: string;
+};
+
+export type DbTaskComment = {
+    id: string;
+    taskId: string;
+    content: string;
+    userId: string;
+    teamId: string;
+    createdAt: number;
+    updatedAt: number;
+};
+
+export type DbCommentsErrorResponse = {
+    code: number;
+    message: string;
+};
+
+export type DbCreateTaskCommentBody = {
+    teamSlugOrId: string;
+    taskId: string;
+    content: string;
+};
+
+export type DbComment = {
+    id: string;
+    url: string;
+    page: string;
+    pageTitle: string;
+    nodeId: string;
+    x: number;
+    y: number;
+    content: string;
+    resolved?: boolean | null;
+    archived?: boolean | null;
+    userId: string;
+    teamId: string;
+    profileImageUrl?: string | null;
+    userAgent: string;
+    screenWidth: number;
+    screenHeight: number;
+    devicePixelRatio: number;
+    createdAt: number;
+    updatedAt: number;
+};
+
+export type DbCreateCommentBody = {
+    teamSlugOrId: string;
+    url: string;
+    page: string;
+    pageTitle: string;
+    nodeId: string;
+    x: number;
+    y: number;
+    content: string;
+    profileImageUrl?: string;
+    userAgent: string;
+    screenWidth: number;
+    screenHeight: number;
+    devicePixelRatio: number;
+};
+
+export type DbUpdateCommentBody = {
+    content?: string;
+    resolved?: boolean;
+    archived?: boolean;
+};
+
+export type DbCommentReply = {
+    id: string;
+    commentId: string;
+    userId: string;
+    teamId: string;
+    content: string;
+    createdAt: number;
+    updatedAt: number;
+};
+
+export type DbCreateReplyBody = {
+    teamSlugOrId: string;
+    content: string;
+};
+
+export type StorageErrorResponse = {
+    code: number;
+    message: string;
 };
 
 export type GetApiHealthData = {
@@ -3142,6 +3453,224 @@ export type PostApiTeamsResponses = {
 
 export type PostApiTeamsResponse = PostApiTeamsResponses[keyof PostApiTeamsResponses];
 
+export type GetApiTeamsMembershipsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/teams/memberships';
+};
+
+export type GetApiTeamsMembershipsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: CreateTeamErrorResponse;
+};
+
+export type GetApiTeamsMembershipsError = GetApiTeamsMembershipsErrors[keyof GetApiTeamsMembershipsErrors];
+
+export type GetApiTeamsMembershipsResponses = {
+    /**
+     * List of team memberships
+     */
+    200: {
+        memberships: Array<{
+            id: string;
+            teamId: string;
+            userId: string;
+            role?: string | null;
+            createdAt?: number | null;
+            updatedAt?: number | null;
+            team: Team;
+        }>;
+    };
+};
+
+export type GetApiTeamsMembershipsResponse = GetApiTeamsMembershipsResponses[keyof GetApiTeamsMembershipsResponses];
+
+export type GetApiTeamsByTeamSlugOrIdData = {
+    body?: never;
+    path: {
+        teamSlugOrId: string;
+    };
+    query?: never;
+    url: '/api/teams/{teamSlugOrId}';
+};
+
+export type GetApiTeamsByTeamSlugOrIdErrors = {
+    /**
+     * Unauthorized
+     */
+    401: CreateTeamErrorResponse;
+    /**
+     * Team not found
+     */
+    404: CreateTeamErrorResponse;
+};
+
+export type GetApiTeamsByTeamSlugOrIdError = GetApiTeamsByTeamSlugOrIdErrors[keyof GetApiTeamsByTeamSlugOrIdErrors];
+
+export type GetApiTeamsByTeamSlugOrIdResponses = {
+    /**
+     * Team details
+     */
+    200: {
+        team: Team & {
+            teamId: string;
+            name?: string | null;
+        };
+    };
+};
+
+export type GetApiTeamsByTeamSlugOrIdResponse = GetApiTeamsByTeamSlugOrIdResponses[keyof GetApiTeamsByTeamSlugOrIdResponses];
+
+export type PatchApiTeamsByTeamSlugOrIdSlugData = {
+    body: {
+        slug: string;
+    };
+    path: {
+        teamSlugOrId: string;
+    };
+    query?: never;
+    url: '/api/teams/{teamSlugOrId}/slug';
+};
+
+export type PatchApiTeamsByTeamSlugOrIdSlugErrors = {
+    /**
+     * Invalid slug
+     */
+    400: CreateTeamErrorResponse;
+    /**
+     * Unauthorized
+     */
+    401: CreateTeamErrorResponse;
+    /**
+     * Team not found
+     */
+    404: CreateTeamErrorResponse;
+    /**
+     * Slug conflict
+     */
+    409: CreateTeamErrorResponse;
+};
+
+export type PatchApiTeamsByTeamSlugOrIdSlugError = PatchApiTeamsByTeamSlugOrIdSlugErrors[keyof PatchApiTeamsByTeamSlugOrIdSlugErrors];
+
+export type PatchApiTeamsByTeamSlugOrIdSlugResponses = {
+    /**
+     * Slug updated
+     */
+    200: {
+        slug: string;
+    };
+};
+
+export type PatchApiTeamsByTeamSlugOrIdSlugResponse = PatchApiTeamsByTeamSlugOrIdSlugResponses[keyof PatchApiTeamsByTeamSlugOrIdSlugResponses];
+
+export type PatchApiTeamsByTeamSlugOrIdNameData = {
+    body: {
+        name: string;
+    };
+    path: {
+        teamSlugOrId: string;
+    };
+    query?: never;
+    url: '/api/teams/{teamSlugOrId}/name';
+};
+
+export type PatchApiTeamsByTeamSlugOrIdNameErrors = {
+    /**
+     * Invalid name
+     */
+    400: CreateTeamErrorResponse;
+    /**
+     * Unauthorized
+     */
+    401: CreateTeamErrorResponse;
+    /**
+     * Team not found
+     */
+    404: CreateTeamErrorResponse;
+};
+
+export type PatchApiTeamsByTeamSlugOrIdNameError = PatchApiTeamsByTeamSlugOrIdNameErrors[keyof PatchApiTeamsByTeamSlugOrIdNameErrors];
+
+export type PatchApiTeamsByTeamSlugOrIdNameResponses = {
+    /**
+     * Name updated
+     */
+    200: {
+        name: string;
+    };
+};
+
+export type PatchApiTeamsByTeamSlugOrIdNameResponse = PatchApiTeamsByTeamSlugOrIdNameResponses[keyof PatchApiTeamsByTeamSlugOrIdNameResponses];
+
+export type PostApiTeamsUpsertData = {
+    body: {
+        id: string;
+        displayName?: string;
+        profileImageUrl?: string;
+        clientMetadata?: unknown;
+        clientReadOnlyMetadata?: unknown;
+        serverMetadata?: unknown;
+        createdAtMillis: number;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/teams/upsert';
+};
+
+export type PostApiTeamsUpsertErrors = {
+    /**
+     * Unauthorized
+     */
+    401: CreateTeamErrorResponse;
+};
+
+export type PostApiTeamsUpsertError = PostApiTeamsUpsertErrors[keyof PostApiTeamsUpsertErrors];
+
+export type PostApiTeamsUpsertResponses = {
+    /**
+     * Team upserted
+     */
+    200: {
+        success: boolean;
+    };
+};
+
+export type PostApiTeamsUpsertResponse = PostApiTeamsUpsertResponses[keyof PostApiTeamsUpsertResponses];
+
+export type PostApiTeamsEnsureMembershipData = {
+    body: {
+        teamId: string;
+        userId: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/teams/ensure-membership';
+};
+
+export type PostApiTeamsEnsureMembershipErrors = {
+    /**
+     * Unauthorized
+     */
+    401: CreateTeamErrorResponse;
+};
+
+export type PostApiTeamsEnsureMembershipError = PostApiTeamsEnsureMembershipErrors[keyof PostApiTeamsEnsureMembershipErrors];
+
+export type PostApiTeamsEnsureMembershipResponses = {
+    /**
+     * Membership ensured
+     */
+    200: {
+        success: boolean;
+    };
+};
+
+export type PostApiTeamsEnsureMembershipResponse = PostApiTeamsEnsureMembershipResponses[keyof PostApiTeamsEnsureMembershipResponses];
+
 export type PostApiBranchesGenerateData = {
     body: GenerateBranchesBody;
     path?: never;
@@ -3189,6 +3718,10 @@ export type PostApiCodeReviewStartErrors = {
      * Failed to start code review
      */
     500: unknown;
+    /**
+     * Service temporarily unavailable
+     */
+    503: unknown;
 };
 
 export type PostApiCodeReviewStartResponses = {
@@ -3745,6 +4278,1573 @@ export type PostApiEditorSettingsResponses = {
 };
 
 export type PostApiEditorSettingsResponse = PostApiEditorSettingsResponses[keyof PostApiEditorSettingsResponses];
+
+export type PostApiLocalAuthLoginData = {
+    body: {
+        email: string;
+        password: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/local-auth/login';
+};
+
+export type PostApiLocalAuthLoginErrors = {
+    /**
+     * Invalid credentials
+     */
+    401: unknown;
+};
+
+export type PostApiLocalAuthLoginResponses = {
+    /**
+     * Login successful
+     */
+    200: {
+        token: string;
+        user: {
+            id: string;
+            email: string;
+            displayName: string;
+            teamSlug: string;
+            teamId: string;
+        };
+    };
+};
+
+export type PostApiLocalAuthLoginResponse = PostApiLocalAuthLoginResponses[keyof PostApiLocalAuthLoginResponses];
+
+export type PostApiLocalAuthRefreshData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/local-auth/refresh';
+};
+
+export type PostApiLocalAuthRefreshErrors = {
+    /**
+     * Invalid or missing token
+     */
+    401: unknown;
+};
+
+export type PostApiLocalAuthRefreshResponses = {
+    /**
+     * Token refreshed
+     */
+    200: {
+        token: string;
+    };
+};
+
+export type PostApiLocalAuthRefreshResponse = PostApiLocalAuthRefreshResponses[keyof PostApiLocalAuthRefreshResponses];
+
+export type GetApiLocalAuthWellKnownJwksJsonData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/local-auth/.well-known/jwks.json';
+};
+
+export type GetApiLocalAuthWellKnownJwksJsonResponses = {
+    /**
+     * JWKS public keys
+     */
+    200: unknown;
+};
+
+export type GetApiTasksData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+        archived?: 'true' | 'false';
+        excludeLocalWorkspaces?: 'true' | 'false';
+        projectFullName?: string;
+    };
+    url: '/api/tasks';
+};
+
+export type GetApiTasksErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbTasksErrorResponse;
+};
+
+export type GetApiTasksError = GetApiTasksErrors[keyof GetApiTasksErrors];
+
+export type GetApiTasksResponses = {
+    /**
+     * List of tasks
+     */
+    200: DbTaskListResponse;
+};
+
+export type GetApiTasksResponse = GetApiTasksResponses[keyof GetApiTasksResponses];
+
+export type PostApiTasksData = {
+    body: DbCreateTaskBody;
+    path?: never;
+    query?: never;
+    url: '/api/tasks';
+};
+
+export type PostApiTasksErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbTasksErrorResponse;
+};
+
+export type PostApiTasksError = PostApiTasksErrors[keyof PostApiTasksErrors];
+
+export type PostApiTasksResponses = {
+    /**
+     * Task created
+     */
+    201: DbCreateTaskResponse;
+};
+
+export type PostApiTasksResponse = PostApiTasksResponses[keyof PostApiTasksResponses];
+
+export type GetApiTasksNotificationOrderData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+        archived?: 'true' | 'false';
+        excludeLocalWorkspaces?: 'true' | 'false';
+        projectFullName?: string;
+    };
+    url: '/api/tasks/notification-order';
+};
+
+export type GetApiTasksNotificationOrderErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbTasksErrorResponse;
+};
+
+export type GetApiTasksNotificationOrderError = GetApiTasksNotificationOrderErrors[keyof GetApiTasksNotificationOrderErrors];
+
+export type GetApiTasksNotificationOrderResponses = {
+    /**
+     * List of tasks sorted by notification order
+     */
+    200: DbTaskListResponse;
+};
+
+export type GetApiTasksNotificationOrderResponse = GetApiTasksNotificationOrderResponses[keyof GetApiTasksNotificationOrderResponses];
+
+export type GetApiTasksPinnedData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+        excludeLocalWorkspaces?: 'true' | 'false';
+    };
+    url: '/api/tasks/pinned';
+};
+
+export type GetApiTasksPinnedErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbTasksErrorResponse;
+};
+
+export type GetApiTasksPinnedError = GetApiTasksPinnedErrors[keyof GetApiTasksPinnedErrors];
+
+export type GetApiTasksPinnedResponses = {
+    /**
+     * List of pinned tasks
+     */
+    200: DbTaskListResponse;
+};
+
+export type GetApiTasksPinnedResponse = GetApiTasksPinnedResponses[keyof GetApiTasksPinnedResponses];
+
+export type GetApiTasksLinkedLocalWorkspaceData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+        cloudTaskRunId: string;
+    };
+    url: '/api/tasks/linked-local-workspace';
+};
+
+export type GetApiTasksLinkedLocalWorkspaceErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbTasksErrorResponse;
+};
+
+export type GetApiTasksLinkedLocalWorkspaceError = GetApiTasksLinkedLocalWorkspaceErrors[keyof GetApiTasksLinkedLocalWorkspaceErrors];
+
+export type GetApiTasksLinkedLocalWorkspaceResponses = {
+    /**
+     * Linked local workspace
+     */
+    200: {
+        task: DbTask;
+        taskRun: {
+            [key: string]: unknown;
+        };
+    } | null;
+};
+
+export type GetApiTasksLinkedLocalWorkspaceResponse = GetApiTasksLinkedLocalWorkspaceResponses[keyof GetApiTasksLinkedLocalWorkspaceResponses];
+
+export type DeleteApiTasksByIdData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/tasks/{id}';
+};
+
+export type DeleteApiTasksByIdErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbTasksErrorResponse;
+    /**
+     * Task not found
+     */
+    404: DbTasksErrorResponse;
+};
+
+export type DeleteApiTasksByIdError = DeleteApiTasksByIdErrors[keyof DeleteApiTasksByIdErrors];
+
+export type DeleteApiTasksByIdResponses = {
+    /**
+     * Task deleted
+     */
+    200: DbTasksSuccessResponse;
+};
+
+export type DeleteApiTasksByIdResponse = DeleteApiTasksByIdResponses[keyof DeleteApiTasksByIdResponses];
+
+export type GetApiTasksByIdData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/tasks/{id}';
+};
+
+export type GetApiTasksByIdErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbTasksErrorResponse;
+};
+
+export type GetApiTasksByIdError = GetApiTasksByIdErrors[keyof GetApiTasksByIdErrors];
+
+export type GetApiTasksByIdResponses = {
+    /**
+     * Task details
+     */
+    200: DbTask & unknown;
+};
+
+export type GetApiTasksByIdResponse = GetApiTasksByIdResponses[keyof GetApiTasksByIdResponses];
+
+export type PatchApiTasksByIdData = {
+    body: DbUpdateTaskBody;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/tasks/{id}';
+};
+
+export type PatchApiTasksByIdErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbTasksErrorResponse;
+    /**
+     * Task not found
+     */
+    404: DbTasksErrorResponse;
+};
+
+export type PatchApiTasksByIdError = PatchApiTasksByIdErrors[keyof PatchApiTasksByIdErrors];
+
+export type PatchApiTasksByIdResponses = {
+    /**
+     * Task updated
+     */
+    200: DbTasksSuccessResponse;
+};
+
+export type PatchApiTasksByIdResponse = PatchApiTasksByIdResponses[keyof PatchApiTasksByIdResponses];
+
+export type GetApiTasksByIdVersionsData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/tasks/{id}/versions';
+};
+
+export type GetApiTasksByIdVersionsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbTasksErrorResponse;
+};
+
+export type GetApiTasksByIdVersionsError = GetApiTasksByIdVersionsErrors[keyof GetApiTasksByIdVersionsErrors];
+
+export type GetApiTasksByIdVersionsResponses = {
+    /**
+     * Task versions
+     */
+    200: {
+        versions: Array<{
+            [key: string]: unknown;
+        }>;
+    };
+};
+
+export type GetApiTasksByIdVersionsResponse = GetApiTasksByIdVersionsResponses[keyof GetApiTasksByIdVersionsResponses];
+
+export type PostApiTasksByIdArchiveData = {
+    body: DbTeamSlugOrIdBody;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/tasks/{id}/archive';
+};
+
+export type PostApiTasksByIdArchiveErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbTasksErrorResponse;
+    /**
+     * Task not found
+     */
+    404: DbTasksErrorResponse;
+};
+
+export type PostApiTasksByIdArchiveError = PostApiTasksByIdArchiveErrors[keyof PostApiTasksByIdArchiveErrors];
+
+export type PostApiTasksByIdArchiveResponses = {
+    /**
+     * Task archived
+     */
+    200: DbTasksSuccessResponse;
+};
+
+export type PostApiTasksByIdArchiveResponse = PostApiTasksByIdArchiveResponses[keyof PostApiTasksByIdArchiveResponses];
+
+export type PostApiTasksByIdUnarchiveData = {
+    body: DbTeamSlugOrIdBody;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/tasks/{id}/unarchive';
+};
+
+export type PostApiTasksByIdUnarchiveErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbTasksErrorResponse;
+    /**
+     * Task not found
+     */
+    404: DbTasksErrorResponse;
+};
+
+export type PostApiTasksByIdUnarchiveError = PostApiTasksByIdUnarchiveErrors[keyof PostApiTasksByIdUnarchiveErrors];
+
+export type PostApiTasksByIdUnarchiveResponses = {
+    /**
+     * Task unarchived
+     */
+    200: DbTasksSuccessResponse;
+};
+
+export type PostApiTasksByIdUnarchiveResponse = PostApiTasksByIdUnarchiveResponses[keyof PostApiTasksByIdUnarchiveResponses];
+
+export type PostApiTasksByIdPinData = {
+    body: DbTeamSlugOrIdBody;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/tasks/{id}/pin';
+};
+
+export type PostApiTasksByIdPinErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbTasksErrorResponse;
+    /**
+     * Task not found
+     */
+    404: DbTasksErrorResponse;
+};
+
+export type PostApiTasksByIdPinError = PostApiTasksByIdPinErrors[keyof PostApiTasksByIdPinErrors];
+
+export type PostApiTasksByIdPinResponses = {
+    /**
+     * Task pinned
+     */
+    200: DbTasksSuccessResponse;
+};
+
+export type PostApiTasksByIdPinResponse = PostApiTasksByIdPinResponses[keyof PostApiTasksByIdPinResponses];
+
+export type PostApiTasksByIdUnpinData = {
+    body: DbTeamSlugOrIdBody;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/tasks/{id}/unpin';
+};
+
+export type PostApiTasksByIdUnpinErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbTasksErrorResponse;
+    /**
+     * Task not found
+     */
+    404: DbTasksErrorResponse;
+};
+
+export type PostApiTasksByIdUnpinError = PostApiTasksByIdUnpinErrors[keyof PostApiTasksByIdUnpinErrors];
+
+export type PostApiTasksByIdUnpinResponses = {
+    /**
+     * Task unpinned
+     */
+    200: DbTasksSuccessResponse;
+};
+
+export type PostApiTasksByIdUnpinResponse = PostApiTasksByIdUnpinResponses[keyof PostApiTasksByIdUnpinResponses];
+
+export type PatchApiTasksByIdCompletedData = {
+    body: {
+        teamSlugOrId: string;
+        isCompleted: boolean;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/tasks/{id}/completed';
+};
+
+export type PatchApiTasksByIdCompletedErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbTasksErrorResponse;
+    /**
+     * Task not found
+     */
+    404: DbTasksErrorResponse;
+};
+
+export type PatchApiTasksByIdCompletedError = PatchApiTasksByIdCompletedErrors[keyof PatchApiTasksByIdCompletedErrors];
+
+export type PatchApiTasksByIdCompletedResponses = {
+    /**
+     * Task completed status updated
+     */
+    200: DbTasksSuccessResponse;
+};
+
+export type PatchApiTasksByIdCompletedResponse = PatchApiTasksByIdCompletedResponses[keyof PatchApiTasksByIdCompletedResponses];
+
+export type PatchApiTasksByIdMergeStatusData = {
+    body: {
+        teamSlugOrId: string;
+        mergeStatus: string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/tasks/{id}/merge-status';
+};
+
+export type PatchApiTasksByIdMergeStatusErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbTasksErrorResponse;
+    /**
+     * Task not found
+     */
+    404: DbTasksErrorResponse;
+};
+
+export type PatchApiTasksByIdMergeStatusError = PatchApiTasksByIdMergeStatusErrors[keyof PatchApiTasksByIdMergeStatusErrors];
+
+export type PatchApiTasksByIdMergeStatusResponses = {
+    /**
+     * Merge status updated
+     */
+    200: DbTasksSuccessResponse;
+};
+
+export type PatchApiTasksByIdMergeStatusResponse = PatchApiTasksByIdMergeStatusResponses[keyof PatchApiTasksByIdMergeStatusResponses];
+
+export type PatchApiTasksByIdWorktreePathData = {
+    body: {
+        teamSlugOrId: string;
+        worktreePath: string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/tasks/{id}/worktree-path';
+};
+
+export type PatchApiTasksByIdWorktreePathErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbTasksErrorResponse;
+    /**
+     * Task not found
+     */
+    404: DbTasksErrorResponse;
+};
+
+export type PatchApiTasksByIdWorktreePathError = PatchApiTasksByIdWorktreePathErrors[keyof PatchApiTasksByIdWorktreePathErrors];
+
+export type PatchApiTasksByIdWorktreePathResponses = {
+    /**
+     * Worktree path updated
+     */
+    200: DbTasksSuccessResponse;
+};
+
+export type PatchApiTasksByIdWorktreePathResponse = PatchApiTasksByIdWorktreePathResponses[keyof PatchApiTasksByIdWorktreePathResponses];
+
+export type PatchApiTasksByIdPullRequestTitleData = {
+    body: {
+        teamSlugOrId: string;
+        pullRequestTitle?: string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/tasks/{id}/pull-request-title';
+};
+
+export type PatchApiTasksByIdPullRequestTitleErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbTasksErrorResponse;
+    /**
+     * Task not found
+     */
+    404: DbTasksErrorResponse;
+};
+
+export type PatchApiTasksByIdPullRequestTitleError = PatchApiTasksByIdPullRequestTitleErrors[keyof PatchApiTasksByIdPullRequestTitleErrors];
+
+export type PatchApiTasksByIdPullRequestTitleResponses = {
+    /**
+     * PR title updated
+     */
+    200: DbTasksSuccessResponse;
+};
+
+export type PatchApiTasksByIdPullRequestTitleResponse = PatchApiTasksByIdPullRequestTitleResponses[keyof PatchApiTasksByIdPullRequestTitleResponses];
+
+export type PatchApiTasksByIdPullRequestDescriptionData = {
+    body: {
+        teamSlugOrId: string;
+        pullRequestDescription?: string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/tasks/{id}/pull-request-description';
+};
+
+export type PatchApiTasksByIdPullRequestDescriptionErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbTasksErrorResponse;
+    /**
+     * Task not found
+     */
+    404: DbTasksErrorResponse;
+};
+
+export type PatchApiTasksByIdPullRequestDescriptionError = PatchApiTasksByIdPullRequestDescriptionErrors[keyof PatchApiTasksByIdPullRequestDescriptionErrors];
+
+export type PatchApiTasksByIdPullRequestDescriptionResponses = {
+    /**
+     * PR description updated
+     */
+    200: DbTasksSuccessResponse;
+};
+
+export type PatchApiTasksByIdPullRequestDescriptionResponse = PatchApiTasksByIdPullRequestDescriptionResponses[keyof PatchApiTasksByIdPullRequestDescriptionResponses];
+
+export type GetApiTaskRunsData = {
+    body?: never;
+    path?: never;
+    query: {
+        taskId: string;
+        includeArchived?: 'true' | 'false';
+    };
+    url: '/api/task-runs';
+};
+
+export type GetApiTaskRunsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbTaskRunsErrorResponse;
+};
+
+export type GetApiTaskRunsError = GetApiTaskRunsErrors[keyof GetApiTaskRunsErrors];
+
+export type GetApiTaskRunsResponses = {
+    /**
+     * List of task runs
+     */
+    200: {
+        taskRuns: Array<{
+            [key: string]: unknown;
+        }>;
+    };
+};
+
+export type GetApiTaskRunsResponse = GetApiTaskRunsResponses[keyof GetApiTaskRunsResponses];
+
+export type PostApiTaskRunsData = {
+    body: DbCreateTaskRunBody;
+    path?: never;
+    query?: never;
+    url: '/api/task-runs';
+};
+
+export type PostApiTaskRunsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbTaskRunsErrorResponse;
+};
+
+export type PostApiTaskRunsError = PostApiTaskRunsErrors[keyof PostApiTaskRunsErrors];
+
+export type PostApiTaskRunsResponses = {
+    /**
+     * Task run created
+     */
+    201: {
+        taskRunId: string;
+    };
+};
+
+export type PostApiTaskRunsResponse = PostApiTaskRunsResponses[keyof PostApiTaskRunsResponses];
+
+export type GetApiTaskRunsByContainerNameData = {
+    body?: never;
+    path?: never;
+    query: {
+        containerName: string;
+    };
+    url: '/api/task-runs/by-container-name';
+};
+
+export type GetApiTaskRunsByContainerNameErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbTaskRunsErrorResponse;
+};
+
+export type GetApiTaskRunsByContainerNameError = GetApiTaskRunsByContainerNameErrors[keyof GetApiTaskRunsByContainerNameErrors];
+
+export type GetApiTaskRunsByContainerNameResponses = {
+    /**
+     * Task run
+     */
+    200: {
+        [key: string]: unknown;
+    } | null;
+};
+
+export type GetApiTaskRunsByContainerNameResponse = GetApiTaskRunsByContainerNameResponses[keyof GetApiTaskRunsByContainerNameResponses];
+
+export type GetApiTaskRunsByIdData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/task-runs/{id}';
+};
+
+export type GetApiTaskRunsByIdErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbTaskRunsErrorResponse;
+};
+
+export type GetApiTaskRunsByIdError = GetApiTaskRunsByIdErrors[keyof GetApiTaskRunsByIdErrors];
+
+export type GetApiTaskRunsByIdResponses = {
+    /**
+     * Task run details
+     */
+    200: {
+        [key: string]: unknown;
+    } | null;
+};
+
+export type GetApiTaskRunsByIdResponse = GetApiTaskRunsByIdResponses[keyof GetApiTaskRunsByIdResponses];
+
+export type GetApiTaskRunsByIdLogChunksData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/task-runs/{id}/log-chunks';
+};
+
+export type GetApiTaskRunsByIdLogChunksErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbTaskRunsErrorResponse;
+};
+
+export type GetApiTaskRunsByIdLogChunksError = GetApiTaskRunsByIdLogChunksErrors[keyof GetApiTaskRunsByIdLogChunksErrors];
+
+export type GetApiTaskRunsByIdLogChunksResponses = {
+    /**
+     * Log chunks
+     */
+    200: {
+        logChunks: Array<{
+            id: string;
+            taskRunId: string;
+            content: string;
+            userId: string;
+            teamId: string;
+        }>;
+    };
+};
+
+export type GetApiTaskRunsByIdLogChunksResponse = GetApiTaskRunsByIdLogChunksResponses[keyof GetApiTaskRunsByIdLogChunksResponses];
+
+export type GetApiTaskRunsByIdScreenshotSetsData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/task-runs/{id}/screenshot-sets';
+};
+
+export type GetApiTaskRunsByIdScreenshotSetsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbTaskRunsErrorResponse;
+};
+
+export type GetApiTaskRunsByIdScreenshotSetsError = GetApiTaskRunsByIdScreenshotSetsErrors[keyof GetApiTaskRunsByIdScreenshotSetsErrors];
+
+export type GetApiTaskRunsByIdScreenshotSetsResponses = {
+    /**
+     * Screenshot sets
+     */
+    200: {
+        screenshotSets: Array<{
+            [key: string]: unknown;
+        }>;
+    };
+};
+
+export type GetApiTaskRunsByIdScreenshotSetsResponse = GetApiTaskRunsByIdScreenshotSetsResponses[keyof GetApiTaskRunsByIdScreenshotSetsResponses];
+
+export type GetApiNotificationsData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+        unreadOnly?: 'true' | 'false';
+    };
+    url: '/api/notifications';
+};
+
+export type GetApiNotificationsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbNotificationsErrorResponse;
+};
+
+export type GetApiNotificationsError = GetApiNotificationsErrors[keyof GetApiNotificationsErrors];
+
+export type GetApiNotificationsResponses = {
+    /**
+     * List of notifications
+     */
+    200: {
+        notifications: Array<DbNotification>;
+    };
+};
+
+export type GetApiNotificationsResponse = GetApiNotificationsResponses[keyof GetApiNotificationsResponses];
+
+export type PostApiNotificationsByIdReadData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/notifications/{id}/read';
+};
+
+export type PostApiNotificationsByIdReadErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbNotificationsErrorResponse;
+};
+
+export type PostApiNotificationsByIdReadError = PostApiNotificationsByIdReadErrors[keyof PostApiNotificationsByIdReadErrors];
+
+export type PostApiNotificationsByIdReadResponses = {
+    /**
+     * Notification marked as read
+     */
+    200: {
+        success: boolean;
+    };
+};
+
+export type PostApiNotificationsByIdReadResponse = PostApiNotificationsByIdReadResponses[keyof PostApiNotificationsByIdReadResponses];
+
+export type PostApiNotificationsReadAllData = {
+    body: {
+        teamSlugOrId: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/notifications/read-all';
+};
+
+export type PostApiNotificationsReadAllErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbNotificationsErrorResponse;
+};
+
+export type PostApiNotificationsReadAllError = PostApiNotificationsReadAllErrors[keyof PostApiNotificationsReadAllErrors];
+
+export type PostApiNotificationsReadAllResponses = {
+    /**
+     * All notifications marked as read
+     */
+    200: {
+        success: boolean;
+    };
+};
+
+export type PostApiNotificationsReadAllResponse = PostApiNotificationsReadAllResponses[keyof PostApiNotificationsReadAllResponses];
+
+export type GetApiUnreadTaskRunsData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/unread-task-runs';
+};
+
+export type GetApiUnreadTaskRunsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbNotificationsErrorResponse;
+};
+
+export type GetApiUnreadTaskRunsError = GetApiUnreadTaskRunsErrors[keyof GetApiUnreadTaskRunsErrors];
+
+export type GetApiUnreadTaskRunsResponses = {
+    /**
+     * List of unread task runs
+     */
+    200: {
+        unreadTaskRuns: Array<DbUnreadTaskRun>;
+    };
+};
+
+export type GetApiUnreadTaskRunsResponse = GetApiUnreadTaskRunsResponses[keyof GetApiUnreadTaskRunsResponses];
+
+export type PostApiTaskRunsByIdMarkReadData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/task-runs/{id}/mark-read';
+};
+
+export type PostApiTaskRunsByIdMarkReadErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbNotificationsErrorResponse;
+};
+
+export type PostApiTaskRunsByIdMarkReadError = PostApiTaskRunsByIdMarkReadErrors[keyof PostApiTaskRunsByIdMarkReadErrors];
+
+export type PostApiTaskRunsByIdMarkReadResponses = {
+    /**
+     * Task run marked as read
+     */
+    200: {
+        success: boolean;
+    };
+};
+
+export type PostApiTaskRunsByIdMarkReadResponse = PostApiTaskRunsByIdMarkReadResponses[keyof PostApiTaskRunsByIdMarkReadResponses];
+
+export type PostApiTasksByTaskIdMarkAllReadData = {
+    body?: never;
+    path: {
+        taskId: string;
+    };
+    query?: never;
+    url: '/api/tasks/{taskId}/mark-all-read';
+};
+
+export type PostApiTasksByTaskIdMarkAllReadErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbNotificationsErrorResponse;
+};
+
+export type PostApiTasksByTaskIdMarkAllReadError = PostApiTasksByTaskIdMarkAllReadErrors[keyof PostApiTasksByTaskIdMarkAllReadErrors];
+
+export type PostApiTasksByTaskIdMarkAllReadResponses = {
+    /**
+     * All task runs marked as read
+     */
+    200: {
+        success: boolean;
+    };
+};
+
+export type PostApiTasksByTaskIdMarkAllReadResponse = PostApiTasksByTaskIdMarkAllReadResponses[keyof PostApiTasksByTaskIdMarkAllReadResponses];
+
+export type GetApiWorkspaceSettingsData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/workspace-settings';
+};
+
+export type GetApiWorkspaceSettingsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbSettingsErrorResponse;
+};
+
+export type GetApiWorkspaceSettingsError = GetApiWorkspaceSettingsErrors[keyof GetApiWorkspaceSettingsErrors];
+
+export type GetApiWorkspaceSettingsResponses = {
+    /**
+     * Workspace settings
+     */
+    200: DbWorkspaceSettings;
+};
+
+export type GetApiWorkspaceSettingsResponse = GetApiWorkspaceSettingsResponses[keyof GetApiWorkspaceSettingsResponses];
+
+export type PatchApiWorkspaceSettingsData = {
+    body: DbUpdateWorkspaceSettingsBody;
+    path?: never;
+    query?: never;
+    url: '/api/workspace-settings';
+};
+
+export type PatchApiWorkspaceSettingsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbSettingsErrorResponse;
+};
+
+export type PatchApiWorkspaceSettingsError = PatchApiWorkspaceSettingsErrors[keyof PatchApiWorkspaceSettingsErrors];
+
+export type PatchApiWorkspaceSettingsResponses = {
+    /**
+     * Workspace settings updated
+     */
+    200: {
+        id: string;
+    };
+};
+
+export type PatchApiWorkspaceSettingsResponse = PatchApiWorkspaceSettingsResponses[keyof PatchApiWorkspaceSettingsResponses];
+
+export type GetApiContainerSettingsData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/container-settings';
+};
+
+export type GetApiContainerSettingsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbSettingsErrorResponse;
+};
+
+export type GetApiContainerSettingsError = GetApiContainerSettingsErrors[keyof GetApiContainerSettingsErrors];
+
+export type GetApiContainerSettingsResponses = {
+    /**
+     * Container settings
+     */
+    200: DbContainerSettings;
+};
+
+export type GetApiContainerSettingsResponse = GetApiContainerSettingsResponses[keyof GetApiContainerSettingsResponses];
+
+export type PatchApiContainerSettingsData = {
+    body: DbUpdateContainerSettingsBody;
+    path?: never;
+    query?: never;
+    url: '/api/container-settings';
+};
+
+export type PatchApiContainerSettingsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbSettingsErrorResponse;
+};
+
+export type PatchApiContainerSettingsError = PatchApiContainerSettingsErrors[keyof PatchApiContainerSettingsErrors];
+
+export type PatchApiContainerSettingsResponses = {
+    /**
+     * Container settings updated
+     */
+    200: {
+        id: string;
+    };
+};
+
+export type PatchApiContainerSettingsResponse = PatchApiContainerSettingsResponses[keyof PatchApiContainerSettingsResponses];
+
+export type GetApiUserEditorSettingsData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/user-editor-settings';
+};
+
+export type GetApiUserEditorSettingsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbSettingsErrorResponse;
+};
+
+export type GetApiUserEditorSettingsError = GetApiUserEditorSettingsErrors[keyof GetApiUserEditorSettingsErrors];
+
+export type GetApiUserEditorSettingsResponses = {
+    /**
+     * Editor settings
+     */
+    200: DbEditorSettings;
+};
+
+export type GetApiUserEditorSettingsResponse = GetApiUserEditorSettingsResponses[keyof GetApiUserEditorSettingsResponses];
+
+export type PutApiUserEditorSettingsData = {
+    body: DbUpdateEditorSettingsBody;
+    path?: never;
+    query?: never;
+    url: '/api/user-editor-settings';
+};
+
+export type PutApiUserEditorSettingsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbSettingsErrorResponse;
+};
+
+export type PutApiUserEditorSettingsError = PutApiUserEditorSettingsErrors[keyof PutApiUserEditorSettingsErrors];
+
+export type PutApiUserEditorSettingsResponses = {
+    /**
+     * Editor settings updated
+     */
+    200: {
+        id: string;
+    };
+};
+
+export type PutApiUserEditorSettingsResponse = PutApiUserEditorSettingsResponses[keyof PutApiUserEditorSettingsResponses];
+
+export type GetApiAnalyticsDashboardData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/analytics/dashboard';
+};
+
+export type GetApiAnalyticsDashboardErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbAnalyticsErrorResponse;
+};
+
+export type GetApiAnalyticsDashboardError = GetApiAnalyticsDashboardErrors[keyof GetApiAnalyticsDashboardErrors];
+
+export type GetApiAnalyticsDashboardResponses = {
+    /**
+     * Dashboard statistics
+     */
+    200: DbDashboardStats;
+};
+
+export type GetApiAnalyticsDashboardResponse = GetApiAnalyticsDashboardResponses[keyof GetApiAnalyticsDashboardResponses];
+
+export type GetApiApiKeysData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/api-keys';
+};
+
+export type GetApiApiKeysErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbApiKeysErrorResponse;
+};
+
+export type GetApiApiKeysError = GetApiApiKeysErrors[keyof GetApiApiKeysErrors];
+
+export type GetApiApiKeysResponses = {
+    /**
+     * List of API keys
+     */
+    200: {
+        apiKeys: Array<DbApiKey>;
+    };
+};
+
+export type GetApiApiKeysResponse = GetApiApiKeysResponses[keyof GetApiApiKeysResponses];
+
+export type DeleteApiApiKeysByEnvVarData = {
+    body?: never;
+    path: {
+        envVar: string;
+    };
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/api-keys/{envVar}';
+};
+
+export type DeleteApiApiKeysByEnvVarErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbApiKeysErrorResponse;
+    /**
+     * API key not found
+     */
+    404: DbApiKeysErrorResponse;
+};
+
+export type DeleteApiApiKeysByEnvVarError = DeleteApiApiKeysByEnvVarErrors[keyof DeleteApiApiKeysByEnvVarErrors];
+
+export type DeleteApiApiKeysByEnvVarResponses = {
+    /**
+     * API key deleted
+     */
+    200: {
+        success: boolean;
+    };
+};
+
+export type DeleteApiApiKeysByEnvVarResponse = DeleteApiApiKeysByEnvVarResponses[keyof DeleteApiApiKeysByEnvVarResponses];
+
+export type PutApiApiKeysByEnvVarData = {
+    body: DbUpsertApiKeyBody;
+    path: {
+        envVar: string;
+    };
+    query?: never;
+    url: '/api/api-keys/{envVar}';
+};
+
+export type PutApiApiKeysByEnvVarErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbApiKeysErrorResponse;
+};
+
+export type PutApiApiKeysByEnvVarError = PutApiApiKeysByEnvVarErrors[keyof PutApiApiKeysByEnvVarErrors];
+
+export type PutApiApiKeysByEnvVarResponses = {
+    /**
+     * API key upserted
+     */
+    200: {
+        id: string;
+    };
+};
+
+export type PutApiApiKeysByEnvVarResponse = PutApiApiKeysByEnvVarResponses[keyof PutApiApiKeysByEnvVarResponses];
+
+export type GetApiTaskCommentsData = {
+    body?: never;
+    path?: never;
+    query: {
+        taskId: string;
+    };
+    url: '/api/task-comments';
+};
+
+export type GetApiTaskCommentsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbCommentsErrorResponse;
+};
+
+export type GetApiTaskCommentsError = GetApiTaskCommentsErrors[keyof GetApiTaskCommentsErrors];
+
+export type GetApiTaskCommentsResponses = {
+    /**
+     * List of task comments
+     */
+    200: {
+        comments: Array<DbTaskComment>;
+    };
+};
+
+export type GetApiTaskCommentsResponse = GetApiTaskCommentsResponses[keyof GetApiTaskCommentsResponses];
+
+export type PostApiTaskCommentsData = {
+    body: DbCreateTaskCommentBody;
+    path?: never;
+    query?: never;
+    url: '/api/task-comments';
+};
+
+export type PostApiTaskCommentsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbCommentsErrorResponse;
+};
+
+export type PostApiTaskCommentsError = PostApiTaskCommentsErrors[keyof PostApiTaskCommentsErrors];
+
+export type PostApiTaskCommentsResponses = {
+    /**
+     * Task comment created
+     */
+    201: {
+        id: string;
+    };
+};
+
+export type PostApiTaskCommentsResponse = PostApiTaskCommentsResponses[keyof PostApiTaskCommentsResponses];
+
+export type GetApiCommentsData = {
+    body?: never;
+    path?: never;
+    query: {
+        url: string;
+    };
+    url: '/api/comments';
+};
+
+export type GetApiCommentsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbCommentsErrorResponse;
+};
+
+export type GetApiCommentsError = GetApiCommentsErrors[keyof GetApiCommentsErrors];
+
+export type GetApiCommentsResponses = {
+    /**
+     * List of comments
+     */
+    200: {
+        comments: Array<DbComment>;
+    };
+};
+
+export type GetApiCommentsResponse = GetApiCommentsResponses[keyof GetApiCommentsResponses];
+
+export type PostApiCommentsData = {
+    body: DbCreateCommentBody;
+    path?: never;
+    query?: never;
+    url: '/api/comments';
+};
+
+export type PostApiCommentsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbCommentsErrorResponse;
+};
+
+export type PostApiCommentsError = PostApiCommentsErrors[keyof PostApiCommentsErrors];
+
+export type PostApiCommentsResponses = {
+    /**
+     * Comment created
+     */
+    201: {
+        id: string;
+    };
+};
+
+export type PostApiCommentsResponse = PostApiCommentsResponses[keyof PostApiCommentsResponses];
+
+export type GetApiCommentsByIdData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/comments/{id}';
+};
+
+export type GetApiCommentsByIdErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbCommentsErrorResponse;
+};
+
+export type GetApiCommentsByIdError = GetApiCommentsByIdErrors[keyof GetApiCommentsByIdErrors];
+
+export type GetApiCommentsByIdResponses = {
+    /**
+     * Comment details
+     */
+    200: DbComment & unknown;
+};
+
+export type GetApiCommentsByIdResponse = GetApiCommentsByIdResponses[keyof GetApiCommentsByIdResponses];
+
+export type PatchApiCommentsByIdData = {
+    body: DbUpdateCommentBody;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/comments/{id}';
+};
+
+export type PatchApiCommentsByIdErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbCommentsErrorResponse;
+};
+
+export type PatchApiCommentsByIdError = PatchApiCommentsByIdErrors[keyof PatchApiCommentsByIdErrors];
+
+export type PatchApiCommentsByIdResponses = {
+    /**
+     * Comment updated
+     */
+    200: {
+        success: boolean;
+    };
+};
+
+export type PatchApiCommentsByIdResponse = PatchApiCommentsByIdResponses[keyof PatchApiCommentsByIdResponses];
+
+export type GetApiCommentsByIdRepliesData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/comments/{id}/replies';
+};
+
+export type GetApiCommentsByIdRepliesErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbCommentsErrorResponse;
+};
+
+export type GetApiCommentsByIdRepliesError = GetApiCommentsByIdRepliesErrors[keyof GetApiCommentsByIdRepliesErrors];
+
+export type GetApiCommentsByIdRepliesResponses = {
+    /**
+     * List of replies
+     */
+    200: {
+        replies: Array<DbCommentReply>;
+    };
+};
+
+export type GetApiCommentsByIdRepliesResponse = GetApiCommentsByIdRepliesResponses[keyof GetApiCommentsByIdRepliesResponses];
+
+export type PostApiCommentsByIdRepliesData = {
+    body: DbCreateReplyBody;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/comments/{id}/replies';
+};
+
+export type PostApiCommentsByIdRepliesErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbCommentsErrorResponse;
+};
+
+export type PostApiCommentsByIdRepliesError = PostApiCommentsByIdRepliesErrors[keyof PostApiCommentsByIdRepliesErrors];
+
+export type PostApiCommentsByIdRepliesResponses = {
+    /**
+     * Reply created
+     */
+    201: {
+        id: string;
+    };
+};
+
+export type PostApiCommentsByIdRepliesResponse = PostApiCommentsByIdRepliesResponses[keyof PostApiCommentsByIdRepliesResponses];
+
+export type PostApiStorageUploadData = {
+    body: {
+        file: Blob | File;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/storage/upload';
+};
+
+export type PostApiStorageUploadErrors = {
+    /**
+     * No file provided
+     */
+    400: StorageErrorResponse;
+    /**
+     * Unauthorized
+     */
+    401: StorageErrorResponse;
+};
+
+export type PostApiStorageUploadError = PostApiStorageUploadErrors[keyof PostApiStorageUploadErrors];
+
+export type PostApiStorageUploadResponses = {
+    /**
+     * File uploaded
+     */
+    201: {
+        id: string;
+        fileName: string;
+        mimeType: string;
+        size: number;
+    };
+};
+
+export type PostApiStorageUploadResponse = PostApiStorageUploadResponses[keyof PostApiStorageUploadResponses];
+
+export type GetApiStorageByIdData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/storage/{id}';
+};
+
+export type GetApiStorageByIdErrors = {
+    /**
+     * File not found
+     */
+    404: StorageErrorResponse;
+};
+
+export type GetApiStorageByIdError = GetApiStorageByIdErrors[keyof GetApiStorageByIdErrors];
+
+export type GetApiStorageByIdResponses = {
+    /**
+     * File content
+     */
+    200: unknown;
+};
 
 export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});

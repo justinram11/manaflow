@@ -1,4 +1,3 @@
-import { Id } from "@cmux/convex/dataModel";
 import fs from "node:fs";
 import { DockerVSCodeInstance } from "../vscode/DockerVSCodeInstance";
 
@@ -14,8 +13,8 @@ async function main() {
   // Create VSCode instance using the abstraction
   const vscodeInstance = new DockerVSCodeInstance({
     agentName: "claude-demo",
-    taskRunId: "test-task-run-id" as Id<"taskRuns">, // Add required taskRunId for testing
-    taskId: "test-task-id" as Id<"tasks">, // Add required taskId for testing
+    taskRunId: "test-task-run-id",
+    taskId: "test-task-id",
     teamSlugOrId: "default",
   });
 

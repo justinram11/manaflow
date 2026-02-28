@@ -14,8 +14,18 @@ import {
   toProxyWorkspaceUrl,
 } from "@/lib/toProxyWorkspaceUrl";
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
-import { api } from "@cmux/convex/api";
-import type { Doc, Id } from "@cmux/convex/dataModel";
+import {
+  postApiTasks,
+} from "@cmux/www-openapi-client";
+import type {
+  GithubRepo,
+} from "@cmux/www-openapi-client";
+import {
+  getApiTeamsOptions,
+  getApiIntegrationsGithubReposOptions,
+  getApiEnvironmentsOptions,
+  getApiTasksOptions,
+} from "@cmux/www-openapi-client/react-query";
 import type {
   CreateLocalWorkspaceResponse,
   CreateCloudWorkspaceResponse,
@@ -25,7 +35,7 @@ import { useUser, type Team } from "@stackframe/react";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
 import { Command, useCommandState } from "cmdk";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Bug,
   ClipboardCopy,
@@ -160,7 +170,7 @@ type LocalWorkspaceOption = {
 type CloudWorkspaceOption =
   | {
       type: "environment";
-      environmentId: Id<"environments">;
+      environmentId: string;
       name: string;
       keywords: string[];
     }
@@ -502,76 +512,86 @@ export function CommandBar({
   const stackUser = useUser({ or: "return-null" });
   const stackTeams = stackUser?.useTeams() ?? EMPTY_TEAM_LIST;
   const selectedTeamId = stackUser?.selectedTeam?.id ?? null;
-  const teamMemberships = useQuery(api.teams.listTeamMemberships, {});
-  const reposByOrg = useQuery(api.github.getReposByOrg, { teamSlugOrId });
-  const environments = useQuery(api.environments.list, { teamSlugOrId });
+  const teamsQuery = useQuery(getApiTeamsOptions());
+  const teams = teamsQuery.data?.teams;
+  const reposQuery = useQuery(
+    getApiIntegrationsGithubReposOptions({ query: { team: teamSlugOrId } }),
+  );
+  const repos = reposQuery.data?.repos;
+  const environmentsQuery = useQuery(
+    getApiEnvironmentsOptions({ query: { teamSlugOrId } }),
+  );
+  const environments = environmentsQuery.data;
 
   const localWorkspaceOptions = useMemo<LocalWorkspaceOption[]>(() => {
-    const repoGroups = reposByOrg ?? {};
-    const uniqueRepos = new Map<string, Doc<"repos">>();
+    const repoList = repos ?? [];
+    const uniqueRepos = new Map<string, GithubRepo>();
 
-    for (const repos of Object.values(repoGroups)) {
-      for (const repo of repos ?? []) {
-        const existing = uniqueRepos.get(repo.fullName);
-        if (!existing) {
-          uniqueRepos.set(repo.fullName, repo);
-          continue;
-        }
-        const existingActivity =
-          existing.lastPushedAt ?? Number.NEGATIVE_INFINITY;
-        const candidateActivity = repo.lastPushedAt ?? Number.NEGATIVE_INFINITY;
-        if (candidateActivity > existingActivity) {
-          uniqueRepos.set(repo.fullName, repo);
-        }
+    for (const repo of repoList) {
+      const existing = uniqueRepos.get(repo.full_name);
+      if (!existing) {
+        uniqueRepos.set(repo.full_name, repo);
+        continue;
+      }
+      const existingActivity = existing.pushed_at
+        ? new Date(existing.pushed_at).getTime()
+        : Number.NEGATIVE_INFINITY;
+      const candidateActivity = repo.pushed_at
+        ? new Date(repo.pushed_at).getTime()
+        : Number.NEGATIVE_INFINITY;
+      if (candidateActivity > existingActivity) {
+        uniqueRepos.set(repo.full_name, repo);
       }
     }
 
     return Array.from(uniqueRepos.values())
       .sort((a, b) => {
-        const aPushedAt = a.lastPushedAt ?? Number.NEGATIVE_INFINITY;
-        const bPushedAt = b.lastPushedAt ?? Number.NEGATIVE_INFINITY;
+        const aPushedAt = a.pushed_at
+          ? new Date(a.pushed_at).getTime()
+          : Number.NEGATIVE_INFINITY;
+        const bPushedAt = b.pushed_at
+          ? new Date(b.pushed_at).getTime()
+          : Number.NEGATIVE_INFINITY;
         if (aPushedAt !== bPushedAt) {
           return bPushedAt - aPushedAt;
         }
-        return a.fullName.localeCompare(b.fullName);
+        return a.full_name.localeCompare(b.full_name);
       })
       .map((repo) => {
         const repoBaseName =
           deriveRepoBaseName({
-            projectFullName: repo.fullName,
-            repoUrl: repo.gitRemote,
+            projectFullName: repo.full_name,
+            repoUrl: undefined,
           }) ?? repo.name;
-        const [owner, name] = repo.fullName.split("/");
+        const [owner, name] = repo.full_name.split("/");
         return {
-          fullName: repo.fullName,
+          fullName: repo.full_name,
           repoBaseName,
           keywords: compactStrings([
-            repo.fullName,
+            repo.full_name,
             repo.name,
-            repo.org,
-            repo.ownerLogin,
             owner,
             name,
           ]),
         };
       });
-  }, [reposByOrg]);
+  }, [repos]);
 
-  const isLocalWorkspaceLoading = reposByOrg === undefined;
+  const isLocalWorkspaceLoading = repos === undefined;
 
   const cloudWorkspaceOptions = useMemo<CloudWorkspaceOption[]>(() => {
     const options: CloudWorkspaceOption[] = [];
 
     // Add environment-based cloud workspaces
     if (environments) {
-      const envOptions: CloudWorkspaceOption[] = environments
+      const envOptions: CloudWorkspaceOption[] = [...environments]
         .sort((a, b) => {
           // Sort by creation time, most recent first
           return b.createdAt - a.createdAt;
         })
         .map((env) => ({
           type: "environment",
-          environmentId: env._id,
+          environmentId: env.id,
           name: env.name,
           keywords: compactStrings([
             env.name,
@@ -598,7 +618,7 @@ export function CommandBar({
   }, [environments, localWorkspaceOptions]);
 
   const isCloudWorkspaceLoading =
-    environments === undefined || reposByOrg === undefined;
+    environments === undefined || repos === undefined;
 
   const getClientSlug = useCallback((meta: unknown): string | undefined => {
     if (!isRecord(meta)) return undefined;
@@ -606,31 +626,19 @@ export function CommandBar({
   }, []);
 
   const teamCommandItems = useMemo(() => {
-    const memberships = teamMemberships ?? [];
     const items: TeamCommandItem[] = [];
 
+    // Merge data from HTTP API teams and Stack teams
     for (const team of stackTeams) {
-      const membership = memberships.find((entry) => entry.teamId === team.id);
-
-      let membershipTeamSlug: string | undefined;
-      let membershipTeamDisplayName: string | undefined;
-      let membershipTeamName: string | undefined;
-
-      if (membership && isRecord(membership.team)) {
-        const teamRecord = membership.team;
-        membershipTeamSlug = extractString(teamRecord["slug"]);
-        membershipTeamDisplayName = extractString(teamRecord["displayName"]);
-        membershipTeamName = extractString(teamRecord["name"]);
-      }
+      const httpTeam = teams?.find((t) => t.id === team.id);
 
       const slugFromMetadata =
         getClientSlug(team.clientMetadata) ||
         getClientSlug(team.clientReadOnlyMetadata);
 
-      const slug = membershipTeamSlug || slugFromMetadata;
+      const slug = httpTeam?.slug ?? slugFromMetadata;
       const label =
-        membershipTeamDisplayName ||
-        membershipTeamName ||
+        httpTeam?.displayName ||
         extractString(team.displayName) ||
         team.id;
 
@@ -653,7 +661,7 @@ export function CommandBar({
     });
 
     return items;
-  }, [stackTeams, teamMemberships, selectedTeamId, getClientSlug]);
+  }, [stackTeams, teams, selectedTeamId, getClientSlug]);
 
   const teamCommandEntries = useMemo(
     () =>
@@ -668,15 +676,29 @@ export function CommandBar({
     [teamCommandItems]
   );
 
-  const isTeamsLoading = Boolean(stackUser) && teamMemberships === undefined;
+  const isTeamsLoading = Boolean(stackUser) && teams === undefined;
   const teamPageEmptyMessage = stackUser
     ? "No teams available yet."
     : "Sign in to view teams.";
 
-  const allTasks = useQuery(api.tasks.getTasksWithTaskRuns, { teamSlugOrId });
-  const reserveLocalWorkspace = useMutation(api.localWorkspaces.reserve);
-  const createTask = useMutation(api.tasks.create);
-  const failTaskRun = useMutation(api.taskRuns.fail);
+  const allTasksQuery = useQuery(
+    getApiTasksOptions({ query: { teamSlugOrId } }),
+  );
+  const allTasks = allTasksQuery.data?.tasks;
+
+  const createTaskMutation = useMutation({
+    mutationFn: async (body: {
+      teamSlugOrId: string;
+      text: string;
+      projectFullName?: string;
+      baseBranch?: string;
+      environmentId?: string;
+      isCloudWorkspace?: boolean;
+    }) => {
+      const { data } = await postApiTasks({ body });
+      return data;
+    },
+  });
 
   useEffect(() => {
     openRef.current = open;
@@ -707,24 +729,9 @@ export function CommandBar({
       }
 
       setIsCreatingLocalWorkspace(true);
-      let reservedTaskId: Id<"tasks"> | null = null;
-      let reservedTaskRunId: Id<"taskRuns"> | null = null;
 
       try {
         const repoUrl = `https://github.com/${projectFullName}.git`;
-        const reservation = await reserveLocalWorkspace({
-          teamSlugOrId,
-          projectFullName,
-          repoUrl,
-        });
-        if (!reservation) {
-          throw new Error("Unable to reserve workspace name");
-        }
-
-        reservedTaskId = reservation.taskId;
-        reservedTaskRunId = reservation.taskRunId;
-
-        addTaskToExpand(reservation.taskId);
 
         await new Promise<void>((resolve) => {
           socket.emit(
@@ -733,10 +740,6 @@ export function CommandBar({
               teamSlugOrId,
               projectFullName,
               repoUrl,
-              taskId: reservation.taskId,
-              taskRunId: reservation.taskRunId,
-              workspaceName: reservation.workspaceName,
-              descriptor: reservation.descriptor,
             },
             async (response: CreateLocalWorkspaceResponse) => {
               try {
@@ -744,24 +747,18 @@ export function CommandBar({
                   const message =
                     response?.error ??
                     `Unable to create workspace for ${projectFullName}`;
-                  if (reservedTaskRunId) {
-                    await failTaskRun({
-                      teamSlugOrId,
-                      id: reservedTaskRunId,
-                      errorMessage: message,
-                    }).catch(() => undefined);
-                  }
                   console.error(message);
                   return;
                 }
 
-                const effectiveTaskId = response.taskId ?? reservedTaskId;
-                const effectiveTaskRunId =
-                  response.taskRunId ?? reservedTaskRunId;
+                const effectiveTaskId = response.taskId;
+                const effectiveTaskRunId = response.taskRunId;
                 const effectiveWorkspaceName =
-                  response.workspaceName ??
-                  reservation.workspaceName ??
-                  projectFullName;
+                  response.workspaceName ?? projectFullName;
+
+                if (effectiveTaskId) {
+                  addTaskToExpand(effectiveTaskId);
+                }
 
                 console.log(
                   response.pending
@@ -825,13 +822,6 @@ export function CommandBar({
       } catch (error) {
         const message =
           error instanceof Error ? error.message : String(error ?? "Unknown");
-        if (reservedTaskRunId) {
-          await failTaskRun({
-            teamSlugOrId,
-            id: reservedTaskRunId,
-            errorMessage: message,
-          }).catch(() => undefined);
-        }
         console.error("Failed to create workspace", message);
       } finally {
         setIsCreatingLocalWorkspace(false);
@@ -839,11 +829,9 @@ export function CommandBar({
     },
     [
       addTaskToExpand,
-      failTaskRun,
       isCreatingLocalWorkspace,
       localServeWeb.data?.baseUrl,
       navigate,
-      reserveLocalWorkspace,
       router,
       socket,
       teamSlugOrId,
@@ -860,7 +848,7 @@ export function CommandBar({
   );
 
   const createCloudWorkspaceFromEnvironment = useCallback(
-    async (environmentId: Id<"environments">) => {
+    async (environmentId: string) => {
       if (isCreatingCloudWorkspace) {
         return;
       }
@@ -876,19 +864,21 @@ export function CommandBar({
       try {
         // Find environment name for the task text
         const environment = environments?.find(
-          (env) => env._id === environmentId
+          (env) => env.id === environmentId
         );
         const environmentName = environment?.name ?? "Unknown Environment";
 
-        // Create task in Convex without task description (it's just a workspace)
-        const { taskId } = await createTask({
+        // Create task via HTTP API without task description (it's just a workspace)
+        const result = await createTaskMutation.mutateAsync({
           teamSlugOrId,
           text: environmentName,
-          projectFullName: undefined, // No repo for cloud environment workspaces
-          baseBranch: undefined, // No branch for environments
           environmentId,
           isCloudWorkspace: true,
         });
+        const taskId = result?.taskId;
+        if (!taskId) {
+          throw new Error("Failed to create task");
+        }
 
         // Hint the sidebar to auto-expand this task once it appears
         addTaskToExpand(taskId);
@@ -934,7 +924,7 @@ export function CommandBar({
     },
     [
       addTaskToExpand,
-      createTask,
+      createTaskMutation,
       environments,
       isCreatingCloudWorkspace,
       socket,
@@ -960,15 +950,17 @@ export function CommandBar({
       try {
         const repoUrl = `https://github.com/${projectFullName}.git`;
 
-        // Create task in Convex for repo-based cloud workspace
-        const { taskId } = await createTask({
+        // Create task via HTTP API for repo-based cloud workspace
+        const result = await createTaskMutation.mutateAsync({
           teamSlugOrId,
           text: projectFullName,
           projectFullName,
-          baseBranch: undefined,
-          environmentId: undefined, // No environment for repo-based cloud workspaces
           isCloudWorkspace: true,
         });
+        const taskId = result?.taskId;
+        if (!taskId) {
+          throw new Error("Failed to create task");
+        }
 
         // Hint the sidebar to auto-expand this task once it appears
         addTaskToExpand(taskId);
@@ -1015,7 +1007,7 @@ export function CommandBar({
     },
     [
       addTaskToExpand,
-      createTask,
+      createTaskMutation,
       isCreatingCloudWorkspace,
       socket,
       teamSlugOrId,
@@ -1279,10 +1271,8 @@ export function CommandBar({
         await preloadTeamDashboard(targetTeamSlugOrId);
       } else if (value?.startsWith("task:")) {
         const parts = value.slice(5).split(":");
-        const taskId = parts[0] as Id<"tasks">;
+        const taskId = parts[0];
         const action = parts[1];
-        const task = allTasks?.find((t) => t._id === taskId);
-        const runId = task?.selectedTaskRun?._id;
 
         try {
           if (!action) {
@@ -1292,44 +1282,20 @@ export function CommandBar({
               params: { teamSlugOrId, taskId },
               search: { runId: undefined },
             });
-          } else if (action === "vs") {
-            if (runId) {
-              await router.preloadRoute({
-                to: "/$teamSlugOrId/task/$taskId/run/$runId",
-                params: {
-                  teamSlugOrId,
-                  taskId,
-                  runId,
-                  taskRunId: runId,
-                },
-              });
-            } else {
-              await router.preloadRoute({
-                to: "/$teamSlugOrId/task/$taskId",
-                params: { teamSlugOrId, taskId },
-                search: { runId: undefined },
-              });
-            }
-          } else if (action === "gitdiff") {
-            if (runId) {
-              await router.preloadRoute({
-                to: "/$teamSlugOrId/task/$taskId/run/$runId/diff",
-                params: { teamSlugOrId, taskId, runId },
-              });
-            } else {
-              await router.preloadRoute({
-                to: "/$teamSlugOrId/task/$taskId",
-                params: { teamSlugOrId, taskId },
-                search: { runId: undefined },
-              });
-            }
+          } else if (action === "vs" || action === "gitdiff") {
+            // Without selectedTaskRun data, just preload the task page
+            await router.preloadRoute({
+              to: "/$teamSlugOrId/task/$taskId",
+              params: { teamSlugOrId, taskId },
+              search: { runId: undefined },
+            });
           }
         } catch {
           // Silently fail preloading
         }
       }
     },
-    [router, teamSlugOrId, allTasks, preloadTeamDashboard]
+    [router, teamSlugOrId, preloadTeamDashboard]
   );
 
   const handleSelect = useCallback(
@@ -1506,10 +1472,8 @@ export function CommandBar({
         });
       } else if (value.startsWith("task:")) {
         const parts = value.slice(5).split(":");
-        const taskId = parts[0] as Id<"tasks">;
+        const taskId = parts[0];
         const action = parts[1];
-        const task = allTasks?.find((t) => t._id === taskId);
-        const runId = task?.selectedTaskRun?._id;
 
         if (!action) {
           navigate({
@@ -1517,41 +1481,14 @@ export function CommandBar({
             params: { teamSlugOrId, taskId },
             search: { runId: undefined },
           });
-        } else if (action === "vs") {
-          if (runId) {
-            navigate({
-              to: "/$teamSlugOrId/task/$taskId/run/$runId",
-              params: {
-                teamSlugOrId,
-                taskId,
-                runId,
-                taskRunId: runId,
-              },
-            });
-          } else {
-            navigate({
-              to: "/$teamSlugOrId/task/$taskId",
-              params: { teamSlugOrId, taskId },
-              search: { runId: undefined },
-            });
-          }
-        } else if (action === "gitdiff") {
-          if (runId) {
-            navigate({
-              to: "/$teamSlugOrId/task/$taskId/run/$runId/diff",
-              params: {
-                teamSlugOrId,
-                taskId,
-                runId,
-              },
-            });
-          } else {
-            navigate({
-              to: "/$teamSlugOrId/task/$taskId",
-              params: { teamSlugOrId, taskId },
-              search: { runId: undefined },
-            });
-          }
+        } else if (action === "vs" || action === "gitdiff") {
+          // Without selectedTaskRun data from the joined query,
+          // navigate to the task page which will resolve the run
+          navigate({
+            to: "/$teamSlugOrId/task/$taskId",
+            params: { teamSlugOrId, taskId },
+            search: { runId: undefined },
+          });
         }
       }
       closeCommand();
@@ -1561,7 +1498,6 @@ export function CommandBar({
       navigate,
       teamSlugOrId,
       setTheme,
-      allTasks,
       stackUser,
       stackTeams,
       closeCommand,
@@ -1865,16 +1801,15 @@ export function CommandBar({
             const statusClassName = task.isCompleted
               ? "text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
               : "text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400";
-            const run = task.selectedTaskRun;
 
             const entriesForTask: CommandListEntry[] = [
               {
-                value: `${index + 1}:task:${task._id}`,
+                value: `${index + 1}:task:${task.id}`,
                 label: title,
                 keywords,
                 searchText: baseSearch,
                 className: taskCommandItemClassName,
-                execute: () => handleSelect(`task:${task._id}`),
+                execute: () => handleSelect(`task:${task.id}`),
                 renderContent: () => (
                   <>
                     <span className="flex h-5 w-5 items-center justify-center rounded text-xs font-semibold bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600">
@@ -1887,53 +1822,52 @@ export function CommandBar({
               },
             ];
 
-            if (run) {
-              const vsKeywords = [...keywords, "vs", "vscode"];
-              entriesForTask.push({
-                value: `${index + 1} vs:task:${task._id}`,
-                label: `${title} (VS)`,
-                keywords: vsKeywords,
-                searchText: buildSearchText(`${title} VS`, vsKeywords, [
-                  `${index + 1} vs`,
-                  `${index + 1}vs`,
-                  `${index + 1}v`,
-                ]),
-                className: taskCommandItemClassName,
-                execute: () => handleSelect(`task:${task._id}:vs`),
-                renderContent: () => (
-                  <>
-                    <span className="flex h-5 w-8 items-center justify-center rounded text-xs font-semibold bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600">
-                      {index + 1} VS
-                    </span>
-                    <span className="flex-1 truncate text-sm">{title}</span>
-                    <span className={statusClassName}>{statusLabel}</span>
-                  </>
-                ),
-              });
+            // Always show VS and git diff shortcuts -- the task page will resolve the run
+            const vsKeywords = [...keywords, "vs", "vscode"];
+            entriesForTask.push({
+              value: `${index + 1} vs:task:${task.id}`,
+              label: `${title} (VS)`,
+              keywords: vsKeywords,
+              searchText: buildSearchText(`${title} VS`, vsKeywords, [
+                `${index + 1} vs`,
+                `${index + 1}vs`,
+                `${index + 1}v`,
+              ]),
+              className: taskCommandItemClassName,
+              execute: () => handleSelect(`task:${task.id}:vs`),
+              renderContent: () => (
+                <>
+                  <span className="flex h-5 w-8 items-center justify-center rounded text-xs font-semibold bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600">
+                    {index + 1} VS
+                  </span>
+                  <span className="flex-1 truncate text-sm">{title}</span>
+                  <span className={statusClassName}>{statusLabel}</span>
+                </>
+              ),
+            });
 
-              const diffKeywords = [...keywords, "git", "diff"];
-              entriesForTask.push({
-                value: `${index + 1} git diff:task:${task._id}`,
-                label: `${title} (git diff)`,
-                keywords: diffKeywords,
-                searchText: buildSearchText(`${title} git diff`, diffKeywords, [
-                  `${index + 1} git diff`,
-                  `${index + 1}gitdiff`,
-                  `${index + 1}gd`,
-                ]),
-                className: taskCommandItemClassName,
-                execute: () => handleSelect(`task:${task._id}:gitdiff`),
-                renderContent: () => (
-                  <>
-                    <span className="flex h-5 px-2 items-center justify-center rounded text-xs font-semibold bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600">
-                      {index + 1} git diff
-                    </span>
-                    <span className="flex-1 truncate text-sm">{title}</span>
-                    <span className={statusClassName}>{statusLabel}</span>
-                  </>
-                ),
-              });
-            }
+            const diffKeywords = [...keywords, "git", "diff"];
+            entriesForTask.push({
+              value: `${index + 1} git diff:task:${task.id}`,
+              label: `${title} (git diff)`,
+              keywords: diffKeywords,
+              searchText: buildSearchText(`${title} git diff`, diffKeywords, [
+                `${index + 1} git diff`,
+                `${index + 1}gitdiff`,
+                `${index + 1}gd`,
+              ]),
+              className: taskCommandItemClassName,
+              execute: () => handleSelect(`task:${task.id}:gitdiff`),
+              renderContent: () => (
+                <>
+                  <span className="flex h-5 px-2 items-center justify-center rounded text-xs font-semibold bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600">
+                    {index + 1} git diff
+                  </span>
+                  <span className="flex-1 truncate text-sm">{title}</span>
+                  <span className={statusClassName}>{statusLabel}</span>
+                </>
+              ),
+            });
 
             return entriesForTask;
           })

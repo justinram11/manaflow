@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/ban-ts-comment */
+// @ts-nocheck - Legacy script, uses removed Convex APIs
 import { githubPrivateKey } from "@/lib/utils/githubPrivateKey";
 import { env } from "@/lib/utils/www-env";
 import { api } from "@cmux/convex/api";

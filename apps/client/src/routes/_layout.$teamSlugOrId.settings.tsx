@@ -7,16 +7,17 @@ import { useTheme } from "@/components/theme/use-theme";
 import { TitleBar } from "@/components/TitleBar";
 import { useOnboardingOptional } from "@/contexts/onboarding";
 import { ChevronDown, HelpCircle } from "lucide-react";
-import { api } from "@cmux/convex/api";
-import type { Doc } from "@cmux/convex/dataModel";
 import { AGENT_CONFIGS, type AgentConfig } from "@cmux/shared/agentConfig";
 import { API_KEY_MODELS_BY_ENV } from "@cmux/shared/model-usage";
-import { convexQuery } from "@convex-dev/react-query";
+import {
+  getApiApiKeysOptions,
+  getApiTeamsByTeamSlugOrIdOptions,
+  getApiWorkspaceSettingsOptions,
+} from "@cmux/www-openapi-client/react-query";
 import { Switch } from "@heroui/react";
 import { useUser } from "@stackframe/react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useConvex } from "convex/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isElectron } from "@/lib/electron";
 import { WWW_ORIGIN } from "@/lib/wwwOrigin";
@@ -262,7 +263,6 @@ function OnboardingTourSection({ teamSlugOrId }: { teamSlugOrId: string }) {
 function SettingsComponent() {
   const { teamSlugOrId } = Route.useParams();
   const { resolvedTheme, setTheme } = useTheme();
-  const convex = useConvex();
   const [apiKeyValues, setApiKeyValues] = useState<Record<string, string>>({});
   const [originalApiKeyValues, setOriginalApiKeyValues] = useState<
     Record<string, string>
@@ -356,25 +356,29 @@ function SettingsComponent() {
   const apiKeyModelsByEnv = API_KEY_MODELS_BY_ENV;
 
   // Query existing API keys
-  const { data: existingKeys } = useQuery(
-    convexQuery(api.apiKeys.getAll, { teamSlugOrId })
-  );
+  const { data: existingKeys } = useQuery({
+    ...getApiApiKeysOptions({ query: { teamSlugOrId } }),
+    enabled: Boolean(teamSlugOrId),
+  });
 
   // Query team info (slug)
-  const { data: teamInfo } = useQuery(
-    convexQuery(api.teams.get, { teamSlugOrId })
-  );
+  const { data: teamInfo } = useQuery({
+    ...getApiTeamsByTeamSlugOrIdOptions({ path: { teamSlugOrId } }),
+    enabled: Boolean(teamSlugOrId),
+  });
 
   // Query workspace settings
-  const { data: workspaceSettings } = useQuery(
-    convexQuery(api.workspaceSettings.get, { teamSlugOrId })
-  );
+  const { data: workspaceSettings } = useQuery({
+    ...getApiWorkspaceSettingsOptions({ query: { teamSlugOrId } }),
+    enabled: Boolean(teamSlugOrId),
+  });
 
   // Initialize form values when data loads
   useEffect(() => {
     if (existingKeys) {
       const values: Record<string, string> = {};
-      existingKeys.forEach((key: Doc<"apiKeys">) => {
+      const keys = existingKeys.apiKeys;
+      keys.forEach((key) => {
         values[key.envVar] = key.value;
       });
       setApiKeyValues(values);
@@ -385,15 +389,12 @@ function SettingsComponent() {
   // Initialize team slug when data loads
   useEffect(() => {
     if (teamInfo) {
-      const s = teamInfo.slug || "";
+      const team = teamInfo.team;
+      const s = team.slug || "";
       setTeamSlug(s);
       setOriginalTeamSlug(s);
       setTeamSlugError("");
-      const n =
-        (teamInfo as unknown as { name?: string; displayName?: string }).name ||
-        (teamInfo as unknown as { name?: string; displayName?: string })
-          .displayName ||
-        "";
+      const n = team.name || team.displayName || "";
       setTeamName(n);
       setOriginalTeamName(n);
       setTeamNameError("");
@@ -446,7 +447,7 @@ function SettingsComponent() {
         prev === nextModel ? prev : nextModel
       );
     }
-    if (workspaceSettings?.heatmapThreshold !== undefined) {
+    if (workspaceSettings?.heatmapThreshold != null) {
       const nextThreshold = workspaceSettings.heatmapThreshold;
       setHeatmapThreshold((prev) =>
         prev === nextThreshold ? prev : nextThreshold
@@ -465,7 +466,7 @@ function SettingsComponent() {
       );
     }
     if (workspaceSettings?.heatmapColors) {
-      const nextColors = workspaceSettings.heatmapColors;
+      const nextColors = workspaceSettings.heatmapColors as HeatmapColors;
       setHeatmapColors((prev) =>
         areHeatmapColorsEqual(prev, nextColors) ? prev : nextColors
       );
@@ -518,9 +519,15 @@ function SettingsComponent() {
       displayName: string;
       description?: string;
     }) => {
-      return await convex.mutation(api.apiKeys.upsert, {
-        teamSlugOrId,
-        ...data,
+      const { putApiApiKeysByEnvVar } = await import("@cmux/www-openapi-client");
+      return await putApiApiKeysByEnvVar({
+        path: { envVar: data.envVar },
+        body: {
+          teamSlugOrId,
+          value: data.value,
+          displayName: data.displayName,
+          description: data.description,
+        },
       });
     },
   });
@@ -607,14 +614,17 @@ function SettingsComponent() {
         JSON.stringify(heatmapColors) !== JSON.stringify(originalHeatmapColors);
 
       if (workspaceSettingsChanged) {
-        await convex.mutation(api.workspaceSettings.update, {
-          teamSlugOrId,
-          worktreePath: worktreePath || undefined,
-          autoPrEnabled,
-          heatmapModel,
-          heatmapThreshold,
-          heatmapTooltipLanguage,
-          heatmapColors,
+        const { patchApiWorkspaceSettings } = await import("@cmux/www-openapi-client");
+        await patchApiWorkspaceSettings({
+          body: {
+            teamSlugOrId,
+            worktreePath: worktreePath || undefined,
+            autoPrEnabled,
+            heatmapModel,
+            heatmapThreshold,
+            heatmapTooltipLanguage,
+            heatmapColors,
+          },
         });
         setOriginalWorktreePath(worktreePath);
         setOriginalAutoPrEnabled(autoPrEnabled);
@@ -631,9 +641,12 @@ function SettingsComponent() {
         JSON.stringify(containerSettingsData) !==
         JSON.stringify(originalContainerSettingsData)
       ) {
-        await convex.mutation(api.containerSettings.update, {
-          teamSlugOrId,
-          ...containerSettingsData,
+        const { patchApiContainerSettings } = await import("@cmux/www-openapi-client");
+        await patchApiContainerSettings({
+          body: {
+            teamSlugOrId,
+            ...containerSettingsData,
+          },
         });
         setOriginalContainerSettingsData(containerSettingsData);
       }
@@ -655,9 +668,10 @@ function SettingsComponent() {
             savedCount++;
           } else if (originalValue) {
             // Delete the key if it was cleared
-            await convex.mutation(api.apiKeys.remove, {
-              teamSlugOrId,
-              envVar: key.envVar,
+            const { deleteApiApiKeysByEnvVar } = await import("@cmux/www-openapi-client");
+            await deleteApiApiKeysByEnvVar({
+              path: { envVar: key.envVar },
+              query: { teamSlugOrId },
             });
             deletedCount++;
           }
@@ -700,9 +714,10 @@ function SettingsComponent() {
     }
     setIsSaving(true);
     try {
-      await convex.mutation(api.teams.setSlug, {
-        teamSlugOrId,
-        slug: newSlug,
+      const { patchApiTeamsByTeamSlugOrIdSlug } = await import("@cmux/www-openapi-client");
+      await patchApiTeamsByTeamSlugOrIdSlug({
+        path: { teamSlugOrId },
+        body: { slug: newSlug },
       });
       setOriginalTeamSlug(newSlug);
       toast.success("Team slug updated");
@@ -724,9 +739,10 @@ function SettingsComponent() {
     }
     setIsSaving(true);
     try {
-      await convex.mutation(api.teams.setName, {
-        teamSlugOrId,
-        name: newName,
+      const { patchApiTeamsByTeamSlugOrIdName } = await import("@cmux/www-openapi-client");
+      await patchApiTeamsByTeamSlugOrIdName({
+        path: { teamSlugOrId },
+        body: { name: newName },
       });
       setOriginalTeamName(newName);
       toast.success("Team name updated");

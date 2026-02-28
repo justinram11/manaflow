@@ -28,9 +28,7 @@ import { stackClientApp } from "@/lib/stack";
 import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListeners";
 import { getApiIntegrationsGithubBranches } from "@/queries/branches";
-import { convexQueryClient } from "@/contexts/convex/convex-query-client";
-import { api } from "@cmux/convex/api";
-import type { Doc, Id } from "@cmux/convex/dataModel";
+import { queryClient } from "@/query-client";
 import type {
   DockerPullProgress,
   DockerPullImageResponse,
@@ -40,15 +38,21 @@ import type {
   TaskStarted,
 } from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
-import type { GithubBranchesResponse } from "@cmux/www-openapi-client";
-import { convexQuery } from "@convex-dev/react-query";
+import type { GithubBranchesResponse, GithubRepo, DbTaskListResponse } from "@cmux/www-openapi-client";
+import {
+  getApiTasksOptions,
+  getApiEnvironmentsOptions,
+  getApiIntegrationsGithubReposOptions,
+  getApiAnalyticsDashboardOptions,
+} from "@cmux/www-openapi-client/react-query";
 import {
   useInfiniteQuery,
-  useQuery,
+  useMutation as useRQMutation,
+  useQuery as useRQ,
+  useQueryClient,
   type InfiniteData,
 } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useAction, useMutation } from "convex/react";
 import { Server as ServerIcon } from "lucide-react";
 import { useDebouncedValue } from "@mantine/hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -59,25 +63,19 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/dashboard")({
   component: DashboardComponent,
   loader: async (opts) => {
     const { teamSlugOrId } = opts.params;
-    // Prewarm queries used in the dashboard
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.github.getReposByOrg,
-      args: { teamSlugOrId },
-    });
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.environments.list,
-      args: { teamSlugOrId },
-    });
-    // Prewarm queries used in TaskList
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.tasks.get,
-      args: { teamSlugOrId },
-    });
-    // Prewarm analytics query
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.analytics.getDashboardStats,
-      args: { teamSlugOrId },
-    });
+    // Prefetch queries used in the dashboard
+    void queryClient.prefetchQuery(
+      getApiIntegrationsGithubReposOptions({ query: { team: teamSlugOrId } })
+    );
+    void queryClient.prefetchQuery(
+      getApiEnvironmentsOptions({ query: { teamSlugOrId } })
+    );
+    void queryClient.prefetchQuery(
+      getApiTasksOptions({ query: { teamSlugOrId } })
+    );
+    void queryClient.prefetchQuery(
+      getApiAnalyticsDashboardOptions({ query: { teamSlugOrId } })
+    );
   },
 });
 
@@ -200,17 +198,19 @@ function DashboardComponent() {
   }, [renderDockerPullToast, socket]);
 
   // Query tasks to check if user is new (has no tasks)
-  const tasksQuery = useQuery(
-    convexQuery(api.tasks.get, { teamSlugOrId })
-  );
-  const archivedTasksQuery = useQuery(
-    convexQuery(api.tasks.get, { teamSlugOrId, archived: true })
-  );
+  const tasksQuery = useRQ({
+    ...getApiTasksOptions({ query: { teamSlugOrId } }),
+    enabled: Boolean(teamSlugOrId),
+  });
+  const archivedTasksQuery = useRQ({
+    ...getApiTasksOptions({ query: { teamSlugOrId, archived: "true" } }),
+    enabled: Boolean(teamSlugOrId),
+  });
 
   const tasksReady = tasksQuery.isSuccess && archivedTasksQuery.isSuccess;
   const { hasRealTasks, hasCompletedRealTasks } = useMemo(() => {
-    const activeTasks = tasksQuery.data ?? [];
-    const archivedTasks = archivedTasksQuery.data ?? [];
+    const activeTasks = tasksQuery.data?.tasks ?? [];
+    const archivedTasks = archivedTasksQuery.data?.tasks ?? [];
     const allTasks = [...activeTasks, ...archivedTasks];
     const realTasks = allTasks.filter(
       (task) => !task.isCloudWorkspace && !task.isLocalWorkspace
@@ -488,19 +488,20 @@ function DashboardComponent() {
     [persistAgentSelection, setSelectedAgents]
   );
 
-  // Fetch repos from Convex
-  const reposByOrgQuery = useQuery({
-    ...convexQuery(api.github.getReposByOrg, { teamSlugOrId }),
+  // Fetch repos from REST API
+  const reposByOrgQuery = useRQ({
+    ...getApiIntegrationsGithubReposOptions({ query: { team: teamSlugOrId } }),
     refetchOnMount: "always",
     refetchOnWindowFocus: false,
+    enabled: Boolean(teamSlugOrId),
   });
-  const reposByOrg = useMemo(
-    () => reposByOrgQuery.data || {},
+  const repos: GithubRepo[] = useMemo(
+    () => reposByOrgQuery.data?.repos ?? [],
     [reposByOrgQuery.data]
   );
 
   // Socket-based functions to fetch data from GitHub
-  // Removed unused fetchRepos function - functionality is handled by Convex queries
+  // Removed unused fetchRepos function - functionality is handled by REST API queries
 
   const checkProviderStatus = useCallback(() => {
     if (!socket) return;
@@ -571,79 +572,85 @@ function DashboardComponent() {
     });
   }, [persistAgentSelection, setDockerReady, setSelectedAgents, socket]);
 
+  const rqQueryClient = useQueryClient();
+
   // Mutation to create tasks with optimistic update
-  const createTask = useMutation(api.tasks.create).withOptimisticUpdate(
-    (localStore, args) => {
-      const currentTasks = localStore.getQuery(api.tasks.get, {
-        teamSlugOrId,
+  const createTaskMutation = useRQMutation({
+    mutationFn: async (args: {
+      teamSlugOrId: string;
+      text: string;
+      description?: string;
+      projectFullName?: string;
+      baseBranch?: string;
+      worktreePath?: string;
+      images?: Array<{ storageId: string; fileName?: string; altText: string }>;
+      environmentId?: string;
+      selectedAgents?: string[];
+      isCloudWorkspace?: boolean;
+    }) => {
+      const { postApiTasks } = await import("@cmux/www-openapi-client");
+      const { data } = await postApiTasks({
+        body: args,
+        throwOnError: true,
       });
+      return data;
+    },
+    onMutate: async (args) => {
+      const queryKey = getApiTasksOptions({ query: { teamSlugOrId } }).queryKey;
+      await rqQueryClient.cancelQueries({ queryKey });
+      const previousTasks = rqQueryClient.getQueryData(queryKey);
 
-      if (currentTasks !== undefined) {
-        const now = Date.now();
-        const fakeTaskId = createFakeConvexId() as Doc<"tasks">["_id"];
-        const optimisticTask = {
-          _id: fakeTaskId,
-          _creationTime: now,
-          text: args.text,
-          description: args.description,
-          projectFullName: args.projectFullName,
-          baseBranch: args.baseBranch,
-          worktreePath: args.worktreePath,
-          isCompleted: false,
-          isArchived: false,
-          createdAt: now,
-          updatedAt: now,
-          images: args.images,
-          userId: "optimistic",
-          teamId: teamSlugOrId,
-          environmentId: args.environmentId,
-          hasUnread: false,
-        };
+      const now = Date.now();
+      const fakeTaskId = createFakeConvexId();
+      const optimisticTask = {
+        id: fakeTaskId,
+        text: args.text,
+        description: args.description,
+        projectFullName: args.projectFullName,
+        baseBranch: args.baseBranch,
+        worktreePath: args.worktreePath,
+        isCompleted: false,
+        isArchived: false,
+        createdAt: now,
+        updatedAt: now,
+        images: args.images,
+        userId: "optimistic",
+        teamId: teamSlugOrId,
+        environmentId: args.environmentId,
+        hasUnread: false,
+      };
 
-        // Add the new task at the beginning (since we order by desc)
-        const listArgs: {
-          teamSlugOrId: string;
-          projectFullName?: string;
-          archived?: boolean;
-        } = {
-          teamSlugOrId,
-        };
-        localStore.setQuery(api.tasks.get, listArgs, [
-          optimisticTask,
-          ...currentTasks,
-        ]);
-
-        // Create optimistic task runs if selectedAgents provided
-        if (args.selectedAgents && args.selectedAgents.length > 0) {
-          const optimisticRuns = args.selectedAgents.map((agentName) => ({
-            _id: createFakeConvexId() as Doc<"taskRuns">["_id"],
-            _creationTime: now,
-            taskId: fakeTaskId,
-            prompt: args.text,
-            agentName,
-            status: "pending" as const,
-            createdAt: now,
-            updatedAt: now,
-            userId: "optimistic",
-            teamId: teamSlugOrId,
-            environmentId: args.environmentId,
-            isCloudWorkspace: args.isCloudWorkspace,
-            children: [],
-            environment: null,
-          }));
-
-          // Set the task runs query for this fake task
-          localStore.setQuery(
-            api.taskRuns.getByTask,
-            { teamSlugOrId, taskId: fakeTaskId },
-            optimisticRuns,
-          );
+      rqQueryClient.setQueryData(
+        queryKey,
+        (oldData: DbTaskListResponse | undefined): DbTaskListResponse => {
+          const oldTasks = oldData?.tasks ?? [];
+          return { tasks: [optimisticTask as DbTaskListResponse["tasks"][number], ...oldTasks] };
         }
+      );
+
+      return { previousTasks };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previousTasks !== undefined) {
+        rqQueryClient.setQueryData(
+          getApiTasksOptions({ query: { teamSlugOrId } }).queryKey,
+          context.previousTasks
+        );
       }
     },
+    onSettled: () => {
+      void rqQueryClient.invalidateQueries({
+        queryKey: getApiTasksOptions({ query: { teamSlugOrId } }).queryKey,
+      });
+    },
+  });
+
+  const createTask = useCallback(
+    async (args: Parameters<typeof createTaskMutation.mutateAsync>[0]) => {
+      return await createTaskMutation.mutateAsync(args);
+    },
+    [createTaskMutation]
   );
-  const generateUploadUrl = useMutation(api.storage.generateUploadUrl);
-  const addManualRepo = useAction(api.github_http.addManualRepo);
 
   const effectiveSelectedBranch = useMemo(() => {
     if (selectedBranch.length > 0) {
@@ -779,14 +786,15 @@ function DashboardComponent() {
       const projectFullName = selectedProject[0];
       const envSelected = projectFullName.startsWith("env:");
       const environmentId = envSelected
-        ? (projectFullName.replace(/^env:/, "") as Id<"environments">)
+        ? (projectFullName.replace(/^env:/, "") as string)
         : undefined;
 
       // Extract content including images from the editor
       const content = editorApiRef.current?.getContent();
       const images = content?.images || [];
 
-      // Upload images to Convex storage first
+      // Upload images to storage first
+      const { postApiStorageUpload } = await import("@cmux/www-openapi-client");
       const uploadedImages = await Promise.all(
         images.map(
           async (image: {
@@ -803,18 +811,13 @@ function DashboardComponent() {
             }
             const byteArray = new Uint8Array(byteNumbers);
             const blob = new Blob([byteArray], { type: "image/png" });
-            const uploadUrl = await generateUploadUrl({
-              teamSlugOrId,
+            const uploadResult = await postApiStorageUpload({
+              body: { file: blob },
+              throwOnError: true,
             });
-            const result = await fetch(uploadUrl, {
-              method: "POST",
-              headers: { "Content-Type": blob.type },
-              body: blob,
-            });
-            const { storageId } = await result.json();
 
             return {
-              storageId,
+              storageId: uploadResult.data.id,
               fileName: image.fileName,
               altText: image.altText,
             };
@@ -834,10 +837,10 @@ function DashboardComponent() {
       const agentsToSpawn =
         selectedAgents.length > 0 ? selectedAgents : DEFAULT_AGENTS;
 
-      // Create task in Convex with storage IDs and task runs atomically
+      // Create task via REST API with storage IDs and task runs
       // Note: isCloudWorkspace is NOT set here - that's only for standalone workspaces without agents.
       // isCloudMode (passed to socket) determines whether agents run in cloud vs local Docker.
-      const { taskId, taskRunIds } = await createTask({
+      const result = await createTask({
         teamSlugOrId,
         text: content?.text || taskDescription, // Use content.text which includes image references
         projectFullName: envSelected ? undefined : projectFullName,
@@ -846,6 +849,8 @@ function DashboardComponent() {
         environmentId,
         selectedAgents: agentsToSpawn,
       });
+      const taskId = (result as Record<string, unknown>).taskId as string;
+      const taskRunIds = (result as Record<string, unknown>).taskRunIds as string[];
 
       // Hint the sidebar to auto-expand this task once it appears
       addTaskToExpand(taskId);
@@ -919,16 +924,8 @@ function DashboardComponent() {
     isCloudMode,
     isEnvSelected,
     theme,
-    generateUploadUrl,
     ensureDockerReadyForLocalTask,
   ]);
-
-  // Fetch repos on mount if none exist
-  // useEffect(() => {
-  //   if (Object.keys(reposByOrg).length === 0) {
-  //     fetchRepos();
-  //   }
-  // }, [reposByOrg, fetchRepos]);
 
   // Check provider status on mount and keep it fresh without page refresh
   useEffect(() => {
@@ -952,38 +949,38 @@ function DashboardComponent() {
 
   // Format repos for multiselect
   // Fetch environments
-  const environmentsQuery = useQuery(
-    convexQuery(api.environments.list, { teamSlugOrId })
-  );
+  const environmentsQuery = useRQ({
+    ...getApiEnvironmentsOptions({ query: { teamSlugOrId } }),
+    enabled: Boolean(teamSlugOrId),
+  });
 
   const projectOptions = useMemo(() => {
     // Repo options as objects with GitHub icon
-    const repoDocs = Object.values(reposByOrg || {}).flatMap((repos) => repos);
-    const uniqueRepos = repoDocs.reduce((acc, repo) => {
-      const existing = acc.get(repo.fullName);
+    const uniqueRepos = repos.reduce((acc, repo) => {
+      const existing = acc.get(repo.full_name);
       if (!existing) {
-        acc.set(repo.fullName, repo);
+        acc.set(repo.full_name, repo);
         return acc;
       }
       const existingActivity =
-        existing.lastPushedAt ?? Number.NEGATIVE_INFINITY;
-      const candidateActivity = repo.lastPushedAt ?? Number.NEGATIVE_INFINITY;
+        new Date(existing.pushed_at ?? 0).getTime();
+      const candidateActivity = new Date(repo.pushed_at ?? 0).getTime();
       if (candidateActivity > existingActivity) {
-        acc.set(repo.fullName, repo);
+        acc.set(repo.full_name, repo);
       }
       return acc;
-    }, new Map<string, Doc<"repos">>());
+    }, new Map<string, GithubRepo>());
     const sortedRepos = Array.from(uniqueRepos.values()).sort((a, b) => {
-      const aPushedAt = a.lastPushedAt ?? Number.NEGATIVE_INFINITY;
-      const bPushedAt = b.lastPushedAt ?? Number.NEGATIVE_INFINITY;
+      const aPushedAt = new Date(a.pushed_at ?? 0).getTime();
+      const bPushedAt = new Date(b.pushed_at ?? 0).getTime();
       if (aPushedAt !== bPushedAt) {
         return bPushedAt - aPushedAt;
       }
-      return a.fullName.localeCompare(b.fullName);
+      return a.full_name.localeCompare(b.full_name);
     });
     const repoOptions = sortedRepos.map((repo) => ({
-      label: repo.fullName,
-      value: repo.fullName,
+      label: repo.full_name,
+      value: repo.full_name,
       icon: (
         <GitHubIcon className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
       ),
@@ -993,7 +990,7 @@ function DashboardComponent() {
     // Environment options as objects with an icon and stable key
     const envOptions = (environmentsQuery.data || []).map((env) => ({
       label: `${env.name}`,
-      value: `env:${env._id}`,
+      value: `env:${env.id}`,
       icon: (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -1027,7 +1024,7 @@ function DashboardComponent() {
     }
 
     return options;
-  }, [reposByOrg, environmentsQuery.data, isCloudMode]);
+  }, [repos, environmentsQuery.data, isCloudMode]);
 
   const selectedRepoFullName = useMemo(() => {
     if (!selectedProject[0] || isEnvSelected) return null;
@@ -1080,30 +1077,27 @@ function DashboardComponent() {
   const handleProjectSearchPaste = useCallback(
     async (input: string) => {
       try {
-        const result = await addManualRepo({
-          teamSlugOrId,
-          repoUrl: input,
-        });
+        // Parse GitHub URL to extract owner/repo
+        const match = input.match(
+          /github\.com[/:]([^/]+)\/([^/.]+)/
+        );
+        if (!match) return false;
 
-        if (result.success) {
-          // Refetch repos to get the newly added one
-          await reposByOrgQuery.refetch();
+        const fullName = `${match[1]}/${match[2]}`;
 
-          // Select the newly added repo
-          setSelectedProject([result.fullName]);
-          localStorage.setItem(
-            `selectedProject-${teamSlugOrId}`,
-            JSON.stringify([result.fullName])
-          );
+        // Select the repo directly
+        setSelectedProject([fullName]);
+        localStorage.setItem(
+          `selectedProject-${teamSlugOrId}`,
+          JSON.stringify([fullName])
+        );
 
-          toast.success(`Added ${result.fullName} to repositories`);
-          return true;
-        }
+        // Refetch repos in case it's not already in the list
+        await reposByOrgQuery.refetch();
 
-        return false;
+        toast.success(`Selected ${fullName}`);
+        return true;
       } catch (error) {
-        // Only show error toast for non-validation errors
-        // Validation errors mean it's not a GitHub URL, so just return false
         if (
           error instanceof Error &&
           error.message &&
@@ -1111,10 +1105,10 @@ function DashboardComponent() {
         ) {
           toast.error(error.message);
         }
-        return false; // Don't close dropdown if it's not a valid GitHub URL
+        return false;
       }
     },
-    [addManualRepo, teamSlugOrId, reposByOrgQuery]
+    [teamSlugOrId, reposByOrgQuery]
   );
 
   // Listen for VSCode spawned events
@@ -1250,7 +1244,7 @@ function DashboardComponent() {
   // Memoized computed values for editor props
   const lexicalEnvironmentId = useMemo(() => {
     if (!selectedProject[0] || !isEnvSelected) return undefined;
-    return selectedProject[0].replace(/^env:/, "") as Id<"environments">;
+    return selectedProject[0].replace(/^env:/, "") as string;
   }, [selectedProject, isEnvSelected]);
 
   const lexicalRepoUrl = useMemo(() => {
@@ -1381,7 +1375,7 @@ type DashboardMainCardProps = {
   onTaskDescriptionChange: (value: string) => void;
   onSubmit: () => void;
   lexicalRepoUrl?: string;
-  lexicalEnvironmentId?: Id<"environments">;
+  lexicalEnvironmentId?: string;
   lexicalBranch?: string;
   projectOptions: SelectOption[];
   selectedProject: string[];

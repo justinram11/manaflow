@@ -1,11 +1,12 @@
-import { api } from "@cmux/convex/api";
-import type { Id } from "@cmux/convex/dataModel";
-import { useQuery } from "convex/react";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
+import {
+  getApiEnvironmentsByIdOptions,
+} from "@cmux/www-openapi-client/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
 interface EnvironmentNameProps {
-  environmentId: Id<"environments">;
+  environmentId: string;
   teamSlugOrId: string;
 }
 
@@ -13,12 +14,12 @@ export function EnvironmentName({
   environmentId,
   teamSlugOrId,
 }: EnvironmentNameProps) {
-  const environment = useQuery(
-    api.environments.get,
-    isFakeConvexId(environmentId)
-      ? "skip"
-      : { teamSlugOrId, id: environmentId }
-  );
+  const isFake = isFakeConvexId(environmentId);
+  const environmentQuery = useQuery({
+    ...getApiEnvironmentsByIdOptions({ path: { id: environmentId }, query: { teamSlugOrId } }),
+    enabled: !isFake,
+  });
+  const environment = environmentQuery.data;
   const [isVisible, setIsVisible] = useState(false);
 
   useEffect(() => {

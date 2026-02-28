@@ -46,14 +46,6 @@
       "import": "./src/diff-types.ts",
       "types": "./src/diff-types.ts"
     },
-    "./convex-ready": {
-      "import": "./src/convex-ready.ts",
-      "types": "./src/convex-ready.ts"
-    },
-    "./convex-safe": {
-      "import": "./src/convex-safe.ts",
-      "types": "./src/convex-safe.ts"
-    },
     "./utils/typed-zid": {
       "import": "./src/utils/typed-zid.ts",
       "types": "./src/utils/typed-zid.ts"
@@ -81,10 +73,6 @@
     "./utils/validate-exposed-ports": {
       "import": "./src/utils/validate-exposed-ports.ts",
       "types": "./src/utils/validate-exposed-ports.ts"
-    },
-    "./node/convex-cache": {
-      "import": "./src/node/convex-cache.ts",
-      "types": "./src/node/convex-cache.ts"
     },
     "./cmux-pty-client": {
       "import": "./src/cmux-pty-client.ts",
@@ -153,8 +141,6 @@
   },
   "dependencies": {
     "clsx": "^2.0.0",
-    "@cmux/convex": "workspace:*",
-    "convex": "1.31.5",
     "jose": "^6.1.0",
     "zod": "^4.1.5",
     "socket.io-client": "^4.8.1"

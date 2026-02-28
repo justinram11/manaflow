@@ -1,12 +1,15 @@
 import { useSocket } from "@/contexts/socket/use-socket";
-import type { Doc } from "@cmux/convex/dataModel";
 import { editorIcons, type EditorType } from "@/components/ui/dropdown-types";
 import { useCallback, useEffect, useMemo } from "react";
 import { toast } from "sonner";
 import { rewriteLocalWorkspaceUrlIfNeeded } from "@/lib/toProxyWorkspaceUrl";
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 
-type NetworkingInfo = Doc<"taskRuns">["networking"];
+type NetworkingInfo = Array<{
+  status: "starting" | "running" | "stopped";
+  port: number;
+  url: string;
+}>;
 type VSCodeProvider = "docker" | "morph" | "incus" | "daytona" | "other" | undefined;
 
 type OpenWithAction = {

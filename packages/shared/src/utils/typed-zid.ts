@@ -1,7 +1,7 @@
-import type { DataModel, Id } from "@cmux/convex/dataModel";
 import { z } from "zod";
 
-// Minimal local replacement for convex-helpers' zid
-export function typedZid<T extends keyof DataModel>(_tableName: T) {
-  return z.string().transform((s) => s as Id<T>);
+// IDs are plain strings (UUIDs) in the SQLite layer.
+// This helper exists for schema compatibility — it simply validates as a string.
+export function typedZid(_tableName: string) {
+  return z.string();
 }

@@ -1,6 +1,3 @@
-import { api } from "@cmux/convex/api";
-import { typedZid } from "@cmux/shared/utils/typed-zid";
-import type { FunctionReturnType } from "convex/server";
 import { exec as _exec } from "node:child_process";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -42,8 +39,6 @@ const describeDockerTests = skipDockerTests
 
 describeDockerTests("stopContainersForRuns (docker E2E)", () => {
   const containers: string[] = [];
-  const zidRun = typedZid("taskRuns");
-  const zidTask = typedZid("tasks");
   const now = Date.now();
 
   beforeAll(async () => {
@@ -76,9 +71,9 @@ describeDockerTests("stopContainersForRuns (docker E2E)", () => {
 
     const tree = [
       {
-        _id: zidRun.parse("r1"),
+        _id: "r1",
         _creationTime: now,
-        taskId: zidTask.parse("t-e2e"),
+        taskId: "t-e2e",
         prompt: "p",
         status: "running",
         log: "",
@@ -90,9 +85,9 @@ describeDockerTests("stopContainersForRuns (docker E2E)", () => {
         environment: null,
         children: [
           {
-            _id: zidRun.parse("r2"),
+            _id: "r2",
             _creationTime: now,
-            taskId: zidTask.parse("t-e2e"),
+            taskId: "t-e2e",
             prompt: "p",
             status: "running",
             log: "",
@@ -111,9 +106,9 @@ describeDockerTests("stopContainersForRuns (docker E2E)", () => {
         ],
       },
       {
-        _id: zidRun.parse("r3"),
+        _id: "r3",
         _creationTime: now,
-        taskId: zidTask.parse("t-e2e"),
+        taskId: "t-e2e",
         prompt: "p",
         status: "running",
         log: "",
@@ -125,7 +120,7 @@ describeDockerTests("stopContainersForRuns (docker E2E)", () => {
         environment: null,
         children: [],
       },
-    ] satisfies FunctionReturnType<typeof api.taskRuns.getByTask>;
+    ];
 
     const results = await stopContainersForRunsFromTree(tree, "t-e2e");
 
@@ -148,9 +143,9 @@ describeDockerTests("stopContainersForRuns (docker E2E)", () => {
 
     const treeMissing = [
       {
-        _id: zidRun.parse("r4"),
+        _id: "r4",
         _creationTime: now,
-        taskId: zidTask.parse("t-missing"),
+        taskId: "t-missing",
         prompt: "p",
         status: "running",
         log: "",
@@ -166,7 +161,7 @@ describeDockerTests("stopContainersForRuns (docker E2E)", () => {
         environment: null,
         children: [],
       },
-    ] satisfies FunctionReturnType<typeof api.taskRuns.getByTask>;
+    ];
 
     const results = await stopContainersForRunsFromTree(
       treeMissing,
@@ -190,9 +185,9 @@ describeDockerTests("stopContainersForRuns (docker E2E)", () => {
     // Test with docker- prefixed name (as stored in DB) - should succeed
     const treeWithPrefix = [
       {
-        _id: zidRun.parse("r5"),
+        _id: "r5",
         _creationTime: now,
-        taskId: zidTask.parse("t-prefix"),
+        taskId: "t-prefix",
         prompt: "p",
         status: "running",
         log: "",
@@ -208,7 +203,7 @@ describeDockerTests("stopContainersForRuns (docker E2E)", () => {
         environment: null,
         children: [],
       },
-    ] satisfies FunctionReturnType<typeof api.taskRuns.getByTask>;
+    ];
 
     const prefixResults = await stopContainersForRunsFromTree(
       treeWithPrefix,
@@ -236,9 +231,9 @@ describeDockerTests("stopContainersForRuns (docker E2E)", () => {
     // Test with non-prefixed name (for backward compatibility)
     const treeNonPrefixed = [
       {
-        _id: zidRun.parse("r7"),
+        _id: "r7",
         _creationTime: now,
-        taskId: zidTask.parse("t-compat"),
+        taskId: "t-compat",
         prompt: "p",
         status: "running",
         log: "",
@@ -254,7 +249,7 @@ describeDockerTests("stopContainersForRuns (docker E2E)", () => {
         environment: null,
         children: [],
       },
-    ] satisfies FunctionReturnType<typeof api.taskRuns.getByTask>;
+    ];
 
     const results = await stopContainersForRunsFromTree(
       treeNonPrefixed,

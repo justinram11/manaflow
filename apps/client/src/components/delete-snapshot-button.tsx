@@ -1,11 +1,9 @@
-import { useMutation } from "convex/react";
 import { forwardRef, useState, type ComponentProps } from "react";
 import { toast } from "sonner";
 
 import { DeleteButton } from "@/components/delete-button";
 import { queryClient } from "@/query-client";
-import type { Id } from "@cmux/convex/dataModel";
-import { api } from "@cmux/convex/api";
+import { deleteApiSandboxesIncusSnapshotsBySnapshotId } from "@cmux/www-openapi-client";
 import { cn } from "@/lib/utils";
 import { Loader2, Trash2 } from "lucide-react";
 
@@ -14,8 +12,8 @@ type DeleteSnapshotButtonProps = Omit<
   "onClick" | "children"
 > & {
   teamSlugOrId: string;
-  environmentId: Id<"environments">;
-  snapshotVersionId: Id<"environmentSnapshotVersions">;
+  environmentId: string;
+  snapshotVersionId: string;
   snapshotsQueryKey?: readonly unknown[];
   confirmMessage?: string;
   onSuccess?: () => void;
@@ -27,8 +25,8 @@ export const DeleteSnapshotButton = forwardRef<
 >(
   (
     {
-      teamSlugOrId,
-      environmentId,
+      teamSlugOrId: _teamSlugOrId,
+      environmentId: _environmentId,
       snapshotVersionId,
       snapshotsQueryKey,
       confirmMessage =
@@ -40,7 +38,6 @@ export const DeleteSnapshotButton = forwardRef<
     },
     ref,
   ) => {
-    const deleteSnapshotVersion = useMutation(api.environmentSnapshots.remove);
     const [isPending, setIsPending] = useState(false);
 
     const handleDelete = async () => {
@@ -50,10 +47,8 @@ export const DeleteSnapshotButton = forwardRef<
 
       setIsPending(true);
       try {
-        await deleteSnapshotVersion({
-          teamSlugOrId,
-          environmentId,
-          snapshotVersionId,
+        await deleteApiSandboxesIncusSnapshotsBySnapshotId({
+          path: { snapshotId: snapshotVersionId },
         });
         toast.success("Snapshot version deleted");
         if (snapshotsQueryKey) {

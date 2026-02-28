@@ -8,7 +8,6 @@ import {
   useMemo,
   useRef,
 } from "react";
-import type { Id } from "@cmux/convex/dataModel";
 
 export interface EditorApi {
   getContent: () => {
@@ -29,7 +28,7 @@ interface DashboardInputProps {
   onSubmit: () => void;
   repoUrl?: string;
   branch?: string;
-  environmentId?: Id<"environments">;
+  environmentId?: string;
   persistenceKey?: string;
   maxHeight?: string;
 }

@@ -1,15 +1,16 @@
-import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { QueryClient } from "@tanstack/react-query";
 
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      queryKeyHashFn: convexQueryClient.hashFn(),
-      queryFn: convexQueryClient.queryFn(),
+      // Poll frequently for near-real-time feel (replaces Convex WebSocket subscriptions)
+      refetchInterval: 3000,
+      // Don't refetch on window focus since we already poll
+      refetchOnWindowFocus: false,
+      staleTime: 2000,
     },
   },
 });
-convexQueryClient.connect(queryClient);
 
 // Subscribe to query cache updates to log errors centrally
 queryClient.getQueryCache().subscribe((event) => {

@@ -6,7 +6,7 @@ import { isElectron } from "@/lib/electron";
 import { cn } from "@/lib/utils";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
-import type { Doc, Id } from "@cmux/convex/dataModel";
+import type { DbTask } from "@cmux/www-openapi-client";
 import type { TaskRunWithChildren } from "@/types/task";
 import { Skeleton } from "@heroui/react";
 import { useClipboard } from "@mantine/hooks";
@@ -68,12 +68,12 @@ import {
 } from "@/hooks/useIncusWorkspace";
 
 interface TaskDetailHeaderProps {
-  task?: Doc<"tasks"> | null;
+  task?: DbTask | null;
   taskRuns?: TaskRunWithChildren[] | null;
   selectedRun?: TaskRunWithChildren | null;
   totalAdditions?: number;
   totalDeletions?: number;
-  taskRunId: Id<"taskRuns">;
+  taskRunId: string;
   onExpandAll?: () => void;
   onCollapseAll?: () => void;
   onExpandAllChecks?: () => void;
@@ -595,13 +595,16 @@ export function TaskDetailHeader({
                             : summary && summary.length > 0
                               ? summary
                               : "unknown agent";
-                        const isSelected = run._id === selectedRun._id;
+                        const runId = run.id ?? "";
+                        const selectedRunId = selectedRun.id ?? "";
+                        const isSelected = runId === selectedRunId;
                         return (
                           <Dropdown.CheckboxItem
-                            key={run._id}
+                            key={runId}
                             checked={isSelected}
                             onCheckedChange={() => {
-                              if (!task?._id) {
+                              const taskId = task?.id;
+                              if (!taskId) {
                                 console.error(
                                   "[TaskDetailHeader] No task ID",
                                 );
@@ -617,8 +620,8 @@ export function TaskDetailHeader({
                                     to: "/$teamSlugOrId/task/$taskId/run/$runId/diff",
                                     params: {
                                       teamSlugOrId,
-                                      taskId: task._id,
-                                      runId: run._id,
+                                      taskId,
+                                      runId,
                                     },
                                   });
                                 } else {
@@ -627,9 +630,9 @@ export function TaskDetailHeader({
                                     to: "/$teamSlugOrId/task/$taskId",
                                     params: {
                                       teamSlugOrId,
-                                      taskId: task._id,
+                                      taskId,
                                     },
-                                    search: { runId: run._id },
+                                    search: { runId },
                                   });
                                 }
                               }
@@ -672,7 +675,7 @@ function SocketActions({
   teamSlugOrId,
 }: {
   selectedRun: TaskRunWithChildren | null;
-  taskRunId: Id<"taskRuns">;
+  taskRunId: string;
   prIsOpen: boolean;
   prIsMerged: boolean;
   repoDiffTargets: RepoDiffTarget[];

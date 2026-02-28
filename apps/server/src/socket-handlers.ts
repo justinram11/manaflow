@@ -1,6 +1,4 @@
-import { api } from "@cmux/convex/api";
 import { env } from "./utils/server-env";
-import type { Id } from "@cmux/convex/dataModel";
 import type { WorkspaceConfigResponse } from "@cmux/www-openapi-client";
 import type { WorkerSyncFiles } from "@cmux/shared/worker-schemas";
 import {
@@ -53,7 +51,40 @@ import {
   generateBranchNamesFromDescription,
   generatePRInfoAndBranchNames,
 } from "./utils/branchNameGenerator";
-import { getConvex } from "./utils/convexClient";
+import { getDb, getUserId } from "./utils/dbClient";
+import { getTaskById } from "@cmux/db/queries/tasks";
+import { getTaskRunById, getTaskRunsByTask } from "@cmux/db/queries/task-runs";
+import { getEnvironmentById } from "@cmux/db/queries/environments";
+import { getWorkspaceSettings } from "@cmux/db/queries/settings";
+import { hasReposForTeam, getReposByOrg } from "@cmux/db/queries/repos";
+import {
+  createTaskRun,
+  failTaskRun,
+  updateTaskRunWorktreePath,
+  updateTaskRunVSCode,
+  updateTaskRunVSCodeStatus,
+  updateTaskRunVSCodeStatusMessage,
+  updateTaskRunEnvironmentError,
+  updateTaskRunStatusPublic,
+  updatePullRequestStateFull,
+} from "@cmux/db/mutations/task-runs";
+import {
+  createTask,
+  setPullRequestTitle,
+  updateTaskMergeStatus,
+  updateTaskWorktreePath,
+} from "@cmux/db/mutations/tasks";
+import { createCommentReply } from "@cmux/db/mutations/comments";
+import { upsertWorkspaceSettings } from "@cmux/db/mutations/settings";
+import { schema } from "@cmux/db";
+import { resolveTeamId } from "@cmux/db/queries/teams";
+import {
+  deriveRepoBaseName,
+} from "@cmux/shared/utils/derive-repo-base-name";
+import {
+  generateWorkspaceName,
+} from "@cmux/shared/utils/generate-workspace-name";
+import { SignJWT } from "jose";
 import { ensureRunWorktreeAndBranch } from "./utils/ensureRunWorktree";
 import { serverLogger } from "./utils/fileLogger";
 import { getGitHubOAuthToken } from "./utils/getGitHubToken";
@@ -651,15 +682,10 @@ export function setupSocketHandlers(
               return;
             }
             try {
-              await Promise.all(
-                taskData.taskRunIds.map((taskRunId) =>
-                  getConvex().mutation(api.taskRuns.updateVSCodeStatusMessage, {
-                    teamSlugOrId: safeTeam,
-                    id: taskRunId,
-                    statusMessage: message,
-                  })
-                )
-              );
+              const db = getDb();
+              for (const taskRunId of taskData.taskRunIds) {
+                updateTaskRunVSCodeStatusMessage(db, taskRunId, message);
+              }
             } catch (error) {
               console.error(
                 "[start-task] Failed to update VSCode status message",
@@ -949,8 +975,11 @@ export function setupSocketHandlers(
                   agentCount,
                   safeTeam
                 );
-                await getConvex().mutation(api.tasks.setPullRequestTitle, {
+                const db = getDb();
+                const userId = getUserId();
+                setPullRequestTitle(db, {
                   teamSlugOrId: safeTeam,
+                  userId,
                   id: taskId,
                   pullRequestTitle: prInfo.prTitle,
                 });
@@ -1315,9 +1344,9 @@ export function setupSocketHandlers(
           }
         }
 
-        let taskId: Id<"tasks"> | null =
+        let taskId: string | null =
           providedTaskId !== undefined ? providedTaskId : null;
-        let taskRunId: Id<"taskRuns"> | null =
+        let taskRunId: string | null =
           providedTaskRunId !== undefined ? providedTaskRunId : null;
         let workspaceName: string | null = providedWorkspaceName ?? null;
         let descriptor: string | null = providedDescriptor ?? null;
@@ -1325,24 +1354,64 @@ export function setupSocketHandlers(
         let cleanupWorkspace: (() => Promise<void>) | null = null;
         let responded = false;
 
-        const convex = getConvex();
+        const db = getDb();
+        const userId = getUserId();
 
         try {
           if (!taskId || !taskRunId || !workspaceName) {
-            const reservation = await convex.mutation(
-              api.localWorkspaces.reserve,
-              {
-                teamSlugOrId,
-                projectFullName: projectFullName ?? undefined,
-                repoUrl,
-                branch,
-                linkedFromCloudTaskRunId,
-              }
-            );
-            taskId = reservation.taskId;
-            taskRunId = reservation.taskRunId;
-            workspaceName = reservation.workspaceName;
-            descriptor = reservation.descriptor;
+            // Replicate localWorkspaces.reserve logic inline
+            const existingSetting = getWorkspaceSettings(db, teamSlugOrId, userId);
+            const now = Date.now();
+            const sequence = existingSetting?.nextLocalWorkspaceSequence ?? 0;
+            const repoName = deriveRepoBaseName({ projectFullName: projectFullName ?? undefined, repoUrl });
+            const generatedWorkspaceName = generateWorkspaceName({ repoName, sequence });
+            const branchForDescriptor = branch?.trim();
+            const generatedDescriptor = branchForDescriptor
+              ? `${generatedWorkspaceName} [${branchForDescriptor}]`
+              : generatedWorkspaceName;
+
+            upsertWorkspaceSettings(db, {
+              teamSlugOrId,
+              userId,
+              patch: { nextLocalWorkspaceSequence: sequence + 1 },
+            });
+
+            const teamId = resolveTeamId(db, teamSlugOrId);
+            const reservedTaskId = crypto.randomUUID();
+            db.insert(schema.tasks).values({
+              id: reservedTaskId,
+              text: generatedDescriptor,
+              description: generatedDescriptor,
+              projectFullName: projectFullName ?? undefined,
+              isCompleted: false,
+              isLocalWorkspace: true,
+              linkedFromCloudTaskRunId,
+              createdAt: now,
+              updatedAt: now,
+              lastActivityAt: now,
+              userId,
+              teamId,
+            }).run();
+
+            const reservedTaskRunId = crypto.randomUUID();
+            db.insert(schema.taskRuns).values({
+              id: reservedTaskRunId,
+              taskId: reservedTaskId,
+              prompt: generatedDescriptor,
+              agentName: "local-workspace",
+              status: "pending",
+              isLocalWorkspace: true,
+              createdAt: now,
+              updatedAt: now,
+              userId,
+              teamId,
+              vscode: { provider: "other", status: "starting", startedAt: now } as unknown as null,
+            }).run();
+
+            taskId = reservedTaskId;
+            taskRunId = reservedTaskRunId;
+            workspaceName = generatedWorkspaceName;
+            descriptor = generatedDescriptor;
           }
 
           if (!workspaceName || !taskId || !taskRunId) {
@@ -1460,9 +1529,7 @@ export function setupSocketHandlers(
                   },
                   maxBuffer: 10 * 1024 * 1024,
                 });
-                await convex.mutation(api.taskRuns.updateEnvironmentError, {
-                  teamSlugOrId,
-                  id: taskRunId,
+                updateTaskRunEnvironmentError(db, taskRunId, {
                   maintenanceError: undefined,
                   devError: undefined,
                 });
@@ -1487,9 +1554,7 @@ export function setupSocketHandlers(
                   error
                 );
 
-                await convex.mutation(api.taskRuns.updateEnvironmentError, {
-                  teamSlugOrId,
-                  id: taskRunId,
+                updateTaskRunEnvironmentError(db, taskRunId, {
                   maintenanceError: maintenanceErrorMessage,
                   devError: undefined,
                 });
@@ -1592,8 +1657,9 @@ export function setupSocketHandlers(
           const now = Date.now();
 
           try {
-            await convex.mutation(api.tasks.updateWorktreePath, {
+            updateTaskWorktreePath(db, {
               teamSlugOrId,
+              userId,
               id: taskId,
               worktreePath: resolvedWorkspacePath,
             });
@@ -1604,23 +1670,15 @@ export function setupSocketHandlers(
             );
           }
 
-          await convex.mutation(api.taskRuns.updateVSCodeInstance, {
-            teamSlugOrId,
-            id: taskRunId,
-            vscode: {
-              provider: "other",
-              status: "starting",
-              url: LOCAL_VSCODE_PLACEHOLDER_ORIGIN,
-              workspaceUrl: placeholderWorkspaceUrl,
-              startedAt: now,
-            },
+          updateTaskRunVSCode(db, taskRunId, {
+            provider: "other",
+            status: "starting",
+            url: LOCAL_VSCODE_PLACEHOLDER_ORIGIN,
+            workspaceUrl: placeholderWorkspaceUrl,
+            startedAt: now,
           });
 
-          await convex.mutation(api.taskRuns.updateStatusPublic, {
-            teamSlugOrId,
-            id: taskRunId,
-            status: "pending",
-          });
+          updateTaskRunStatusPublic(db, taskRunId, "pending");
 
           callback({
             success: true,
@@ -1723,23 +1781,11 @@ export function setupSocketHandlers(
 
           const parsedEnvVars = await writeEnvVariablesIfPresent();
 
-          await convex.mutation(api.taskRuns.updateWorktreePath, {
-            teamSlugOrId,
-            id: taskRunId,
-            worktreePath: resolvedWorkspacePath,
-          });
+          updateTaskRunWorktreePath(db, taskRunId, resolvedWorkspacePath);
 
-          await convex.mutation(api.taskRuns.updateStatusPublic, {
-            teamSlugOrId,
-            id: taskRunId,
-            status: "running",
-          });
+          updateTaskRunStatusPublic(db, taskRunId, "running");
 
-          await convex.mutation(api.taskRuns.updateVSCodeStatus, {
-            teamSlugOrId,
-            id: taskRunId,
-            status: "running",
-          });
+          updateTaskRunVSCodeStatus(db, taskRunId, "running");
 
           // Run maintenance script in background after status updates (doesn't block)
           runMaintenanceScriptAsync(parsedEnvVars);
@@ -1831,11 +1877,7 @@ export function setupSocketHandlers(
             });
           } else if (taskRunId) {
             try {
-              await convex.mutation(api.taskRuns.fail, {
-                teamSlugOrId,
-                id: taskRunId,
-                errorMessage: message,
-              });
+              failTaskRun(db, taskRunId, message);
             } catch (failError) {
               serverLogger.error(
                 "Failed to mark task run as failed:",
@@ -1843,10 +1885,7 @@ export function setupSocketHandlers(
               );
             }
             try {
-              await convex.mutation(api.taskRuns.updateVSCodeStatus, {
-                teamSlugOrId,
-                id: taskRunId,
-                status: "stopped",
+              updateTaskRunVSCodeStatus(db, taskRunId, "stopped", {
                 stoppedAt: Date.now(),
               });
             } catch (statusError) {
@@ -1899,9 +1938,10 @@ export function setupSocketHandlers(
         } = parsed.data;
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
 
-        const convex = getConvex();
-        const taskId: Id<"tasks"> | undefined = providedTaskId;
-        let taskRunId: Id<"taskRuns"> | null = null;
+        const db = getDb();
+        const userId = getUserId();
+        const taskId: string | undefined = providedTaskId;
+        let taskRunId: string | null = null;
         let responded = false;
 
         try {
@@ -1911,36 +1951,43 @@ export function setupSocketHandlers(
 
           // Create a taskRun for the workspace
           const now = Date.now();
-          const taskRunResult = await convex.mutation(api.taskRuns.create, {
-            teamSlugOrId,
+          const teamId = resolveTeamId(db, teamSlugOrId);
+          taskRunId = createTaskRun(db, {
             taskId,
             prompt: "Cloud Workspace",
             agentName: "cloud-workspace",
+            userId,
+            teamId,
             environmentId,
           });
-          taskRunId = taskRunResult.taskRunId;
-          const taskRunJwt = taskRunResult.jwt;
+
+          // Generate JWT for the task run
+          const jwtSecret = process.env.CMUX_TASK_RUN_JWT_SECRET;
+          if (!jwtSecret) {
+            throw new Error("CMUX_TASK_RUN_JWT_SECRET is not set");
+          }
+          const taskRunJwt = await new SignJWT({
+            taskRunId,
+            teamId,
+            userId,
+          })
+            .setProtectedHeader({ alg: "HS256" })
+            .setIssuedAt()
+            .setExpirationTime("12h")
+            .sign(new TextEncoder().encode(jwtSecret));
 
           serverLogger.info(
             `[create-cloud-workspace] Created taskRun ${taskRunId} for task ${taskId}`
           );
 
           // Update initial VSCode status
-          await convex.mutation(api.taskRuns.updateVSCodeInstance, {
-            teamSlugOrId,
-            id: taskRunId,
-            vscode: {
-              provider: "morph",
-              status: "starting",
-              startedAt: now,
-            },
+          updateTaskRunVSCode(db, taskRunId, {
+            provider: "morph",
+            status: "starting",
+            startedAt: now,
           });
 
-          await convex.mutation(api.taskRuns.updateStatusPublic, {
-            teamSlugOrId,
-            id: taskRunId,
-            status: "pending",
-          });
+          updateTaskRunStatusPublic(db, taskRunId, "pending");
 
           callback({
             success: true,
@@ -1998,29 +2045,17 @@ export function setupSocketHandlers(
           );
 
           // Update taskRun with actual VSCode info immediately
-          await convex.mutation(api.taskRuns.updateVSCodeInstance, {
-            teamSlugOrId,
-            id: taskRunId,
-            vscode: {
-              provider: "morph",
-              status: "running",
-              url: vscodeBaseUrl,
-              workspaceUrl,
-              startedAt: now,
-            },
+          updateTaskRunVSCode(db, taskRunId, {
+            provider: "morph",
+            status: "running",
+            url: vscodeBaseUrl,
+            workspaceUrl,
+            startedAt: now,
           });
 
-          await convex.mutation(api.taskRuns.updateStatusPublic, {
-            teamSlugOrId,
-            id: taskRunId,
-            status: "running",
-          });
+          updateTaskRunStatusPublic(db, taskRunId, "running");
 
-          await convex.mutation(api.taskRuns.updateVSCodeStatus, {
-            teamSlugOrId,
-            id: taskRunId,
-            status: "running",
-          });
+          updateTaskRunVSCodeStatus(db, taskRunId, "running");
 
           // Emit vscode-spawned event to the client
           rt.emit("vscode-spawned", {
@@ -2049,11 +2084,7 @@ export function setupSocketHandlers(
             });
           } else if (taskRunId) {
             try {
-              await convex.mutation(api.taskRuns.fail, {
-                teamSlugOrId,
-                id: taskRunId,
-                errorMessage: message,
-              });
+              failTaskRun(db, taskRunId, message);
             } catch (failError) {
               serverLogger.error(
                 "Failed to mark task run as failed:",
@@ -2061,12 +2092,7 @@ export function setupSocketHandlers(
               );
             }
             try {
-              await convex.mutation(api.taskRuns.updateVSCodeStatus, {
-                teamSlugOrId,
-                id: taskRunId,
-                status: "stopped",
-                stoppedAt: Date.now(),
-              });
+              updateTaskRunVSCodeStatus(db, taskRunId, "stopped", { stoppedAt: Date.now() });
             } catch (statusError) {
               serverLogger.warn(
                 "Failed to update VS Code status after failure:",
@@ -2078,15 +2104,13 @@ export function setupSocketHandlers(
       }
     );
 
-    // Sync PR state (non-destructive): query GitHub and update Convex
+    // Sync PR state (non-destructive): query GitHub and update DB
     socket.on("github-sync-pr-state", async (data, callback) => {
       try {
         const { taskRunId } = GitHubSyncPrStateSchema.parse(data);
+        const db = getDb();
 
-        const run = await getConvex().query(api.taskRuns.get, {
-          teamSlugOrId: safeTeam,
-          id: taskRunId,
-        });
+        const run = getTaskRunById(db, taskRunId);
         if (!run) {
           callback({
             success: false,
@@ -2097,10 +2121,7 @@ export function setupSocketHandlers(
           return;
         }
 
-        const task = await getConvex().query(api.tasks.getById, {
-          teamSlugOrId: safeTeam,
-          id: run.taskId,
-        });
+        const task = getTaskById(db, safeTeam, run.taskId);
         if (!task) {
           callback({
             success: false,
@@ -2136,8 +2157,9 @@ export function setupSocketHandlers(
           return;
         }
 
+        const pullRecords = (run.pullRequests ?? []) as StoredPullRequestInfo[];
         const existingByRepo = new Map(
-          (run.pullRequests ?? []).map(
+          pullRecords.map(
             (record) => [record.repoFullName, record] as const
           )
         );
@@ -2247,7 +2269,7 @@ export function setupSocketHandlers(
             head: branchName,
           });
 
-          const existingRecords = run.pullRequests ?? [];
+          const existingRecords = (run.pullRequests ?? []) as StoredPullRequestInfo[];
           const updatedRecords: StoredPullRequestInfo[] =
             existingRecords.length > 0
               ? existingRecords.map((record) =>
@@ -2272,17 +2294,21 @@ export function setupSocketHandlers(
                 },
               ];
 
-          await getConvex().mutation(api.taskRuns.updatePullRequestState, {
-            teamSlugOrId: safeTeam,
-            id: run._id,
+          const db = getDb();
+          const userId = getUserId();
+          const teamId = resolveTeamId(db, safeTeam);
+          updatePullRequestStateFull(db, {
+            id: run.id,
+            teamId,
             state: "merged",
             isDraft: false,
             pullRequests: updatedRecords,
           });
 
-          await getConvex().mutation(api.tasks.updateMergeStatus, {
+          updateTaskMergeStatus(db, {
             teamSlugOrId: safeTeam,
-            id: task._id,
+            userId,
+            id: task.id,
             mergeStatus: "pr_merged",
           });
 
@@ -2589,10 +2615,8 @@ export function setupSocketHandlers(
         };
 
         if (environmentId) {
-          const environment = await getConvex().query(api.environments.get, {
-            teamSlugOrId: safeTeam,
-            id: environmentId,
-          });
+          const db = getDb();
+          const environment = getEnvironmentById(db, environmentId);
 
           if (!environment) {
             socket.emit("list-files-response", {
@@ -2602,7 +2626,7 @@ export function setupSocketHandlers(
             return;
           }
 
-          const repoFullNames = (environment.selectedRepos || [])
+          const repoFullNames = ((environment.selectedRepos || []) as string[])
             .map((repo) => repo?.trim())
             .filter((repo): repo is string => Boolean(repo));
 
@@ -2714,17 +2738,15 @@ export function setupSocketHandlers(
           callback({ success: false, repos: {}, error: "Not authenticated" });
           return;
         }
-        // First, try to get existing repos from Convex
-        const hasRepos = await getConvex().query(api.github.hasReposForTeam, {
-          teamSlugOrId,
-        });
+        // First, try to get existing repos from DB
+        const db = getDb();
+        const userId = getUserId();
+        const hasReposResult = hasReposForTeam(db, teamSlugOrId);
 
-        if (hasRepos) {
+        if (hasReposResult) {
           // If we have repos, return them and refresh in the background
-          const reposByOrg = await getConvex().query(api.github.getReposByOrg, {
-            teamSlugOrId,
-          });
-          callback({ success: true, repos: reposByOrg });
+          const reposByOrgResult = getReposByOrg(db, teamSlugOrId, userId);
+          callback({ success: true, repos: reposByOrgResult });
 
           // Refresh in the background to add any new repos
           runWithAuthToken(initialToken, () =>
@@ -2739,10 +2761,8 @@ export function setupSocketHandlers(
         await runWithAuthToken(initialToken, () =>
           refreshGitHubData({ teamSlugOrId })
         );
-        const reposByOrg = await getConvex().query(api.github.getReposByOrg, {
-          teamSlugOrId,
-        });
-        callback({ success: true, repos: reposByOrg });
+        const reposByOrgResult = getReposByOrg(db, teamSlugOrId, userId);
+        callback({ success: true, repos: reposByOrgResult });
       } catch (error) {
         serverLogger.error("Error fetching repos:", error);
         callback({
@@ -2781,18 +2801,23 @@ Context:
 
 Please address the issue mentioned in the comment above.`;
 
-        // Create a new task in Convex
-        const { taskId } = await getConvex().mutation(api.tasks.create, {
+        // Create a new task in DB
+        const db = getDb();
+        const userId = getUserId();
+        const teamId = resolveTeamId(db, safeTeam);
+        const { taskId } = createTask(db, {
           teamSlugOrId: safeTeam,
+          userId,
           text: formattedPrompt,
           projectFullName: "manaflow-ai/manaflow",
         });
         // Create a comment reply with link to the task
         try {
-          await getConvex().mutation(api.comments.addReply, {
-            teamSlugOrId: safeTeam,
+          createCommentReply(db, {
             commentId: commentId,
             content: `[View run here](http://localhost:5173/${safeTeam}/task/${taskId})`,
+            userId,
+            teamId,
           });
           serverLogger.info("Created comment reply with task link:", {
             commentId,
@@ -2874,10 +2899,8 @@ Please address the issue mentioned in the comment above.`;
       try {
         const { taskRunId } = GitHubCreateDraftPrSchema.parse(data);
 
-        const run = await getConvex().query(api.taskRuns.get, {
-          teamSlugOrId: safeTeam,
-          id: taskRunId,
-        });
+        const db = getDb();
+        const run = getTaskRunById(db, taskRunId);
         if (!run) {
           callback({
             success: false,
@@ -2888,10 +2911,7 @@ Please address the issue mentioned in the comment above.`;
           return;
         }
 
-        const task = await getConvex().query(api.tasks.getById, {
-          teamSlugOrId: safeTeam,
-          id: run.taskId,
-        });
+        const task = getTaskById(db, safeTeam, run.taskId);
         if (!task) {
           callback({
             success: false,
@@ -2949,8 +2969,9 @@ Please address the issue mentioned in the comment above.`;
 
 ${title}`;
 
+        const draftPullRecords = (run.pullRequests ?? []) as StoredPullRequestInfo[];
         const existingByRepo = new Map(
-          (run.pullRequests ?? []).map(
+          draftPullRecords.map(
             (record) => [record.repoFullName, record] as const
           )
         );
@@ -3306,11 +3327,9 @@ ${title}`;
         const results = await stopContainersForRuns(taskId, safeTeam);
 
         try {
-          const runsTree = await getConvex().query(api.taskRuns.getByTask, {
-            teamSlugOrId: safeTeam,
-            taskId,
-          });
-          const worktreePaths = collectWorktreePaths(runsTree);
+          const db = getDb();
+          const runs = getTaskRunsByTask(db, { taskId });
+          const worktreePaths = collectWorktreePaths(runs);
           if (worktreePaths.length > 0) {
             for (const worktreePath of worktreePaths) {
               gitDiffManager.unwatchWorkspace(worktreePath);
@@ -3411,10 +3430,8 @@ ${title}`;
         );
         if (!existingInstance || !existingInstance.isWorkerConnected()) {
           // Query task run to get worker URL for reconnection
-          const taskRun = await getConvex().query(api.taskRuns.get, {
-            teamSlugOrId: safeTeam,
-            id: cloudTaskRunId,
-          });
+          const db = getDb();
+          const taskRun = getTaskRunById(db, cloudTaskRunId);
 
           if (!taskRun) {
             serverLogger.warn(
@@ -3428,16 +3445,18 @@ ${title}`;
             return;
           }
 
-          let workerUrl = taskRun.vscode?.ports?.worker;
-          const vscodeStatus = taskRun.vscode?.status;
-          const vscodeUrl = taskRun.vscode?.url;
+          const vscodeData = taskRun.vscode as Record<string, unknown> | null;
+          const vscodePorts = vscodeData?.ports as Record<string, string> | undefined;
+          let workerUrl = vscodePorts?.worker;
+          const vscodeStatus = vscodeData?.status as string | undefined;
+          const vscodeUrl = vscodeData?.url as string | undefined;
 
           // For Morph instances, derive worker URL from VSCode URL if not stored
           // VSCode is on port 39378, worker is on port 39377
           if (
             !workerUrl &&
             vscodeUrl &&
-            taskRun.vscode?.provider === "morph"
+            vscodeData?.provider === "morph"
           ) {
             workerUrl = vscodeUrl.replace("port-39378", "port-39377");
             serverLogger.info(
@@ -3448,7 +3467,7 @@ ${title}`;
           if (
             workerUrl &&
             vscodeStatus === "running" &&
-            taskRun.vscode?.provider !== "docker"
+            vscodeData?.provider !== "docker"
           ) {
             serverLogger.info(
               `[trigger-local-cloud-sync] No VSCodeInstance or worker disconnected, attempting to reconnect to worker at ${workerUrl}`
@@ -3461,7 +3480,7 @@ ${title}`;
                   teamSlugOrId: safeTeam,
                 },
                 workerUrl,
-                sandboxId: taskRun.vscode?.containerName,
+                sandboxId: vscodeData?.containerName as string | undefined,
               });
               serverLogger.info(
                 `[trigger-local-cloud-sync] Successfully reconnected to cloud workspace`

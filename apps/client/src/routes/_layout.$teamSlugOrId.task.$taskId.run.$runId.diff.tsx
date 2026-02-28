@@ -16,13 +16,21 @@ import { stackClientApp } from "@/lib/stack";
 import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
-import { api } from "@cmux/convex/api";
 import type { CreateLocalWorkspaceResponse, ReplaceDiffEntry } from "@cmux/shared";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
-import { convexQuery } from "@convex-dev/react-query";
-import { useQuery as useRQ } from "@tanstack/react-query";
+import {
+  getApiTasksByIdOptions,
+  getApiTaskRunsOptions,
+  getApiWorkspaceSettingsOptions,
+  getApiWorkspaceSettingsQueryKey,
+  getApiTaskRunsByIdScreenshotSetsOptions,
+  getApiTasksLinkedLocalWorkspaceOptions,
+} from "@cmux/www-openapi-client/react-query";
+import {
+  patchApiWorkspaceSettings,
+} from "@cmux/www-openapi-client";
+import { useQuery as useRQ, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useMutation } from "convex/react";
 import {
   Suspense,
   useCallback,
@@ -45,7 +53,8 @@ import {
 } from "@/lib/heatmap-settings";
 import type { HeatmapColorSettings } from "@/components/heatmap-diff-viewer/heatmap-gradient";
 import { useCombinedWorkflowData, WorkflowRunsSection } from "@/components/WorkflowRunsSection";
-import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { queryClient } from "@/query-client";
+import type { TaskRunWithChildren } from "@/types/task";
 
 const DIFF_HEADER_PREFIXES = [
   "diff --git ",
@@ -238,52 +247,38 @@ export const Route = createFileRoute(
   loader: (opts) => {
     const { runId } = opts.params;
 
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.taskRuns.getRunDiffContext,
-      args: { teamSlugOrId: opts.params.teamSlugOrId, taskId: opts.params.taskId, runId },
-    });
+    // Prefetch task and task runs data
+    void queryClient.prefetchQuery(
+      getApiTasksByIdOptions({ path: { id: opts.params.taskId }, query: { teamSlugOrId: opts.params.teamSlugOrId } })
+    );
+    void queryClient.prefetchQuery(
+      getApiTaskRunsOptions({ query: { taskId: opts.params.taskId } })
+    );
+    void queryClient.prefetchQuery(
+      getApiTaskRunsByIdScreenshotSetsOptions({ path: { id: runId } })
+    );
 
-    void opts.context.queryClient
-      .ensureQueryData(
-        convexQuery(api.taskRuns.getRunDiffContext, {
-          teamSlugOrId: opts.params.teamSlugOrId,
-          taskId: opts.params.taskId,
-          runId,
-        }),
-      )
-      .then(async (context) => {
-        if (!context) {
+    void (async () => {
+      const [task, taskRuns] = await Promise.all([
+        opts.context.queryClient.ensureQueryData(
+          getApiTasksByIdOptions({ path: { id: opts.params.taskId }, query: { teamSlugOrId: opts.params.teamSlugOrId } })
+        ).catch(() => null),
+        opts.context.queryClient.ensureQueryData(
+          getApiTaskRunsOptions({ query: { taskId: opts.params.taskId } })
+        ).catch(() => ({ taskRuns: [] })),
+      ]);
+
+      const taskRunsList = ((taskRuns as { taskRuns?: Array<Record<string, unknown>> })?.taskRuns ?? []) as unknown as TaskRunWithChildren[];
+      if (!task && taskRunsList.length === 0) {
+        return;
+      }
+
+      const selectedTaskRun = taskRunsList.find((run) => run.id === runId);
+        if ((!task && !selectedTaskRun) || !selectedTaskRun?.newBranch) {
           return;
         }
 
-        const { task, taskRuns } = context;
-
-        if (task) {
-          opts.context.queryClient.setQueryData(
-            convexQuery(api.tasks.getById, {
-              teamSlugOrId: opts.params.teamSlugOrId,
-              id: opts.params.taskId,
-            }).queryKey,
-            task,
-          );
-        }
-
-        if (taskRuns) {
-          opts.context.queryClient.setQueryData(
-            convexQuery(api.taskRuns.getByTask, {
-              teamSlugOrId: opts.params.teamSlugOrId,
-              taskId: opts.params.taskId,
-            }).queryKey,
-            taskRuns,
-          );
-        }
-
-        const selectedTaskRun = taskRuns.find((run) => run._id === runId);
-        if (!task || !selectedTaskRun?.newBranch) {
-          return;
-        }
-
-        const trimmedProjectFullName = task.projectFullName?.trim();
+        const trimmedProjectFullName = task?.projectFullName?.trim();
         const targetRepos = new Set<string>();
         for (const repo of selectedTaskRun.environment?.selectedRepos ?? []) {
           const trimmed = repo?.trim();
@@ -299,7 +294,7 @@ export const Route = createFileRoute(
           return;
         }
 
-        const baseRefForDiff = normalizeGitRef(task.baseBranch || "main");
+        const baseRefForDiff = normalizeGitRef(task?.baseBranch || "main");
         const headRefForDiff = normalizeGitRef(selectedTaskRun.newBranch);
         if (!headRefForDiff || !baseRefForDiff) {
           return;
@@ -322,8 +317,7 @@ export const Route = createFileRoute(
         });
 
         await Promise.all(prefetches);
-      })
-      .catch(() => undefined);
+      })().catch(() => undefined);
 
     return undefined;
   },
@@ -335,27 +329,25 @@ function RunDiffPage() {
   const [isAiReviewActive, setIsAiReviewActive] = useState(false);
   const [hasVisitedAiReview, setHasVisitedAiReview] = useState(false);
   const { socket } = useSocket();
-  // Use React Query-wrapped Convex queries to avoid real-time subscriptions
-  // that cause excessive re-renders. The data is prefetched in the loader.
+  const rqQueryClient = useQueryClient();
   const taskQuery = useRQ({
-    ...convexQuery(api.tasks.getById, { teamSlugOrId, id: taskId }),
+    ...getApiTasksByIdOptions({ path: { id: taskId }, query: { teamSlugOrId } }),
     enabled: Boolean(teamSlugOrId && taskId),
   });
   const task = taskQuery.data;
   const taskRunsQuery = useRQ({
-    ...convexQuery(api.taskRuns.getByTask, { teamSlugOrId, taskId }),
+    ...getApiTaskRunsOptions({ query: { taskId } }),
     enabled: Boolean(teamSlugOrId && taskId),
   });
-  const taskRuns = taskRunsQuery.data;
+  const taskRuns = (taskRunsQuery.data?.taskRuns ?? undefined) as unknown as TaskRunWithChildren[] | undefined;
   const selectedRun = useMemo(() => {
-    return taskRuns?.find((run) => run._id === runId);
+    return taskRuns?.find((run) => run.id === runId);
   }, [runId, taskRuns]);
 
   // Query for existing linked local workspace (to prevent creating duplicates)
   const linkedLocalWorkspaceQuery = useRQ({
-    ...convexQuery(api.tasks.getLinkedLocalWorkspace, {
-      teamSlugOrId,
-      cloudTaskRunId: runId,
+    ...getApiTasksLinkedLocalWorkspaceOptions({
+      query: { teamSlugOrId, cloudTaskRunId: runId },
     }),
     enabled: Boolean(teamSlugOrId && runId),
   });
@@ -373,14 +365,13 @@ function RunDiffPage() {
 
   // Query workspace settings for heatmap configuration
   const workspaceSettingsQuery = useRQ({
-    ...convexQuery(api.workspaceSettings.get, { teamSlugOrId }),
+    ...getApiWorkspaceSettingsOptions({ query: { teamSlugOrId } }),
     enabled: Boolean(teamSlugOrId),
   });
   const workspaceSettings = useMemo(() => {
     const parsed = workspaceSettingsSchema.safeParse(workspaceSettingsQuery.data);
     return parsed.success ? parsed.data ?? null : null;
   }, [workspaceSettingsQuery.data]);
-  const updateWorkspaceSettings = useMutation(api.workspaceSettings.update);
   const [heatmapThreshold, setHeatmapThreshold] = useState<number>(0);
   const [heatmapColors, setHeatmapColors] = useState<HeatmapColorSettings>(
     normalizeHeatmapColors(undefined)
@@ -406,28 +397,30 @@ function RunDiffPage() {
   const handleHeatmapColorsChange = useCallback(
     (next: HeatmapColorSettings) => {
       setHeatmapColors(next);
-      void updateWorkspaceSettings({
-        teamSlugOrId,
-        heatmapColors: next,
+      void patchApiWorkspaceSettings({
+        body: {
+          teamSlugOrId,
+          heatmapColors: next,
+        },
+      }).then(() => {
+        void rqQueryClient.invalidateQueries({
+          queryKey: getApiWorkspaceSettingsQueryKey({ query: { teamSlugOrId } }),
+        });
       }).catch((error) => {
         console.error("Failed to update heatmap colors:", error);
       });
     },
-    [teamSlugOrId, updateWorkspaceSettings]
+    [teamSlugOrId, rqQueryClient]
   );
 
-  const runDiffContextQuery = useRQ({
-    ...convexQuery(api.taskRuns.getRunDiffContext, {
-      teamSlugOrId,
-      taskId,
-      runId,
-    }),
-    enabled: Boolean(teamSlugOrId && taskId && runId),
+  const screenshotSetsQuery = useRQ({
+    ...getApiTaskRunsByIdScreenshotSetsOptions({ path: { id: runId } }),
+    enabled: Boolean(runId),
   });
 
-  const screenshotSets = runDiffContextQuery.data?.screenshotSets ?? [];
+  const screenshotSets = screenshotSetsQuery.data?.screenshotSets ?? [];
   const screenshotSetsLoading =
-    runDiffContextQuery.isLoading && screenshotSets.length === 0;
+    screenshotSetsQuery.isLoading && screenshotSets.length === 0;
 
   // Get PR information from the selected run
   const pullRequests = useMemo(() => {
@@ -932,7 +925,7 @@ function RunDiffPage() {
     workspaceSettingsQuery.isLoading,
   ]);
 
-  const taskRunId = selectedRun?._id ?? runId;
+  const taskRunId = selectedRun?.id ?? runId;
   const baseBranch = task?.baseBranch ?? "main";
 
   const handleOpenLocalWorkspace = useCallback(() => {
@@ -977,7 +970,7 @@ function RunDiffPage() {
         repoUrl: `https://github.com/${primaryRepo}.git`,
         branch: selectedRun.newBranch,
         baseBranch,
-        linkedFromCloudTaskRunId: selectedRun._id, // Link to the current cloud task run
+        linkedFromCloudTaskRunId: selectedRun.id, // Link to the current cloud task run
       },
       (response: CreateLocalWorkspaceResponse) => {
         if (response.success && response.workspacePath) {
@@ -993,7 +986,7 @@ function RunDiffPage() {
         }
       }
     );
-  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, selectedRun?._id, linkedLocalWorkspace, linkedLocalWorkspaceQuery.isLoading, baseBranch]);
+  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, selectedRun?.id, linkedLocalWorkspace, linkedLocalWorkspaceQuery.isLoading, baseBranch]);
 
   // 404 if selected run is missing
   if (!selectedRun) {
@@ -1067,7 +1060,7 @@ function RunDiffPage() {
               </div>
             ) : screenshotSets.length > 0 ? (
               <RunScreenshotGallery
-                screenshotSets={screenshotSets}
+                screenshotSets={screenshotSets as unknown as React.ComponentProps<typeof RunScreenshotGallery>["screenshotSets"]}
                 highlightedSetId={selectedRun?.latestScreenshotSetId ?? null}
               />
             ) : null}

@@ -1,7 +1,9 @@
 import { GitHubIcon } from "@/components/icons/github";
-import { api } from "@cmux/convex/api";
+import {
+  getApiIntegrationsGithubPrsOptions,
+} from "@cmux/www-openapi-client/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useQuery as useConvexQuery } from "convex/react";
 import {
   GitMerge,
   GitPullRequest,
@@ -11,22 +13,34 @@ import {
 import { useMemo, useState, type MouseEvent } from "react";
 import { SidebarListItem } from "./SidebarListItem";
 import { SIDEBAR_PRS_DEFAULT_LIMIT } from "./const";
-import type { Doc } from "@cmux/convex/dataModel";
 
 type Props = {
   teamSlugOrId: string;
   limit?: number;
 };
 
+type PullRequest = {
+  repoFullName: string;
+  number: number;
+  title: string;
+  state: string;
+  draft?: boolean | null;
+  merged?: boolean | null;
+  headRef?: string | null;
+  authorLogin?: string | null;
+  htmlUrl?: string | null;
+};
+
 export function SidebarPullRequestList({
   teamSlugOrId,
   limit = SIDEBAR_PRS_DEFAULT_LIMIT,
 }: Props) {
-  const prs = useConvexQuery(api.github_prs.listPullRequests, {
-    teamSlugOrId,
-    state: "open",
-    limit,
-  });
+  const prsQuery = useQuery(
+    getApiIntegrationsGithubPrsOptions({
+      query: { team: teamSlugOrId, state: "open", per_page: limit },
+    }),
+  );
+  const prs = prsQuery.data as PullRequest[] | undefined;
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
@@ -68,7 +82,7 @@ export function SidebarPullRequestList({
 }
 
 type PullRequestListItemProps = {
-  pr: Doc<"pullRequests">;
+  pr: PullRequest;
   teamSlugOrId: string;
   expanded: Record<string, boolean>;
   setExpanded: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;

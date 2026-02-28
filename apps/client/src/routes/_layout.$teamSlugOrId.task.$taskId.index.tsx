@@ -40,10 +40,18 @@ import {
   terminalTabsQueryOptions,
   type TerminalTabId,
 } from "@/queries/terminals";
-import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
-import { convexQuery } from "@convex-dev/react-query";
-import { useMutation, useQuery } from "convex/react";
+import {
+  getApiTasksByIdOptions,
+  getApiTaskRunsOptions,
+  getApiWorkspaceSettingsOptions,
+  getApiWorkspaceSettingsQueryKey,
+  getApiTasksLinkedLocalWorkspaceOptions,
+} from "@cmux/www-openapi-client/react-query";
+import {
+  patchApiWorkspaceSettings,
+} from "@cmux/www-openapi-client";
+import { useQuery as useRQ, useMutation as useRQMutation, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -56,12 +64,11 @@ import {
 } from "lucide-react";
 import z from "zod";
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
-import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { queryClient } from "@/query-client";
 import { useSocket } from "@/contexts/socket/use-socket";
 import type { CreateLocalWorkspaceResponse } from "@cmux/shared";
 import { toast } from "sonner";
-
-type TaskRunListItem = (typeof api.taskRuns.getByTask._returnType)[number];
+import type { TaskRunWithChildren } from "@/types/task";
 type IframeStatusEntry = {
   status: PersistentIframeStatus;
   url: string | null;
@@ -86,57 +93,51 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
     };
   },
   loader: async (opts) => {
-    const { queryClient } = opts.context;
+    const { queryClient: routeQueryClient } = opts.context;
 
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.taskRuns.getByTask,
-      args: {
-        teamSlugOrId: opts.params.teamSlugOrId,
-        taskId: opts.params.taskId,
-      },
-    });
+    void queryClient.prefetchQuery(
+      getApiTaskRunsOptions({
+        query: { taskId: opts.params.taskId },
+      })
+    );
 
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.tasks.getById,
-      args: { teamSlugOrId: opts.params.teamSlugOrId, id: opts.params.taskId },
-    });
-
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.crown.getCrownEvaluation,
-      args: {
-        teamSlugOrId: opts.params.teamSlugOrId,
-        taskId: opts.params.taskId,
-      },
-    });
+    void queryClient.prefetchQuery(
+      getApiTasksByIdOptions({
+        path: { id: opts.params.taskId },
+        query: { teamSlugOrId: opts.params.teamSlugOrId },
+      })
+    );
 
     void (async () => {
-      const taskRuns = await queryClient.ensureQueryData(
-        convexQuery(api.taskRuns.getByTask, {
-          teamSlugOrId: opts.params.teamSlugOrId,
-          taskId: opts.params.taskId,
+      const taskRunsData = await routeQueryClient.ensureQueryData(
+        getApiTaskRunsOptions({
+          query: { taskId: opts.params.taskId },
         })
       );
+      const taskRuns = (taskRunsData?.taskRuns ?? []) as unknown as TaskRunWithChildren[] | undefined;
 
       if (!taskRuns?.length) {
         return;
       }
 
-      const taskRunIndex = buildTaskRunIndex(taskRuns);
+      const taskRunIndex = buildTaskRunIndex(taskRuns ?? []);
       const searchParams = new URLSearchParams(opts.location.search);
       const runIdParam = searchParams.get("runId");
       const parsedRunId = runIdParam
         ? typedZid("taskRuns").safeParse(runIdParam)
         : null;
+      const taskRunsList = taskRuns ?? [];
       const selectedRun = parsedRunId?.success
-        ? (taskRunIndex.get(parsedRunId.data) ?? taskRuns[0])
-        : taskRuns[0];
+        ? (taskRunIndex.get(parsedRunId.data) ?? taskRunsList[0])
+        : taskRunsList[0];
 
       const rawWorkspaceUrl = selectedRun?.vscode?.workspaceUrl ?? null;
       const rawBrowserUrl =
         selectedRun?.vscode?.url ?? rawWorkspaceUrl ?? null;
 
+      const selectedRunId = selectedRun?.id;
       // Preload both VSCode and browser iframes in parallel
-      if (selectedRun && rawWorkspaceUrl) {
+      if (selectedRun && rawWorkspaceUrl && selectedRunId) {
         const workspaceUrl = getWorkspaceUrl(
           rawWorkspaceUrl,
           selectedRun.vscode?.provider,
@@ -144,7 +145,7 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
         );
         if (workspaceUrl) {
           void preloadTaskRunIframes([
-            { url: workspaceUrl, taskRunId: selectedRun._id },
+            { url: workspaceUrl, taskRunId: selectedRunId },
           ]).catch((error) => {
             console.error("Failed to preload VSCode iframe", error);
           });
@@ -152,10 +153,10 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
       }
       const provider = selectedRun?.vscode?.provider;
       const ports = selectedRun?.vscode?.ports;
-      if (selectedRun && rawBrowserUrl && provider) {
+      if (selectedRun && rawBrowserUrl && provider && selectedRunId) {
         const vncViewUrl = toVncUrl(rawBrowserUrl, provider, ports ?? undefined);
         if (vncViewUrl) {
-          void preloadTaskRunBrowserIframe(selectedRun._id, vncViewUrl).catch(
+          void preloadTaskRunBrowserIframe(selectedRunId, vncViewUrl).catch(
             (error) => {
               console.error("Failed to preload browser iframe", error);
             }
@@ -209,9 +210,9 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
 });
 
 function buildTaskRunIndex(
-  runs: TaskRunListItem[]
-): Map<TaskRunListItem["_id"], TaskRunListItem> {
-  const index = new Map<TaskRunListItem["_id"], TaskRunListItem>();
+  runs: TaskRunWithChildren[]
+): Map<string, TaskRunWithChildren> {
+  const index = new Map<string, TaskRunWithChildren>();
   const stack = [...runs];
 
   while (stack.length > 0) {
@@ -219,7 +220,10 @@ function buildTaskRunIndex(
     if (!current) {
       continue;
     }
-    index.set(current._id, current);
+    const runId = current.id;
+    if (runId) {
+      index.set(runId, current);
+    }
     if (current.children?.length) {
       stack.push(...current.children);
     }
@@ -311,21 +315,34 @@ function TaskDetailPage() {
   const search = Route.useSearch();
   const localServeWeb = useLocalVSCodeServeWebQuery();
   const { socket } = useSocket();
-  const task = useQuery(api.tasks.getById, {
-    teamSlugOrId,
-    id: taskId,
+  const rqQueryClient = useQueryClient();
+  const taskQuery = useRQ({
+    ...getApiTasksByIdOptions({ path: { id: taskId }, query: { teamSlugOrId } }),
+    enabled: Boolean(teamSlugOrId && taskId),
   });
-  const taskRuns = useQuery(api.taskRuns.getByTask, {
-    teamSlugOrId,
-    taskId,
+  const task = taskQuery.data;
+  const taskRunsQuery = useRQ({
+    ...getApiTaskRunsOptions({ query: { taskId } }),
+    enabled: Boolean(teamSlugOrId && taskId),
   });
-  const crownEvaluation = useQuery(api.crown.getCrownEvaluation, {
-    teamSlugOrId,
-    taskId,
-  });
+  const taskRuns = (taskRunsQuery.data?.taskRuns ?? undefined) as unknown as TaskRunWithChildren[] | undefined;
+  // Crown evaluation is not available as a separate endpoint - it's embedded in task run data
+  const crownEvaluation = undefined;
   // Query workspace settings for auto-sync toggle
-  const workspaceSettings = useQuery(api.workspaceSettings.get, { teamSlugOrId });
-  const updateWorkspaceSettings = useMutation(api.workspaceSettings.update);
+  const workspaceSettingsQuery = useRQ({
+    ...getApiWorkspaceSettingsOptions({ query: { teamSlugOrId } }),
+    enabled: Boolean(teamSlugOrId),
+  });
+  const workspaceSettings = workspaceSettingsQuery.data;
+  const updateWorkspaceSettingsMutation = useRQMutation({
+    mutationFn: (args: { teamSlugOrId: string; autoSyncEnabled?: boolean }) =>
+      patchApiWorkspaceSettings({ body: args }),
+    onSettled: () => {
+      void rqQueryClient.invalidateQueries({
+        queryKey: getApiWorkspaceSettingsQueryKey({ query: { teamSlugOrId } }),
+      });
+    },
+  });
 
   // Auto-sync enabled state (defaults to true)
   const autoSyncEnabled = workspaceSettings?.autoSyncEnabled ?? true;
@@ -485,13 +502,16 @@ function TaskDetailPage() {
     return taskRuns[0];
   }, [search.runId, taskRunIndex, taskRuns]);
 
-  const selectedRunId = selectedRun?._id ?? null;
+  const selectedRunId = selectedRun?.id ?? null;
 
   // Query for existing linked local workspace (to prevent creating duplicates)
-  const linkedLocalWorkspace = useQuery(
-    api.tasks.getLinkedLocalWorkspace,
-    selectedRunId ? { teamSlugOrId, cloudTaskRunId: selectedRunId } : "skip"
-  );
+  const linkedLocalWorkspaceQuery = useRQ({
+    ...getApiTasksLinkedLocalWorkspaceOptions({
+      query: { teamSlugOrId, cloudTaskRunId: selectedRunId ?? "" },
+    }),
+    enabled: Boolean(selectedRunId),
+  });
+  const linkedLocalWorkspace = linkedLocalWorkspaceQuery.data;
 
   // Helper to trigger sync - can be called from multiple places for reliability
   const triggerSyncIfNeeded = useCallback(() => {
@@ -547,7 +567,7 @@ function TaskDetailPage() {
     previousSelectedRunIdRef.current = selectedRunId ?? null;
     setExpandedPanel(null);
   }, [selectedRunId]);
-  const headerTaskRunId = selectedRunId ?? taskRuns?.[0]?._id ?? null;
+  const headerTaskRunId = selectedRunId ?? taskRuns?.[0]?.id ?? null;
 
   const rawWorkspaceUrl = selectedRun?.vscode?.workspaceUrl ?? null;
   const workspaceUrl = getWorkspaceUrl(
@@ -723,9 +743,8 @@ function TaskDetailPage() {
 
   // Handle opening a local workspace for the current task run
   const handleOpenLocalWorkspace = useCallback(() => {
-    // If query is still loading (undefined), don't allow creation to prevent duplicates
-    // linkedLocalWorkspace is undefined while loading, null when no linked workspace exists
-    if (linkedLocalWorkspace === undefined) {
+    // If query is still loading, don't allow creation to prevent duplicates
+    if (linkedLocalWorkspaceQuery.isLoading) {
       toast.info("Checking for existing workspace...", {
         description: "Please wait a moment and try again",
       });
@@ -765,7 +784,7 @@ function TaskDetailPage() {
         repoUrl: `https://github.com/${primaryRepo}.git`,
         branch: selectedRun.newBranch,
         baseBranch,
-        linkedFromCloudTaskRunId: selectedRun._id, // Link to the current cloud task run
+        linkedFromCloudTaskRunId: selectedRun.id, // Link to the current cloud task run
       },
       (response: CreateLocalWorkspaceResponse) => {
         if (response.success && response.workspacePath) {
@@ -781,23 +800,27 @@ function TaskDetailPage() {
         }
       }
     );
-  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, selectedRun?._id, linkedLocalWorkspace, baseBranch]);
+  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, selectedRun?.id, linkedLocalWorkspace, linkedLocalWorkspaceQuery.isLoading, baseBranch]);
 
   // Handle toggling auto-sync on/off
   const handleToggleAutoSync = useCallback(() => {
     const newValue = !autoSyncEnabled;
-    updateWorkspaceSettings({
-      teamSlugOrId,
-      autoSyncEnabled: newValue,
-    })
-      .then(() => {
-        toast.success(newValue ? "Auto-sync enabled" : "Auto-sync disabled");
-      })
-      .catch((error) => {
-        console.error("Failed to toggle auto-sync:", error);
-        toast.error("Failed to toggle auto-sync");
-      });
-  }, [autoSyncEnabled, teamSlugOrId, updateWorkspaceSettings]);
+    updateWorkspaceSettingsMutation.mutate(
+      {
+        teamSlugOrId,
+        autoSyncEnabled: newValue,
+      },
+      {
+        onSuccess: () => {
+          toast.success(newValue ? "Auto-sync enabled" : "Auto-sync disabled");
+        },
+        onError: (error) => {
+          console.error("Failed to toggle auto-sync:", error);
+          toast.error("Failed to toggle auto-sync");
+        },
+      }
+    );
+  }, [autoSyncEnabled, teamSlugOrId, updateWorkspaceSettingsMutation]);
 
   // Determine workspace type for layout overrides
   const isLocalWorkspaceTask = task?.isLocalWorkspace;

@@ -1,9 +1,10 @@
-import { getAccessTokenFromRequest } from "@/lib/utils/auth";
-import { getConvex } from "@/lib/utils/get-convex";
+import { getUserFromRequest } from "@/lib/utils/auth";
 import { stackServerAppJs } from "@/lib/utils/stack";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
-import { api } from "@cmux/convex/api";
+import { getDb } from "@cmux/db";
+import { getWorkspaceConfig } from "@cmux/db/queries/settings";
+import { upsertWorkspaceConfig } from "@cmux/db/mutations/settings";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { randomBytes } from "node:crypto";
@@ -36,7 +37,7 @@ const WorkspaceConfigBody = z
   .openapi("WorkspaceConfigBody");
 
 async function loadEnvVarsContent(
-  dataVaultKey: string | undefined,
+  dataVaultKey: string | undefined | null,
 ): Promise<string> {
   if (!dataVaultKey) return "";
   const store = await stackServerAppJs.getDataVaultStore("cmux-snapshot-envs");
@@ -68,8 +69,8 @@ workspaceConfigsRouter.openapi(
     },
   }),
   async (c) => {
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) return c.text("Unauthorized", 401);
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) return c.text("Unauthorized", 401);
 
     const query = c.req.valid("query");
 
@@ -78,11 +79,13 @@ workspaceConfigsRouter.openapi(
       teamSlugOrId: query.teamSlugOrId,
     });
 
-    const convex = getConvex({ accessToken });
-    const config = await convex.query(api.workspaceConfigs.get, {
-      teamSlugOrId: query.teamSlugOrId,
-      projectFullName: query.projectFullName,
-    });
+    const db = getDb();
+    const config = getWorkspaceConfig(
+      db,
+      query.teamSlugOrId,
+      user.id,
+      query.projectFullName,
+    );
 
     if (!config) {
       return c.json(null);
@@ -129,8 +132,8 @@ workspaceConfigsRouter.openapi(
     },
   }),
   async (c) => {
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) return c.text("Unauthorized", 401);
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) return c.text("Unauthorized", 401);
 
     const body = c.req.valid("json");
 
@@ -139,11 +142,13 @@ workspaceConfigsRouter.openapi(
       teamSlugOrId: body.teamSlugOrId,
     });
 
-    const convex = getConvex({ accessToken });
-    const existing = await convex.query(api.workspaceConfigs.get, {
-      teamSlugOrId: body.teamSlugOrId,
-      projectFullName: body.projectFullName,
-    });
+    const db = getDb();
+    const existing = getWorkspaceConfig(
+      db,
+      body.teamSlugOrId,
+      user.id,
+      body.projectFullName,
+    );
 
     const store = await stackServerAppJs.getDataVaultStore(
       "cmux-snapshot-envs",
@@ -165,8 +170,9 @@ workspaceConfigsRouter.openapi(
       });
     }
 
-    await convex.mutation(api.workspaceConfigs.upsert, {
+    upsertWorkspaceConfig(db, {
       teamSlugOrId: body.teamSlugOrId,
+      userId: user.id,
       projectFullName: body.projectFullName,
       maintenanceScript: body.maintenanceScript,
       dataVaultKey,

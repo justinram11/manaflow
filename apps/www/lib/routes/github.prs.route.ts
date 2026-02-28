@@ -1,10 +1,10 @@
-import { getAccessTokenFromRequest } from "@/lib/utils/auth";
+import { getUserFromRequest } from "@/lib/utils/auth";
 import { env } from "@/lib/utils/www-env";
-import { api } from "@cmux/convex/api";
+import { getDb } from "@cmux/db";
+import { listProviderConnections } from "@cmux/db/queries/repos";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { createAppAuth } from "@octokit/auth-app";
 import { Octokit } from "octokit";
-import { getConvex } from "../utils/get-convex";
 import { githubPrivateKey } from "../utils/githubPrivateKey";
 
 export const githubPrsRouter = new OpenAPIHono();
@@ -93,27 +93,19 @@ githubPrsRouter.openapi(
     },
   }),
   async (c) => {
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) return c.text("Unauthorized", 401);
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) return c.text("Unauthorized", 401);
 
     const { team, installationId, q, state = "open", page = 1, per_page = 20 } =
       c.req.valid("query");
 
-    // Fetch provider connections for this team using Convex (enforces membership)
-    const convex = getConvex({ accessToken });
-    const connections = await convex.query(api.github.listProviderConnections, {
-      teamSlugOrId: team,
-    });
+    // Fetch provider connections for this team using DB (enforces membership)
+    const db = getDb();
+    const connections = listProviderConnections(db, team);
 
     // Determine which installation to query
-    type Conn = {
-      installationId: number;
-      isActive?: boolean | null;
-      accountLogin?: string | null;
-      accountType?: "Organization" | "User" | null;
-    };
-    const target = (connections as Conn[]).find(
-      (co: Conn) => co.isActive !== false && (!installationId || co.installationId === installationId)
+    const target = connections.find(
+      (co) => (co.isActive ?? true) !== false && (!installationId || co.installationId === installationId)
     );
 
     if (!target) {

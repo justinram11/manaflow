@@ -1,11 +1,11 @@
-import { getAccessTokenFromRequest } from "@/lib/utils/auth";
-import { api } from "@cmux/convex/api";
+import { getUserFromRequest } from "@/lib/utils/auth";
+import { env } from "@/lib/utils/www-env";
+import { getDb } from "@cmux/db";
+import { createInstallState } from "@cmux/db/mutations/repos";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { createAppAuth } from "@octokit/auth-app";
 import { Octokit } from "octokit";
-import { env } from "@/lib/utils/www-env";
 import { githubPrivateKey } from "../utils/githubPrivateKey";
-import { getConvex } from "../utils/get-convex";
 
 export const githubInstallStateRouter = new OpenAPIHono();
 
@@ -32,6 +32,43 @@ const ResponseBody = z
     installUrl: z.string().url(),
   })
   .openapi("GithubInstallStateResponse");
+
+function base64urlFromBytes(buf: ArrayBuffer | Uint8Array): string {
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  const abc = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  let out = "";
+  let i = 0;
+  for (; i + 2 < bytes.length; i += 3) {
+    const x = (bytes[i]! << 16) | (bytes[i + 1]! << 8) | bytes[i + 2]!;
+    out += abc[(x >> 18) & 63];
+    out += abc[(x >> 12) & 63];
+    out += abc[(x >> 6) & 63];
+    out += abc[x & 63];
+  }
+  if (i + 1 === bytes.length) {
+    const x = bytes[i]! << 16;
+    out += abc[(x >> 18) & 63];
+    out += abc[(x >> 12) & 63];
+  } else if (i < bytes.length) {
+    const x = (bytes[i]! << 16) | (bytes[i + 1]! << 8);
+    out += abc[(x >> 18) & 63];
+    out += abc[(x >> 12) & 63];
+    out += abc[(x >> 6) & 63];
+  }
+  return out;
+}
+
+async function hmacSha256(secret: string, payload: string): Promise<ArrayBuffer> {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  return await crypto.subtle.sign("HMAC", key, enc.encode(payload));
+}
 
 githubInstallStateRouter.openapi(
   createRoute({
@@ -64,19 +101,41 @@ githubInstallStateRouter.openapi(
     },
   }),
   async (c) => {
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) {
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) {
       return c.text("Unauthorized", 401);
     }
 
     const body = c.req.valid("json");
 
     try {
-      const convex = getConvex({ accessToken });
-      const result = await convex.mutation(api.github_app.mintInstallState, {
+      const installStateSecret = env.INSTALL_STATE_SECRET;
+      if (!installStateSecret) {
+        return c.text("INSTALL_STATE_SECRET is not configured", 500);
+      }
+
+      const db = getDb();
+      const { teamId, nonce, iat, exp } = createInstallState(db, {
         teamSlugOrId: body.teamSlugOrId,
-        ...(body.returnUrl ? { returnUrl: body.returnUrl } : {}),
+        userId: user.id,
+        returnUrl: body.returnUrl,
       });
+
+      // Build signed token matching the Convex mintInstallState format
+      const payloadObj = {
+        ver: 1,
+        teamId,
+        userId: user.id,
+        iat,
+        exp,
+        nonce,
+        ...(body.returnUrl ? { returnUrl: body.returnUrl } : {}),
+      };
+      const payload = JSON.stringify(payloadObj);
+      const sigBuf = await hmacSha256(installStateSecret, payload);
+      const payloadB64 = base64urlFromBytes(new TextEncoder().encode(payload));
+      const sigB64 = base64urlFromBytes(sigBuf);
+      const token = `v2.${payloadB64}.${sigB64}`;
 
       const octokit = new Octokit({
         authStrategy: createAppAuth,
@@ -96,14 +155,14 @@ githubInstallStateRouter.openapi(
       const installUrl = new URL(
         `https://github.com/apps/${appSlug}/installations/new`,
       );
-      installUrl.searchParams.set("state", result.state);
+      installUrl.searchParams.set("state", token);
 
-      return c.json({ state: result.state, installUrl: installUrl.toString() });
+      return c.json({ state: token, installUrl: installUrl.toString() });
     } catch (error) {
       console.error("[githubInstallState] Failed to mint install state", error);
       const message = error instanceof Error ? error.message : "Unknown error";
 
-      if (message.includes("Forbidden") || message.includes("Unknown team")) {
+      if (message.includes("Forbidden") || message.includes("Unknown team") || message.includes("Team not found")) {
         return c.text("Forbidden", 403);
       }
 

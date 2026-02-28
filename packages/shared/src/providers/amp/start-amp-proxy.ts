@@ -1,6 +1,6 @@
 import { createServer as createHttpServer } from "node:http";
 import { readFile as fspReadFile } from "node:fs/promises";
-import type { Id } from "@cmux/convex/dataModel";
+
 import type { WorkerToServerEvents } from "../../worker-schemas";
 import {
   DEFAULT_AMP_PROXY_PORT,
@@ -269,7 +269,7 @@ export function startAmpProxy(options: AmpProxyOptions = {}) {
           const elapsedMs = Date.now() - start;
           emit("worker:task-complete", {
             workerId,
-            taskRunId: taskRunId as Id<"taskRuns">,
+            taskRunId,
             agentModel: "amp",
             elapsedMs,
           });

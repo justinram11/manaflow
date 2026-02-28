@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import type { Id } from "@cmux/convex/dataModel";
+
 
 import { log } from "../logger";
 import { convexRequest } from "./convex";
@@ -143,8 +143,8 @@ export async function handleWorkerTaskCompletion(
 
   void uploadScreenshotsWithLogging(
     {
-      taskId: info.taskRun.taskId as Id<"tasks">,
-      taskRunId: taskRunId as Id<"taskRuns">,
+      taskId: info.taskRun.taskId,
+      taskRunId: taskRunId,
       token: runContext.token,
       convexUrl: runContext.convexUrl,
     },

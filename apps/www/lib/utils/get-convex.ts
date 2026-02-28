@@ -1,22 +1,19 @@
-import {
-  convexClientCache,
-  ConvexHttpClient,
-} from "@cmux/shared/node/convex-cache";
-import { env } from "./www-env";
+// Stub: Convex has been replaced with SQLite.
+// Code review features that depend on Convex are temporarily disabled.
 
-export function getConvex({ accessToken }: { accessToken: string }) {
-  // Try to get from cache first
-  const cachedClient = convexClientCache.get(
-    accessToken,
-    env.NEXT_PUBLIC_CONVEX_URL
-  );
-  if (cachedClient) {
-    return cachedClient;
-  }
+const disabledProxy = new Proxy({} as Record<string, unknown>, {
+  get(_target, prop) {
+    if (typeof prop === "string") {
+      return async (..._args: unknown[]) => {
+        throw new Error(
+          `Convex has been removed. Called .${prop}() but code review features are temporarily disabled.`
+        );
+      };
+    }
+    return undefined;
+  },
+});
 
-  // Create new client and cache it
-  const client = new ConvexHttpClient(env.NEXT_PUBLIC_CONVEX_URL);
-  client.setAuth(accessToken);
-  convexClientCache.set(accessToken, env.NEXT_PUBLIC_CONVEX_URL, client);
-  return client;
+export function getConvex(_opts: { accessToken: string }) {
+  return disabledProxy as { query: (...args: unknown[]) => Promise<unknown>; mutation: (...args: unknown[]) => Promise<unknown> };
 }

@@ -1,10 +1,21 @@
-import { getAccessTokenFromRequest } from "@/lib/utils/auth";
-import { getConvex } from "@/lib/utils/get-convex";
+import { getUserFromRequest } from "@/lib/utils/auth";
 import { stackServerAppJs } from "@/lib/utils/stack";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
-import { api } from "@cmux/convex/api";
-import { typedZid } from "@cmux/shared/utils/typed-zid";
+import { getDb } from "@cmux/db";
+import {
+  getEnvironmentByTeam,
+  listEnvironments,
+  listSnapshotVersionsWithActive,
+} from "@cmux/db/queries/environments";
+import {
+  createEnvironment,
+  updateEnvironmentByTeam,
+  updateExposedPorts,
+  removeEnvironment,
+  createSnapshotVersionForEnvironment,
+  activateSnapshotVersion,
+} from "@cmux/db/mutations/environments";
 import { validateExposedPorts } from "@cmux/shared/utils/validate-exposed-ports";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
@@ -247,8 +258,8 @@ environmentsRouter.openapi(
   }),
   async (c) => {
     // Require authentication
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) return c.text("Unauthorized", 401);
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) return c.text("Unauthorized", 401);
 
     const body = c.req.valid("json");
 
@@ -293,23 +304,21 @@ environmentsRouter.openapi(
           console.warn("[environments] DataVault store failed (local auth?), env vars may not persist:", dvError);
         }
 
-        const convexClient = getConvex({ accessToken });
-        const environmentId = await convexClient.mutation(
-          api.environments.create,
-          {
-            teamSlugOrId: body.teamSlugOrId,
-            name: body.name,
-            morphSnapshotId: "incus", // Sentinel value — field is required
-            dataVaultKey,
-            selectedRepos: body.selectedRepos,
-            description: body.description,
-            maintenanceScript: body.maintenanceScript,
-            devScript: body.devScript,
-            exposedPorts: sanitizedPorts.length > 0 ? sanitizedPorts : undefined,
-            provider: "incus",
-            incusSnapshotId: snapshotId,
-          }
-        );
+        const db = getDb();
+        const environmentId = createEnvironment(db, {
+          teamSlugOrId: body.teamSlugOrId,
+          userId: user.id,
+          name: body.name,
+          morphSnapshotId: "incus", // Sentinel value — field is required
+          dataVaultKey,
+          selectedRepos: body.selectedRepos,
+          description: body.description,
+          maintenanceScript: body.maintenanceScript,
+          devScript: body.devScript,
+          exposedPorts: sanitizedPorts.length > 0 ? sanitizedPorts : undefined,
+          provider: "incus",
+          incusSnapshotId: snapshotId,
+        });
 
         return c.json({
           id: environmentId,
@@ -349,22 +358,20 @@ environmentsRouter.openapi(
 
       const snapshot = await instance.snapshot();
 
-      const convexClient = getConvex({ accessToken });
       const { dataVaultKey } = await persistDataVaultPromise;
-      const environmentId = await convexClient.mutation(
-        api.environments.create,
-        {
-          teamSlugOrId: body.teamSlugOrId,
-          name: body.name,
-          morphSnapshotId: snapshot.id,
-          dataVaultKey,
-          selectedRepos: body.selectedRepos,
-          description: body.description,
-          maintenanceScript: body.maintenanceScript,
-          devScript: body.devScript,
-          exposedPorts: sanitizedPorts.length > 0 ? sanitizedPorts : undefined,
-        }
-      );
+      const db = getDb();
+      const environmentId = createEnvironment(db, {
+        teamSlugOrId: body.teamSlugOrId,
+        userId: user.id,
+        name: body.name,
+        morphSnapshotId: snapshot.id,
+        dataVaultKey,
+        selectedRepos: body.selectedRepos,
+        description: body.description,
+        maintenanceScript: body.maintenanceScript,
+        devScript: body.devScript,
+        exposedPorts: sanitizedPorts.length > 0 ? sanitizedPorts : undefined,
+      });
 
       return c.json({
         id: environmentId,
@@ -407,32 +414,30 @@ environmentsRouter.openapi(
   }),
   async (c) => {
     // Require authentication
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) return c.text("Unauthorized", 401);
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) return c.text("Unauthorized", 401);
 
     const { teamSlugOrId } = c.req.valid("query");
 
     try {
-      const convexClient = getConvex({ accessToken });
-      const environments = await convexClient.query(api.environments.list, {
-        teamSlugOrId,
-      });
+      const db = getDb();
+      const envs = listEnvironments(db, teamSlugOrId);
 
-      // Map Convex documents to API response shape
-      const result = environments.map((env) => ({
-        id: env._id,
-        name: env.name,
-        morphSnapshotId: env.morphSnapshotId,
-        dataVaultKey: env.dataVaultKey,
-        selectedRepos: env.selectedRepos,
-        description: env.description,
-        maintenanceScript: env.maintenanceScript,
-        devScript: env.devScript,
-        exposedPorts: env.exposedPorts,
-        provider: env.provider,
-        incusSnapshotId: env.incusSnapshotId,
-        createdAt: env.createdAt,
-        updatedAt: env.updatedAt,
+      // Map DB rows to API response shape
+      const result = envs.map((row) => ({
+        id: row.id,
+        name: row.name,
+        morphSnapshotId: row.morphSnapshotId,
+        dataVaultKey: row.dataVaultKey,
+        selectedRepos: (row.selectedRepos as string[] | null) ?? undefined,
+        description: row.description ?? undefined,
+        maintenanceScript: row.maintenanceScript ?? undefined,
+        devScript: row.devScript ?? undefined,
+        exposedPorts: (row.exposedPorts as number[] | null) ?? undefined,
+        provider: (row.provider as "morph" | "incus" | null) ?? undefined,
+        incusSnapshotId: row.incusSnapshotId ?? undefined,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
       }));
 
       return c.json(result);
@@ -474,36 +479,32 @@ environmentsRouter.openapi(
   }),
   async (c) => {
     // Require authentication
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) return c.text("Unauthorized", 401);
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) return c.text("Unauthorized", 401);
 
     const { id } = c.req.valid("param");
     const { teamSlugOrId } = c.req.valid("query");
 
     try {
-      const convexClient = getConvex({ accessToken });
-      const environmentId = typedZid("environments").parse(id);
-      const environment = await convexClient.query(api.environments.get, {
-        teamSlugOrId,
-        id: environmentId,
-      });
+      const db = getDb();
+      const environment = getEnvironmentByTeam(db, teamSlugOrId, id);
 
       if (!environment) {
         return c.text("Environment not found", 404);
       }
-      // Map Convex document to API response shape
+      // Map DB row to API response shape
       const mapped = {
-        id: environment._id,
+        id: environment.id,
         name: environment.name,
         morphSnapshotId: environment.morphSnapshotId,
         dataVaultKey: environment.dataVaultKey,
-        selectedRepos: environment.selectedRepos,
-        description: environment.description,
-        maintenanceScript: environment.maintenanceScript,
-        devScript: environment.devScript,
-        exposedPorts: environment.exposedPorts,
-        provider: environment.provider,
-        incusSnapshotId: environment.incusSnapshotId,
+        selectedRepos: (environment.selectedRepos as string[] | null) ?? undefined,
+        description: environment.description ?? undefined,
+        maintenanceScript: environment.maintenanceScript ?? undefined,
+        devScript: environment.devScript ?? undefined,
+        exposedPorts: (environment.exposedPorts as number[] | null) ?? undefined,
+        provider: (environment.provider as "morph" | "incus" | null) ?? undefined,
+        incusSnapshotId: environment.incusSnapshotId ?? undefined,
         createdAt: environment.createdAt,
         updatedAt: environment.updatedAt,
       };
@@ -547,20 +548,16 @@ environmentsRouter.openapi(
   }),
   async (c) => {
     // Require authentication
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) return c.text("Unauthorized", 401);
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) return c.text("Unauthorized", 401);
 
     const { id } = c.req.valid("param");
     const { teamSlugOrId } = c.req.valid("query");
 
     try {
       // Get the environment to retrieve the dataVaultKey
-      const convexClient = getConvex({ accessToken });
-      const environmentId = typedZid("environments").parse(id);
-      const environment = await convexClient.query(api.environments.get, {
-        teamSlugOrId,
-        id: environmentId,
-      });
+      const db = getDb();
+      const environment = getEnvironmentByTeam(db, teamSlugOrId, id);
 
       if (!environment) {
         return c.text("Environment not found", 404);
@@ -621,12 +618,11 @@ environmentsRouter.openapi(
     },
   }),
   async (c) => {
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) return c.text("Unauthorized", 401);
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) return c.text("Unauthorized", 401);
 
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
-    const environmentId = typedZid("environments").parse(id);
 
     try {
       await verifyTeamAccess({
@@ -634,36 +630,33 @@ environmentsRouter.openapi(
         teamSlugOrId: body.teamSlugOrId,
       });
 
-      const convexClient = getConvex({ accessToken });
-      await convexClient.mutation(api.environments.update, {
+      const db = getDb();
+      updateEnvironmentByTeam(db, {
         teamSlugOrId: body.teamSlugOrId,
-        id: environmentId,
+        id,
         name: body.name,
         description: body.description,
         maintenanceScript: body.maintenanceScript,
         devScript: body.devScript,
       });
 
-      const updated = await convexClient.query(api.environments.get, {
-        teamSlugOrId: body.teamSlugOrId,
-        id: environmentId,
-      });
+      const updated = getEnvironmentByTeam(db, body.teamSlugOrId, id);
 
       if (!updated) {
         return c.text("Environment not found", 404);
       }
 
       return c.json({
-        id: updated._id,
+        id: updated.id,
         name: updated.name,
         morphSnapshotId: updated.morphSnapshotId,
         dataVaultKey: updated.dataVaultKey,
-        selectedRepos: updated.selectedRepos ?? undefined,
+        selectedRepos: (updated.selectedRepos as string[] | null) ?? undefined,
         description: updated.description ?? undefined,
         maintenanceScript: updated.maintenanceScript ?? undefined,
         devScript: updated.devScript ?? undefined,
-        exposedPorts: updated.exposedPorts ?? undefined,
-        provider: updated.provider ?? undefined,
+        exposedPorts: (updated.exposedPorts as number[] | null) ?? undefined,
+        provider: (updated.provider as "morph" | "incus" | null) ?? undefined,
         incusSnapshotId: updated.incusSnapshotId ?? undefined,
         createdAt: updated.createdAt,
         updatedAt: updated.updatedAt,
@@ -715,16 +708,14 @@ environmentsRouter.openapi(
     },
   }),
   async (c) => {
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) return c.text("Unauthorized", 401);
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) return c.text("Unauthorized", 401);
 
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
-    const environmentId = typedZid("environments").parse(id);
 
     try {
       const sanitizedPorts = sanitizePortsOrThrow(body.ports);
-      const convexClient = getConvex({ accessToken });
       const team = await verifyTeamAccess({
         req: c.req.raw,
         teamSlugOrId: body.teamSlugOrId,
@@ -808,14 +799,12 @@ environmentsRouter.openapi(
           .map(([port, url]) => ({ port, url }));
       }
 
-      const updatedPorts = await convexClient.mutation(
-        api.environments.updateExposedPorts,
-        {
-          teamSlugOrId: body.teamSlugOrId,
-          id: environmentId,
-          ports: sanitizedPorts,
-        }
-      );
+      const db = getDb();
+      const updatedPorts = updateExposedPorts(db, {
+        teamSlugOrId: body.teamSlugOrId,
+        id,
+        ports: sanitizedPorts,
+      });
 
       return c.json({
         exposedPorts: updatedPorts,
@@ -864,32 +853,25 @@ environmentsRouter.openapi(
     },
   }),
   async (c) => {
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) return c.text("Unauthorized", 401);
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) return c.text("Unauthorized", 401);
 
     const { id } = c.req.valid("param");
     const { teamSlugOrId } = c.req.valid("query");
 
     try {
-      const environmentId = typedZid("environments").parse(id);
-      const convexClient = getConvex({ accessToken });
-      const [environment, versions] = await Promise.all([
-        convexClient.query(api.environments.get, {
-          teamSlugOrId,
-          id: environmentId,
-        }),
-        convexClient.query(api.environmentSnapshots.list, {
-          teamSlugOrId,
-          environmentId,
-        }),
-      ]);
+      const db = getDb();
 
+      // Verify environment exists and belongs to team
+      const environment = getEnvironmentByTeam(db, teamSlugOrId, id);
       if (!environment) {
         return c.text("Environment not found", 404);
       }
 
+      const versions = listSnapshotVersionsWithActive(db, teamSlugOrId, id);
+
       const mapped = versions.map((version) => ({
-        id: String(version._id),
+        id: String(version.id),
         version: version.version,
         morphSnapshotId: version.morphSnapshotId,
         incusSnapshotId: version.incusSnapshotId ?? undefined,
@@ -945,12 +927,11 @@ environmentsRouter.openapi(
     },
   }),
   async (c) => {
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) return c.text("Unauthorized", 401);
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) return c.text("Unauthorized", 401);
 
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
-    const environmentId = typedZid("environments").parse(id);
 
     try {
       const team = await verifyTeamAccess({
@@ -958,13 +939,10 @@ environmentsRouter.openapi(
         teamSlugOrId: body.teamSlugOrId,
       });
 
-      const convexClient = getConvex({ accessToken });
+      const db = getDb();
 
       // Look up environment to determine provider
-      const envDoc = await convexClient.query(api.environments.get, {
-        teamSlugOrId: body.teamSlugOrId,
-        id: environmentId,
-      });
+      const envDoc = getEnvironmentByTeam(db, body.teamSlugOrId, id);
       if (!envDoc) {
         return c.text("Environment not found", 404);
       }
@@ -983,19 +961,17 @@ environmentsRouter.openapi(
         const snapshotId = `incus_snap_${randomBytes(8).toString("hex")}`;
         await incusInstance.snapshot(snapshotId);
 
-        const creation = await convexClient.mutation(
-          api.environmentSnapshots.create,
-          {
-            teamSlugOrId: body.teamSlugOrId,
-            environmentId,
-            morphSnapshotId: "incus", // Sentinel
-            incusSnapshotId: snapshotId,
-            label: body.label,
-            activate: body.activate,
-            maintenanceScript: body.maintenanceScript,
-            devScript: body.devScript,
-          }
-        );
+        const creation = createSnapshotVersionForEnvironment(db, {
+          teamSlugOrId: body.teamSlugOrId,
+          environmentId: id,
+          userId: user.id,
+          morphSnapshotId: "incus", // Sentinel
+          incusSnapshotId: snapshotId,
+          label: body.label,
+          activate: body.activate,
+          maintenanceScript: body.maintenanceScript,
+          devScript: body.devScript,
+        });
 
         return c.json({
           snapshotVersionId: String(creation.snapshotVersionId),
@@ -1032,18 +1008,16 @@ environmentsRouter.openapi(
 
       const snapshot = await instance.snapshot();
 
-      const creation = await convexClient.mutation(
-        api.environmentSnapshots.create,
-        {
-          teamSlugOrId: body.teamSlugOrId,
-          environmentId,
-          morphSnapshotId: snapshot.id,
-          label: body.label,
-          activate: body.activate,
-          maintenanceScript: body.maintenanceScript,
-          devScript: body.devScript,
-        }
-      );
+      const creation = createSnapshotVersionForEnvironment(db, {
+        teamSlugOrId: body.teamSlugOrId,
+        environmentId: id,
+        userId: user.id,
+        morphSnapshotId: snapshot.id,
+        label: body.label,
+        activate: body.activate,
+        maintenanceScript: body.maintenanceScript,
+        devScript: body.devScript,
+      });
 
       return c.json({
         snapshotVersionId: String(creation.snapshotVersionId),
@@ -1099,32 +1073,24 @@ environmentsRouter.openapi(
     },
   }),
   async (c) => {
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) return c.text("Unauthorized", 401);
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) return c.text("Unauthorized", 401);
 
     const { id, snapshotVersionId } = c.req.valid("param");
     const body = c.req.valid("json");
 
     try {
-      const environmentId = typedZid("environments").parse(id);
-      const versionId = typedZid("environmentSnapshotVersions").parse(
-        snapshotVersionId
-      );
-      const convexClient = getConvex({ accessToken });
-
       await verifyTeamAccess({
         req: c.req.raw,
         teamSlugOrId: body.teamSlugOrId,
       });
 
-      const result = await convexClient.mutation(
-        api.environmentSnapshots.activate,
-        {
-          teamSlugOrId: body.teamSlugOrId,
-          environmentId,
-          snapshotVersionId: versionId,
-        }
-      );
+      const db = getDb();
+      const result = activateSnapshotVersion(db, {
+        teamSlugOrId: body.teamSlugOrId,
+        environmentId: id,
+        snapshotVersionId,
+      });
 
       return c.json(result);
     } catch (error) {
@@ -1170,17 +1136,17 @@ environmentsRouter.openapi(
   }),
   async (c) => {
     // Require authentication
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) return c.text("Unauthorized", 401);
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) return c.text("Unauthorized", 401);
 
     const { id } = c.req.valid("param");
     const { teamSlugOrId } = c.req.valid("query");
 
     try {
-      const convexClient = getConvex({ accessToken });
-      await convexClient.mutation(api.environments.remove, {
+      const db = getDb();
+      removeEnvironment(db, {
         teamSlugOrId,
-        id: typedZid("environments").parse(id),
+        id,
       });
 
       return c.body(null, 204);

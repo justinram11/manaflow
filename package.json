@@ -32,8 +32,7 @@
     "node-abi": "^4.14.0",
     "react": "^19.2.2",
     "react-dom": "^19.2.2",
-    "monaco-editor": "^0.53.0",
-    "convex": "1.31.5"
+    "monaco-editor": "^0.53.0"
   },
   "private": true,
   "scripts": {
@@ -51,7 +50,7 @@
     "typecheck:shared": "cd packages/shared && bun run typecheck",
     "typecheck:worker": "cd apps/worker && bun run typecheck",
     "typecheck:vscode-extension": "cd packages/vscode-extension && bun run typecheck",
-    "typecheck:convex": "cd packages/convex && bun run typecheck",
+    "typecheck:db": "cd packages/db && bun run typecheck",
     "typecheck:cmux": "cd packages/cmux && bun run typecheck",
     "typecheck:morphcloud-openapi-client": "cd packages/morphcloud-openapi-client && bun run typecheck",
     "typecheck:www-openapi-client": "cd packages/www-openapi-client && bun run typecheck",
@@ -64,13 +63,20 @@
     "generate-openapi-client": "cd apps/www && bun run generate-openapi-client",
     "generate-morphcloud-openapi-client": "cd packages/morphcloud-openapi-client && bun run generate",
     "build:mac-arm64-prod": "bash scripts/build-prod-mac-arm64.sh",
-    "convex:deploy:prod": "(cd packages/convex && bun run deploy:prod)",
-    "convex:setup": "bun run --env-file .env --cwd packages/convex setup"
+    "db:migrate": "(cd packages/db && bun run migrate)",
+    "db:seed": "(cd packages/db && bun run seed)"
   },
   "type": "module",
   "workspaces": [
     "apps/*",
-    "packages/*",
+    "packages/cmux",
+    "packages/compute-provider-client",
+    "packages/db",
+    "packages/host-screenshot-collector",
+    "packages/morphcloud-openapi-client",
+    "packages/shared",
+    "packages/vscode-extension",
+    "packages/www-openapi-client",
     "scripts"
   ],
   "dependencies": {

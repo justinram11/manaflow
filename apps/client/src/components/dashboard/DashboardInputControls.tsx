@@ -18,15 +18,16 @@ import {
   setGitHubAppInstallIntent,
 } from "@/lib/github-oauth-flow";
 import { WWW_ORIGIN } from "@/lib/wwwOrigin";
-import { api } from "@cmux/convex/api";
 import type { ProviderStatus, ProviderStatusResponse } from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { parseGithubRepoUrl } from "@cmux/shared";
+import {
+  postApiIntegrationsGithubInstallState,
+} from "@cmux/www-openapi-client";
 import { useUser } from "@stackframe/react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import clsx from "clsx";
-import { useAction, useMutation } from "convex/react";
 import { Check, GitBranch, Image, Link2, Mic, Server, X } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -154,8 +155,14 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   const queryClient = useQueryClient();
   const user = useUser({ or: "return-null" });
   const agentSelectRef = useRef<SearchableSelectHandle | null>(null);
-  const mintState = useMutation(api.github_app.mintInstallState);
-  const addManualRepo = useAction(api.github_http.addManualRepo);
+  const mintStateMutation = useMutation({
+    mutationFn: async ({ teamSlugOrId: team, returnUrl }: { teamSlugOrId: string; returnUrl?: string }) => {
+      const result = await postApiIntegrationsGithubInstallState({
+        body: { teamSlugOrId: team, returnUrl },
+      });
+      return result.data as { state: string };
+    },
+  });
   const providerStatusMap = useMemo(() => {
     const map = new Map<string, ProviderStatus>();
     providerStatus?.providers?.forEach((provider) => {
@@ -436,22 +443,16 @@ export const DashboardInputControls = memo(function DashboardInputControls({
     setCustomRepoError(null);
 
     try {
-      const result = await addManualRepo({
-        teamSlugOrId,
-        repoUrl: trimmedUrl,
-      });
+      // For manual repos, just derive the full name from the URL and select it
+      const fullName = `${parsed.owner}/${parsed.repo}`;
+      onProjectChange([fullName]);
 
-      if (result.success) {
-        // Set the repo as selected
-        onProjectChange([result.fullName]);
+      // Clear the custom input
+      setCustomRepoUrl("");
+      setCustomRepoError(null);
+      setShowCustomRepoInput(false);
 
-        // Clear the custom input
-        setCustomRepoUrl("");
-        setCustomRepoError(null);
-        setShowCustomRepoInput(false);
-
-        toast.success(`Added ${result.fullName} to repositories`);
-      }
+      toast.success(`Added ${fullName} to repositories`);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Failed to add repository";
@@ -460,7 +461,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
     } finally {
       setIsAddingRepo(false);
     }
-  }, [customRepoUrl, addManualRepo, teamSlugOrId, onProjectChange]);
+  }, [customRepoUrl, teamSlugOrId, onProjectChange]);
 
   const handleCustomRepoInputChange = useCallback((value: string) => {
     setCustomRepoUrl(value);
@@ -549,7 +550,8 @@ export const DashboardInputControls = memo(function DashboardInputControls({
     const returnUrl = !isElectron
       ? new URL(`/${teamSlugOrId}/connect-complete?popup=true`, window.location.origin).toString()
       : undefined;
-    const { state } = await mintState({ teamSlugOrId, returnUrl });
+    const mintResult = await mintStateMutation.mutateAsync({ teamSlugOrId, returnUrl });
+    const { state } = mintResult;
     const sep = baseUrl.includes("?") ? "&" : "?";
     const url = `${baseUrl}${sep}state=${encodeURIComponent(state)}`;
     const win = openCenteredPopup(
@@ -560,7 +562,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
       },
     );
     win?.focus?.();
-  }, [mintState, queryClient, teamSlugOrId]);
+  }, [mintStateMutation, queryClient, teamSlugOrId]);
 
   // Check for pending GitHub App install intent on mount and when github-connect-complete is received
   useEffect(() => {

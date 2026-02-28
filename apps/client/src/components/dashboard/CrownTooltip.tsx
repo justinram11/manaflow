@@ -1,38 +1,47 @@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
-import { api } from "@cmux/convex/api";
-import type { Id } from "@cmux/convex/dataModel";
-import { useQuery } from "convex/react";
+import {
+  getApiTaskRunsOptions,
+  getApiTasksByIdOptions,
+} from "@cmux/www-openapi-client/react-query";
+import { useQuery } from "@tanstack/react-query";
 // Read team slug from path to avoid route type coupling
 import { AlertCircle, Crown, Loader2 } from "lucide-react";
 
 interface CrownStatusProps {
-  taskId: Id<"tasks">;
+  taskId: string;
   teamSlugOrId: string;
 }
 
 export function CrownStatus({ taskId, teamSlugOrId }: CrownStatusProps) {
+  const isFake = isFakeConvexId(taskId);
+
   // Get task runs
-  const taskRuns = useQuery(
-    api.taskRuns.getByTask,
-    isFakeConvexId(taskId) ? "skip" : { teamSlugOrId, taskId }
-  );
+  const taskRunsQuery = useQuery({
+    ...getApiTaskRunsOptions({ query: { taskId } }),
+    enabled: !isFake,
+  });
+  const taskRuns = taskRunsQuery.data?.taskRuns as Array<{
+    status: string;
+    agentName?: string | null;
+    crownReason?: string | null;
+    isCrowned?: boolean;
+  }> | undefined;
 
   // Get task with error status
-  const task = useQuery(
-    api.tasks.getById,
-    isFakeConvexId(taskId) ? "skip" : { teamSlugOrId, id: taskId }
-  );
+  const taskQuery = useQuery({
+    ...getApiTasksByIdOptions({ path: { id: taskId }, query: { teamSlugOrId } }),
+    enabled: !isFake,
+  });
+  const task = taskQuery.data;
 
-  // Get crown evaluation
-  const crownedRun = useQuery(
-    api.crown.getCrownedRun,
-    isFakeConvexId(taskId) ? "skip" : { teamSlugOrId, taskId }
-  );
+  // Derive crown evaluation from task data (crown endpoint removed in HTTP API)
+  const crownedRun = taskRuns?.find((run) => (run as Record<string, unknown>).isCrowned) ?? null;
 
-  const crownStatus = task?.crownEvaluationStatus ?? null;
-  const isCrownEvaluating = task?.crownEvaluationStatus === "in_progress";
-  const rawCrownErrorMessage = task?.crownEvaluationError ?? null;
+  const taskRecord = task as Record<string, unknown> | undefined;
+  const crownStatus = taskRecord?.crownEvaluationStatus as string | null ?? null;
+  const isCrownEvaluating = crownStatus === "in_progress";
+  const rawCrownErrorMessage = (taskRecord?.crownEvaluationError as string | null) ?? null;
   const crownErrorMessage =
     rawCrownErrorMessage === "pending_evaluation" ||
     rawCrownErrorMessage === "in_progress"

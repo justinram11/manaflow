@@ -4,7 +4,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useArchiveTask } from "@/hooks/useArchiveTask";
 import {
   useResumeMorphWorkspace,
@@ -21,8 +20,18 @@ import {
 import { persistentIframeManager } from "@/lib/persistentIframeManager";
 import type { AnnotatedTaskRun, TaskRunWithChildren } from "@/types/task";
 import { ContextMenu } from "@base-ui-components/react/context-menu";
-import { api } from "@cmux/convex/api";
-import { type Doc, type Id } from "@cmux/convex/dataModel";
+import type { DbTask } from "@cmux/www-openapi-client";
+import {
+  getApiTaskRunsOptions,
+  getApiTaskRunsQueryKey,
+  getApiTasksLinkedLocalWorkspaceOptions,
+  getApiTasksQueryKey,
+  getApiTasksPinnedQueryKey,
+} from "@cmux/www-openapi-client/react-query";
+import {
+  postApiTasksByIdPin,
+  postApiTasksByIdUnpin,
+} from "@cmux/www-openapi-client";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import {
   aggregatePullRequestState,
@@ -34,9 +43,8 @@ import {
   useNavigate,
   type LinkProps,
 } from "@tanstack/react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { useMutation, useQuery } from "convex/react";
-import { toast } from "sonner";
 import { useSetTaskReadState } from "@/hooks/useMarkTaskAsRead";
 import {
   AlertTriangle,
@@ -114,8 +122,9 @@ function getStatusIcon(status: TaskRunStatus): ReactElement {
   }
 }
 
-type TaskWithGeneratedBranch = Doc<"tasks"> & {
+type TaskWithGeneratedBranch = DbTask & {
   generatedBranchName?: string | null;
+  crownEvaluationStatus?: string | null;
 };
 
 function sanitizeBranchName(input?: string | null): string | null {
@@ -245,10 +254,10 @@ function flattenRuns(
 
 function findRunInTree(
   runs: TaskRunWithChildren[],
-  targetId: Id<"taskRuns">
+  targetId: string
 ): TaskRunWithChildren | null {
   for (const run of runs) {
-    if (run._id === targetId) {
+    if (run.id === targetId) {
       return run;
     }
     if (run.children.length > 0) {
@@ -264,9 +273,9 @@ function findRunInTree(
 function collectRunIds(
   node: TaskRunWithChildren,
   includeChildren: boolean,
-  acc: Set<Id<"taskRuns">>
+  acc: Set<string>
 ) {
-  acc.add(node._id);
+  acc.add(node.id ?? "");
   if (!includeChildren) {
     return;
   }
@@ -277,7 +286,7 @@ function collectRunIds(
 
 function applyArchiveStateToNode(
   run: TaskRunWithChildren,
-  ids: Set<Id<"taskRuns">>,
+  ids: Set<string>,
   archive: boolean
 ): [TaskRunWithChildren, boolean] {
   let nextChildren: TaskRunWithChildren[] | null = null;
@@ -301,7 +310,7 @@ function applyArchiveStateToNode(
     }
   }
 
-  const shouldUpdate = ids.has(run._id);
+  const shouldUpdate = ids.has(run.id ?? "");
   const nextIsArchived = shouldUpdate ? archive : run.isArchived;
   const nodeChanged = childrenChanged || nextIsArchived !== run.isArchived;
 
@@ -321,7 +330,7 @@ function applyArchiveStateToNode(
 
 function applyArchiveStateToRuns(
   runs: TaskRunWithChildren[],
-  ids: Set<Id<"taskRuns">>,
+  ids: Set<string>,
   archive: boolean
 ): TaskRunWithChildren[] {
   let changed = false;
@@ -337,7 +346,7 @@ function applyArchiveStateToRuns(
 
 function updateRunArchiveStateLocal(
   runs: TaskRunWithChildren[],
-  targetId: Id<"taskRuns">,
+  targetId: string,
   archive: boolean,
   includeChildren: boolean
 ): TaskRunWithChildren[] {
@@ -345,16 +354,16 @@ function updateRunArchiveStateLocal(
   if (!target) {
     return runs;
   }
-  const ids = new Set<Id<"taskRuns">>();
+  const ids = new Set<string>();
   collectRunIds(target, includeChildren, ids);
   return applyArchiveStateToRuns(runs, ids, archive);
 }
 
-type TaskRunExpansionState = Partial<Record<Id<"taskRuns">, boolean>>;
+type TaskRunExpansionState = Partial<Record<string, boolean>>;
 
 interface TaskRunExpansionContextValue {
   expandedRuns: TaskRunExpansionState;
-  setRunExpanded: (runId: Id<"taskRuns">, expanded: boolean) => void;
+  setRunExpanded: (runId: string, expanded: boolean) => void;
 }
 
 const TaskRunExpansionContext =
@@ -384,13 +393,13 @@ function TaskTreeInner({
   // Get the current route to determine if this task is selected
   const location = useLocation();
   const isTaskSelected = useMemo(
-    () => location.pathname.includes(`/task/${task._id}`),
-    [location.pathname, task._id]
+    () => location.pathname.includes(`/task/${task.id}`),
+    [location.pathname, task.id]
   );
 
   const [expandedRuns, setExpandedRuns] = useState<TaskRunExpansionState>({});
   const setRunExpanded = useCallback(
-    (runId: Id<"taskRuns">, expanded: boolean) => {
+    (runId: string, expanded: boolean) => {
       setExpandedRuns((prev) => {
         if (prev[runId] === expanded) {
           return prev;
@@ -411,15 +420,18 @@ function TaskTreeInner({
   const [isExpanded, setIsExpanded] = useState<boolean>(
     isTaskSelected || defaultExpanded
   );
-  const isOptimisticTask = isFakeConvexId(task._id);
+  const isOptimisticTask = isFakeConvexId(task.id);
   const canRenameTask = !isOptimisticTask;
-  const taskRuns = useQuery(
-    api.taskRuns.getByTask,
-    isOptimisticTask
-      ? "skip"
-      : { teamSlugOrId, taskId: task._id, includeArchived: true }
-  );
-  const runsLoading = !isOptimisticTask && taskRuns === undefined;
+  const taskRunsQuery = useQuery({
+    ...getApiTaskRunsOptions({
+      query: { taskId: task.id, includeArchived: "true" },
+    }),
+    enabled: !isOptimisticTask,
+  });
+  const taskRuns = taskRunsQuery.data?.taskRuns as
+    | TaskRunWithChildren[]
+    | undefined;
+  const runsLoading = !isOptimisticTask && taskRunsQuery.isLoading;
   const flattenedRuns = useMemo(() => flattenRuns(taskRuns), [taskRuns]);
   const activeRunsFlat = useMemo(
     () => flattenedRuns.filter((run) => !run.isArchived),
@@ -446,80 +458,52 @@ function TaskTreeInner({
   const runMenuEntries = useMemo(
     () =>
       annotateAgentOrdinals(flattenedRuns).map((run) => ({
-        id: run._id,
+        id: run.id ?? "",
         label: getRunDisplayText(run),
         ordinal: run.agentOrdinal,
         isArchived: Boolean(run.isArchived),
       })),
     [flattenedRuns]
   );
+  const queryClient = useQueryClient();
   const prefetched = useRef(false);
   const prefetchTaskRuns = useCallback(() => {
     if (prefetched.current || isOptimisticTask) {
       return;
     }
     prefetched.current = true;
-    void convexQueryClient.convexClient.prewarmQuery({
-      query: api.taskRuns.getByTask,
-      args: { teamSlugOrId, taskId: task._id, includeArchived: true },
-    });
-  }, [isOptimisticTask, task._id, teamSlugOrId]);
-
-  const archiveTaskRun = useMutation(api.taskRuns.archive).withOptimisticUpdate(
-    (localStore, args) => {
-      if (!args.taskId) {
-        return;
-      }
-      const variants: Array<{
-        teamSlugOrId: string;
-        taskId: Id<"tasks">;
-        includeArchived?: boolean;
-      }> = [
-        { teamSlugOrId: args.teamSlugOrId, taskId: args.taskId },
-        {
-          teamSlugOrId: args.teamSlugOrId,
-          taskId: args.taskId,
-          includeArchived: true,
-        },
-      ];
-
-      for (const variant of variants) {
-        const current = localStore.getQuery(api.taskRuns.getByTask, variant);
-        if (!current) {
-          continue;
-        }
-        const updated = updateRunArchiveStateLocal(
-          current,
-          args.id,
-          args.archive,
-          args.includeChildren ?? false
-        );
-        if (updated !== current) {
-          localStore.setQuery(api.taskRuns.getByTask, variant, updated);
-        }
-      }
-    }
-  );
+    void queryClient.prefetchQuery(
+      getApiTaskRunsOptions({
+        query: { taskId: task.id, includeArchived: "true" },
+      })
+    );
+  }, [isOptimisticTask, task.id, queryClient]);
 
   const handleRunArchiveToggle = useCallback(
-    async (runId: Id<"taskRuns">, shouldArchive: boolean) => {
-      try {
-        await archiveTaskRun({
-          teamSlugOrId,
-          id: runId,
-          archive: shouldArchive,
-          taskId: task._id,
-        });
-      } catch (error) {
-        console.error(error);
-        toast.error(
-          shouldArchive
-            ? "Failed to archive task run"
-            : "Failed to restore task run"
+    (runId: string, shouldArchive: boolean) => {
+      // Optimistically update the local cache
+      const queryKey = getApiTaskRunsQueryKey({
+        query: { taskId: task.id, includeArchived: "true" },
+      });
+      const current = queryClient.getQueryData<{
+        taskRuns: TaskRunWithChildren[];
+      }>(queryKey);
+      if (current?.taskRuns) {
+        const updated = updateRunArchiveStateLocal(
+          current.taskRuns,
+          runId,
+          shouldArchive,
+          false
         );
+        if (updated !== current.taskRuns) {
+          queryClient.setQueryData(queryKey, {
+            ...current,
+            taskRuns: updated,
+          });
+        }
       }
     },
-    [archiveTaskRun, task._id, teamSlugOrId]
+    [task.id, queryClient]
   );
 
   // Memoize the toggle handler
@@ -563,7 +547,7 @@ function TaskTreeInner({
 
   const { archiveWithUndo, unarchive, isArchiving } =
     useArchiveTask(teamSlugOrId);
-  const taskIsArchiving = isArchiving(task._id);
+  const taskIsArchiving = isArchiving(task.id);
 
   const {
     isRenaming,
@@ -577,7 +561,7 @@ function TaskTreeInner({
     handleRenameFocus,
     handleStartRenaming,
   } = useTaskRename({
-    taskId: task._id,
+    taskId: task.id,
     teamSlugOrId,
     currentText: task.text ?? "",
     canRename: canRenameTask,
@@ -594,102 +578,66 @@ function TaskTreeInner({
   }, [archiveWithUndo, task]);
 
   const handleUnarchive = useCallback(() => {
-    unarchive(task._id);
-  }, [unarchive, task._id]);
+    unarchive(task.id);
+  }, [unarchive, task.id]);
 
-  // Mutations for pinning/unpinning tasks with optimistic updates
-  const pinTask = useMutation(api.tasks.pin).withOptimisticUpdate(
-    (localStore, args) => {
-      const now = Date.now();
-
-      // Update the task in the main task list
-      const tasks = localStore.getQuery(api.tasks.get, {
-        teamSlugOrId: args.teamSlugOrId,
+  // Mutations for pinning/unpinning tasks
+  const pinTaskMutation = useMutation({
+    mutationFn: (args: { id: string }) =>
+      postApiTasksByIdPin({
+        path: { id: args.id },
+        body: { teamSlugOrId },
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: getApiTasksQueryKey({ query: { teamSlugOrId } }),
       });
-      if (tasks) {
-        const updatedTasks = tasks.map((t) =>
-          t._id === args.id ? { ...t, pinned: true, updatedAt: now, hasUnread: t.hasUnread ?? false } : t
-        );
-        localStore.setQuery(
-          api.tasks.get,
-          { teamSlugOrId: args.teamSlugOrId },
-          updatedTasks
-        );
-      }
-
-      // Update the pinned items query
-      const pinned =
-        localStore.getQuery(api.tasks.getPinned, {
-          teamSlugOrId: args.teamSlugOrId,
-        }) || [];
-      const taskToPin = tasks?.find((t) => t._id === args.id);
-      if (taskToPin) {
-        // Insert at the beginning since it's the most recently updated
-        localStore.setQuery(
-          api.tasks.getPinned,
-          { teamSlugOrId: args.teamSlugOrId },
-          [{ ...taskToPin, pinned: true, updatedAt: now, hasUnread: taskToPin.hasUnread ?? false }, ...pinned]
-        );
-      }
-    }
-  );
-
-  const unpinTask = useMutation(api.tasks.unpin).withOptimisticUpdate(
-    (localStore, args) => {
-      const now = Date.now();
-
-      // Update the task in the main task list
-      const tasks = localStore.getQuery(api.tasks.get, {
-        teamSlugOrId: args.teamSlugOrId,
+      void queryClient.invalidateQueries({
+        queryKey: getApiTasksPinnedQueryKey({ query: { teamSlugOrId } }),
       });
-      if (tasks) {
-        const updatedTasks = tasks.map((t) =>
-          t._id === args.id ? { ...t, pinned: false, updatedAt: now } : t
-        );
-        localStore.setQuery(
-          api.tasks.get,
-          { teamSlugOrId: args.teamSlugOrId },
-          updatedTasks
-        );
-      }
+    },
+    onError: (error) => {
+      console.error("Failed to pin task", error);
+    },
+  });
 
-      // Update the pinned items query
-      const pinned =
-        localStore.getQuery(api.tasks.getPinned, {
-          teamSlugOrId: args.teamSlugOrId,
-        }) || [];
-      localStore.setQuery(
-        api.tasks.getPinned,
-        { teamSlugOrId: args.teamSlugOrId },
-        pinned.filter((t) => t._id !== args.id)
-      );
-    }
-  );
+  const unpinTaskMutation = useMutation({
+    mutationFn: (args: { id: string }) =>
+      postApiTasksByIdUnpin({
+        path: { id: args.id },
+        body: { teamSlugOrId },
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: getApiTasksQueryKey({ query: { teamSlugOrId } }),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: getApiTasksPinnedQueryKey({ query: { teamSlugOrId } }),
+      });
+    },
+    onError: (error) => {
+      console.error("Failed to unpin task", error);
+    },
+  });
 
   const handlePin = useCallback(() => {
-    pinTask({
-      teamSlugOrId,
-      id: task._id,
-    });
-  }, [pinTask, teamSlugOrId, task._id]);
+    pinTaskMutation.mutate({ id: task.id });
+  }, [pinTaskMutation, task.id]);
 
   const handleUnpin = useCallback(() => {
-    unpinTask({
-      teamSlugOrId,
-      id: task._id,
-    });
-  }, [unpinTask, teamSlugOrId, task._id]);
+    unpinTaskMutation.mutate({ id: task.id });
+  }, [unpinTaskMutation, task.id]);
 
   // Mutation for marking task as read/unread (with optimistic updates)
   const setTaskReadState = useSetTaskReadState(teamSlugOrId);
 
   const handleMarkAsRead = useCallback(() => {
-    setTaskReadState(task._id, true);
-  }, [setTaskReadState, task._id]);
+    setTaskReadState(task.id, true);
+  }, [setTaskReadState, task.id]);
 
   const handleMarkAsUnread = useCallback(() => {
-    setTaskReadState(task._id, false);
-  }, [setTaskReadState, task._id]);
+    setTaskReadState(task.id, false);
+  }, [setTaskReadState, task.id]);
 
   const inferredBranch = getTaskBranch(task);
   const trimmedTaskText = (task.text ?? "").trim();
@@ -890,7 +838,7 @@ function TaskTreeInner({
           <ContextMenu.Trigger>
               <Link
                 to="/$teamSlugOrId/task/$taskId"
-                params={{ teamSlugOrId, taskId: task._id }}
+                params={{ teamSlugOrId, taskId: task.id }}
                 search={{ runId: undefined }}
                 activeOptions={{ exact: true }}
                 className={clsx(
@@ -924,8 +872,8 @@ function TaskTreeInner({
                     to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
                     params: {
                       teamSlugOrId,
-                      taskId: task._id,
-                      runId: localWorkspaceRun._id,
+                      taskId: task.id,
+                      runId: localWorkspaceRun.id,
                     },
                   });
                   return;
@@ -1095,8 +1043,8 @@ function TaskTreeInner({
             to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
             params={{
               teamSlugOrId,
-              taskId: task._id,
-              runId: localWorkspaceRun._id,
+              taskId: task.id,
+              runId: localWorkspaceRun.id,
             }}
             icon={
               <VSCodeIcon className="w-3 h-3 mr-2 text-neutral-400 grayscale opacity-60" />
@@ -1112,7 +1060,7 @@ function TaskTreeInner({
         {/* For non-local workspaces, show normal task runs content */}
         {isExpanded && !localWorkspaceRun ? (
           <TaskRunsContent
-            taskId={task._id}
+            taskId={task.id}
             teamSlugOrId={teamSlugOrId}
             level={level}
             runs={taskRuns}
@@ -1128,12 +1076,12 @@ function TaskTreeInner({
 }
 
 interface TaskRunsContentProps {
-  taskId: Id<"tasks">;
+  taskId: string;
   teamSlugOrId: string;
   level: number;
   runs: TaskRunWithChildren[] | undefined;
   isLoading: boolean;
-  onArchiveToggle: (runId: Id<"taskRuns">, archive: boolean) => void;
+  onArchiveToggle: (runId: string, archive: boolean) => void;
   hasVisibleRuns: boolean;
   showRunNumbers: boolean;
 }
@@ -1175,7 +1123,7 @@ function TaskRunsContent({
   const firstVisibleRunId = useMemo(() => {
     for (const run of annotatedRuns) {
       if (!run.isArchived) {
-        return run._id;
+        return run.id;
       }
     }
     return null;
@@ -1234,13 +1182,13 @@ function TaskRunsContent({
     <div className="flex flex-col">
       {annotatedRuns.map((run) => (
         <TaskRunTree
-          key={run._id}
+          key={run.id}
           run={run}
           level={level + 1}
           taskId={taskId}
           teamSlugOrId={teamSlugOrId}
           isDefaultSelected={
-            shouldHighlightDefaultRun && firstVisibleRunId === run._id
+            shouldHighlightDefaultRun && firstVisibleRunId === run.id
           }
           onArchiveToggle={onArchiveToggle}
           showRunNumbers={showRunNumbers}
@@ -1284,10 +1232,10 @@ function TaskRunsMessage({
 interface TaskRunTreeProps {
   run: AnnotatedTaskRun;
   level: number;
-  taskId: Id<"tasks">;
+  taskId: string;
   teamSlugOrId: string;
   isDefaultSelected?: boolean;
-  onArchiveToggle: (runId: Id<"taskRuns">, archive: boolean) => void;
+  onArchiveToggle: (runId: string, archive: boolean) => void;
   showRunNumbers: boolean;
 }
 
@@ -1303,7 +1251,7 @@ function TaskRunTreeInner({
   const location = useLocation();
   const { expandedRuns, setRunExpanded } = useTaskRunExpansionContext();
   const defaultExpanded = Boolean(run.isCrowned);
-  const isExpanded = expandedRuns[run._id] ?? defaultExpanded;
+  const isExpanded = expandedRuns[run.id] ?? defaultExpanded;
   const runIdFromSearch = useMemo(() => {
     if (
       location.search &&
@@ -1324,26 +1272,26 @@ function TaskRunTreeInner({
   const isRunRoute = useMemo(
     () =>
       location.pathname.includes(
-        `/${teamSlugOrId}/task/${taskId}/run/${run._id}`
+        `/${teamSlugOrId}/task/${taskId}/run/${run.id}`
       ),
-    [location.pathname, teamSlugOrId, taskId, run._id]
+    [location.pathname, teamSlugOrId, taskId, run.id]
   );
   const isRunSelected = useMemo(
-    () => isDefaultSelected || runIdFromSearch === run._id || isRunRoute,
-    [isDefaultSelected, isRunRoute, run._id, runIdFromSearch]
+    () => isDefaultSelected || runIdFromSearch === run.id || isRunRoute,
+    [isDefaultSelected, isRunRoute, run.id, runIdFromSearch]
   );
 
-  const hasExpandedManually = useRef<Id<"taskRuns"> | null>(null);
+  const hasExpandedManually = useRef<string | null>(null);
 
   useEffect(() => {
     if (
       isRunSelected &&
       !isExpanded &&
-      hasExpandedManually.current !== run._id
+      hasExpandedManually.current !== run.id
     ) {
-      setRunExpanded(run._id, true);
+      setRunExpanded(run.id, true);
     }
-  }, [isExpanded, isRunSelected, run._id, setRunExpanded]);
+  }, [isExpanded, isRunSelected, run.id, setRunExpanded]);
 
   const hasChildren = run.children.length > 0;
 
@@ -1367,14 +1315,14 @@ function TaskRunTreeInner({
   // Memoize the toggle handler
   const handleToggle = useCallback(
     (_event?: MouseEvent<HTMLButtonElement | HTMLAnchorElement>) => {
-      hasExpandedManually.current = run._id;
-      setRunExpanded(run._id, !isExpanded);
+      hasExpandedManually.current = run.id;
+      setRunExpanded(run.id, !isExpanded);
     },
-    [isExpanded, run._id, setRunExpanded]
+    [isExpanded, run.id, setRunExpanded]
   );
   const handleArchiveRun = useCallback(() => {
-    onArchiveToggle(run._id, true);
-  }, [onArchiveToggle, run._id]);
+    onArchiveToggle(run.id, true);
+  }, [onArchiveToggle, run.id]);
 
   const isLocalWorkspaceRunEntry = run.isLocalWorkspace;
   const isCloudWorkspaceRunEntry = run.isCloudWorkspace;
@@ -1551,7 +1499,7 @@ function TaskRunTreeInner({
   });
 
   const resumeWorkspace = useResumeMorphWorkspace({
-    taskRunId: run._id,
+    taskRunId: run.id,
     teamSlugOrId,
   });
 
@@ -1561,13 +1509,13 @@ function TaskRunTreeInner({
     }
 
     void resumeWorkspace.mutateAsync({
-      path: { taskRunId: run._id },
+      path: { taskRunId: run.id },
       body: { teamSlugOrId },
     });
-  }, [resumeWorkspace, run._id, teamSlugOrId]);
+  }, [resumeWorkspace, run.id, teamSlugOrId]);
 
   const refreshGitHubAuth = useRefreshMorphGitHubAuth({
-    taskRunId: run._id,
+    taskRunId: run.id,
     teamSlugOrId,
   });
 
@@ -1577,10 +1525,10 @@ function TaskRunTreeInner({
     }
 
     void refreshGitHubAuth.mutateAsync({
-      path: { taskRunId: run._id },
+      path: { taskRunId: run.id },
       body: { teamSlugOrId },
     });
-  }, [refreshGitHubAuth, run._id, teamSlugOrId]);
+  }, [refreshGitHubAuth, run.id, teamSlugOrId]);
 
   const shouldRenderPullRequestLink = Boolean(
     (run.pullRequestUrl && run.pullRequestUrl !== "pending") ||
@@ -1613,7 +1561,7 @@ function TaskRunTreeInner({
             }}
             search={(prev) => ({
               ...(prev ?? {}),
-              runId: run._id,
+              runId: run.id,
             })}
             className="group/run block"
             data-focus-visible={isRunLinkFocusVisible ? "true" : undefined}
@@ -1844,8 +1792,8 @@ interface AddPreviewInputProps {
   indentLevel: number;
   onAdd: (url: string) => Promise<number>;
   currentCount: number;
-  taskId: Id<"tasks">;
-  runId: Id<"taskRuns">;
+  taskId: string;
+  runId: string;
   teamSlugOrId: string;
 }
 
@@ -1890,7 +1838,7 @@ function AddPreviewInput({
 interface TaskRunDetailsProps {
   run: AnnotatedTaskRun;
   level: number;
-  taskId: Id<"tasks">;
+  taskId: string;
   teamSlugOrId: string;
   isExpanded: boolean;
   hasChildren: boolean;
@@ -1904,7 +1852,7 @@ interface TaskRunDetailsProps {
     maintenanceError?: string;
     devError?: string;
   };
-  onArchiveToggle: (runId: Id<"taskRuns">, archive: boolean) => void;
+  onArchiveToggle: (runId: string, archive: boolean) => void;
   showRunNumbers: boolean;
   isLocalWorkspace: boolean;
   isCloudWorkspace: boolean;
@@ -1928,103 +1876,79 @@ function TaskRunDetails({
 }: TaskRunDetailsProps) {
   const location = useLocation();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   // Fetch linked local workspace for cloud runs (skip for local/cloud workspaces)
-  const linkedLocalWorkspace = useQuery(
-    api.tasks.getLinkedLocalWorkspace,
-    !isLocalWorkspace && !isCloudWorkspace
-      ? { teamSlugOrId, cloudTaskRunId: run._id }
-      : "skip"
-  );
+  const linkedLocalWorkspaceQuery = useQuery({
+    ...getApiTasksLinkedLocalWorkspaceOptions({
+      query: { teamSlugOrId, cloudTaskRunId: run.id ?? "" },
+    }),
+    enabled: !isLocalWorkspace && !isCloudWorkspace && Boolean(run.id),
+  });
+  const linkedLocalWorkspace = linkedLocalWorkspaceQuery.data ?? null;
 
   // Extract current previewId from URL if on preview route
   const currentPreviewId = location.pathname.includes("/preview/")
     ? location.pathname.split("/preview/")[1]?.split("/")[0]
     : undefined;
 
-  const addCustomPreview = useMutation(
-    api.taskRuns.addCustomPreview
-  ).withOptimisticUpdate((localStore, args) => {
-    const newPreview = {
-      url: args.url,
-      createdAt: Date.now(),
-    };
-
-    // Update all queries that might have this task run
-    const taskRunsQuery = localStore.getQuery(api.taskRuns.getByTask, {
-      teamSlugOrId: args.teamSlugOrId,
-      taskId,
-    });
-
-    if (taskRunsQuery) {
-      localStore.setQuery(
-        api.taskRuns.getByTask,
-        { teamSlugOrId: args.teamSlugOrId, taskId },
-        taskRunsQuery.map((r) =>
-          r._id === args.runId
-            ? {
-                ...r,
-                customPreviews: [...(r.customPreviews || []), newPreview],
-              }
-            : r
-        )
-      );
-    }
-  });
-
-  const removeCustomPreview = useMutation(
-    api.taskRuns.removeCustomPreview
-  ).withOptimisticUpdate((localStore, args) => {
-    // Update all queries that might have this task run
-    const taskRunsQuery = localStore.getQuery(api.taskRuns.getByTask, {
-      teamSlugOrId: args.teamSlugOrId,
-      taskId,
-    });
-
-    if (taskRunsQuery) {
-      localStore.setQuery(
-        api.taskRuns.getByTask,
-        { teamSlugOrId: args.teamSlugOrId, taskId },
-        taskRunsQuery.map((r) =>
-          r._id === args.runId
-            ? {
-                ...r,
-                customPreviews: (r.customPreviews || []).filter(
-                  (_, i) => i !== args.index
-                ),
-              }
-            : r
-        )
-      );
-    }
-  });
-
   const handleAddPreview = useCallback(
     async (url: string): Promise<number> => {
-      try {
-        const index = await addCustomPreview({
-          teamSlugOrId,
-          runId: run._id,
-          url,
+      // Optimistically update the local cache
+      const runId = run.id ?? "";
+      const queryKey = getApiTaskRunsQueryKey({
+        query: { taskId, includeArchived: "true" },
+      });
+      const current = queryClient.getQueryData<{
+        taskRuns: TaskRunWithChildren[];
+      }>(queryKey);
+      let newIndex = customPreviews.length;
+      if (current?.taskRuns) {
+        const newPreview = { url, createdAt: Date.now() };
+        queryClient.setQueryData(queryKey, {
+          ...current,
+          taskRuns: current.taskRuns.map((r) =>
+            r.id === runId
+              ? {
+                  ...r,
+                  customPreviews: [...(r.customPreviews || []), newPreview],
+                }
+              : r
+          ),
         });
-        return index;
-      } catch (error) {
-        console.error("Failed to add preview", error);
-        throw error;
+        const updatedRun = current.taskRuns.find((r) => r.id === runId);
+        newIndex = (updatedRun?.customPreviews?.length ?? 0);
       }
+      return newIndex;
     },
-    [addCustomPreview, run._id, teamSlugOrId]
+    [run.id, taskId, customPreviews.length, queryClient]
   );
 
   const handleRemovePreview = useCallback(
     (index: number, currentPreviewId?: string) => {
-      void removeCustomPreview({
-        teamSlugOrId,
-        runId: run._id,
-        index,
-      }).catch((error) => {
-        console.error("Failed to remove preview", error);
+      // Optimistically update the local cache
+      const runId = run.id ?? "";
+      const queryKey = getApiTaskRunsQueryKey({
+        query: { taskId, includeArchived: "true" },
       });
+      const current = queryClient.getQueryData<{
+        taskRuns: TaskRunWithChildren[];
+      }>(queryKey);
+      if (current?.taskRuns) {
+        queryClient.setQueryData(queryKey, {
+          ...current,
+          taskRuns: current.taskRuns.map((r) =>
+            r.id === runId
+              ? {
+                  ...r,
+                  customPreviews: (r.customPreviews || []).filter(
+                    (_, i) => i !== index
+                  ),
+                }
+              : r
+          ),
+        });
+      }
 
       // If we're currently viewing the tab being closed, navigate to another tab
       if (currentPreviewId === String(index)) {
@@ -2038,7 +1962,7 @@ function TaskRunDetails({
             params: {
               teamSlugOrId,
               taskId,
-              runId: run._id,
+              runId: run.id,
               previewId: String(nextIndex),
             },
           });
@@ -2049,7 +1973,7 @@ function TaskRunDetails({
             params: {
               teamSlugOrId,
               taskId,
-              runId: run._id,
+              runId: run.id,
               previewId: String(previewServices[0].port),
             },
           });
@@ -2060,31 +1984,31 @@ function TaskRunDetails({
             params: {
               teamSlugOrId,
               taskId,
-              runId: run._id,
-              taskRunId: run._id,
+              runId: run.id,
+              taskRunId: run.id,
             },
           });
         }
       }
     },
     [
-      removeCustomPreview,
-      run._id,
+      run.id,
       teamSlugOrId,
       customPreviews,
       previewServices,
       navigate,
       taskId,
+      queryClient,
     ]
   );
 
   const handleReloadVSCode = useCallback(() => {
-    persistentIframeManager.reloadIframe(getTaskRunPersistKey(run._id));
-  }, [run._id]);
+    persistentIframeManager.reloadIframe(getTaskRunPersistKey(run.id));
+  }, [run.id]);
 
   const handleReloadBrowser = useCallback(() => {
-    persistentIframeManager.reloadIframe(getTaskRunBrowserPersistKey(run._id));
-  }, [run._id]);
+    persistentIframeManager.reloadIframe(getTaskRunBrowserPersistKey(run.id));
+  }, [run.id]);
 
   const handleReloadTerminals = useCallback(() => {
     window.location.reload();
@@ -2151,10 +2075,10 @@ function TaskRunDetails({
 
   // Determine linked local workspace status
   const hasLinkedLocalWorkspace = Boolean(linkedLocalWorkspace);
-  const linkedLocalTaskRunId = linkedLocalWorkspace?.taskRun?._id;
-  const linkedLocalTaskId = linkedLocalWorkspace?.task?._id;
-  const isLinkedLocalVSCodeReady =
-    linkedLocalWorkspace?.taskRun?.vscode?.status === "running";
+  const linkedLocalTaskRunId = (linkedLocalWorkspace?.taskRun as Record<string, unknown> | undefined)?.id as string | undefined;
+  const linkedLocalTaskId = linkedLocalWorkspace?.task?.id;
+  const linkedTaskRunVscode = (linkedLocalWorkspace?.taskRun as Record<string, unknown> | undefined)?.vscode as { status?: string } | undefined;
+  const isLinkedLocalVSCodeReady = linkedTaskRunVscode?.status === "running";
 
   // For VSCode, combine environment error with status indicator
   const vscodeTrailing = environmentErrorIndicator || statusIndicator;
@@ -2201,7 +2125,7 @@ function TaskRunDetails({
         params={{
           teamSlugOrId,
           taskId,
-          runId: run._id,
+          runId: run.id,
         }}
         icon={<VSCodeIcon className="w-3 h-3 mr-2 text-neutral-400 grayscale opacity-60" />}
         label="VS Code"
@@ -2213,7 +2137,7 @@ function TaskRunDetails({
       {!isCloudWorkspace ? (
         <TaskRunDetailLink
           to="/$teamSlugOrId/task/$taskId/run/$runId/diff"
-          params={{ teamSlugOrId, taskId, runId: run._id }}
+          params={{ teamSlugOrId, taskId, runId: run.id }}
           icon={<GitCompare className="w-3 h-3 mr-2 text-neutral-400" />}
           label="Git diff"
           indentLevel={indentLevel}
@@ -2223,7 +2147,7 @@ function TaskRunDetails({
       {!isLocalWorkspace ? (
         <TaskRunDetailLink
           to="/$teamSlugOrId/task/$taskId/run/$runId/browser"
-          params={{ teamSlugOrId, taskId, runId: run._id }}
+          params={{ teamSlugOrId, taskId, runId: run.id }}
           icon={<Monitor className="w-3 h-3 mr-2 text-neutral-400" />}
           label="Browser"
           indentLevel={indentLevel}
@@ -2235,7 +2159,7 @@ function TaskRunDetails({
       {!isLocalWorkspace ? (
         <TaskRunDetailLink
           to="/$teamSlugOrId/task/$taskId/run/$runId/terminals"
-          params={{ teamSlugOrId, taskId, runId: run._id }}
+          params={{ teamSlugOrId, taskId, runId: run.id }}
           icon={<TerminalSquare className="w-3 h-3 mr-2 text-neutral-400" />}
           label="Terminals"
           indentLevel={indentLevel}
@@ -2247,7 +2171,7 @@ function TaskRunDetails({
       {shouldRenderPullRequestLink ? (
         <TaskRunDetailLink
           to="/$teamSlugOrId/task/$taskId/run/$runId/pr"
-          params={{ teamSlugOrId, taskId, runId: run._id }}
+          params={{ teamSlugOrId, taskId, runId: run.id }}
           icon={<GitPullRequest className="w-3 h-3 mr-2 text-neutral-400" />}
           label="Pull Request"
           indentLevel={indentLevel}
@@ -2264,7 +2188,7 @@ function TaskRunDetails({
                 params={{
                   teamSlugOrId,
                   taskId,
-                  runId: run._id,
+                  runId: run.id,
                   previewId: `${service.port}`,
                 }}
                 icon={
@@ -2328,7 +2252,7 @@ function TaskRunDetails({
                 params={{
                   teamSlugOrId,
                   taskId,
-                  runId: run._id,
+                  runId: run.id,
                   previewId: String(index),
                 }}
                 icon={
@@ -2399,7 +2323,7 @@ function TaskRunDetails({
             onAdd={handleAddPreview}
             currentCount={customPreviews.length}
             taskId={taskId}
-            runId={run._id}
+            runId={run.id}
             teamSlugOrId={teamSlugOrId}
           />
         </>
@@ -2409,7 +2333,7 @@ function TaskRunDetails({
         <div className="flex flex-col">
           {run.children.map((childRun) => (
             <TaskRunTree
-              key={childRun._id}
+              key={childRun.id}
               run={childRun}
               level={level + 1}
               taskId={taskId}

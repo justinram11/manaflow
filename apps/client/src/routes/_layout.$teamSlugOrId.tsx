@@ -1,15 +1,17 @@
 import { CmuxComments } from "@/components/cmux-comments";
 import { CommandBar } from "@/components/CommandBar";
 import { Sidebar } from "@/components/Sidebar";
-import { SIDEBAR_PRS_DEFAULT_LIMIT } from "@/components/sidebar/const";
-import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { ExpandTasksProvider } from "@/contexts/expand-tasks/ExpandTasksProvider";
 import { cachedGetUser } from "@/lib/cachedGetUser";
 import { setLastTeamSlugOrId } from "@/lib/lastTeam";
 import { stackClientApp } from "@/lib/stack";
-import { api } from "@cmux/convex/api";
+import { queryClient } from "@/query-client";
+import type { DbTask } from "@cmux/www-openapi-client";
+import {
+  getApiTasksNotificationOrderOptions,
+  getApiTeamsOptions,
+} from "@cmux/www-openapi-client/react-query";
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
-import { convexQuery } from "@convex-dev/react-query";
 import { useQuery as useRQ } from "@tanstack/react-query";
 import { Suspense, useEffect } from "react";
 import { env } from "@/client-env";
@@ -39,16 +41,11 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId")({
       }
     }
     const { teamSlugOrId } = params;
-    const teamMemberships = await convexQueryClient.convexClient.query(
-      api.teams.listTeamMemberships
-    );
-    const teamMembership = teamMemberships.find((membership) => {
-      const team = membership.team;
-      const membershipTeamId = team?.teamId ?? membership.teamId;
-      const membershipSlug = team?.slug;
-      return (
-        membershipSlug === teamSlugOrId || membershipTeamId === teamSlugOrId
-      );
+    // Verify team membership via API
+    const teamsData = await queryClient.ensureQueryData(getApiTeamsOptions());
+    const teams = teamsData.teams as Array<{ id?: string; slug?: string; teamId?: string }>;
+    const teamMembership = teams.find((team) => {
+      return team.slug === teamSlugOrId || team.id === teamSlugOrId || team.teamId === teamSlugOrId;
     });
     if (!teamMembership) {
       throw redirect({ to: "/team-picker" });
@@ -56,37 +53,31 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId")({
   },
   loader: async ({ params }) => {
     // In web mode, exclude local workspaces
-    const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE || undefined;
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.tasks.getWithNotificationOrder,
-      args: { teamSlugOrId: params.teamSlugOrId, excludeLocalWorkspaces },
-    });
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.github_prs.listPullRequests,
-      args: {
-        teamSlugOrId: params.teamSlugOrId,
-        state: "open",
-        limit: SIDEBAR_PRS_DEFAULT_LIMIT,
-      },
-    });
+    const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE ? "true" as const : undefined;
+    void queryClient.prefetchQuery(
+      getApiTasksNotificationOrderOptions({
+        query: { teamSlugOrId: params.teamSlugOrId, excludeLocalWorkspaces },
+      })
+    );
   },
 });
 
 function LayoutComponent() {
   const { teamSlugOrId } = Route.useParams();
   // In web mode, exclude local workspaces
-  const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE || undefined;
-  // Use React Query-wrapped Convex queries to avoid real-time subscriptions
-  // that cause excessive re-renders cascading to all child components.
-  // Uses getWithNotificationOrder which sorts tasks with unread notifications first
+  const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE ? "true" as const : undefined;
+  // Use React Query to fetch tasks sorted by notification order
   const tasksQuery = useRQ({
-    ...convexQuery(api.tasks.getWithNotificationOrder, { teamSlugOrId, excludeLocalWorkspaces }),
+    ...getApiTasksNotificationOrderOptions({
+      query: { teamSlugOrId, excludeLocalWorkspaces },
+    }),
     enabled: Boolean(teamSlugOrId),
   });
-  const tasks = tasksQuery.data;
+  const tasks = tasksQuery.data?.tasks;
 
   // Tasks are already sorted by the query (unread notifications first, then by createdAt)
-  const displayTasks = tasks;
+  // The API response includes hasUnread as an extra field beyond the base DbTask type
+  const displayTasks = tasks as Array<DbTask & { hasUnread: boolean }> | undefined;
 
   return (
     <ExpandTasksProvider>
@@ -134,8 +125,6 @@ function LayoutComponent() {
   );
 }
 
-// ConvexClientProvider is already applied in the top-level `/_layout` route.
-// Avoid nesting providers here to prevent auth/loading thrash.
 function LayoutComponentWrapper() {
   const { teamSlugOrId } = Route.useParams();
   useEffect(() => {

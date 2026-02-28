@@ -1,5 +1,4 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useQuery as useConvexQuery } from "convex/react";
 import {
   postApiMorphTaskRunsByTaskRunIdIsPaused,
   type Options,
@@ -11,20 +10,19 @@ import {
 import {
   postApiMorphTaskRunsByTaskRunIdResumeMutation,
   postApiMorphTaskRunsByTaskRunIdRefreshGithubAuthMutation,
+  getApiTaskRunsByIdOptions,
 } from "@cmux/www-openapi-client/react-query";
 import { toast } from "sonner";
 import { queryClient } from "@/query-client";
-import { api } from "@cmux/convex/api";
-import { type Id } from "@cmux/convex/dataModel";
 
 interface MorphWorkspaceQueryArgs {
-  taskRunId: Id<"taskRuns">;
+  taskRunId: string;
   teamSlugOrId: string;
   enabled?: boolean;
 }
 
 interface UseResumeMorphWorkspaceArgs {
-  taskRunId: Id<"taskRuns">;
+  taskRunId: string;
   teamSlugOrId: string;
   onSuccess?: () => void;
   onError?: (error: unknown) => void;
@@ -39,11 +37,15 @@ export function useMorphInstancePauseQuery({
   teamSlugOrId,
   enabled,
 }: MorphWorkspaceQueryArgs) {
-  const taskRun = useConvexQuery(api.taskRuns.get, {
-    teamSlugOrId,
-    id: taskRunId,
+  const taskRunQuery = useQuery({
+    ...getApiTaskRunsByIdOptions({ path: { id: taskRunId } }),
+    enabled: enabled !== false,
   });
-  const canResume = taskRun?.vscode?.provider === "morph";
+
+  const taskRun = taskRunQuery.data as Record<string, unknown> | null | undefined;
+  const vscode = taskRun?.vscode as { provider?: string } | undefined;
+  const canResume = vscode?.provider === "morph";
+
   return useQuery({
     enabled: canResume && enabled,
     queryKey: morphPauseQueryKey(taskRunId, teamSlugOrId),
@@ -103,7 +105,7 @@ export function useResumeMorphWorkspace({
 }
 
 interface UseRefreshGitHubAuthArgs {
-  taskRunId: Id<"taskRuns">;
+  taskRunId: string;
   teamSlugOrId: string;
   onSuccess?: () => void;
   onError?: (error: unknown) => void;

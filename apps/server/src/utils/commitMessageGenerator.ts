@@ -1,10 +1,10 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
-import { api } from "@cmux/convex/api";
 import { CLOUDFLARE_OPENAI_BASE_URL } from "@cmux/shared";
 import { generateText, type LanguageModel } from "ai";
-import { getConvex } from "../utils/convexClient";
+import { getDb, getUserId } from "./dbClient";
+import { getApiKeysForAgents } from "@cmux/db/queries/settings";
 import { serverLogger } from "./fileLogger";
 
 function getModelAndProvider(
@@ -35,9 +35,9 @@ export async function generateCommitMessageFromDiff(
   diff: string,
   teamSlugOrId: string
 ): Promise<string | null> {
-  const apiKeys = await getConvex().query(api.apiKeys.getAllForAgents, {
-    teamSlugOrId,
-  });
+  const db = getDb();
+  const userId = getUserId();
+  const apiKeys = getApiKeysForAgents(db, teamSlugOrId, userId);
   const config = getModelAndProvider(apiKeys);
   if (!config) {
     serverLogger.warn(

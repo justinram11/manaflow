@@ -1,6 +1,6 @@
-import { api } from "@cmux/convex/api";
 import { createGitHubApiClient, ghApi } from "../ghApi";
-import { getConvex } from "./convexClient";
+import { getDb, getUserId } from "./dbClient";
+import { bulkInsertRepos, bulkUpsertBranchesWithActivity } from "@cmux/db/mutations/repos";
 import { serverLogger } from "./fileLogger";
 import { getGitHubOAuthToken } from "./getGitHubToken";
 
@@ -66,9 +66,11 @@ export async function refreshGitHubData({
       serverLogger.info(
         `Refreshing repository data with ${reposToInsert.length} repos...`
       );
-      // The mutation now handles deduplication
-      await getConvex().mutation(api.github.bulkInsertRepos, {
+      const db = getDb();
+      const userId = getUserId();
+      bulkInsertRepos(db, {
         teamSlugOrId,
+        userId,
         repos: reposToInsert,
       });
       serverLogger.info("Repository data refreshed successfully");
@@ -105,8 +107,11 @@ export async function refreshBranchesForRepo(
     const branches = await ghClient.getRepoBranchesWithActivity(repo);
 
     if (branches.length > 0) {
-      await getConvex().mutation(api.github.bulkUpsertBranchesWithActivity, {
+      const db = getDb();
+      const userId = getUserId();
+      bulkUpsertBranchesWithActivity(db, {
         teamSlugOrId,
+        userId,
         repo,
         branches,
       });

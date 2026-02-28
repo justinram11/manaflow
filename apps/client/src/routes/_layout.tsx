@@ -1,6 +1,5 @@
 import { env } from "@/client-env";
-import { convexAuthReadyPromise } from "@/contexts/convex/convex-auth-ready";
-import { ConvexClientProvider } from "@/contexts/convex/convex-client-provider";
+import { BootLoaderProvider } from "@/contexts/auth/boot-loader-provider";
 import { RealSocketProvider } from "@/contexts/socket/real-socket-provider";
 import {
   identifyPosthogUser,
@@ -13,12 +12,12 @@ import {
   localVSCodeServeWebQueryOptions,
   useLocalVSCodeServeWebQuery,
 } from "@/queries/local-vscode-serve-web";
-import { api } from "@cmux/convex/api";
+import { getApiTeamsOptions } from "@cmux/www-openapi-client/react-query";
 import { PostHogProvider } from "@posthog/react";
 import { useUser } from "@stackframe/react";
 import { useMatch } from "@tanstack/react-router";
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
-import { useQuery } from "convex/react";
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef } from "react";
 
 export const Route = createFileRoute("/_layout")({
@@ -45,10 +44,6 @@ export const Route = createFileRoute("/_layout")({
         });
       }
     }
-    const convexAuthReady = await convexAuthReadyPromise;
-    if (!convexAuthReady) {
-      console.log("[Route.beforeLoad] convexAuthReady:", convexAuthReady);
-    }
     void context.queryClient
       .ensureQueryData(localVSCodeServeWebQueryOptions())
       .catch(() => undefined);
@@ -63,11 +58,18 @@ function PosthogTracking() {
     shouldThrow: false,
   });
   const teamSlugOrId = match?.params.teamSlugOrId;
-  const team = useQuery(
-    api.teams.get,
-    teamSlugOrId ? { teamSlugOrId } : "skip"
-  );
-  const teamId = team?.uuid;
+  const teamQuery = useQuery({
+    ...getApiTeamsOptions(),
+    enabled: Boolean(teamSlugOrId),
+  });
+  const team = useMemo(() => {
+    if (!teamSlugOrId || !teamQuery.data) return undefined;
+    const teams = teamQuery.data?.teams as Array<{ id?: string; uuid?: string; slug?: string }> | undefined;
+    return teams?.find(
+      (t) => t.slug === teamSlugOrId || t.id === teamSlugOrId || t.uuid === teamSlugOrId
+    );
+  }, [teamSlugOrId, teamQuery.data]);
+  const teamId = team?.uuid ?? team?.id;
 
   useEffect(() => {
     if (!user) {
@@ -101,13 +103,13 @@ function Layout() {
   useLocalVSCodeServeWebQuery();
 
   return (
-    <ConvexClientProvider>
+    <BootLoaderProvider>
       <RealSocketProvider>
         <MaybePosthogProvider>
           <PosthogTracking />
           <Outlet />
         </MaybePosthogProvider>
       </RealSocketProvider>
-    </ConvexClientProvider>
+    </BootLoaderProvider>
   );
 }

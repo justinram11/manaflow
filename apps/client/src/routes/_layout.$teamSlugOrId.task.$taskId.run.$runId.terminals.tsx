@@ -1,9 +1,9 @@
-import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
-import { convexQuery } from "@convex-dev/react-query";
+import {
+  getApiTaskRunsByIdOptions,
+} from "@cmux/www-openapi-client/react-query";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery as useConvexQuery } from "convex/react";
 import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, X } from "lucide-react";
@@ -22,7 +22,8 @@ import {
   type CreateTerminalTabResponse,
   type TerminalTabId,
 } from "@/queries/terminals";
-import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { queryClient } from "@/query-client";
+import type { TaskRunWithChildren } from "@/types/task";
 
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
@@ -42,21 +43,18 @@ export const Route = createFileRoute(
   },
   loader: async (opts) => {
     const { params, context } = opts;
-    const { teamSlugOrId, runId } = params;
-    const { queryClient } = context;
+    const { runId } = params;
+    const { queryClient: routeQueryClient } = context;
 
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.taskRuns.get,
-      args: { teamSlugOrId, id: runId },
-    });
+    void queryClient.prefetchQuery(
+      getApiTaskRunsByIdOptions({ path: { id: runId } })
+    );
 
     void (async () => {
-      const taskRun = await queryClient.ensureQueryData(
-        convexQuery(api.taskRuns.get, {
-          teamSlugOrId,
-          id: runId,
-        })
+      const taskRunData = await routeQueryClient.ensureQueryData(
+        getApiTaskRunsByIdOptions({ path: { id: runId } })
       );
+      const taskRun = (taskRunData ?? undefined) as TaskRunWithChildren | undefined;
       const vscodeInfo = taskRun?.vscode;
       const rawUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
       const hasCloudBackend = vscodeInfo?.provider === "morph" || vscodeInfo?.provider === "docker";
@@ -156,10 +154,11 @@ function getTabRemovalOutcome(
 
 function TaskRunTerminals() {
   const { runId: taskRunId, teamSlugOrId } = Route.useParams();
-  const taskRun = useConvexQuery(api.taskRuns.get, {
-    teamSlugOrId,
-    id: taskRunId,
+  const taskRunQuery = useQuery({
+    ...getApiTaskRunsByIdOptions({ path: { id: taskRunId } }),
+    enabled: Boolean(teamSlugOrId && taskRunId),
   });
+  const taskRun = (taskRunQuery.data ?? undefined) as TaskRunWithChildren | undefined;
 
   const vscodeInfo = taskRun?.vscode;
   const rawUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;

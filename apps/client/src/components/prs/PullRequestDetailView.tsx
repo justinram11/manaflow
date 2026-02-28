@@ -18,10 +18,10 @@ import { normalizeGitRef } from "@/lib/refWithOrigin";
 import { stackClientApp } from "@/lib/stack";
 import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
-import { api } from "@cmux/convex/api";
 import type { ReplaceDiffEntry } from "@cmux/shared/diff-types";
 import { useQuery as useRQ, useMutation } from "@tanstack/react-query";
-import { useQuery as useConvexQuery, useMutation as useConvexMutation } from "convex/react";
+import { getApiWorkspaceSettingsOptions, getApiIntegrationsGithubPrsOptions } from "@cmux/www-openapi-client/react-query";
+import { patchApiWorkspaceSettings } from "@cmux/www-openapi-client";
 import { ExternalLink, Flame, X, Check, Copy, GitBranch, Loader2 } from "lucide-react";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -247,18 +247,42 @@ export function PullRequestDetailView({
 }: PullRequestDetailViewProps) {
   const clipboard = useClipboard({ timeout: 2000 });
 
-  const currentPR = useConvexQuery(api.github_prs.getPullRequest, {
-    teamSlugOrId,
-    repoFullName: `${owner}/${repo}`,
-    number: Number(number),
+  // TODO: Replace with HTTP API when a dedicated getPullRequest endpoint is available.
+  // For now, use the list endpoint and find the matching PR.
+  const prListQuery = useRQ({
+    ...getApiIntegrationsGithubPrsOptions({
+      query: {
+        team: teamSlugOrId,
+      },
+    }),
   });
 
-  const fileOutputs = useConvexQuery(api.codeReview.listFileOutputsForPr, {
-    teamSlugOrId,
-    repoFullName: `${owner}/${repo}`,
-    prNumber: Number(number),
-    commitRef: currentPR?.headSha ?? undefined,
-  });
+  const currentPR = useMemo(() => {
+    if (prListQuery.isLoading) return undefined; // still loading
+    const items = prListQuery.data?.pullRequests;
+    if (!items) return null; // loaded but no data
+    const prNum = Number(number);
+    const repoFullName = `${owner}/${repo}`;
+    const match = items.find(
+      (item) => item.number === prNum && item.repository_full_name === repoFullName
+    );
+    if (!match) return null;
+    return {
+      number: match.number,
+      title: match.title,
+      state: match.state,
+      merged: false, // HTTP API doesn't expose this field directly
+      repoFullName: match.repository_full_name,
+      htmlUrl: match.html_url,
+      authorLogin: match.user?.login ?? "",
+      baseRef: "", // Not available from list endpoint
+      headRef: "", // Not available from list endpoint
+      headSha: undefined as string | undefined,
+    };
+  }, [prListQuery.data, prListQuery.isLoading, owner, repo, number]);
+
+  // TODO: Replace with HTTP API when code review endpoint is available
+  const fileOutputs = null as Array<{ filePath: string; codexReviewOutput: unknown }> | null;
 
   const commitRefForLogging = currentPR?.headSha ?? null;
 
@@ -339,12 +363,16 @@ export function PullRequestDetailView({
   }, [diffQuery.data]);
 
   // Heatmap settings state
-  const workspaceSettingsData = useConvexQuery(api.workspaceSettings.get, { teamSlugOrId });
+  const workspaceSettingsQuery = useRQ(
+    getApiWorkspaceSettingsOptions({
+      query: { teamSlugOrId },
+    })
+  );
+  const workspaceSettingsData = workspaceSettingsQuery.data;
   const workspaceSettings = useMemo(() => {
     const parsed = workspaceSettingsSchema.safeParse(workspaceSettingsData);
     return parsed.success ? parsed.data ?? null : null;
   }, [workspaceSettingsData]);
-  const updateWorkspaceSettings = useConvexMutation(api.workspaceSettings.update);
 
   const [heatmapThreshold, setHeatmapThreshold] = useState<number>(0);
   const [heatmapColors, setHeatmapColors] = useState<HeatmapColorSettings>(
@@ -371,14 +399,16 @@ export function PullRequestDetailView({
   const handleHeatmapColorsChange = useCallback(
     (next: HeatmapColorSettings) => {
       setHeatmapColors(next);
-      void updateWorkspaceSettings({
-        teamSlugOrId,
-        heatmapColors: next,
-      }).catch((error) => {
+      void patchApiWorkspaceSettings({
+        body: {
+          teamSlugOrId,
+          heatmapColors: next,
+        },
+      }).catch((error: unknown) => {
         console.error("Failed to update heatmap colors:", error);
       });
     },
-    [teamSlugOrId, updateWorkspaceSettings]
+    [teamSlugOrId]
   );
 
   // Streaming heatmap review state

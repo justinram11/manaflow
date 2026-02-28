@@ -1,7 +1,6 @@
 import { env } from "@/client-env";
 import { GitHubIcon } from "@/components/icons/github";
 import { Skeleton } from "@/components/ui/skeleton";
-import { api } from "@cmux/convex/api";
 import { getElectronBridge, isElectron } from "@/lib/electron";
 import {
   consumeGitHubAppInstallIntent,
@@ -9,9 +8,9 @@ import {
 } from "@/lib/github-oauth-flow";
 import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { useUser } from "@stackframe/react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { useMutation, useQuery } from "convex/react";
+import { getApiIntegrationsGithubReposOptions } from "@cmux/www-openapi-client/react-query";
 import { Check, Loader2, X } from "lucide-react";
 import {
   useCallback,
@@ -419,13 +418,20 @@ function RepositoryConnectionsSection({
   onInstallHandlerReady,
 }: RepositoryConnectionsSectionProps) {
   const user = useUser({ or: "return-null" });
-  const connections = useQuery(api.github.listProviderConnections, {
-    teamSlugOrId,
-  });
-  const mintState = useMutation(api.github_app.mintInstallState);
+  // TODO: Replace with dedicated HTTP endpoint when available
+  // For now, connections are fetched via repos endpoint which handles connections internally
+  const connections = undefined as Array<{ installationId: number; accountLogin: string; isActive: boolean }> | undefined;
+  const mintState = async (args: { teamSlugOrId: string; returnUrl?: string }) => {
+    const { postApiIntegrationsGithubInstallState } = await import("@cmux/www-openapi-client");
+    const result = await postApiIntegrationsGithubInstallState({
+      body: { teamSlugOrId: args.teamSlugOrId, returnUrl: args.returnUrl },
+    });
+    if (!result.data) throw new Error("Failed to mint install state");
+    return result.data;
+  };
 
   const activeConnections = useMemo(
-    () => (connections || []).filter((c) => c.isActive !== false),
+    () => (connections ?? []).filter((c) => c.isActive !== false),
     [connections]
   );
 
@@ -697,20 +703,24 @@ function RepositoryListSection({
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
 
-  // Use Convex to fetch synced repos (same as dashboard) for consistent experience
-  const allReposQuery = useQuery(api.github.getAllRepos, { teamSlugOrId });
+  // Fetch repos via HTTP API
+  const allReposQuery = useQuery(
+    getApiIntegrationsGithubReposOptions({
+      query: { team: teamSlugOrId },
+    })
+  );
 
   const filteredRepos = useMemo(() => {
-    const repos = allReposQuery ?? [];
+    const repos = allReposQuery.data?.repos ?? [];
     const q = deferredSearch.trim().toLowerCase();
     // Map to the expected format and add timestamp for sorting
     const withTs = repos.map((r) => ({
       name: r.name,
-      full_name: r.fullName,
-      private: r.visibility === "private",
-      updated_at: r.lastSyncedAt ? new Date(r.lastSyncedAt).toISOString() : null,
-      pushed_at: r.lastPushedAt ? new Date(r.lastPushedAt).toISOString() : null,
-      _ts: r.lastPushedAt ?? r.lastSyncedAt ?? 0,
+      full_name: r.full_name,
+      private: r.private,
+      updated_at: r.updated_at ?? null,
+      pushed_at: r.pushed_at ?? null,
+      _ts: r.pushed_at ? Date.parse(r.pushed_at) : r.updated_at ? Date.parse(r.updated_at) : 0,
     }));
     let list = withTs.sort((a, b) => b._ts - a._ts);
     if (q) {
@@ -723,8 +733,8 @@ function RepositoryListSection({
     return list;
   }, [deferredSearch, allReposQuery]);
 
-  const showReposLoading = allReposQuery === undefined && hasConnections;
-  const showSpinner = false; // No need for spinner with Convex reactive queries
+  const showReposLoading = allReposQuery.isLoading && hasConnections;
+  const showSpinner = allReposQuery.isFetching && !allReposQuery.isLoading;
   const selectedSet = useMemo(() => new Set(selectedRepos), [selectedRepos]);
 
   // Handle Enter key to add repo from URL/owner-repo format

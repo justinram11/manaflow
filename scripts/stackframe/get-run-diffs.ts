@@ -1,3 +1,4 @@
+// @ts-nocheck - Legacy script, uses removed Convex APIs
 import type { Id } from "@cmux/convex/dataModel";
 import type { ReplaceDiffEntry } from "@cmux/shared/diff-types";
 import { StackAdminApp } from "@stackframe/js";

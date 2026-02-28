@@ -1,4 +1,5 @@
-import { emitConvexReady } from "@cmux/shared/convex-ready";
+// Convex has been removed - emitConvexReady is a no-op
+function emitConvexReady() { /* no-op */ }
 import { ChildProcess, spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";

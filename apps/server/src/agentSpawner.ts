@@ -1,5 +1,3 @@
-import { api } from "@cmux/convex/api";
-import type { Id } from "@cmux/convex/dataModel";
 import {
   AGENT_CONFIGS,
   type AgentConfig,
@@ -18,8 +16,19 @@ import {
   generateUniqueBranchNames,
   generateUniqueBranchNamesFromTitle,
 } from "./utils/branchNameGenerator";
-import { getConvex } from "./utils/convexClient";
-import { retryOnOptimisticConcurrency } from "./utils/convexRetry";
+import { getDb, getUserId } from "./utils/dbClient";
+import { SignJWT } from "jose";
+import { getTaskById } from "@cmux/db/queries/tasks";
+import { resolveTeamId } from "@cmux/db/queries/teams";
+import { getApiKeysForAgents, getUserEditorSettings, getWorkspaceConfig } from "@cmux/db/queries/settings";
+import {
+  createTaskRun,
+  failTaskRun,
+  updateTaskRunBranch,
+  updateTaskRunWorktreePath,
+  updateTaskRunVSCode,
+  updateTaskRunEnvironmentError,
+} from "@cmux/db/mutations/task-runs";
 import { serverLogger } from "./utils/fileLogger";
 import {
   getAuthHeaderJson,
@@ -30,7 +39,7 @@ import {
   getEditorSettingsUpload,
   type UserUploadedEditorSettings,
 } from "./utils/editorSettings";
-import { env } from "./utils/server-env";
+import { env, getWwwBaseUrl } from "./utils/server-env";
 import { getWwwClient } from "./utils/wwwClient";
 import { getWwwOpenApiModule } from "./utils/wwwOpenApiModule";
 import { CmuxVSCodeInstance } from "./vscode/CmuxVSCodeInstance";
@@ -49,7 +58,7 @@ const { getApiEnvironmentsByIdVars } = await getWwwOpenApiModule();
 export interface AgentSpawnResult {
   agentName: string;
   terminalId: string;
-  taskRunId: string | Id<"taskRuns">;
+  taskRunId: string;
   worktreePath: string;
   vscodeUrl?: string;
   success: boolean;
@@ -58,13 +67,13 @@ export interface AgentSpawnResult {
 
 export async function spawnAgent(
   agent: AgentConfig,
-  taskId: Id<"tasks">,
+  taskId: string,
   options: {
     repoUrl?: string;
     branch?: string;
     taskDescription: string;
     isCloudMode?: boolean;
-    environmentId?: Id<"environments">;
+    environmentId?: string;
     images?: Array<{
       src: string;
       fileName?: string;
@@ -72,13 +81,13 @@ export async function spawnAgent(
     }>;
     theme?: "dark" | "light" | "system";
     newBranch?: string; // Optional pre-generated branch name
-    taskRunId?: Id<"taskRuns">; // Optional pre-created task run ID
+    taskRunId?: string; // Optional pre-created task run ID
     incusSnapshotId?: string; // Optional Incus snapshot for sub-second resume
   },
   teamSlugOrId: string
 ): Promise<AgentSpawnResult> {
   // Declare taskRunId outside try block so it's accessible in catch for error reporting
-  let taskRunId: Id<"taskRuns"> | null = options.taskRunId ?? null;
+  let taskRunId: string | null = options.taskRunId ?? null;
 
   try {
     // Capture the current auth token and header JSON from AsyncLocalStorage so we can
@@ -97,47 +106,56 @@ export async function spawnAgent(
 
     let taskRunJwt: string;
 
+    const db = getDb();
+    const userId = getUserId();
+    const teamId = resolveTeamId(db, teamSlugOrId);
+
     if (options.taskRunId) {
-      // Task run was pre-created - get JWT and update branch
-      const [jwtResult] = await Promise.all([
-        getConvex().mutation(api.taskRuns.getJwt, {
-          teamSlugOrId,
-          taskRunId: options.taskRunId,
-        }),
-        getConvex().mutation(api.taskRuns.updateBranch, {
-          teamSlugOrId,
-          id: options.taskRunId,
-          newBranch,
-        }),
-      ]);
-      taskRunJwt = jwtResult.jwt;
+      // Task run was pre-created - generate JWT and update branch
+      const jwtSecret = process.env.CMUX_TASK_RUN_JWT_SECRET;
+      if (!jwtSecret) throw new Error("CMUX_TASK_RUN_JWT_SECRET is not set");
+      taskRunJwt = await new SignJWT({ taskRunId: options.taskRunId, teamId, userId })
+        .setProtectedHeader({ alg: "HS256" })
+        .setIssuedAt()
+        .setExpirationTime("12h")
+        .sign(new TextEncoder().encode(jwtSecret));
+
+      updateTaskRunBranch(db, options.taskRunId, newBranch);
+
       taskRunId = options.taskRunId;
       serverLogger.info(
         `[AgentSpawner] Using pre-created task run ${taskRunId}, updated branch to ${newBranch}`
       );
     } else {
       // Create a task run for this specific agent (legacy path)
-      const { taskRunId: createdTaskRunId, jwt } =
-        await getConvex().mutation(api.taskRuns.create, {
-          teamSlugOrId,
-          taskId: taskId,
-          prompt: options.taskDescription,
-          agentName: agent.name,
-          newBranch,
-          environmentId: options.environmentId,
-        });
+      const createdTaskRunId = createTaskRun(db, {
+        taskId: taskId,
+        prompt: options.taskDescription,
+        agentName: agent.name,
+        userId,
+        teamId,
+        environmentId: options.environmentId,
+      });
       taskRunId = createdTaskRunId;
-      taskRunJwt = jwt;
+
+      // Generate JWT for the new task run
+      const jwtSecret = process.env.CMUX_TASK_RUN_JWT_SECRET;
+      if (!jwtSecret) throw new Error("CMUX_TASK_RUN_JWT_SECRET is not set");
+      taskRunJwt = await new SignJWT({ taskRunId: createdTaskRunId, teamId, userId })
+        .setProtectedHeader({ alg: "HS256" })
+        .setIssuedAt()
+        .setExpirationTime("12h")
+        .sign(new TextEncoder().encode(jwtSecret));
+
+      // Update branch on the newly created task run
+      updateTaskRunBranch(db, createdTaskRunId, newBranch);
     }
 
     // After this point, taskRunId is guaranteed to be non-null
     const runId = taskRunId;
 
     // Fetch the task to get image storage IDs
-    const task = await getConvex().query(api.tasks.getById, {
-      teamSlugOrId,
-      id: taskId,
-    });
+    const task = getTaskById(db, teamSlugOrId, taskId);
 
     // Process prompt to handle images
     let processedTaskDescription = options.taskDescription;
@@ -147,13 +165,12 @@ export async function spawnAgent(
     let imagesToProcess = options.images || [];
 
     // If task has images with storage IDs, download them
-    if (task && task.images && task.images.length > 0) {
-      const imageUrlsResult = await getConvex().query(api.storage.getUrls, {
-        teamSlugOrId,
-        storageIds: task.images.map((image) => image.storageId),
-      });
+    const taskImages = (task?.images ?? []) as Array<{ storageId: string; fileName?: string; altText: string }>;
+    if (taskImages.length > 0) {
+      const storageIds = taskImages.map((image) => image.storageId);
+      const imageUrlsResult = storageIds.map(id => ({ storageId: id, url: `/api/storage/${id}` }));
       const downloadedImages = await Promise.all(
-        task.images.map(async (taskImage) => {
+        taskImages.map(async (taskImage) => {
           const imageUrl = imageUrlsResult.find(
             (url) => url.storageId === taskImage.storageId
           );
@@ -254,8 +271,11 @@ export async function spawnAgent(
       );
     }
 
-    // Callback URL for stop hooks to call crown/complete (Convex site URL)
-    const callbackUrl = env.NEXT_PUBLIC_CONVEX_URL.replace('.convex.cloud', '.convex.site');
+    // Callback URL for stop hooks to call crown/complete
+    // Legacy: was Convex site URL, now falls back to WWW origin
+    const callbackUrl = env.NEXT_PUBLIC_CONVEX_URL
+      ? env.NEXT_PUBLIC_CONVEX_URL.replace('.convex.cloud', '.convex.site')
+      : getWwwBaseUrl();
 
     let envVars: Record<string, string> = {
       CMUX_PROMPT: processedTaskDescription,
@@ -308,11 +328,9 @@ export async function spawnAgent(
     let postStartCommands: EnvironmentResult["postStartCommands"] = [];
     let unsetEnvVars: string[] = [];
 
-    // Fetch API keys from Convex BEFORE calling agent.environment()
+    // Fetch API keys from DB BEFORE calling agent.environment()
     // so agents can access them in their environment configuration
-    const userApiKeys = await getConvex().query(api.apiKeys.getAllForAgents, {
-      teamSlugOrId,
-    });
+    const userApiKeys = getApiKeysForAgents(db, teamSlugOrId, userId);
 
     const apiKeys: Record<string, string> = {
       ...userApiKeys,
@@ -363,24 +381,21 @@ export async function spawnAgent(
       }
     }
 
-    // Fetch user-uploaded editor settings from Convex (for web mode users)
+    // Fetch user-uploaded editor settings from DB (for web mode users)
     let userUploadedSettings: UserUploadedEditorSettings | null = null;
     try {
-      const userEditorSettingsFromDb = await getConvex().query(
-        api.userEditorSettings.get,
-        { teamSlugOrId }
-      );
+      const userEditorSettingsFromDb = getUserEditorSettings(db, teamSlugOrId, userId);
       if (userEditorSettingsFromDb) {
         userUploadedSettings = {
           settingsJson: userEditorSettingsFromDb.settingsJson ?? undefined,
           keybindingsJson: userEditorSettingsFromDb.keybindingsJson ?? undefined,
-          snippets: userEditorSettingsFromDb.snippets ?? undefined,
+          snippets: (userEditorSettingsFromDb.snippets ?? undefined) as Array<{ name: string; content: string }> | undefined,
           extensions: userEditorSettingsFromDb.extensions ?? undefined,
         };
       }
     } catch (error) {
       serverLogger.warn(
-        "[AgentSpawner] Failed to fetch user editor settings from Convex",
+        "[AgentSpawner] Failed to fetch user editor settings from DB",
         error
       );
     }
@@ -525,14 +540,8 @@ export async function spawnAgent(
       });
     }
 
-    // Update the task run with the worktree path (retry on OCC)
-    await retryOnOptimisticConcurrency(() =>
-      getConvex().mutation(api.taskRuns.updateWorktreePath, {
-        teamSlugOrId,
-        id: runId,
-        worktreePath: worktreePath,
-      })
-    );
+    // Update the task run with the worktree path
+    updateTaskRunWorktreePath(db, runId, worktreePath);
 
     // Store the VSCode instance
     // VSCodeInstance.getInstances().set(vscodeInstance.getInstanceId(), vscodeInstance);
@@ -601,17 +610,10 @@ export async function spawnAgent(
         }
 
         // Mark the run as failed with error message
-        await runWithAuth(capturedAuthToken, capturedAuthHeaderJson, async () =>
-          retryOnOptimisticConcurrency(() =>
-            getConvex().mutation(api.taskRuns.fail, {
-              teamSlugOrId,
-              id: runId,
-              errorMessage: data.errorMessage || "Terminal failed",
-              // WorkerTerminalFailed does not include exitCode in schema; default to 1
-              exitCode: 1,
-            })
-          )
-        );
+        await runWithAuth(capturedAuthToken, capturedAuthHeaderJson, async () => {
+          const dbInner = getDb();
+          failTaskRun(dbInner, runId, data.errorMessage || "Terminal failed");
+        });
 
         serverLogger.info(
           `[AgentSpawner] Marked taskRun ${runId} as failed`
@@ -649,24 +651,18 @@ export async function spawnAgent(
       }
     }
 
-    // Update VSCode instance information in Convex (retry on OCC)
+    // Update VSCode instance information in DB
     // Skip if www already persisted the VSCode info (cloud mode optimization)
     if (!vscodeInfo.vscodePersisted) {
-      await retryOnOptimisticConcurrency(() =>
-        getConvex().mutation(api.taskRuns.updateVSCodeInstance, {
-          teamSlugOrId,
-          id: runId,
-          vscode: {
-            provider: vscodeInfo.provider,
-            containerName: vscodeInstance.getName(),
-            status: "running",
-            url: vscodeInfo.url,
-            workspaceUrl: vscodeInfo.workspaceUrl,
-            startedAt: Date.now(),
-            ...(ports ? { ports } : {}),
-          },
-        })
-      );
+      updateTaskRunVSCode(db, runId, {
+        provider: vscodeInfo.provider,
+        containerName: vscodeInstance.getName(),
+        status: "running",
+        url: vscodeInfo.url,
+        workspaceUrl: vscodeInfo.workspaceUrl,
+        startedAt: Date.now(),
+        ...(ports ? { ports } : {}),
+      });
     } else {
       serverLogger.info(
         `[AgentSpawner] Skipping updateVSCodeInstance - already persisted by www`
@@ -688,16 +684,13 @@ export async function spawnAgent(
       `[AgentSpawner] Preparing to send terminal creation command for ${agent.name}`
     );
 
-    // Start fetching workspace config early (for maintenance script) - runs in parallel with worker connection
+    // Start fetching workspace config early (for maintenance script)
     const workspaceConfigPromise = (async () => {
       if (options.isCloudMode || !options.repoUrl) return null;
       const parsedRepo = parseGithubRepoUrl(options.repoUrl);
       if (!parsedRepo) return null;
       try {
-        const config = await getConvex().query(api.workspaceConfigs.get, {
-          teamSlugOrId,
-          projectFullName: parsedRepo.fullName,
-        });
+        const config = getWorkspaceConfig(db, teamSlugOrId, userId, parsedRepo.fullName);
         return { config, projectFullName: parsedRepo.fullName };
       } catch (error) {
         serverLogger.warn(`[AgentSpawner] Failed to fetch workspace config`, error);
@@ -831,9 +824,7 @@ chmod +x ${maintenanceScriptPath}`;
               `[AgentSpawner] Failed to send maintenance script to PTY`,
               { exitCode: sendResult.exitCode, stdout: sendResult.stdout, stderr: sendResult.stderr }
             );
-            await getConvex().mutation(api.taskRuns.updateEnvironmentError, {
-              teamSlugOrId,
-              id: runId,
+            updateTaskRunEnvironmentError(db, runId, {
               maintenanceError: `Failed to send maintenance script: ${sendResult.stderr || sendResult.stdout}`,
               devError: undefined,
             });
@@ -842,9 +833,7 @@ chmod +x ${maintenanceScriptPath}`;
               `[AgentSpawner] Maintenance script sent to PTY for ${projectFullName}`
             );
             // Clear any previous error (script is now running in PTY)
-            await getConvex().mutation(api.taskRuns.updateEnvironmentError, {
-              teamSlugOrId,
-              id: runId,
+            updateTaskRunEnvironmentError(db, runId, {
               maintenanceError: undefined,
               devError: undefined,
             });
@@ -958,7 +947,7 @@ chmod +x ${maintenanceScriptPath}`;
       taskRunContext: {
         taskRunToken: taskRunJwt,
         prompt: processedTaskDescription,
-        convexUrl: env.NEXT_PUBLIC_CONVEX_URL,
+        convexUrl: env.NEXT_PUBLIC_CONVEX_URL ?? getWwwBaseUrl(),
       },
       taskRunId,
       agentModel: agent.name,
@@ -1231,18 +1220,12 @@ exit $EXIT_CODE
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
 
-    // Mark the task run as failed in Convex so the UI shows the failure
+    // Mark the task run as failed in DB so the UI shows the failure
     if (taskRunId) {
       const failedRunId = taskRunId; // Capture for TypeScript narrowing
       try {
-        await retryOnOptimisticConcurrency(() =>
-          getConvex().mutation(api.taskRuns.fail, {
-            teamSlugOrId,
-            id: failedRunId,
-            errorMessage: `Agent spawn failed: ${errorMessage}`,
-            exitCode: 1,
-          })
-        );
+        const dbFail = getDb();
+        failTaskRun(dbFail, failedRunId, `Agent spawn failed: ${errorMessage}`);
         serverLogger.info(
           `[AgentSpawner] Marked taskRun ${failedRunId} as failed due to spawn error`
         );
@@ -1266,7 +1249,7 @@ exit $EXIT_CODE
 }
 
 export async function spawnAllAgents(
-  taskId: Id<"tasks">,
+  taskId: string,
   options: {
     repoUrl?: string;
     branch?: string;
@@ -1274,9 +1257,9 @@ export async function spawnAllAgents(
     prTitle?: string;
     branchNames?: string[]; // Pre-generated branch names (one per agent)
     selectedAgents?: string[];
-    taskRunIds?: Id<"taskRuns">[]; // Pre-created task run IDs (one per agent)
+    taskRunIds?: string[]; // Pre-created task run IDs (one per agent)
     isCloudMode?: boolean;
-    environmentId?: Id<"environments">;
+    environmentId?: string;
     images?: Array<{
       src: string;
       fileName?: string;

@@ -1,11 +1,20 @@
-import { api } from "@cmux/convex/api";
-import type { Id } from "@cmux/convex/dataModel";
 import Docker from "dockerode";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { getDockerSocketCandidates } from "@cmux/shared/providers/common/check-docker";
-import { getConvex } from "../utils/convexClient";
+import {
+  updateTaskRunVSCodeStatusMessage,
+  updateTaskRunVSCode,
+  updateTaskRunVSCodePorts,
+  updateTaskRunVSCodeStatus,
+} from "@cmux/db/mutations/task-runs";
+import {
+  getContainersToStop,
+  getRunningContainersByCleanupPriority,
+} from "@cmux/db/queries/task-runs";
+import { getEffectiveContainerSettings } from "@cmux/db/queries/settings";
+import { getDb, getUserId } from "../utils/dbClient";
 import { cleanupGitCredentials } from "../utils/dockerGitSetup";
 import { dockerLogger } from "../utils/fileLogger";
 import { getGitHubOAuthToken } from "../utils/getGitHubToken";
@@ -19,7 +28,7 @@ import {
 // Global port mapping storage
 export interface ContainerMapping {
   containerName: string;
-  instanceId: Id<"taskRuns">;
+  instanceId: string;
   teamSlugOrId: string;
   authToken?: string;
   ports: {
@@ -90,13 +99,10 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     VSCodeInstance.getInstances().set(this.instanceId, this);
   }
 
-  private async updateStatusMessage(message: string | undefined): Promise<void> {
+  private updateStatusMessage(message: string | undefined): void {
     try {
-      await getConvex().mutation(api.taskRuns.updateVSCodeStatusMessage, {
-        teamSlugOrId: this.teamSlugOrId,
-        id: this.taskRunId,
-        statusMessage: message,
-      });
+      const db = getDb();
+      updateTaskRunVSCodeStatusMessage(db, this.taskRunId, message);
     } catch (error) {
       dockerLogger.warn(`Failed to update status message:`, error);
     }
@@ -409,16 +415,13 @@ export class DockerVSCodeInstance extends VSCodeInstance {
 
     // Initialize VSCode status early so users can see Docker pull progress
     try {
-      await getConvex().mutation(api.taskRuns.updateVSCodeInstance, {
-        teamSlugOrId: this.teamSlugOrId,
-        id: this.taskRunId,
-        vscode: {
-          provider: "docker",
-          containerName: this.containerName,
-          status: "starting",
-          statusMessage: "Initializing Docker container...",
-          startedAt: Date.now(),
-        },
+      const db = getDb();
+      updateTaskRunVSCode(db, this.taskRunId, {
+        provider: "docker",
+        containerName: this.containerName,
+        status: "starting",
+        statusMessage: "Initializing Docker container...",
+        startedAt: Date.now(),
       });
     } catch (error) {
       dockerLogger.warn(`Failed to set initial VSCode status:`, error);
@@ -703,20 +706,17 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       mapping.status = "running";
     }
 
-    // Update VSCode ports in Convex
+    // Update VSCode ports in DB
     try {
-      await getConvex().mutation(api.taskRuns.updateVSCodePorts, {
-        teamSlugOrId: this.teamSlugOrId,
-        id: this.taskRunId,
-        ports: {
-          vscode: vscodePort,
-          worker: workerPort,
-          proxy: proxyPort,
-          vnc: vncPort,
-        },
+      const db = getDb();
+      updateTaskRunVSCodePorts(db, this.taskRunId, {
+        vscode: vscodePort,
+        worker: workerPort,
+        proxy: proxyPort,
+        vnc: vncPort,
       });
     } catch (error) {
-      dockerLogger.error("Failed to update VSCode ports in Convex:", error);
+      dockerLogger.error("Failed to update VSCode ports in DB:", error);
     }
 
     // Wait for worker to be ready by polling
@@ -827,19 +827,15 @@ export class DockerVSCodeInstance extends VSCodeInstance {
             mapping.status = "stopped";
           }
 
-          // Update VSCode status in Convex
+          // Update VSCode status in DB
           try {
-            await runWithAuthToken(this.authToken, async () =>
-              getConvex().mutation(api.taskRuns.updateVSCodeStatus, {
-                teamSlugOrId: this.teamSlugOrId,
-                id: this.taskRunId,
-                status: "stopped",
-                stoppedAt: Date.now(),
-              })
-            );
+            const db = getDb();
+            updateTaskRunVSCodeStatus(db, this.taskRunId, "stopped", {
+              stoppedAt: Date.now(),
+            });
           } catch (error) {
             dockerLogger.error(
-              "Failed to update VSCode status in Convex:",
+              "Failed to update VSCode status in DB:",
               error
             );
           }
@@ -879,18 +875,14 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       mapping.status = "stopped";
     }
 
-    // Update VSCode status in Convex
+    // Update VSCode status in DB
     try {
-      await runWithAuthToken(this.authToken, async () =>
-        getConvex().mutation(api.taskRuns.updateVSCodeStatus, {
-          teamSlugOrId: this.teamSlugOrId,
-          id: this.taskRunId,
-          status: "stopped",
-          stoppedAt: Date.now(),
-        })
-      );
+      const db = getDb();
+      updateTaskRunVSCodeStatus(db, this.taskRunId, "stopped", {
+        stoppedAt: Date.now(),
+      });
     } catch (error) {
-      console.error("Failed to update VSCode status in Convex:", error);
+      console.error("Failed to update VSCode status in DB:", error);
     }
 
     if (this.container) {
@@ -1576,32 +1568,23 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         try {
           if (!mapping.authToken) {
             dockerLogger.warn(
-              `[docker events] No auth token for container ${containerName}; deferring Convex updates`
+              `[docker events] No auth token for container ${containerName}; deferring DB updates`
             );
             return;
           }
-          await runWithAuthToken(mapping.authToken, async () => {
-            if (vscodePort && workerPort && proxyPort && vncPort) {
-              await getConvex().mutation(api.taskRuns.updateVSCodePorts, {
-                teamSlugOrId: mapping.teamSlugOrId,
-                id: taskRunId,
-                ports: {
-                  vscode: vscodePort,
-                  worker: workerPort,
-                  proxy: proxyPort,
-                  vnc: vncPort,
-                },
-              });
-            }
-            await getConvex().mutation(api.taskRuns.updateVSCodeStatus, {
-              teamSlugOrId: mapping.teamSlugOrId,
-              id: taskRunId,
-              status: "running",
+          const db = getDb();
+          if (vscodePort && workerPort && proxyPort && vncPort) {
+            updateTaskRunVSCodePorts(db, taskRunId, {
+              vscode: vscodePort,
+              worker: workerPort,
+              proxy: proxyPort,
+              vnc: vncPort,
             });
-          });
+          }
+          updateTaskRunVSCodeStatus(db, taskRunId, "running");
         } catch (error) {
           dockerLogger.error(
-            `[docker events] Failed to update Convex state for container ${containerName}:`,
+            `[docker events] Failed to update DB state for container ${containerName}:`,
             error
           );
         }
@@ -1619,14 +1602,10 @@ export class DockerVSCodeInstance extends VSCodeInstance {
             `[docker events] No auth token for container ${containerName}; skipping stopped status update`
           );
         } else {
-          await runWithAuthToken(mapping.authToken, async () =>
-            getConvex().mutation(api.taskRuns.updateVSCodeStatus, {
-              teamSlugOrId: mapping.teamSlugOrId,
-              id: taskRunId,
-              status: "stopped",
-              stoppedAt: Date.now(),
-            })
-          );
+          const db = getDb();
+          updateTaskRunVSCodeStatus(db, taskRunId, "stopped", {
+            stoppedAt: Date.now(),
+          });
         }
       } catch (error) {
         dockerLogger.error(
@@ -1642,13 +1621,16 @@ export class DockerVSCodeInstance extends VSCodeInstance {
           );
         } else {
           await runWithAuthToken(mapping.authToken, async () => {
-            const containerSettings = await getConvex().query(
-              api.containerSettings.getEffective,
-              { teamSlugOrId: mapping.teamSlugOrId }
+            const db = getDb();
+            const userId = getUserId();
+            const settings = getEffectiveContainerSettings(
+              db,
+              mapping.teamSlugOrId,
+              userId
             );
-            if (containerSettings.autoCleanupEnabled) {
+            if (settings.autoCleanupEnabled) {
               await DockerVSCodeInstance.performContainerCleanup(
-                containerSettings,
+                settings,
                 mapping.teamSlugOrId
               );
             }
@@ -1676,18 +1658,22 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         "[performContainerCleanup] Starting container cleanup..."
       );
 
-      // 1. Check for containers that have exceeded their TTL
-      const containersToStop = await getConvex().query(
-        api.taskRuns.getContainersToStop,
-        { teamSlugOrId }
-      );
+      const db = getDb();
+      const userId = getUserId();
 
-      for (const taskRun of containersToStop) {
-        if (taskRun.vscode?.containerName) {
-          const instance = VSCodeInstance.getInstance(taskRun._id);
+      // 1. Check for containers that have exceeded their TTL
+      const stoppable = getContainersToStop(db, {
+        teamSlugOrId,
+        userId,
+      });
+
+      for (const taskRun of stoppable) {
+        const vscode = taskRun.vscode as Record<string, unknown> | null;
+        if (vscode?.containerName) {
+          const instance = VSCodeInstance.getInstance(taskRun.id);
           if (instance) {
             dockerLogger.info(
-              `[performContainerCleanup] Stopping container ${taskRun.vscode.containerName} due to TTL expiry`
+              `[performContainerCleanup] Stopping container ${vscode.containerName} due to TTL expiry`
             );
             await instance.stop();
           }
@@ -1695,28 +1681,29 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       }
 
       // 2. Enforce max running containers limit with smart prioritization
-      const containerPriority = await getConvex().query(
-        api.taskRuns.getRunningContainersByCleanupPriority,
-        { teamSlugOrId }
-      );
+      const containerPriority = getRunningContainersByCleanupPriority(db, {
+        teamSlugOrId,
+        userId,
+      });
 
       if (containerPriority.total > settings.maxRunningContainers) {
-        const containersToStop =
+        const excessCount =
           containerPriority.total - settings.maxRunningContainers;
         const toRemove = containerPriority.prioritizedForCleanup.slice(
           0,
-          containersToStop
+          excessCount
         );
 
         for (const taskRun of toRemove) {
-          if (taskRun.vscode?.containerName) {
-            const instance = VSCodeInstance.getInstance(taskRun._id);
+          const vscode = taskRun.vscode as Record<string, unknown> | null;
+          if (vscode?.containerName) {
+            const instance = VSCodeInstance.getInstance(taskRun.id);
             if (instance) {
               const isReview = containerPriority.reviewContainers.some(
-                (r) => r._id === taskRun._id
+                (r) => r.id === taskRun.id
               );
               dockerLogger.info(
-                `[performContainerCleanup] Stopping ${isReview ? "review-period" : "active"} container ${taskRun.vscode.containerName} to maintain max containers limit`
+                `[performContainerCleanup] Stopping ${isReview ? "review-period" : "active"} container ${vscode.containerName} to maintain max containers limit`
               );
               await instance.stop();
             }

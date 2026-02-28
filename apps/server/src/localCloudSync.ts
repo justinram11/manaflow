@@ -1,4 +1,3 @@
-import type { Id } from "@cmux/convex/dataModel";
 import type {
   ServerToWorkerEvents,
   WorkerSyncFiles,
@@ -132,7 +131,7 @@ const MAX_RETRY_ATTEMPTS = 5;
 
 class LocalCloudSyncSession {
   private readonly localPath: string;
-  private readonly cloudTaskRunId: Id<"taskRuns">;
+  private readonly cloudTaskRunId: string;
   private readonly pending = new Map<string, PendingChange>();
   private readonly ignoreMatcher: Ignore;
   private watcher: FSWatcher | null = null;
@@ -168,7 +167,7 @@ class LocalCloudSyncSession {
     ignoreMatcher,
   }: {
     localPath: string;
-    cloudTaskRunId: Id<"taskRuns">;
+    cloudTaskRunId: string;
     ignoreMatcher: Ignore;
   }) {
     this.localPath = localPath;
@@ -329,7 +328,7 @@ class LocalCloudSyncSession {
     }
   }
 
-  getCloudTaskRunId(): Id<"taskRuns"> {
+  getCloudTaskRunId(): string {
     return this.cloudTaskRunId;
   }
 
@@ -675,7 +674,7 @@ export class LocalCloudSyncManager {
     cloudTaskRunId,
   }: {
     localWorkspacePath: string;
-    cloudTaskRunId: Id<"taskRuns">;
+    cloudTaskRunId: string;
   }): Promise<void> {
     const resolvedPath = path.resolve(localWorkspacePath);
     if (this.sessions.has(resolvedPath)) {
@@ -780,7 +779,7 @@ export class LocalCloudSyncManager {
    * Called when a new VSCodeInstance is created or reconnected.
    */
   notifyInstanceAvailable(
-    cloudTaskRunId: Id<"taskRuns">,
+    cloudTaskRunId: string,
     instance: VSCodeInstance
   ): void {
     const localPath = this.cloudToLocalMap.get(cloudTaskRunId);

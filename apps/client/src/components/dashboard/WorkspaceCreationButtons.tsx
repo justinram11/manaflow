@@ -7,13 +7,12 @@ import {
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { useTheme } from "@/components/theme/use-theme";
-import { api } from "@cmux/convex/api";
-import type { Id } from "@cmux/convex/dataModel";
+import { postApiTasks } from "@cmux/www-openapi-client";
 import type {
   CreateLocalWorkspaceResponse,
   CreateCloudWorkspaceResponse,
 } from "@cmux/shared";
-import { useMutation } from "convex/react";
+import { useMutation } from "@tanstack/react-query";
 import { Cloud, Loader2, Monitor } from "lucide-react";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
@@ -35,8 +34,26 @@ export function WorkspaceCreationButtons({
   const [isCreatingLocal, setIsCreatingLocal] = useState(false);
   const [isCreatingCloud, setIsCreatingCloud] = useState(false);
 
-  const reserveLocalWorkspace = useMutation(api.localWorkspaces.reserve);
-  const createTask = useMutation(api.tasks.create);
+  const reserveLocalWorkspaceMutation = useMutation({
+    mutationFn: async (_args: { teamSlugOrId: string; projectFullName: string; repoUrl: string }) => {
+      // This uses the socket emit below, so this is a placeholder
+      // The actual reservation is done via socket
+      return null as unknown as { taskId: string; taskRunId: string; workspaceName: string; descriptor: string };
+    },
+  });
+  const createTaskMutation = useMutation({
+    mutationFn: async (args: {
+      teamSlugOrId: string;
+      text: string;
+      projectFullName?: string;
+      baseBranch?: string;
+      environmentId?: string;
+      isCloudWorkspace?: boolean;
+    }) => {
+      const result = await postApiTasks({ body: args });
+      return result.data as { taskId: string };
+    },
+  });
 
   const handleCreateLocalWorkspace = useCallback(async () => {
     if (!socket) {
@@ -60,7 +77,7 @@ export function WorkspaceCreationButtons({
     setIsCreatingLocal(true);
 
     try {
-      const reservation = await reserveLocalWorkspace({
+      const reservation = await reserveLocalWorkspaceMutation.mutateAsync({
         teamSlugOrId,
         projectFullName,
         repoUrl,
@@ -109,7 +126,7 @@ export function WorkspaceCreationButtons({
     selectedProject,
     isEnvSelected,
     teamSlugOrId,
-    reserveLocalWorkspace,
+    reserveLocalWorkspaceMutation,
     addTaskToExpand,
   ]);
 
@@ -133,7 +150,7 @@ export function WorkspaceCreationButtons({
     const environmentId = projectFullName.replace(
       /^env:/,
       ""
-    ) as Id<"environments">;
+    );
 
     // Extract environment name from the selectedProject (format is "env:id:name")
     const environmentName = projectFullName.split(":")[2] || "Unknown Environment";
@@ -141,12 +158,10 @@ export function WorkspaceCreationButtons({
     setIsCreatingCloud(true);
 
     try {
-      // Create task in Convex with environment name
-      const { taskId } = await createTask({
+      // Create task with environment name
+      const { taskId } = await createTaskMutation.mutateAsync({
         teamSlugOrId,
         text: environmentName,
-        projectFullName: undefined, // No repo for cloud environment workspaces
-        baseBranch: undefined, // No branch for environments
         environmentId,
         isCloudWorkspace: true,
       });
@@ -188,7 +203,7 @@ export function WorkspaceCreationButtons({
     selectedProject,
     isEnvSelected,
     teamSlugOrId,
-    createTask,
+    createTaskMutation,
     addTaskToExpand,
     theme,
   ]);

@@ -1,4 +1,4 @@
-import { getAccessTokenFromRequest } from "@/lib/utils/auth";
+import { getUserFromRequest } from "@/lib/utils/auth";
 import {
   generateBranchNamesFromBase,
   generateNewBranchName,
@@ -6,9 +6,9 @@ import {
   mergeApiKeysWithEnv,
   toKebabCase,
 } from "@/lib/utils/branch-name-generator";
-import { getConvex } from "@/lib/utils/get-convex";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
-import { api } from "@cmux/convex/api";
+import { getDb } from "@cmux/db";
+import { getApiKeysForAgents } from "@cmux/db/queries/settings";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 
@@ -75,19 +75,21 @@ branchRouter.openapi(
     const body = c.req.valid("json");
     const req = c.req.raw;
 
-    const accessToken = await getAccessTokenFromRequest(req);
-    if (!accessToken) {
+    const user = await getUserFromRequest(req);
+    if (!user) {
       throw new HTTPException(401, { message: "Unauthorized" });
     }
 
     await verifyTeamAccess({ req, teamSlugOrId: body.teamSlugOrId });
 
-    const convex = getConvex({ accessToken });
+    const db = getDb();
 
     try {
-      const teamApiKeys = await convex.query(api.apiKeys.getAllForAgents, {
-        teamSlugOrId: body.teamSlugOrId,
-      });
+      const teamApiKeys = getApiKeysForAgents(
+        db,
+        body.teamSlugOrId,
+        user.id,
+      );
       const apiKeys = mergeApiKeysWithEnv(teamApiKeys ?? {});
 
       const count = body.count ?? 1;

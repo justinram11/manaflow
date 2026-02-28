@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef } from "react";
-import { useQueries } from "convex/react";
-import { api } from "@cmux/convex/api";
-import type { Doc, Id } from "@cmux/convex/dataModel";
+import { useQueries } from "@tanstack/react-query";
+import {
+  getApiTaskRunsOptions,
+} from "@cmux/www-openapi-client/react-query";
+import type { DbTask } from "@cmux/www-openapi-client";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 import { getWorkspaceUrl } from "@/lib/workspace-url";
@@ -10,11 +12,22 @@ import {
   setTaskRunIframePinned,
 } from "@/lib/preloadTaskRunIframes";
 
-type TaskWithUnread = Doc<"tasks"> & { hasUnread?: boolean };
-type TaskRunListItem = (typeof api.taskRuns.getByTask._returnType)[number];
+type TaskWithUnread = DbTask & { hasUnread?: boolean };
+
+// Task run type from the API (generic record)
+type TaskRunRecord = Record<string, unknown> & {
+  id: string;
+  isArchived?: boolean;
+  vscode?: {
+    provider?: string;
+    status?: string;
+    workspaceUrl?: string;
+  };
+  children?: TaskRunRecord[];
+};
 
 type WarmTarget = {
-  taskRunId: TaskRunListItem["_id"];
+  taskRunId: string;
   url: string;
   pinned: boolean;
 };
@@ -23,7 +36,7 @@ const MAX_ACTIVE_LOCAL_WARMUPS = 2;
 const MAX_WARM_LOCAL_WORKSPACES = 10;
 
 export function useWarmLocalWorkspaces({
-  teamSlugOrId,
+  teamSlugOrId: _teamSlugOrId,
   tasks,
   pinnedTasks,
   enabled = true,
@@ -40,12 +53,12 @@ export function useWarmLocalWorkspaces({
   }, [pinnedTasks]);
 
   const pinnedTaskIds = useMemo(() => {
-    return new Set(pinnedLocalTasks.map((task) => task._id));
+    return new Set(pinnedLocalTasks.map((task) => task.id));
   }, [pinnedLocalTasks]);
 
   const activeLocalTasks = useMemo(() => {
     return (tasks ?? []).filter(
-      (task) => task.isLocalWorkspace && !pinnedTaskIds.has(task._id)
+      (task) => task.isLocalWorkspace && !pinnedTaskIds.has(task.id)
     );
   }, [tasks, pinnedTaskIds]);
 
@@ -55,19 +68,19 @@ export function useWarmLocalWorkspaces({
     }
 
     const candidates: TaskWithUnread[] = [];
-    const seen = new Set<Id<"tasks">>();
+    const seen = new Set<string>();
 
     const addTask = (task: TaskWithUnread) => {
-      if (isFakeConvexId(task._id)) {
+      if (isFakeConvexId(task.id)) {
         return;
       }
-      if (seen.has(task._id)) {
+      if (seen.has(task.id)) {
         return;
       }
       if (candidates.length >= MAX_WARM_LOCAL_WORKSPACES) {
         return;
       }
-      seen.add(task._id);
+      seen.add(task.id);
       candidates.push(task);
     };
 
@@ -87,33 +100,38 @@ export function useWarmLocalWorkspaces({
     return candidates;
   }, [activeLocalTasks, enabled, pinnedLocalTasks]);
 
-  const taskRunQueries = useMemo(() => {
-    const queries: Record<
-      Id<"tasks">,
-      {
-        query: typeof api.taskRuns.getByTask;
-        args: { teamSlugOrId: string; taskId: Id<"tasks"> };
-      }
-    > = {};
-
+  const taskRunQueryConfigs = useMemo(() => {
     if (!enabled) {
-      return queries;
+      return [];
     }
 
-    for (const task of warmCandidateTasks) {
-      if (isFakeConvexId(task._id)) {
-        continue;
+    return warmCandidateTasks
+      .filter((task) => !isFakeConvexId(task.id))
+      .map((task) => ({
+        ...getApiTaskRunsOptions({ query: { taskId: task.id } }),
+        // Tag with taskId so we can look up results by task
+        meta: { taskId: task.id },
+      }));
+  }, [enabled, warmCandidateTasks]);
+
+  const taskRunResults = useQueries({
+    queries: taskRunQueryConfigs,
+  });
+
+  // Build a map of taskId -> task runs for lookup
+  const taskRunsByTaskId = useMemo(() => {
+    const map = new Map<string, TaskRunRecord[]>();
+    for (let i = 0; i < taskRunQueryConfigs.length; i++) {
+      const config = taskRunQueryConfigs[i];
+      const result = taskRunResults[i];
+      const taskId = config?.meta?.taskId;
+      if (taskId && result?.data) {
+        const data = result.data as { taskRuns?: TaskRunRecord[] };
+        map.set(taskId as string, data.taskRuns ?? []);
       }
-      queries[task._id] = {
-        query: api.taskRuns.getByTask,
-        args: { teamSlugOrId, taskId: task._id },
-      };
     }
-
-    return queries;
-  }, [enabled, teamSlugOrId, warmCandidateTasks]);
-
-  const taskRunResults = useQueries(taskRunQueries);
+    return map;
+  }, [taskRunQueryConfigs, taskRunResults]);
 
   const warmTargets = useMemo<WarmTarget[]>(() => {
     if (!enabled) {
@@ -128,7 +146,7 @@ export function useWarmLocalWorkspaces({
     const targets: WarmTarget[] = [];
 
     for (const task of warmCandidateTasks) {
-      const taskRuns = taskRunResults[task._id];
+      const taskRuns = taskRunsByTaskId.get(task.id);
       if (!taskRuns || taskRuns.length === 0) {
         continue;
       }
@@ -157,9 +175,9 @@ export function useWarmLocalWorkspaces({
       }
 
       targets.push({
-        taskRunId: localRun._id,
+        taskRunId: localRun.id,
         url: workspaceUrl,
-        pinned: pinnedTaskIds.has(task._id),
+        pinned: pinnedTaskIds.has(task.id),
       });
     }
 
@@ -168,7 +186,7 @@ export function useWarmLocalWorkspaces({
     enabled,
     localServeWeb.data?.baseUrl,
     pinnedTaskIds,
-    taskRunResults,
+    taskRunsByTaskId,
     warmCandidateTasks,
   ]);
 
@@ -180,7 +198,7 @@ export function useWarmLocalWorkspaces({
     [warmTargets]
   );
 
-  const previousPinnedRef = useRef<Set<TaskRunListItem["_id"]>>(new Set());
+  const previousPinnedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!enabled) {
@@ -226,8 +244,8 @@ export function useWarmLocalWorkspaces({
   }, [enabled, warmTargets]);
 }
 
-function flattenRuns(runs: TaskRunListItem[]): TaskRunListItem[] {
-  const acc: TaskRunListItem[] = [];
+function flattenRuns(runs: TaskRunRecord[]): TaskRunRecord[] {
+  const acc: TaskRunRecord[] = [];
   const stack = [...runs];
 
   while (stack.length > 0) {
@@ -245,8 +263,8 @@ function flattenRuns(runs: TaskRunListItem[]): TaskRunListItem[] {
 }
 
 function selectLocalWorkspaceRun(
-  runs: TaskRunListItem[]
-): TaskRunListItem | null {
+  runs: TaskRunRecord[]
+): TaskRunRecord | null {
   const active = runs.find(
     (run) => !run.isArchived && run.vscode?.provider === "other"
   );

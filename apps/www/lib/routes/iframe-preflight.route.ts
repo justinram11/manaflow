@@ -1,7 +1,8 @@
-import { getConvex } from "@/lib/utils/get-convex";
 import { stackServerAppJs } from "@/lib/utils/stack";
 import { env } from "@/lib/utils/www-env";
-import { api } from "@cmux/convex/api";
+import { getDb } from "@cmux/db";
+import { listTeamMemberships } from "@cmux/db/queries/teams";
+import { recordResume } from "@cmux/db/mutations/morph-instances";
 import {
   extractMorphInstanceInfo,
   type IframePreflightResult,
@@ -328,7 +329,7 @@ iframePreflightRouter.openapi(
     }
 
     const userId = user.id;
-    const convexClient = getConvex({ accessToken });
+    const db = getDb();
 
     const { url } = c.req.valid("query");
     const target = new URL(url);
@@ -391,8 +392,7 @@ iframePreflightRouter.openapi(
 
       try {
         if (morphInfo) {
-          const teamMembershipsPromise = convexClient
-            .query(api.teams.listTeamMemberships, {});
+          const memberships = listTeamMemberships(db, userId);
 
           const resumeOutcome = await attemptResumeIfNeeded(
             morphInfo,
@@ -426,10 +426,8 @@ iframePreflightRouter.openapi(
                 }
 
                 try {
-                  const memberships = await teamMembershipsPromise;
                   const belongsToTeam = memberships.some((membership) => {
-                    const membershipTeam =
-                      membership.team?.teamId ?? membership.teamId;
+                    const membershipTeam = membership.teams.teamId;
                     return membershipTeam === metadataTeamId;
                   });
 
@@ -461,10 +459,14 @@ iframePreflightRouter.openapi(
                   ? metadata.teamId
                   : null;
                 if (teamId) {
-                  await convexClient.mutation(api.morphInstances.recordResume, {
-                    instanceId,
-                    teamSlugOrId: teamId,
-                  });
+                  try {
+                    recordResume(db, {
+                      instanceId,
+                      teamSlugOrId: teamId,
+                    });
+                  } catch (recordError) {
+                    console.error("[iframe-preflight] Failed to record resume:", recordError);
+                  }
                 }
               },
             },

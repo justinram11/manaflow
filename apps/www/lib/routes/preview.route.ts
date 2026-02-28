@@ -1,10 +1,24 @@
-import { getAccessTokenFromRequest } from "@/lib/utils/auth";
-import { getConvex } from "@/lib/utils/get-convex";
+import { getAccessTokenFromRequest, getUserFromRequest } from "@/lib/utils/auth";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { fetchPullRequest } from "@/lib/github/fetch-pull-request";
-import { api } from "@cmux/convex/api";
-import type { Doc } from "@cmux/convex/dataModel";
-import { typedZid } from "@cmux/shared/utils/typed-zid";
+import { getDb } from "@cmux/db";
+import { listByTeam, getByTeamAndId } from "@cmux/db/queries/preview-configs";
+import { listByConfig } from "@cmux/db/queries/preview-runs";
+import {
+  checkRepoAccess,
+  listTestRuns,
+  getTestRunDetails,
+} from "@cmux/db/queries/preview-test-jobs";
+import {
+  upsertPreviewConfig,
+  removePreviewConfig,
+} from "@cmux/db/mutations/preview-configs";
+import {
+  createTestRun,
+  markDispatched,
+  retryTestJob,
+  deleteTestRun,
+} from "@cmux/db/mutations/preview-test-jobs";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 
@@ -91,31 +105,54 @@ const PreviewRunsResponse = z
   })
   .openapi("PreviewRunsResponse");
 
-type PreviewConfigDoc = Doc<"previewConfigs">;
-type PreviewRunDoc = Doc<"previewRuns">;
+interface PreviewConfigRow {
+  id: string;
+  repoFullName: string;
+  environmentId: string | null;
+  repoInstallationId: number | null;
+  repoDefaultBranch: string | null;
+  status: string | null;
+  lastRunAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
 
-function formatPreviewConfig(config: PreviewConfigDoc) {
+interface PreviewRunRow {
+  id: string;
+  prNumber: number;
+  prUrl: string;
+  headSha: string;
+  baseSha: string | null;
+  status: string;
+  createdAt: number;
+  updatedAt: number;
+  dispatchedAt: number | null;
+  startedAt: number | null;
+  completedAt: number | null;
+}
+
+function formatPreviewConfig(config: PreviewConfigRow) {
   return {
-    id: config._id,
+    id: config.id,
     repoFullName: config.repoFullName,
     environmentId: config.environmentId ?? null,
     repoInstallationId: config.repoInstallationId ?? null,
     repoDefaultBranch: config.repoDefaultBranch ?? null,
-    status: config.status ?? "active",
+    status: (config.status ?? "active") as "active" | "paused" | "disabled",
     lastRunAt: config.lastRunAt ?? null,
     createdAt: config.createdAt,
     updatedAt: config.updatedAt,
   } satisfies z.infer<typeof PreviewConfigSchema>;
 }
 
-function formatPreviewRun(run: PreviewRunDoc) {
+function formatPreviewRun(run: PreviewRunRow) {
   return {
-    id: run._id,
+    id: run.id,
     prNumber: run.prNumber,
     prUrl: run.prUrl,
     headSha: run.headSha,
     baseSha: run.baseSha ?? null,
-    status: run.status,
+    status: run.status as "pending" | "running" | "completed" | "failed" | "skipped" | "superseded",
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
     dispatchedAt: run.dispatchedAt ?? null,
@@ -158,10 +195,8 @@ previewRouter.openapi(
     }
     const query = c.req.valid("query");
     await verifyTeamAccess({ req: c.req.raw, teamSlugOrId: query.teamSlugOrId });
-    const convex = getConvex({ accessToken });
-    const configs = await convex.query(api.previewConfigs.listByTeam, {
-      teamSlugOrId: query.teamSlugOrId,
-    });
+    const db = getDb();
+    const configs = listByTeam(db, query.teamSlugOrId);
     return c.json({ configs: configs.map(formatPreviewConfig) });
   },
 );
@@ -195,27 +230,26 @@ previewRouter.openapi(
     },
   }),
   async (c) => {
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) {
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) {
       return c.text("Unauthorized", 401);
     }
 
     const body = c.req.valid("json");
     await verifyTeamAccess({ req: c.req.raw, teamSlugOrId: body.teamSlugOrId });
-    const convex = getConvex({ accessToken });
+    const db = getDb();
 
-    const previewConfigId = await convex.mutation(api.previewConfigs.upsert, {
+    const previewConfigId = upsertPreviewConfig(db, {
       teamSlugOrId: body.teamSlugOrId,
+      userId: user.id,
       repoFullName: body.repoFullName,
-      environmentId: body.environmentId
-        ? typedZid("environments").parse(body.environmentId)
-        : undefined,
+      environmentId: body.environmentId,
       repoInstallationId: body.repoInstallationId,
       repoDefaultBranch: body.repoDefaultBranch,
       status: body.status,
     });
 
-    const saved = await convex.query(api.previewConfigs.get, {
+    const saved = getByTeamAndId(db, {
       teamSlugOrId: body.teamSlugOrId,
       previewConfigId,
     });
@@ -259,11 +293,11 @@ previewRouter.openapi(
     const params = c.req.valid("param");
     const query = c.req.valid("query");
     await verifyTeamAccess({ req: c.req.raw, teamSlugOrId: query.teamSlugOrId });
-    const convex = getConvex({ accessToken });
+    const db = getDb();
     try {
-      const result = await convex.mutation(api.previewConfigs.remove, {
+      const result = removePreviewConfig(db, {
         teamSlugOrId: query.teamSlugOrId,
-        previewConfigId: typedZid("previewConfigs").parse(params.previewConfigId),
+        previewConfigId: params.previewConfigId,
       });
       return c.json(result);
     } catch (error) {
@@ -306,10 +340,10 @@ previewRouter.openapi(
     const params = c.req.valid("param");
     const query = c.req.valid("query");
     await verifyTeamAccess({ req: c.req.raw, teamSlugOrId: query.teamSlugOrId });
-    const convex = getConvex({ accessToken });
-    const runs = await convex.query(api.previewRuns.listByConfig, {
+    const db = getDb();
+    const runs = listByConfig(db, {
       teamSlugOrId: query.teamSlugOrId,
-      previewConfigId: typedZid("previewConfigs").parse(params.previewConfigId),
+      previewConfigId: params.previewConfigId,
       limit: query.limit,
     });
     return c.json({ runs: runs.map(formatPreviewRun) });
@@ -422,9 +456,9 @@ previewRouter.openapi(
 
     const query = c.req.valid("query");
     await verifyTeamAccess({ req: c.req.raw, teamSlugOrId: query.teamSlugOrId });
-    const convex = getConvex({ accessToken });
+    const db = getDb();
 
-    const result = await convex.query(api.previewTestJobs.checkRepoAccess, {
+    const result = checkRepoAccess(db, {
       teamSlugOrId: query.teamSlugOrId,
       prUrl: query.prUrl,
     });
@@ -478,7 +512,7 @@ previewRouter.openapi(
 
     const body = c.req.valid("json");
     await verifyTeamAccess({ req: c.req.raw, teamSlugOrId: body.teamSlugOrId });
-    const convex = getConvex({ accessToken });
+    const db = getDb();
 
     // Parse PR URL to get owner/repo/prNumber
     const parsed = parsePrUrl(body.prUrl);
@@ -516,10 +550,9 @@ previewRouter.openapi(
     }
 
     try {
-      const result = await convex.mutation(api.previewTestJobs.createTestRun, {
+      const result = createTestRun(db, {
         teamSlugOrId: body.teamSlugOrId,
         prUrl: body.prUrl,
-        // Pass the real PR metadata
         prMetadata: {
           headSha: prData.headSha,
           baseSha: prData.baseSha,
@@ -580,13 +613,13 @@ previewRouter.openapi(
     const params = c.req.valid("param");
     const query = c.req.valid("query");
     await verifyTeamAccess({ req: c.req.raw, teamSlugOrId: query.teamSlugOrId });
-    const convex = getConvex({ accessToken });
+    const db = getDb();
 
     try {
-      const result = await convex.action(api.previewTestJobs.dispatchTestJob, {
-        teamSlugOrId: query.teamSlugOrId,
-        previewRunId: typedZid("previewRuns").parse(params.previewRunId),
+      const result = markDispatched(db, {
+        previewRunId: params.previewRunId,
       });
+      // Note: Job scheduling (previously via Convex scheduler) must be handled externally
       return c.json(result);
     } catch (error) {
       if (error instanceof Error && error.message.includes("not found")) {
@@ -632,9 +665,9 @@ previewRouter.openapi(
 
     const query = c.req.valid("query");
     await verifyTeamAccess({ req: c.req.raw, teamSlugOrId: query.teamSlugOrId });
-    const convex = getConvex({ accessToken });
+    const db = getDb();
 
-    const jobs = await convex.query(api.previewTestJobs.listTestRuns, {
+    const jobs = listTestRuns(db, {
       teamSlugOrId: query.teamSlugOrId,
       limit: query.limit,
     });
@@ -677,12 +710,12 @@ previewRouter.openapi(
     const params = c.req.valid("param");
     const query = c.req.valid("query");
     await verifyTeamAccess({ req: c.req.raw, teamSlugOrId: query.teamSlugOrId });
-    const convex = getConvex({ accessToken });
+    const db = getDb();
 
     try {
-      const job = await convex.query(api.previewTestJobs.getTestRunDetails, {
+      const job = getTestRunDetails(db, {
         teamSlugOrId: query.teamSlugOrId,
-        previewRunId: typedZid("previewRuns").parse(params.previewRunId),
+        previewRunId: params.previewRunId,
       });
       return c.json(job);
     } catch (error) {
@@ -724,20 +757,21 @@ previewRouter.openapi(
     },
   }),
   async (c) => {
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) {
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) {
       return c.text("Unauthorized", 401);
     }
 
     const params = c.req.valid("param");
     const query = c.req.valid("query");
     await verifyTeamAccess({ req: c.req.raw, teamSlugOrId: query.teamSlugOrId });
-    const convex = getConvex({ accessToken });
+    const db = getDb();
 
     try {
-      const result = await convex.action(api.previewTestJobs.retryTestJob, {
+      const result = retryTestJob(db, {
         teamSlugOrId: query.teamSlugOrId,
-        previewRunId: typedZid("previewRuns").parse(params.previewRunId),
+        userId: user.id,
+        previewRunId: params.previewRunId,
       });
       return c.json(result);
     } catch (error) {
@@ -784,12 +818,12 @@ previewRouter.openapi(
     const params = c.req.valid("param");
     const query = c.req.valid("query");
     await verifyTeamAccess({ req: c.req.raw, teamSlugOrId: query.teamSlugOrId });
-    const convex = getConvex({ accessToken });
+    const db = getDb();
 
     try {
-      const result = await convex.mutation(api.previewTestJobs.deleteTestRun, {
+      const result = deleteTestRun(db, {
         teamSlugOrId: query.teamSlugOrId,
-        previewRunId: typedZid("previewRuns").parse(params.previewRunId),
+        previewRunId: params.previewRunId,
       });
       return c.json(result);
     } catch (error) {

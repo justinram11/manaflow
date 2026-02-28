@@ -1,6 +1,3 @@
-import { api } from "@cmux/convex/api";
-import { convexQuery } from "@convex-dev/react-query";
-import { useQuery as useRQ } from "@tanstack/react-query";
 import {
   ExternalLink,
   X,
@@ -23,124 +20,27 @@ type WorkflowRunsProps = {
 
 type CombinedRun = ReturnType<typeof useCombinedWorkflowData>["allRuns"][number];
 
-// Use React Query-wrapped Convex queries to avoid real-time subscriptions
-// that cause excessive re-renders on the diff page.
+// TODO: Replace with HTTP API endpoints when available
+// (github_workflows, github_check_runs, github_deployments, github_commit_statuses)
+// For now, stub with empty data since these Convex queries are not yet migrated to HTTP.
 function useCombinedWorkflowData({
-  teamSlugOrId,
-  repoFullName,
-  prNumber,
-  headSha,
+  teamSlugOrId: _teamSlugOrId,
+  repoFullName: _repoFullName,
+  prNumber: _prNumber,
+  headSha: _headSha,
 }: WorkflowRunsProps) {
-  const workflowRunsQuery = useRQ({
-    ...convexQuery(api.github_workflows.getWorkflowRunsForPr, {
-      teamSlugOrId,
-      repoFullName,
-      prNumber,
-      headSha,
-      limit: 50,
-    }),
-    enabled: Boolean(teamSlugOrId && repoFullName && prNumber),
-  });
+  const allRuns = useMemo(() => [] as Array<{
+    id: string;
+    type: string;
+    name: string;
+    timestamp?: number;
+    url?: string;
+    status?: string;
+    conclusion?: string;
+    [key: string]: unknown;
+  }>, []);
 
-  const checkRunsQuery = useRQ({
-    ...convexQuery(api.github_check_runs.getCheckRunsForPr, {
-      teamSlugOrId,
-      repoFullName,
-      prNumber,
-      headSha,
-      limit: 50,
-    }),
-    enabled: Boolean(teamSlugOrId && repoFullName && prNumber),
-  });
-
-  const deploymentsQuery = useRQ({
-    ...convexQuery(api.github_deployments.getDeploymentsForPr, {
-      teamSlugOrId,
-      repoFullName,
-      prNumber,
-      headSha,
-      limit: 50,
-    }),
-    enabled: Boolean(teamSlugOrId && repoFullName && prNumber),
-  });
-
-  const commitStatusesQuery = useRQ({
-    ...convexQuery(api.github_commit_statuses.getCommitStatusesForPr, {
-      teamSlugOrId,
-      repoFullName,
-      prNumber,
-      headSha,
-      limit: 50,
-    }),
-    enabled: Boolean(teamSlugOrId && repoFullName && prNumber),
-  });
-
-  const workflowRuns = workflowRunsQuery.data;
-  const checkRuns = checkRunsQuery.data;
-  const deployments = deploymentsQuery.data;
-  const commitStatuses = commitStatusesQuery.data;
-
-  const isLoading =
-    workflowRunsQuery.isLoading ||
-    checkRunsQuery.isLoading ||
-    deploymentsQuery.isLoading ||
-    commitStatusesQuery.isLoading;
-
-  const allRuns = useMemo(
-    () => [
-      ...(workflowRuns || []).map((run) => ({
-        ...run,
-        type: "workflow",
-        name: run.workflowName,
-        timestamp: run.runStartedAt,
-        url: run.htmlUrl,
-      })),
-      ...(checkRuns || []).map((run) => {
-        const url =
-          run.htmlUrl ||
-          `https://github.com/${repoFullName}/pull/${prNumber}/checks?check_run_id=${run.checkRunId}`;
-        return { ...run, type: "check", timestamp: run.startedAt, url };
-      }),
-      ...(deployments || [])
-        .filter((dep) => dep.environment !== "Preview")
-        .map((dep) => ({
-          ...dep,
-          type: "deployment",
-          name: dep.description || dep.environment || "Deployment",
-          timestamp: dep.createdAt,
-          status:
-            dep.state === "pending" ||
-            dep.state === "queued" ||
-            dep.state === "in_progress"
-              ? "in_progress"
-              : "completed",
-          conclusion:
-            dep.state === "success"
-              ? "success"
-              : dep.state === "failure" || dep.state === "error"
-                ? "failure"
-                : undefined,
-          url: dep.targetUrl,
-        })),
-      ...(commitStatuses || []).map((status) => ({
-        ...status,
-        type: "status",
-        name: status.context,
-        timestamp: status.updatedAt,
-        status: status.state === "pending" ? "in_progress" : "completed",
-        conclusion:
-          status.state === "success"
-            ? "success"
-            : status.state === "failure" || status.state === "error"
-              ? "failure"
-              : undefined,
-        url: status.targetUrl,
-      })),
-    ],
-    [workflowRuns, checkRuns, deployments, commitStatuses, repoFullName, prNumber],
-  );
-
-  return { allRuns, isLoading };
+  return { allRuns, isLoading: false };
 }
 
 function WorkflowRunsBadge({
@@ -390,8 +290,9 @@ export function WorkflowRunsSection({
 
     if (run.conclusion === "success") {
       if (run.type === "workflow" && "runDuration" in run && run.runDuration) {
-        const mins = Math.floor(run.runDuration / 60);
-        const secs = run.runDuration % 60;
+        const duration = run.runDuration as number;
+        const mins = Math.floor(duration / 60);
+        const secs = duration % 60;
         parts.push(`Successful in ${mins}m ${secs}s`);
       } else {
         parts.push("Successful");
@@ -464,7 +365,7 @@ export function WorkflowRunsSection({
 
             return (
               <a
-                key={`${run.type}-${run._id}`}
+                key={`${run.type}-${run.id}`}
                 href={run.url || "#"}
                 target="_blank"
                 rel="noreferrer"

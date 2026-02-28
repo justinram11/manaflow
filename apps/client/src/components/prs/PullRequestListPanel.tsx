@@ -1,7 +1,7 @@
-import { api } from "@cmux/convex/api";
 import { Link } from "@tanstack/react-router";
 import clsx from "clsx";
-import { useQuery as useConvexQuery } from "convex/react";
+import { useQuery } from "@tanstack/react-query";
+import { getApiIntegrationsGithubPrsOptions } from "@cmux/www-openapi-client/react-query";
 import { useMemo } from "react";
 
 type Connection = {
@@ -49,19 +49,36 @@ export function PullRequestListPanel({
   onStateChange: (s: "open" | "closed" | "all") => void;
   selectedKey: string | null;
 }) {
-  const prs = useConvexQuery(api.github_prs.listPullRequests, {
-    teamSlugOrId,
-    state,
-    search,
+  const prsQuery = useQuery({
+    ...getApiIntegrationsGithubPrsOptions({
+      query: {
+        team: teamSlugOrId,
+        installationId: installationId ?? undefined,
+        q: search || undefined,
+        state: state === "all" ? undefined : state,
+      },
+    }),
   });
+
+  // Map HTTP API shape (GithubPullRequestItem) to the shape expected by the UI
+  const prs = useMemo(() => {
+    const items = prsQuery.data?.pullRequests;
+    if (!items) return undefined;
+    return items.map((item) => ({
+      number: item.number,
+      title: item.title,
+      state: item.state,
+      repoFullName: item.repository_full_name,
+      authorLogin: item.user?.login ?? "",
+      updatedAt: item.updated_at ?? "",
+      htmlUrl: item.html_url,
+    }));
+  }, [prsQuery.data]);
 
   const list = useMemo(() => {
     const rows = prs || [];
-    if (installationId) {
-      return rows.filter((p) => p.installationId === installationId);
-    }
     return rows;
-  }, [prs, installationId]);
+  }, [prs]);
 
   return (
     <div className="flex flex-col min-h-0 h-full">

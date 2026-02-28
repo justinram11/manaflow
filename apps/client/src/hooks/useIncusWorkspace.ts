@@ -1,18 +1,18 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useQuery as useConvexQuery } from "convex/react";
-import { api } from "@cmux/convex/api";
-import type { Id } from "@cmux/convex/dataModel";
+import {
+  getApiTaskRunsByIdOptions,
+} from "@cmux/www-openapi-client/react-query";
 import { toast } from "sonner";
 import { queryClient } from "@/query-client";
 
 interface IncusWorkspaceQueryArgs {
-  taskRunId: Id<"taskRuns">;
+  taskRunId: string;
   teamSlugOrId: string;
   enabled?: boolean;
 }
 
 interface UseResumeIncusWorkspaceArgs {
-  taskRunId: Id<"taskRuns">;
+  taskRunId: string;
   teamSlugOrId: string;
   onSuccess?: () => void;
   onError?: (error: unknown) => void;
@@ -37,13 +37,16 @@ export function useIncusPauseQuery({
   teamSlugOrId,
   enabled,
 }: IncusWorkspaceQueryArgs) {
-  const taskRun = useConvexQuery(api.taskRuns.get, {
-    teamSlugOrId,
-    id: taskRunId,
+  const taskRunQuery = useQuery({
+    ...getApiTaskRunsByIdOptions({ path: { id: taskRunId } }),
+    enabled: enabled !== false,
   });
+
+  const taskRun = taskRunQuery.data as Record<string, unknown> | null | undefined;
+  const vscode = taskRun?.vscode as { provider?: string; containerName?: string } | undefined;
   const canQuery = isIncusProvider(
-    taskRun?.vscode?.provider,
-    taskRun?.vscode?.containerName ?? undefined,
+    vscode?.provider,
+    vscode?.containerName ?? undefined,
   );
 
   return useQuery({
@@ -71,18 +74,20 @@ export function useIncusPause({
   taskRunId,
   teamSlugOrId,
 }: {
-  taskRunId: Id<"taskRuns">;
+  taskRunId: string;
   teamSlugOrId: string;
 }) {
-  const taskRun = useConvexQuery(api.taskRuns.get, {
-    teamSlugOrId,
-    id: taskRunId,
+  const taskRunQuery = useQuery({
+    ...getApiTaskRunsByIdOptions({ path: { id: taskRunId } }),
   });
+
+  const taskRun = taskRunQuery.data as Record<string, unknown> | null | undefined;
+  const vscode = taskRun?.vscode as { provider?: string; containerName?: string } | undefined;
 
   return useMutation<{ paused: true }, Error, void, { toastId: string | number }>({
     mutationKey: ["incus", "pause", taskRunId],
     mutationFn: async () => {
-      const containerName = taskRun?.vscode?.containerName;
+      const containerName = vscode?.containerName;
       if (!containerName) throw new Error("No container found");
 
       const res = await fetch(

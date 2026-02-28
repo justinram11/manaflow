@@ -1,15 +1,15 @@
 import { TaskTimeline } from "@/components/task-timeline";
-import type { Doc, Id } from "@cmux/convex/dataModel";
+import type { DbTask } from "@cmux/www-openapi-client";
 import type { TaskRunWithChildren } from "@/types/task";
 import clsx from "clsx";
 import { MessageCircle, GripVertical, X, Maximize2, Minimize2 } from "lucide-react";
 
 export interface TaskRunChatPaneProps {
-  task: Doc<"tasks"> | null | undefined;
+  task: DbTask | null | undefined;
   taskRuns: TaskRunWithChildren[] | null | undefined;
   crownEvaluation?: {
     evaluatedAt?: number;
-    winnerRunId?: Id<"taskRuns">;
+    winnerRunId?: string;
     reason?: string;
   } | null;
   hideHeader?: boolean;

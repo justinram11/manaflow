@@ -1,18 +1,18 @@
 import { fetchGithubUserInfoForRequest } from "@/lib/utils/githubUserInfo";
-import { api } from "@cmux/convex/api";
+import { getDb } from "@cmux/db";
+import { getCurrentBasic } from "@cmux/db/queries/users";
 
-import type { ConvexClient } from "./snapshot";
 import type { SandboxInstance } from "./sandbox-instance";
 import { singleQuote } from "./shell";
 
 export type MorphInstance = SandboxInstance;
 
 export const fetchGitIdentityInputs = (
-  convex: ConvexClient,
+  userId: string,
   githubAccessToken: string
 ) =>
   Promise.all([
-    convex.query(api.users.getCurrentBasic, {}),
+    Promise.resolve(getCurrentBasic(getDb(), userId)),
     fetchGithubUserInfoForRequest(githubAccessToken),
   ] as const);
 

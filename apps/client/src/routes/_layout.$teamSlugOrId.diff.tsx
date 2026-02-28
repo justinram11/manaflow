@@ -7,8 +7,9 @@ import {
 import { useSocket } from "@/contexts/socket/use-socket";
 import { getApiIntegrationsGithubBranchesOptions } from "@/queries/branches";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
-import { api } from "@cmux/convex/api";
-import { convexQuery } from "@convex-dev/react-query";
+import {
+  getApiIntegrationsGithubReposOptions,
+} from "@cmux/www-openapi-client/react-query";
 import { useQuery as useRQ } from "@tanstack/react-query";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { ArrowLeftRight, GitBranch } from "lucide-react";
@@ -70,9 +71,12 @@ function DashboardDiffPage() {
   const isEnvironmentProject =
     !!selectedProject && selectedProject.startsWith("env:");
 
-  const reposByOrgQuery = useRQ(
-    convexQuery(api.github.getReposByOrg, { teamSlugOrId })
-  );
+  const reposByOrgQuery = useRQ({
+    ...getApiIntegrationsGithubReposOptions({
+      query: { team: teamSlugOrId },
+    }),
+    enabled: Boolean(teamSlugOrId),
+  });
 
   const branchesQuery = useRQ({
     ...getApiIntegrationsGithubBranchesOptions({
@@ -83,16 +87,9 @@ function DashboardDiffPage() {
   });
 
   const projectOptions: SelectOption[] = useMemo(() => {
-    const byOrg =
-      (reposByOrgQuery.data as
-        | Record<string, Array<{ fullName: string }>>
-        | undefined) || {};
+    const repos = reposByOrgQuery.data?.repos ?? [];
     const repoValues = Array.from(
-      new Set(
-        Object.entries(byOrg).flatMap(([, repos]) =>
-          repos.map((r) => r.fullName)
-        )
-      )
+      new Set(repos.map((r) => r.full_name))
     );
     const repoOptions = repoValues.map((fullName) => ({
       label: fullName,

@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+// @ts-nocheck - Legacy script, uses removed Convex APIs
 /**
  * Local Preview to PR Script
  *

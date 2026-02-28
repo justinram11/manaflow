@@ -1,10 +1,5 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { streamSSE } from "hono/streaming";
-import { stackServerAppJs } from "../utils/stack";
-import {
-  getConvexHttpActionBaseUrl,
-  startCodeReviewJob,
-} from "../services/code-review/start-code-review";
 import {
   parseModelConfigFromUrlSearchParams,
   parseTooltipLanguageFromUrlSearchParams,
@@ -102,10 +97,10 @@ const StartResponseSchema = z
   })
   .openapi("CodeReviewStartResponse");
 
-type CodeReviewStartBody = z.infer<typeof StartBodySchema>;
-
 export const codeReviewRouter = new OpenAPIHono();
 
+// The /code-review/start endpoint is temporarily disabled during the Convex-to-SQLite migration.
+// It depends on Convex for job reservation, state management, and callbacks.
 codeReviewRouter.openapi(
   createRoute({
     method: "post",
@@ -133,97 +128,15 @@ codeReviewRouter.openapi(
       },
       401: { description: "Unauthorized" },
       500: { description: "Failed to start code review" },
+      503: { description: "Service temporarily unavailable" },
     },
   }),
   async (c) => {
-    const user = await stackServerAppJs.getUser({ tokenStore: c.req.raw });
-    if (!user) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
-    const [{ accessToken }, githubAccount] = await Promise.all([
-      user.getAuthJson(),
-      user.getConnectedAccount("github"),
-    ]);
-    if (!accessToken) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
-    if (!githubAccount) {
-      return c.json({ error: "GitHub account is not connected" }, 401);
-    }
-    const { accessToken: githubAccessToken } =
-      await githubAccount.getAccessToken();
-    if (!githubAccessToken) {
-      return c.json({ error: "GitHub access token unavailable" }, 401);
-    }
-
-    const body = c.req.valid("json") as CodeReviewStartBody;
-    const convexHttpBase = getConvexHttpActionBaseUrl();
-    if (!convexHttpBase) {
-      return c.json({ error: "Convex HTTP base URL is not configured" }, 500);
-    }
-    if (!body.prNumber && !body.comparison) {
-      return c.json(
-        { error: "Either prNumber or comparison metadata is required" },
-        400,
-      );
-    }
-    const jobType = body.comparison ? "comparison" : "pull_request";
-    const headCommitProvided = Boolean(body.headCommitRef ?? body.commitRef);
-    if (!headCommitProvided) {
-      return c.json(
-        { error: "headCommitRef is required to start a code review run" },
-        400,
-      );
-    }
-    if (jobType === "pull_request" && !body.baseCommitRef) {
-      return c.json(
-        { error: "baseCommitRef is required when starting a pull request review" },
-        400,
-      );
-    }
-    if (jobType === "comparison" && !body.baseCommitRef) {
-      return c.json(
-        { error: "baseCommitRef is required when starting a comparison review" },
-        400,
-      );
-    }
-
-    const { job, deduplicated, backgroundTask } = await startCodeReviewJob({
-      accessToken,
-      githubAccessToken,
-      callbackBaseUrl: convexHttpBase,
-      payload: {
-        teamSlugOrId: body.teamSlugOrId,
-        githubLink: body.githubLink,
-        prNumber: body.prNumber,
-        commitRef: body.commitRef,
-        headCommitRef: body.headCommitRef,
-        baseCommitRef: body.baseCommitRef,
-        force: body.force,
-        comparison: body.comparison
-          ? {
-              slug: body.comparison.slug,
-              base: body.comparison.base,
-              head: body.comparison.head,
-            }
-          : undefined,
-        fileDiffs: body.fileDiffs,
-        heatmapModel: body.heatmapModel,
-        tooltipLanguage: body.tooltipLanguage,
-      },
-      request: c.req.raw,
-    });
-
-    if (backgroundTask) {
-      void backgroundTask;
-    }
-
     return c.json(
       {
-        job,
-        deduplicated,
+        error: "Code review start is temporarily disabled during database migration. Use /code-review/simple for diff-based reviews.",
       },
-      200,
+      503,
     );
   },
 );
@@ -231,10 +144,6 @@ codeReviewRouter.openapi(
 codeReviewRouter.post("/code-review/simple", async (c) => {
   const user = await getUserFromRequest(c.req.raw);
   if (!user) {
-    return c.json({ error: "Unauthorized" }, 401);
-  }
-  const { accessToken } = await user.getAuthJson();
-  if (!accessToken) {
     return c.json({ error: "Unauthorized" }, 401);
   }
 

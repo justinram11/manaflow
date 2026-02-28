@@ -51,12 +51,9 @@ function getAnthropicApiUrl(): string {
   if (USE_CLOUDFLARE_AI_GATEWAY) {
     return CLOUDFLARE_ANTHROPIC_API_URL;
   }
-  // Use Convex Anthropic Bedrock endpoint
-  // HTTP routes are served from .convex.site, not .convex.cloud
-  const convexSiteUrl = env.NEXT_PUBLIC_CONVEX_URL.replace(
-    ".convex.cloud",
-    ".convex.site"
-  );
+  // Legacy: was Convex Anthropic Bedrock endpoint
+  const convexUrl = env.NEXT_PUBLIC_CONVEX_URL ?? "";
+  const convexSiteUrl = convexUrl.replace(".convex.cloud", ".convex.site");
   return `${convexSiteUrl}/api/anthropic/v1/messages`;
 }
 

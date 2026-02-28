@@ -268,7 +268,7 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
             taskRunContext: {
               taskRunToken: "dev-server-placeholder-token",
               prompt: body.taskDescription,
-              convexUrl: env.NEXT_PUBLIC_CONVEX_URL,
+              convexUrl: env.NEXT_PUBLIC_CONVEX_URL ?? "",
             },
           },
           () => {

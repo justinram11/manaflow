@@ -1,4 +1,3 @@
-import type { ConvexHttpClient } from "convex/browser";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
@@ -7,7 +6,7 @@ import { getGitHubOAuthToken } from "./getGitHubToken";
 
 export async function setupGitCredentialsForDocker(
   instanceId: string,
-  _convex?: ConvexHttpClient
+  _convex?: unknown
 ): Promise<string | null> {
   try {
     const githubToken = await getGitHubOAuthToken();

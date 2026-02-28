@@ -1,9 +1,7 @@
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { PreviewConfigureClient } from "@/components/preview/preview-configure-client";
-import { getConvex } from "@/lib/utils/get-convex";
 import { stackServerApp } from "@/lib/utils/stack";
-import { api } from "@cmux/convex/api";
 import {
   getTeamDisplayName,
   getTeamId,
@@ -13,6 +11,9 @@ import {
 } from "@/lib/team-utils";
 import { env } from "@/lib/utils/www-env";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
+import { getDb } from "@cmux/db";
+import { listProviderConnections } from "@cmux/db/queries/repos";
+import { createInstallState } from "@cmux/db/mutations/repos";
 
 type PageProps = {
   searchParams?: Promise<SearchParams>;
@@ -132,12 +133,10 @@ export default async function PreviewConfigurePage({ searchParams }: PageProps) 
     teams[0];
   const selectedTeamSlugOrId = getTeamSlugOrId(selectedTeam);
 
-  const convex = getConvex({ accessToken });
-  const providerConnections = await convex.query(api.github.listProviderConnections, {
-    teamSlugOrId: selectedTeamSlugOrId,
-  });
+  const db = getDb();
+  const connections = listProviderConnections(db, selectedTeamSlugOrId);
 
-  const hasGithubAppInstallation = providerConnections.some(
+  const hasGithubAppInstallation = connections.some(
     (connection) => connection.isActive,
   );
 
@@ -155,10 +154,46 @@ export default async function PreviewConfigurePage({ searchParams }: PageProps) 
         ? `${protocol}://${host}${configurePath}`
         : configurePath;
 
-    const { state } = await convex.mutation(api.github_app.mintInstallState, {
+    const installStateSecret = env.INSTALL_STATE_SECRET;
+    if (!installStateSecret) {
+      throw new Error("INSTALL_STATE_SECRET is not configured");
+    }
+
+    const { teamId, nonce, iat, exp } = createInstallState(db, {
       teamSlugOrId: selectedTeamSlugOrId,
+      userId: user.id,
       returnUrl,
     });
+
+    // Sign the install state token
+    const payloadObj = {
+      ver: 1,
+      teamId,
+      userId: user.id,
+      iat,
+      exp,
+      nonce,
+      returnUrl,
+    };
+    const payload = JSON.stringify(payloadObj);
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(installStateSecret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const sigBuf = new Uint8Array(
+      await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload)),
+    );
+    const toBase64Url = (buf: Uint8Array) => {
+      let binary = "";
+      for (const b of buf) binary += String.fromCharCode(b);
+      return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    };
+    const payloadB64 = toBase64Url(new TextEncoder().encode(payload));
+    const sigB64 = toBase64Url(sigBuf);
+    const state = `v2.${payloadB64}.${sigB64}`;
 
     const url = new URL(`https://github.com/apps/${githubAppSlug}/installations/new`);
     url.searchParams.set("state", state);
@@ -183,11 +218,10 @@ export default async function PreviewConfigurePage({ searchParams }: PageProps) 
       // Validate and parse environment ID
       const parsedEnvId = typedZid("environments").parse(environmentId);
 
-      // Fetch environment details directly from Convex
-      const environment = await convex.query(api.environments.get, {
-        teamSlugOrId: selectedTeamSlugOrId,
-        id: parsedEnvId,
-      });
+      // Fetch environment details directly from DB
+      const { getEnvironmentByTeam } = await import("@cmux/db/queries/environments");
+      const envDb = getDb();
+      const environment = getEnvironmentByTeam(envDb, selectedTeamSlugOrId, parsedEnvId);
 
       if (environment) {
         initialMaintenanceScript = environment.maintenanceScript ?? null;

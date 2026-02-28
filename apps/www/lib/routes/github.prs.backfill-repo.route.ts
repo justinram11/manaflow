@@ -1,10 +1,11 @@
-import { getAccessTokenFromRequest } from "@/lib/utils/auth";
+import { getUserFromRequest } from "@/lib/utils/auth";
 import { env } from "@/lib/utils/www-env";
-import { api } from "@cmux/convex/api";
+import { getDb } from "@cmux/db";
+import { listProviderConnections } from "@cmux/db/queries/repos";
+import { upsertPullRequest } from "@cmux/db/mutations/github-prs";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { createAppAuth } from "@octokit/auth-app";
 import { Octokit } from "octokit";
-import { getConvex } from "../utils/get-convex";
 import { githubPrivateKey } from "../utils/githubPrivateKey";
 
 export const githubPrsBackfillRepoRouter = new OpenAPIHono();
@@ -17,7 +18,7 @@ const Body = z
       .regex(/^[^/]+\/.+$/)
       .openapi({ description: "owner/repo" }),
     state: z
-      .enum(["open", "closed", "all"]) 
+      .enum(["open", "closed", "all"])
       .optional()
       .default("all")
       .openapi({ description: "PR state to backfill (default all)" }),
@@ -36,7 +37,7 @@ githubPrsBackfillRepoRouter.openapi(
     method: "post" as const,
     path: "/integrations/github/prs/backfill-repo",
     tags: ["Integrations"],
-    summary: "Backfill all PRs for a repo and persist to Convex",
+    summary: "Backfill all PRs for a repo and persist to DB",
     request: {
       body: {
         content: {
@@ -56,23 +57,16 @@ githubPrsBackfillRepoRouter.openapi(
     },
   }),
   async (c) => {
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) return c.text("Unauthorized", 401);
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) return c.text("Unauthorized", 401);
 
     const { team, repoFullName, state = "all", maxPages = 50 } = c.req.valid("json");
     const [owner, repo] = repoFullName.split("/", 2);
     if (!owner || !repo) return c.text("Bad repo name", 400);
 
-    const convex = getConvex({ accessToken });
-    const connections = await convex.query(api.github.listProviderConnections, {
-      teamSlugOrId: team,
-    });
-    type Conn = {
-      installationId: number;
-      accountLogin?: string | null;
-      isActive?: boolean | null;
-    };
-    const target = (connections as Conn[]).find(
+    const db = getDb();
+    const connections = listProviderConnections(db, team);
+    const target = connections.find(
       (co) => (co.isActive ?? true) && (co.accountLogin ?? "").toLowerCase() === owner.toLowerCase()
     );
     if (!target) return c.text("Installation not found for owner", 404);
@@ -127,7 +121,7 @@ githubPrsBackfillRepoRouter.openapi(
       const items = (res.data as unknown as Pull[]) || [];
       if (items.length === 0) break;
       for (const pr of items) {
-        await convex.mutation(api.github_prs.upsertFromServer, {
+        upsertPullRequest(db, {
           teamSlugOrId: team,
           installationId: target.installationId,
           repoFullName: `${owner}/${repo}`,
@@ -166,4 +160,3 @@ githubPrsBackfillRepoRouter.openapi(
     return c.json({ ok: true, count: total, pages: page - 1 });
   }
 );
-

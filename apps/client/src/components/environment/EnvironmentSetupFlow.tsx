@@ -21,7 +21,7 @@ import {
   ensureInitialEnvVars,
 } from "@cmux/shared/components/environment";
 import { formatEnvVarsContent } from "@cmux/shared/utils/format-env-vars-content";
-import type { Id } from "@cmux/convex/dataModel";
+// IDs are plain strings in the HTTP API
 import { validateExposedPorts } from "@cmux/shared/utils/validate-exposed-ports";
 import {
   postApiEnvironmentsMutation,
@@ -404,7 +404,7 @@ export function EnvironmentSetupFlow({
             to: "/$teamSlugOrId/environments/$environmentId",
             params: {
               teamSlugOrId,
-              environmentId: data.id as Id<"environments">,
+              environmentId: data.id,
             },
             search: {
               step: undefined,

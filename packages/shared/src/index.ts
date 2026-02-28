@@ -1,7 +1,6 @@
 // Do NOT export Node-only utilities here; browser builds import this index.
 
 export * from "./agentConfig";
-export * from "./convex-ready";
 export * from "./crown";
 export * from "./diff-types";
 export * from "./getShortId";

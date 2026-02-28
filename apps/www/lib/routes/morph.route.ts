@@ -4,20 +4,23 @@ import {
   type MorphSnapshotId,
 } from "@/lib/utils/morph-defaults";
 import { getAccessTokenFromRequest, getUserFromRequest } from "@/lib/utils/auth";
+import { fetchGithubUserInfoForRequest } from "@/lib/utils/githubUserInfo";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { type Instance, MorphCloudClient } from "morphcloud";
-import { getConvex } from "../utils/get-convex";
+import { getDb } from "@cmux/db";
+import { getTaskRunById } from "@cmux/db/queries/task-runs";
+import { listTeamMemberships, resolveTeamId } from "@cmux/db/queries/teams";
+import { getCurrentBasic } from "@cmux/db/queries/users";
+import { recordResume } from "@cmux/db/mutations/morph-instances";
+import { updateTaskRunVSCodeStatus } from "@cmux/db/mutations/task-runs";
 import { selectGitIdentity } from "../utils/gitIdentity";
 import { stackServerAppJs } from "../utils/stack";
-import { api } from "@cmux/convex/api";
-import type { Id } from "@cmux/convex/dataModel";
 import {
   configureGithubAccess,
   configureGitIdentity,
-  fetchGitIdentityInputs,
 } from "./sandboxes/git";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import * as Sentry from "@sentry/nextjs";
@@ -122,20 +125,19 @@ morphRouter.openapi(
     const { taskRunId } = c.req.valid("param");
     const { teamSlugOrId } = c.req.valid("json");
 
-    const convex = getConvex({ accessToken });
+    const db = getDb();
     const team = await verifyTeamAccess({ req: c.req.raw, teamSlugOrId });
+    const teamId = resolveTeamId(db, teamSlugOrId);
 
-    const taskRun = await convex.query(api.taskRuns.get, {
-      teamSlugOrId,
-      id: taskRunId,
-    });
+    const taskRun = getTaskRunById(db, taskRunId);
 
-    if (!taskRun) {
+    if (!taskRun || taskRun.teamId !== teamId) {
       return c.text("Task run not found", 404);
     }
 
-    const instanceId = taskRun.vscode?.containerName;
-    const isMorphProvider = taskRun.vscode?.provider === "morph";
+    const vscode = taskRun.vscode as Record<string, unknown> | null;
+    const instanceId = vscode?.containerName as string | undefined;
+    const isMorphProvider = vscode?.provider === "morph";
 
     if (!isMorphProvider || !instanceId) {
       return c.text("Task run is not backed by a Morph instance", 400);
@@ -165,16 +167,12 @@ morphRouter.openapi(
       await instance.resume();
 
       // Record the resume for activity tracking (used by cleanup cron)
-      await convex.mutation(api.morphInstances.recordResume, {
+      recordResume(db, {
         instanceId,
         teamSlugOrId,
       });
 
-      await convex.mutation(api.taskRuns.updateVSCodeStatus, {
-        teamSlugOrId,
-        id: taskRunId as Id<"taskRuns">,
-        status: "running",
-      });
+      updateTaskRunVSCodeStatus(db, taskRunId, "running");
 
       return c.json({ resumed: true });
     } catch (error) {
@@ -228,20 +226,19 @@ morphRouter.openapi(
     const { taskRunId } = c.req.valid("param");
     const { teamSlugOrId } = c.req.valid("json");
 
-    const convex = getConvex({ accessToken });
+    const db = getDb();
     const team = await verifyTeamAccess({ req: c.req.raw, teamSlugOrId });
+    const teamId = resolveTeamId(db, teamSlugOrId);
 
-    const taskRun = await convex.query(api.taskRuns.get, {
-      teamSlugOrId,
-      id: taskRunId,
-    });
+    const taskRun = getTaskRunById(db, taskRunId);
 
-    if (!taskRun) {
+    if (!taskRun || taskRun.teamId !== teamId) {
       return c.text("Task run not found", 404);
     }
 
-    const instanceId = taskRun.vscode?.containerName;
-    const isMorphProvider = taskRun.vscode?.provider === "morph";
+    const vscode = taskRun.vscode as Record<string, unknown> | null;
+    const instanceId = vscode?.containerName as string | undefined;
+    const isMorphProvider = vscode?.provider === "morph";
 
     if (!isMorphProvider || !instanceId) {
       return c.text("Task run is not backed by a Morph instance", 400);
@@ -376,21 +373,20 @@ morphRouter.openapi(
     const { teamSlugOrId } = c.req.valid("json");
 
     // Verify team access
-    const convex = getConvex({ accessToken });
+    const db = getDb();
     const team = await verifyTeamAccess({ req: c.req.raw, teamSlugOrId });
+    const teamId = resolveTeamId(db, teamSlugOrId);
 
     // Get task run
-    const taskRun = await convex.query(api.taskRuns.get, {
-      teamSlugOrId,
-      id: taskRunId,
-    });
+    const taskRun = getTaskRunById(db, taskRunId);
 
-    if (!taskRun) {
+    if (!taskRun || taskRun.teamId !== teamId) {
       return c.text("Task run not found", 404);
     }
 
-    const instanceId = taskRun.vscode?.containerName;
-    const isMorphProvider = taskRun.vscode?.provider === "morph";
+    const vscode = taskRun.vscode as Record<string, unknown> | null;
+    const instanceId = vscode?.containerName as string | undefined;
+    const isMorphProvider = vscode?.provider === "morph";
 
     if (!isMorphProvider || !instanceId) {
       return c.text("Task run is not backed by a Morph instance", 400);
@@ -491,7 +487,7 @@ morphRouter.openapi(
       snapshotId,
     } = c.req.valid("json");
 
-    const convex = getConvex({ accessToken });
+    const db = getDb();
 
     const verifyTeamPromise = Sentry.startSpan(
       { name: "verifyTeamAccess", op: "auth" },
@@ -528,7 +524,11 @@ morphRouter.openapi(
         }
         return Sentry.startSpan(
           { name: "fetchGitIdentityInputs", op: "db" },
-          () => fetchGitIdentityInputs(convex, githubAccessToken)
+          () =>
+            Promise.all([
+              getCurrentBasic(db, user.id),
+              fetchGithubUserInfoForRequest(githubAccessToken),
+            ] as const)
         );
       }
     );
@@ -946,11 +946,11 @@ morphRouter.openapi(
     const { teamId } = c.req.valid("query");
 
     try {
-      const convex = getConvex({ accessToken });
+      const db = getDb();
 
       // Get user's team memberships to scope the results
-      const memberships = await convex.query(api.teams.listTeamMemberships, {});
-      const userTeamIds = new Set(memberships.map((m) => m.team.teamId));
+      const memberships = listTeamMemberships(db, user.id);
+      const userTeamIds = new Set(memberships.map((m) => m.teams.teamId));
 
       // If teamId filter is specified, verify user belongs to that team
       if (teamId && !userTeamIds.has(teamId)) {

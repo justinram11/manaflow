@@ -28,7 +28,7 @@ import {
 import { Accordion, AccordionItem } from "@heroui/react";
 import { useMutation as useRQMutation } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import type { Id } from "@cmux/convex/dataModel";
+// IDs are plain strings in the HTTP API
 import clsx from "clsx";
 import {
   ArrowLeft,
@@ -90,7 +90,7 @@ export function EnvironmentConfiguration({
   browserUrl?: string;
   isProvisioning: boolean;
   mode?: "new" | "snapshot";
-  sourceEnvironmentId?: Id<"environments">;
+  sourceEnvironmentId?: string;
   initialEnvName?: string;
   initialMaintenanceScript?: string;
   initialDevScript?: string;
@@ -581,7 +581,7 @@ export function EnvironmentConfiguration({
               to: "/$teamSlugOrId/environments/$environmentId",
               params: {
                 teamSlugOrId,
-                environmentId: data.id as Id<"environments">,
+                environmentId: data.id as string,
               },
               search: {
                 step: undefined,

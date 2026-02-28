@@ -20,12 +20,12 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { Id } from "@cmux/convex/dataModel";
+// IDs are plain strings in the HTTP API
 
 type ScreenshotStatus = "completed" | "failed" | "skipped";
 
 interface ScreenshotMediaBase {
-  storageId: Id<"_storage">;
+  storageId: string;
   mimeType: string;
   fileName?: string | null;
   commitSha?: string | null;
@@ -38,9 +38,9 @@ type ScreenshotImage = ScreenshotMediaBase;
 type ScreenshotVideo = ScreenshotMediaBase;
 
 interface RunScreenshotSet {
-  _id: Id<"taskRunScreenshotSets">;
-  taskId: Id<"tasks">;
-  runId: Id<"taskRuns">;
+  id: string;
+  taskId: string;
+  runId: string;
   status: ScreenshotStatus;
   hasUiChanges?: boolean | null;
   commitSha?: string | null;
@@ -52,7 +52,7 @@ interface RunScreenshotSet {
 
 interface RunScreenshotGalleryProps {
   screenshotSets: RunScreenshotSet[];
-  highlightedSetId?: Id<"taskRunScreenshotSets"> | null;
+  highlightedSetId?: string | null;
 }
 
 const MIN_ZOOM = 0.2;
@@ -130,7 +130,7 @@ type GalleryEntry = GalleryItem & {
 };
 
 const getMediaKey = (
-  setId: Id<"taskRunScreenshotSets">,
+  setId: string,
   kind: MediaKind,
   media: ScreenshotMediaBase,
   indexInSet: number,
@@ -143,7 +143,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
     if (screenshotSets.length === 0) return null;
     return [...screenshotSets].sort((a, b) => {
       if (a.capturedAt === b.capturedAt) {
-        return a._id.localeCompare(b._id);
+        return a.id.localeCompare(b.id);
       }
       return a.capturedAt - b.capturedAt;
     })[screenshotSets.length - 1];
@@ -158,7 +158,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
         media: image,
         kind: "image",
         indexInSet,
-        key: getMediaKey(latestScreenshotSet._id, "image", image, indexInSet),
+        key: getMediaKey(latestScreenshotSet.id, "image", image, indexInSet),
       });
     });
     // Filter out animated preview images (GIF/APNG) - they are only used for GitHub comment embedding, not gallery display
@@ -171,7 +171,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
         media: video,
         kind: "video",
         indexInSet,
-        key: getMediaKey(latestScreenshotSet._id, "video", video, indexInSet),
+        key: getMediaKey(latestScreenshotSet.id, "video", video, indexInSet),
       });
     });
     return entries;

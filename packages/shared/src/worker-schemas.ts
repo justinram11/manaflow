@@ -1,4 +1,3 @@
-import type { Id } from "@cmux/convex/dataModel";
 import { z } from "zod";
 import { typedZid } from "./utils/typed-zid";
 
@@ -314,20 +313,20 @@ export interface ServerToWorkerEvents {
 
   // File watching events
   "worker:start-file-watch": (data: {
-    taskRunId: Id<"taskRuns">;
+    taskRunId: string;
     worktreePath: string;
   }) => void;
-  "worker:stop-file-watch": (data: { taskRunId: Id<"taskRuns"> }) => void;
+  "worker:stop-file-watch": (data: { taskRunId: string }) => void;
 
   // Cloud-to-local sync: start/stop syncing cloud changes back to local
   "worker:start-cloud-sync": (data: {
-    taskRunId: Id<"taskRuns">;
+    taskRunId: string;
     workspacePath: string;
   }) => void;
-  "worker:stop-cloud-sync": (data: { taskRunId: Id<"taskRuns"> }) => void;
+  "worker:stop-cloud-sync": (data: { taskRunId: string }) => void;
   // Request a full sync of all existing files from cloud to local
   "worker:request-full-cloud-sync": (
-    data: { taskRunId: Id<"taskRuns"> },
+    data: { taskRunId: string },
     callback: (result: { filesSent: number }) => void
   ) => void;
   "worker:start-screenshot-collection": (
@@ -397,7 +396,7 @@ export interface WorkerToServerEvents {
   // File change events
   "worker:file-changes": (data: {
     workerId: string;
-    taskRunId: Id<"taskRuns">;
+    taskRunId: string;
     changes: WorkerFileChange[];
     gitDiff: string;
     fileDiffs: WorkerFileDiff[];

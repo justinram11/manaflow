@@ -1,6 +1,12 @@
-import { api } from "@cmux/convex/api";
-import type { Id } from "@cmux/convex/dataModel";
-import { useMutation } from "convex/react";
+import {
+  patchApiTasksById,
+} from "@cmux/www-openapi-client";
+import type { DbTaskListResponse } from "@cmux/www-openapi-client";
+import {
+  getApiTasksQueryKey,
+  getApiTasksByIdQueryKey,
+} from "@cmux/www-openapi-client/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   useCallback,
   useEffect,
@@ -13,14 +19,8 @@ import {
 import { flushSync } from "react-dom";
 import { toast } from "sonner";
 
-type TasksGetArgs = {
-  teamSlugOrId: string;
-  projectFullName?: string;
-  archived?: boolean;
-};
-
 interface UseTaskRenameOptions {
-  taskId: Id<"tasks">;
+  taskId: string;
   teamSlugOrId: string;
   currentText: string;
   canRename: boolean;
@@ -32,6 +32,7 @@ export function useTaskRename({
   currentText,
   canRename,
 }: UseTaskRenameOptions) {
+  const queryClient = useQueryClient();
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(currentText);
   const [renameError, setRenameError] = useState<string | null>(null);
@@ -40,46 +41,69 @@ export function useTaskRename({
   const pendingRenameFocusFrame = useRef<number | null>(null);
   const renameInputHasFocusedRef = useRef(false);
 
-  const updateTaskMutation = useMutation(api.tasks.update).withOptimisticUpdate(
-    (localStore, args) => {
+  const updateTaskMutation = useMutation({
+    mutationFn: ({ id, text }: { id: string; text: string }) =>
+      patchApiTasksById({
+        path: { id },
+        body: { teamSlugOrId, text },
+        throwOnError: true,
+      }),
+    onMutate: async ({ id, text }) => {
       const optimisticUpdatedAt = Date.now();
-      const applyUpdateToList = (keyArgs: TasksGetArgs) => {
-        const list = localStore.getQuery(api.tasks.get, keyArgs);
-        if (!list) {
-          return;
-        }
-        const index = list.findIndex((item) => item._id === args.id);
-        if (index === -1) {
-          return;
-        }
-        const next = list.slice();
-        next[index] = {
-          ...next[index],
-          text: args.text,
-          updatedAt: optimisticUpdatedAt,
-        };
-        localStore.setQuery(api.tasks.get, keyArgs, next);
-      };
 
-      const listVariants: TasksGetArgs[] = [
-        { teamSlugOrId: args.teamSlugOrId },
-        { teamSlugOrId: args.teamSlugOrId, archived: false },
-        { teamSlugOrId: args.teamSlugOrId, archived: true },
+      type ListVariant = { teamSlugOrId: string; archived?: "true" | "false" };
+      const listVariants: ListVariant[] = [
+        { teamSlugOrId },
+        { teamSlugOrId, archived: "false" },
+        { teamSlugOrId, archived: "true" },
       ];
 
-      listVariants.forEach(applyUpdateToList);
+      const previousLists: Array<{ key: readonly unknown[]; data: DbTaskListResponse | undefined }> = [];
 
-      const detailArgs = { teamSlugOrId: args.teamSlugOrId, id: args.id };
-      const existingDetail = localStore.getQuery(api.tasks.getById, detailArgs);
-      if (existingDetail) {
-        localStore.setQuery(api.tasks.getById, detailArgs, {
-          ...existingDetail,
-          text: args.text,
+      for (const variant of listVariants) {
+        const key = getApiTasksQueryKey({ query: variant });
+        await queryClient.cancelQueries({ queryKey: key });
+        const prev = queryClient.getQueryData<DbTaskListResponse>(key);
+        previousLists.push({ key, data: prev });
+
+        if (prev) {
+          queryClient.setQueryData(key, {
+            ...prev,
+            tasks: prev.tasks.map((t) =>
+              t.id === id ? { ...t, text, updatedAt: optimisticUpdatedAt } : t
+            ),
+          });
+        }
+      }
+
+      const detailKey = getApiTasksByIdQueryKey({ path: { id }, query: { teamSlugOrId } });
+      await queryClient.cancelQueries({ queryKey: detailKey });
+      const previousDetail = queryClient.getQueryData(detailKey);
+      if (previousDetail && typeof previousDetail === "object") {
+        queryClient.setQueryData(detailKey, {
+          ...previousDetail,
+          text,
           updatedAt: optimisticUpdatedAt,
         });
       }
-    }
-  );
+
+      return { previousLists, previousDetail, detailKey };
+    },
+    onError: (_err, _args, context) => {
+      if (context) {
+        for (const { key, data } of context.previousLists) {
+          if (data) queryClient.setQueryData(key, data);
+        }
+        if (context.previousDetail) {
+          queryClient.setQueryData(context.detailKey, context.previousDetail);
+        }
+      }
+    },
+    onSettled: (_data, _err, args) => {
+      void queryClient.invalidateQueries({ queryKey: getApiTasksQueryKey({ query: { teamSlugOrId } }) });
+      void queryClient.invalidateQueries({ queryKey: getApiTasksByIdQueryKey({ path: { id: args.id }, query: { teamSlugOrId } }) });
+    },
+  });
 
   const focusRenameInput = useCallback(() => {
     if (typeof window === "undefined") {
@@ -155,8 +179,7 @@ export function useTaskRename({
     }
     setIsRenamePending(true);
     try {
-      await updateTaskMutation({
-        teamSlugOrId,
+      await updateTaskMutation.mutateAsync({
         id: taskId,
         text: trimmed,
       });
@@ -177,7 +200,6 @@ export function useTaskRename({
     renameValue,
     taskId,
     currentText,
-    teamSlugOrId,
     updateTaskMutation,
   ]);
 

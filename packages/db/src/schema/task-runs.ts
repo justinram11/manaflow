@@ -1,0 +1,110 @@
+import { sqliteTable, text, integer, index } from "drizzle-orm/sqlite-core";
+
+export const taskRuns = sqliteTable(
+  "taskRuns",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    taskId: text("taskId").notNull(),
+    parentRunId: text("parentRunId"),
+    prompt: text("prompt").notNull(),
+    agentName: text("agentName"),
+    summary: text("summary"),
+    status: text("status").notNull(),
+    isArchived: integer("isArchived", { mode: "boolean" }),
+    isLocalWorkspace: integer("isLocalWorkspace", { mode: "boolean" }),
+    isCloudWorkspace: integer("isCloudWorkspace", { mode: "boolean" }),
+    isPreviewJob: integer("isPreviewJob", { mode: "boolean" }),
+    log: text("log"),
+    worktreePath: text("worktreePath"),
+    newBranch: text("newBranch"),
+    createdAt: integer("createdAt").notNull(),
+    updatedAt: integer("updatedAt").notNull(),
+    completedAt: integer("completedAt"),
+    exitCode: integer("exitCode"),
+    environmentError: text("environmentError", { mode: "json" }),
+    errorMessage: text("errorMessage"),
+    userId: text("userId").notNull(),
+    teamId: text("teamId").notNull(),
+    environmentId: text("environmentId"),
+    isCrowned: integer("isCrowned", { mode: "boolean" }),
+    crownReason: text("crownReason"),
+    pullRequestUrl: text("pullRequestUrl"),
+    pullRequestIsDraft: integer("pullRequestIsDraft", { mode: "boolean" }),
+    pullRequestState: text("pullRequestState"),
+    pullRequestNumber: integer("pullRequestNumber"),
+    pullRequests: text("pullRequests", { mode: "json" }),
+    diffsLastUpdated: integer("diffsLastUpdated"),
+    screenshotStorageId: text("screenshotStorageId"),
+    screenshotCapturedAt: integer("screenshotCapturedAt"),
+    screenshotMimeType: text("screenshotMimeType"),
+    screenshotFileName: text("screenshotFileName"),
+    screenshotCommitSha: text("screenshotCommitSha"),
+    latestScreenshotSetId: text("latestScreenshotSetId"),
+    claims: text("claims", { mode: "json" }),
+    claimsGeneratedAt: integer("claimsGeneratedAt"),
+    vscode: text("vscode", { mode: "json" }),
+    networking: text("networking", { mode: "json" }),
+    customPreviews: text("customPreviews", { mode: "json" }),
+  },
+  (table) => [
+    index("taskRuns_by_task").on(table.taskId, table.createdAt),
+    index("taskRuns_by_parent").on(table.parentRunId),
+    index("taskRuns_by_status").on(table.status),
+    index("taskRuns_by_user").on(table.userId, table.createdAt),
+    index("taskRuns_by_team_user").on(table.teamId, table.userId),
+    index("taskRuns_by_pull_request_url").on(table.pullRequestUrl),
+  ],
+);
+
+export const taskRunPullRequests = sqliteTable(
+  "taskRunPullRequests",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    taskRunId: text("taskRunId").notNull(),
+    teamId: text("teamId").notNull(),
+    repoFullName: text("repoFullName").notNull(),
+    prNumber: integer("prNumber").notNull(),
+    createdAt: integer("createdAt").notNull(),
+  },
+  (table) => [
+    index("taskRunPullRequests_by_task_run").on(table.taskRunId),
+    index("taskRunPullRequests_by_pr").on(table.teamId, table.repoFullName, table.prNumber),
+  ],
+);
+
+export const taskRunScreenshotSets = sqliteTable(
+  "taskRunScreenshotSets",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    taskId: text("taskId").notNull(),
+    runId: text("runId").notNull(),
+    status: text("status").notNull(),
+    hasUiChanges: integer("hasUiChanges", { mode: "boolean" }),
+    commitSha: text("commitSha"),
+    capturedAt: integer("capturedAt").notNull(),
+    error: text("error"),
+    images: text("images", { mode: "json" }).notNull(),
+    videos: text("videos", { mode: "json" }),
+    createdAt: integer("createdAt").notNull(),
+    updatedAt: integer("updatedAt").notNull(),
+  },
+  (table) => [
+    index("taskRunScreenshotSets_by_task_capturedAt").on(table.taskId, table.capturedAt),
+    index("taskRunScreenshotSets_by_run_capturedAt").on(table.runId, table.capturedAt),
+  ],
+);
+
+export const taskRunLogChunks = sqliteTable(
+  "taskRunLogChunks",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    taskRunId: text("taskRunId").notNull(),
+    content: text("content").notNull(),
+    userId: text("userId").notNull(),
+    teamId: text("teamId").notNull(),
+  },
+  (table) => [
+    index("taskRunLogChunks_by_taskRun").on(table.taskRunId),
+    index("taskRunLogChunks_by_team_user").on(table.teamId, table.userId),
+  ],
+);

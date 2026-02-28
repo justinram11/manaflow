@@ -1,5 +1,5 @@
 import type { ScreenshotUploadPayload } from "@cmux/shared";
-import type { Id } from "@cmux/convex/dataModel";
+
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 
@@ -8,8 +8,8 @@ import { startScreenshotCollection } from "./startScreenshotCollection";
 import { createScreenshotUploadUrl, uploadScreenshot } from "./upload";
 
 export interface RunTaskScreenshotsOptions {
-  taskId: Id<"tasks">;
-  taskRunId: Id<"taskRuns">;
+  taskId: string;
+  taskRunId: string;
   token: string;
   convexUrl?: string;
   anthropicApiKey?: string | null;

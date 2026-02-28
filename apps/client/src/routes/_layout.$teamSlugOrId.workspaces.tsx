@@ -1,25 +1,26 @@
 import { TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
 import { FloatingPane } from "@/components/floating-pane";
-import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
-import { isFakeConvexId } from "@/lib/fakeConvexId";
-import { api } from "@cmux/convex/api";
-import { type Id } from "@cmux/convex/dataModel";
-import { convexQuery } from "@convex-dev/react-query";
+import { queryClient } from "@/query-client";
+import {
+  getApiTasksNotificationOrderOptions,
+  getApiUnreadTaskRunsOptions,
+} from "@cmux/www-openapi-client/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useQueries, useQuery } from "convex/react";
+import { useQuery as useRQ } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { env } from "@/client-env";
+import type { TaskRunWithChildren } from "@/types/task";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/workspaces")({
   component: WorkspacesRoute,
   loader: async ({ params }) => {
     const { teamSlugOrId } = params;
     // In web mode, exclude local workspaces
-    const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE || undefined;
-    void convexQueryClient.queryClient.ensureQueryData(
-      convexQuery(api.tasks.getWithNotificationOrder, { teamSlugOrId, excludeLocalWorkspaces })
+    const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE ? "true" as const : undefined;
+    void queryClient.prefetchQuery(
+      getApiTasksNotificationOrderOptions({ query: { teamSlugOrId, excludeLocalWorkspaces } })
     );
   },
 });
@@ -27,11 +28,17 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/workspaces")({
 function WorkspacesRoute() {
   const { teamSlugOrId } = Route.useParams();
   // In web mode, exclude local workspaces
-  const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE || undefined;
+  const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE ? "true" as const : undefined;
   // Use notification-aware ordering: unread notifications first, then by createdAt
-  const tasks = useQuery(api.tasks.getWithNotificationOrder, { teamSlugOrId, excludeLocalWorkspaces });
-  const tasksWithUnread = useQuery(api.taskNotifications.getTasksWithUnread, {
-    teamSlugOrId,
+  const tasksQuery = useRQ({
+    ...getApiTasksNotificationOrderOptions({ query: { teamSlugOrId, excludeLocalWorkspaces } }),
+    enabled: Boolean(teamSlugOrId),
+  });
+  const tasks = tasksQuery.data?.tasks;
+
+  const unreadQuery = useRQ({
+    ...getApiUnreadTaskRunsOptions({ query: { teamSlugOrId } }),
+    enabled: Boolean(teamSlugOrId),
   });
   const { expandTaskIds } = useExpandTasks();
 
@@ -43,47 +50,20 @@ function WorkspacesRoute() {
 
   // Create a Set for quick lookup of task IDs with unread notifications
   const tasksWithUnreadSet = useMemo(() => {
-    if (!tasksWithUnread) return new Set<string>();
-    return new Set(tasksWithUnread.map((t) => t.taskId));
-  }, [tasksWithUnread]);
+    const unreadData = unreadQuery.data as { unreadTaskRuns?: Array<{ taskId: string }> } | undefined;
+    if (!unreadData?.unreadTaskRuns) return new Set<string>();
+    return new Set(unreadData.unreadTaskRuns.map((t) => t.taskId));
+  }, [unreadQuery.data]);
 
-  const taskRunQueries = useMemo(() => {
-    return orderedTasks
-      .filter((task) => !isFakeConvexId(task._id))
-      .reduce(
-        (acc, task) => ({
-          ...acc,
-          [task._id]: {
-            query: api.taskRuns.getByTask,
-            args: { teamSlugOrId, taskId: task._id },
-          },
-        }),
-        {} as Record<
-          Id<"tasks">,
-          {
-            query: typeof api.taskRuns.getByTask;
-            args:
-              | ((d: { params: { teamSlugOrId: string } }) => {
-                  teamSlugOrId: string;
-                  taskId: Id<"tasks">;
-                })
-              | { teamSlugOrId: string; taskId: Id<"tasks"> };
-          }
-        >
-      );
-  }, [orderedTasks, teamSlugOrId]);
-
-  const taskRunResults = useQueries(
-    taskRunQueries as Parameters<typeof useQueries>[0]
-  );
-
+  // For workspaces, we fetch task runs per task using individual queries
+  // This is simplified - we pass runs as empty and let TaskTree handle loading
   const tasksWithRuns = useMemo(
     () =>
       orderedTasks.map((task) => ({
         ...task,
-        runs: taskRunResults?.[task._id] ?? [],
+        runs: [] as TaskRunWithChildren[],
       })),
-    [orderedTasks, taskRunResults]
+    [orderedTasks]
   );
 
   return (
@@ -103,15 +83,18 @@ function WorkspacesRoute() {
             </p>
           ) : (
             <div className="mt-2 space-y-1">
-              {tasksWithRuns.map((task) => (
-                <TaskTree
-                  key={task._id}
-                  task={task}
-                  defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
-                  teamSlugOrId={teamSlugOrId}
-                  hasUnreadNotification={tasksWithUnreadSet.has(task._id)}
-                />
-              ))}
+              {tasksWithRuns.map((task) => {
+                const taskId = task.id;
+                return (
+                  <TaskTree
+                    key={taskId}
+                    task={task as React.ComponentProps<typeof TaskTree>["task"]}
+                    defaultExpanded={expandTaskIds?.includes(taskId) ?? false}
+                    teamSlugOrId={teamSlugOrId}
+                    hasUnreadNotification={tasksWithUnreadSet.has(taskId)}
+                  />
+                );
+              })}
             </div>
           )}
         </div>

@@ -1,8 +1,13 @@
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
-import { getConvex } from "@/lib/utils/get-convex";
 import { stackServerAppJs } from "@/lib/utils/stack";
-import { api } from "@cmux/convex/api";
-import type { Doc } from "@cmux/convex/dataModel";
+import { getDb } from "@cmux/db";
+import { getTaskRunById } from "@cmux/db/queries/task-runs";
+import { getTaskById } from "@cmux/db/queries/tasks";
+import { getEnvironmentById } from "@cmux/db/queries/environments";
+import { getPullRequest } from "@cmux/db/queries/github-prs";
+import { updatePullRequestStateFull } from "@cmux/db/mutations/task-runs";
+import { patchTask } from "@cmux/db/mutations/tasks";
+import { upsertPullRequest } from "@cmux/db/mutations/github-prs";
 import {
   reconcilePullRequestRecords,
   type AggregatePullRequestSummary,
@@ -13,9 +18,10 @@ import {
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { Octokit } from "octokit";
+import type { DbClient } from "@cmux/db";
 
-type TaskDoc = Doc<"tasks">;
-type TaskRunDoc = Doc<"taskRuns">;
+type TaskRow = NonNullable<ReturnType<typeof getTaskRunById>>;
+type TaskDocRow = NonNullable<ReturnType<typeof getTaskById>>;
 
 type GitHubPrBasic = {
   number: number;
@@ -29,7 +35,6 @@ type GitHubPrDetail = GitHubPrBasic & {
   node_id: string;
 };
 
-type ConvexClient = ReturnType<typeof getConvex>;
 type OctokitThrottleOptions = {
   method?: string;
   url?: string;
@@ -153,14 +158,7 @@ githubPrsOpenRouter.openapi(
       return c.text("Unauthorized", 401);
     }
 
-    const [{ accessToken }, githubAccount] = await Promise.all([
-      user.getAuthJson(),
-      user.getConnectedAccount("github"),
-    ]);
-
-    if (!accessToken) {
-      return c.text("Unauthorized", 401);
-    }
+    const githubAccount = await user.getConnectedAccount("github");
 
     if (!githubAccount) {
       return c.json(
@@ -192,12 +190,9 @@ githubPrsOpenRouter.openapi(
 
     await verifyTeamAccess({ req: c.req.raw, teamSlugOrId });
 
-    const convex = getConvex({ accessToken });
+    const db = getDb();
 
-    const run = await convex.query(api.taskRuns.get, {
-      teamSlugOrId,
-      id: taskRunId,
-    });
+    const run = getTaskRunById(db, taskRunId);
 
     if (!run) {
       return c.json(
@@ -211,10 +206,7 @@ githubPrsOpenRouter.openapi(
       );
     }
 
-    const task = await convex.query(api.tasks.getById, {
-      teamSlugOrId,
-      id: run.taskId,
-    });
+    const task = getTaskById(db, teamSlugOrId, run.taskId);
 
     if (!task) {
       return c.json(
@@ -241,11 +233,10 @@ githubPrsOpenRouter.openapi(
       );
     }
 
-    const repoFullNames = await collectRepoFullNamesForRun({
-      convex,
+    const repoFullNames = collectRepoFullNamesForRun({
+      db,
       run,
       task,
-      teamSlugOrId,
     });
 
     if (repoFullNames.length === 0) {
@@ -269,7 +260,7 @@ githubPrsOpenRouter.openapi(
       `## Summary\n\n${title}`;
 
     const existingByRepo = new Map(
-      (run.pullRequests ?? []).map(
+      ((run.pullRequests as StoredPullRequestInfo[] | null) ?? []).map(
         (record) => [record.repoFullName, record] as const,
       ),
     );
@@ -346,9 +337,8 @@ githubPrsOpenRouter.openapi(
     );
 
     try {
-      const persisted = await persistPullRequestResults({
-        convex,
-        teamSlugOrId,
+      const persisted = persistPullRequestResults({
+        db,
         run,
         task,
         repoFullNames,
@@ -418,14 +408,7 @@ githubPrsOpenRouter.openapi(
       return c.text("Unauthorized", 401);
     }
 
-    const [{ accessToken }, githubAccount] = await Promise.all([
-      user.getAuthJson(),
-      user.getConnectedAccount("github"),
-    ]);
-
-    if (!accessToken) {
-      return c.text("Unauthorized", 401);
-    }
+    const githubAccount = await user.getConnectedAccount("github");
 
     if (!githubAccount) {
       return c.json(
@@ -457,12 +440,9 @@ githubPrsOpenRouter.openapi(
 
     await verifyTeamAccess({ req: c.req.raw, teamSlugOrId });
 
-    const convex = getConvex({ accessToken });
+    const db = getDb();
 
-    const run = await convex.query(api.taskRuns.get, {
-      teamSlugOrId,
-      id: taskRunId,
-    });
+    const run = getTaskRunById(db, taskRunId);
 
     if (!run) {
       return c.json(
@@ -476,10 +456,7 @@ githubPrsOpenRouter.openapi(
       );
     }
 
-    const task = await convex.query(api.tasks.getById, {
-      teamSlugOrId,
-      id: run.taskId,
-    });
+    const task = getTaskById(db, teamSlugOrId, run.taskId);
 
     if (!task) {
       return c.json(
@@ -506,11 +483,10 @@ githubPrsOpenRouter.openapi(
       );
     }
 
-    const repoFullNames = await collectRepoFullNamesForRun({
-      convex,
+    const repoFullNames = collectRepoFullNamesForRun({
+      db,
       run,
       task,
-      teamSlugOrId,
     });
 
     if (repoFullNames.length === 0) {
@@ -528,10 +504,10 @@ githubPrsOpenRouter.openapi(
     const title = task.pullRequestTitle || task.text || "cmux changes";
     const truncatedTitle =
       title.length > 72 ? `${title.slice(0, 69)}...` : title;
-    const commitMessage = `Merged by cmux for task ${String(task._id)}.`;
+    const commitMessage = `Merged by cmux for task ${task.id}.`;
 
     const existingByRepo = new Map(
-      (run.pullRequests ?? []).map(
+      ((run.pullRequests as StoredPullRequestInfo[] | null) ?? []).map(
         (record) => [record.repoFullName, record] as const,
       ),
     );
@@ -634,9 +610,8 @@ githubPrsOpenRouter.openapi(
     );
 
     try {
-      const persisted = await persistPullRequestResults({
-        convex,
-        teamSlugOrId,
+      const persisted = persistPullRequestResults({
+        db,
         run,
         task,
         repoFullNames,
@@ -708,14 +683,7 @@ githubPrsOpenRouter.openapi(
       return c.text("Unauthorized", 401);
     }
 
-    const [{ accessToken }, githubAccount] = await Promise.all([
-      user.getAuthJson(),
-      user.getConnectedAccount("github"),
-    ]);
-
-    if (!accessToken) {
-      return c.text("Unauthorized", 401);
-    }
+    const githubAccount = await user.getConnectedAccount("github");
 
     if (!githubAccount) {
       return c.json(
@@ -743,14 +711,10 @@ githubPrsOpenRouter.openapi(
 
     await verifyTeamAccess({ req: c.req.raw, teamSlugOrId });
 
-    const convex = getConvex({ accessToken });
+    const db = getDb();
     const repoFullName = `${owner}/${repo}`;
 
-    const existingPR = await convex.query(api.github_prs.getPullRequest, {
-      teamSlugOrId,
-      repoFullName,
-      number,
-    });
+    const existingPR = getPullRequest(db, teamSlugOrId, repoFullName, number);
 
     if (!existingPR) {
       return c.json(
@@ -779,7 +743,7 @@ githubPrsOpenRouter.openapi(
         number,
       });
 
-      await convex.mutation(api.github_prs.upsertFromServer, {
+      upsertPullRequest(db, {
         teamSlugOrId,
         installationId: existingPR.installationId,
         repoFullName,
@@ -790,19 +754,19 @@ githubPrsOpenRouter.openapi(
           state: "closed",
           merged: Boolean(closedPR.merged_at),
           draft: closedPR.draft,
-          authorLogin: existingPR.authorLogin,
-          authorId: existingPR.authorId,
+          authorLogin: existingPR.authorLogin ?? undefined,
+          authorId: existingPR.authorId ?? undefined,
           htmlUrl: closedPR.html_url,
-          baseRef: existingPR.baseRef,
-          headRef: existingPR.headRef,
-          baseSha: existingPR.baseSha,
-          headSha: existingPR.headSha,
-          mergeCommitSha: existingPR.mergeCommitSha,
-          createdAt: existingPR.createdAt,
-          updatedAt: existingPR.updatedAt,
+          baseRef: existingPR.baseRef ?? undefined,
+          headRef: existingPR.headRef ?? undefined,
+          baseSha: existingPR.baseSha ?? undefined,
+          headSha: existingPR.headSha ?? undefined,
+          mergeCommitSha: existingPR.mergeCommitSha ?? undefined,
+          createdAt: existingPR.createdAt ?? undefined,
+          updatedAt: existingPR.updatedAt ?? undefined,
           closedAt: Date.now(),
           mergedAt: closedPR.merged_at ? new Date(closedPR.merged_at).getTime() : undefined,
-          repositoryId: existingPR.repositoryId,
+          repositoryId: existingPR.repositoryId ?? undefined,
         },
       });
 
@@ -864,14 +828,7 @@ githubPrsOpenRouter.openapi(
       return c.text("Unauthorized", 401);
     }
 
-    const [{ accessToken }, githubAccount] = await Promise.all([
-      user.getAuthJson(),
-      user.getConnectedAccount("github"),
-    ]);
-
-    if (!accessToken) {
-      return c.text("Unauthorized", 401);
-    }
+    const githubAccount = await user.getConnectedAccount("github");
 
     if (!githubAccount) {
       return c.json(
@@ -899,14 +856,10 @@ githubPrsOpenRouter.openapi(
 
     await verifyTeamAccess({ req: c.req.raw, teamSlugOrId });
 
-    const convex = getConvex({ accessToken });
+    const db = getDb();
     const repoFullName = `${owner}/${repo}`;
 
-    const existingPR = await convex.query(api.github_prs.getPullRequest, {
-      teamSlugOrId,
-      repoFullName,
-      number,
-    });
+    const existingPR = getPullRequest(db, teamSlugOrId, repoFullName, number);
 
     if (!existingPR) {
       return c.json(
@@ -938,7 +891,7 @@ githubPrsOpenRouter.openapi(
         number,
       });
 
-      await convex.mutation(api.github_prs.upsertFromServer, {
+      upsertPullRequest(db, {
         teamSlugOrId,
         installationId: existingPR.installationId,
         repoFullName,
@@ -949,19 +902,19 @@ githubPrsOpenRouter.openapi(
           state: mergedPR.state === "open" ? "open" : "closed",
           merged: Boolean(mergedPR.merged_at),
           draft: mergedPR.draft,
-          authorLogin: existingPR.authorLogin,
-          authorId: existingPR.authorId,
+          authorLogin: existingPR.authorLogin ?? undefined,
+          authorId: existingPR.authorId ?? undefined,
           htmlUrl: mergedPR.html_url,
-          baseRef: existingPR.baseRef,
-          headRef: existingPR.headRef,
-          baseSha: existingPR.baseSha,
-          headSha: existingPR.headSha,
-          mergeCommitSha: existingPR.mergeCommitSha,
-          createdAt: existingPR.createdAt,
-          updatedAt: existingPR.updatedAt,
-          closedAt: existingPR.closedAt,
+          baseRef: existingPR.baseRef ?? undefined,
+          headRef: existingPR.headRef ?? undefined,
+          baseSha: existingPR.baseSha ?? undefined,
+          headSha: existingPR.headSha ?? undefined,
+          mergeCommitSha: existingPR.mergeCommitSha ?? undefined,
+          createdAt: existingPR.createdAt ?? undefined,
+          updatedAt: existingPR.updatedAt ?? undefined,
+          closedAt: existingPR.closedAt ?? undefined,
           mergedAt: mergedPR.merged_at ? new Date(mergedPR.merged_at).getTime() : undefined,
-          repositoryId: existingPR.repositoryId,
+          repositoryId: existingPR.repositoryId ?? undefined,
         },
       });
 
@@ -1280,17 +1233,15 @@ async function closePullRequest({
   });
 }
 
-async function collectRepoFullNamesForRun({
-  convex,
+function collectRepoFullNamesForRun({
+  db,
   run,
   task,
-  teamSlugOrId,
 }: {
-  convex: ConvexClient;
-  run: TaskRunDoc;
-  task: TaskDoc;
-  teamSlugOrId: string;
-}): Promise<string[]> {
+  db: DbClient;
+  run: TaskRow;
+  task: TaskDocRow;
+}): string[] {
   const repos = new Set<string>();
   const project = task.projectFullName?.trim();
   if (project) {
@@ -1300,11 +1251,9 @@ async function collectRepoFullNamesForRun({
   const environmentId = run.environmentId;
   if (environmentId) {
     try {
-      const environment = await convex.query(api.environments.get, {
-        teamSlugOrId,
-        id: environmentId,
-      });
-      environment?.selectedRepos?.forEach((repoName) => {
+      const environment = getEnvironmentById(db, environmentId);
+      const selectedRepos = environment?.selectedRepos as string[] | null;
+      selectedRepos?.forEach((repoName) => {
         const trimmed = typeof repoName === "string" ? repoName.trim() : "";
         if (trimmed) {
           repos.add(trimmed);
@@ -1321,34 +1270,32 @@ async function collectRepoFullNamesForRun({
   return Array.from(repos);
 }
 
-async function persistPullRequestResults({
-  convex,
-  teamSlugOrId,
+function persistPullRequestResults({
+  db,
   run,
   task,
   repoFullNames,
   results,
 }: {
-  convex: ConvexClient;
-  teamSlugOrId: string;
-  run: TaskRunDoc;
-  task: TaskDoc;
+  db: DbClient;
+  run: TaskRow;
+  task: TaskDocRow;
   repoFullNames: readonly string[];
   results: PullRequestActionResult[];
-}): Promise<{
+}): {
   records: StoredPullRequestInfo[];
   aggregate: AggregatePullRequestSummary;
-}> {
-  const existing = run.pullRequests ?? [];
+} {
+  const existing = (run.pullRequests as StoredPullRequestInfo[] | null) ?? [];
   const { records, aggregate } = reconcilePullRequestRecords({
     existing,
     updates: results,
     repoFullNames,
   });
 
-  await convex.mutation(api.taskRuns.updatePullRequestState, {
-    teamSlugOrId,
-    id: run._id,
+  updatePullRequestStateFull(db, {
+    id: run.id,
+    teamId: run.teamId,
     state: aggregate.state,
     isDraft: aggregate.isDraft,
     number: aggregate.number,
@@ -1356,9 +1303,7 @@ async function persistPullRequestResults({
     pullRequests: records,
   });
 
-  await convex.mutation(api.tasks.updateMergeStatus, {
-    teamSlugOrId,
-    id: task._id,
+  patchTask(db, task.id, {
     mergeStatus: aggregate.mergeStatus,
   });
 

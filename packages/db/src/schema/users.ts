@@ -1,0 +1,35 @@
+import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
+
+export const users = sqliteTable(
+  "users",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: text("userId").notNull(),
+    primaryEmail: text("primaryEmail"),
+    primaryEmailVerified: integer("primaryEmailVerified", { mode: "boolean" }),
+    primaryEmailAuthEnabled: integer("primaryEmailAuthEnabled", { mode: "boolean" }),
+    displayName: text("displayName"),
+    profileImageUrl: text("profileImageUrl"),
+    selectedTeamId: text("selectedTeamId"),
+    selectedTeamDisplayName: text("selectedTeamDisplayName"),
+    selectedTeamProfileImageUrl: text("selectedTeamProfileImageUrl"),
+    hasPassword: integer("hasPassword", { mode: "boolean" }),
+    otpAuthEnabled: integer("otpAuthEnabled", { mode: "boolean" }),
+    passkeyAuthEnabled: integer("passkeyAuthEnabled", { mode: "boolean" }),
+    signedUpAtMillis: integer("signedUpAtMillis"),
+    lastActiveAtMillis: integer("lastActiveAtMillis"),
+    clientMetadata: text("clientMetadata", { mode: "json" }),
+    clientReadOnlyMetadata: text("clientReadOnlyMetadata", { mode: "json" }),
+    serverMetadata: text("serverMetadata", { mode: "json" }),
+    oauthProviders: text("oauthProviders", { mode: "json" }),
+    isAnonymous: integer("isAnonymous", { mode: "boolean" }),
+    onboardingCompletedAt: integer("onboardingCompletedAt"),
+    createdAt: integer("createdAt"),
+    updatedAt: integer("updatedAt"),
+  },
+  (table) => [
+    uniqueIndex("users_by_userId").on(table.userId),
+    index("users_by_email").on(table.primaryEmail),
+    index("users_by_selected_team").on(table.selectedTeamId),
+  ],
+);

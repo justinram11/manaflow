@@ -1,16 +1,17 @@
-import { api } from "@cmux/convex/api";
-import type { Doc, Id } from "@cmux/convex/dataModel";
+import { getDb } from "./dbClient";
+import { getTaskRunById } from "@cmux/db/queries/task-runs";
+import { getTaskById } from "@cmux/db/queries/tasks";
+import { updateTaskRunWorktreePath } from "@cmux/db/mutations/task-runs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { RepositoryManager } from "../repositoryManager";
-import { getConvex } from "../utils/convexClient";
-import { retryOnOptimisticConcurrency } from "../utils/convexRetry";
+import type { TaskDoc, TaskRunDoc } from "../types/taskDocs";
 import { serverLogger } from "../utils/fileLogger";
 import { getWorktreePath, setupProjectWorkspace } from "../workspace";
 
 export type EnsureWorktreeResult = {
-  run: Doc<"taskRuns">;
-  task: Doc<"tasks">;
+  run: TaskRunDoc;
+  task: TaskDoc;
   worktreePath: string;
   branchName: string;
   baseBranch: string;
@@ -24,30 +25,26 @@ function sanitizeBranchName(name: string): string {
 const pendingEnsures = new Map<string, Promise<EnsureWorktreeResult>>();
 
 export async function ensureRunWorktreeAndBranch(
-  taskRunId: Id<"taskRuns">,
+  taskRunId: string,
   teamSlugOrId: string
 ): Promise<EnsureWorktreeResult> {
-  const key = String(taskRunId);
+  const key = taskRunId;
   const existing = pendingEnsures.get(key);
   if (existing) return existing;
 
   const p = (async (): Promise<EnsureWorktreeResult> => {
-    const run = await getConvex().query(api.taskRuns.get, {
-      teamSlugOrId,
-      id: taskRunId,
-    });
+    const db = getDb();
+
+    const run = getTaskRunById(db, taskRunId);
     if (!run) throw new Error("Task run not found");
 
-    const task = await getConvex().query(api.tasks.getById, {
-      teamSlugOrId,
-      id: run.taskId,
-    });
+    const task = getTaskById(db, teamSlugOrId, run.taskId);
     if (!task) throw new Error("Task not found");
 
     // Determine base branch: prefer explicit task.baseBranch; otherwise detect later
     let baseBranch = task.baseBranch || "";
     const branchName = sanitizeBranchName(
-      run.newBranch || `cmux-run-${String(taskRunId).slice(-8)}`
+      run.newBranch || `cmux-run-${taskRunId.slice(-8)}`
     );
 
     // Ensure worktree exists
@@ -65,7 +62,7 @@ export async function ensureRunWorktreeAndBranch(
           `Worktree path ${worktreePath} doesn't exist or is not a git directory, recreating...`
         );
         needsSetup = true;
-        worktreePath = undefined;
+        worktreePath = null;
       }
     }
 
@@ -92,13 +89,7 @@ export async function ensureRunWorktreeAndBranch(
         throw new Error(res.error || "Failed to set up worktree");
       }
       worktreePath = res.worktreePath;
-      await retryOnOptimisticConcurrency(() =>
-        getConvex().mutation(api.taskRuns.updateWorktreePath, {
-          teamSlugOrId,
-          id: run._id,
-          worktreePath: worktreePath as string,
-        })
-      );
+      updateTaskRunWorktreePath(db, run.id, worktreePath);
 
       // If baseBranch wasn't specified, detect it now from the origin repo
       if (!baseBranch) {

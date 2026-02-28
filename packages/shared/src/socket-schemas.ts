@@ -1,4 +1,4 @@
-import type { Id } from "@cmux/convex/dataModel";
+// IDs are plain strings (UUIDs) in the SQLite layer.
 import { z } from "zod";
 import { typedZid } from "./utils/typed-zid";
 import type {
@@ -629,7 +629,7 @@ export interface ClientToServerEvents {
     data: SpawnFromComment,
     callback: (response: {
       success: boolean;
-      taskId?: Id<"tasks">;
+      taskId?: string;
       taskRunId?: string;
       worktreePath?: string;
       terminalId?: string;

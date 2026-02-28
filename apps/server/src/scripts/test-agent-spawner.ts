@@ -1,8 +1,8 @@
 #!/usr/bin/env tsx
-import { api } from "@cmux/convex/api";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { spawnAgent } from "../agentSpawner";
-import { getConvex } from "../utils/convexClient";
+import { getDb } from "../utils/dbClient";
+import { createTask } from "@cmux/db/mutations/tasks";
 import { VSCodeInstance } from "../vscode/VSCodeInstance";
 
 async function main() {
@@ -40,10 +40,12 @@ async function main() {
 
   console.log("\nTest options:", testOptions);
 
-  // Create a task in Convex first
-  console.log("\nCreating task in Convex...");
-  const { taskId } = await getConvex().mutation(api.tasks.create, {
+  // Create a task in DB
+  console.log("\nCreating task in DB...");
+  const db = getDb();
+  const { taskId } = createTask(db, {
     teamSlugOrId: "default",
+    userId: "test-user",
     projectFullName: "lawrencecchen/cmux",
     text: testOptions.taskDescription,
   });

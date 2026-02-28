@@ -1,7 +1,6 @@
 import { useCallback, useMemo } from "react";
 import clsx from "clsx";
 import { Button } from "@/components/ui/button";
-import type { Doc } from "@cmux/convex/dataModel";
 import {
   useMorphInstancePauseQuery,
   useResumeMorphWorkspace,
@@ -12,17 +11,30 @@ import {
 } from "@/hooks/useIncusWorkspace";
 import { AlertTriangle } from "lucide-react";
 
+/** Minimal task run shape needed by the resume overlay */
+interface TaskRunForResume {
+  id: string;
+  vscode?: {
+    provider?: string;
+    containerName?: string;
+    url?: string;
+    status?: string;
+    [key: string]: unknown;
+  } | null;
+  [key: string]: unknown;
+}
+
 /**
  * Detect if a task run is backed by Incus (new or legacy provider value).
  */
-function isIncusRun(taskRun: Doc<"taskRuns">): boolean {
+function isIncusRun(taskRun: TaskRunForResume): boolean {
   if (taskRun.vscode?.provider === "incus") return true;
   if (taskRun.vscode?.provider === "docker" && taskRun.vscode.containerName?.startsWith("cmux-")) return true;
   return false;
 }
 
 interface ResumeWorkspaceOverlayProps {
-  taskRun: Doc<"taskRuns">;
+  taskRun: TaskRunForResume;
   teamSlugOrId: string;
   className?: string;
   onResumed?: () => void;
@@ -34,7 +46,7 @@ export function ResumeWorkspaceOverlay({
   className,
   onResumed,
 }: ResumeWorkspaceOverlayProps) {
-  const taskRunId = taskRun._id;
+  const taskRunId = taskRun.id;
   const isIncus = useMemo(() => isIncusRun(taskRun), [taskRun]);
 
   // Morph hooks (only enabled when not Incus)

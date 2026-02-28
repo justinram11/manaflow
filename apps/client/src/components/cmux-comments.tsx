@@ -1,11 +1,17 @@
 import { env } from "@/client-env";
 import { useSocket } from "@/contexts/socket/use-socket";
-import { api } from "@cmux/convex/api";
-import type { Id } from "@cmux/convex/dataModel";
+import {
+  postApiComments,
+  patchApiCommentsById,
+} from "@cmux/www-openapi-client";
+import {
+  getApiCommentsOptions,
+  getApiCommentsByIdRepliesOptions,
+} from "@cmux/www-openapi-client/react-query";
 import type { SpawnFromComment } from "@cmux/shared";
 import { useUser } from "@stackframe/react";
 import clsx from "clsx";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 // Read team slug from path to avoid route type coupling
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -103,7 +109,7 @@ const ArchiveIcon = ({ className }: { className?: string }) => (
 );
 
 interface Comment {
-  _id: Id<"comments">;
+  id: string;
   url: string;
   page: string;
   pageTitle: string;
@@ -172,15 +178,20 @@ function renderMarkdownLinks(text: string): React.ReactNode {
 // Component to display comment replies
 function CommentReplies({
   commentId,
-  teamSlugOrId,
+  teamSlugOrId: _teamSlugOrId,
 }: {
-  commentId: Id<"comments">;
+  commentId: string;
   teamSlugOrId: string;
 }) {
-  const replies = useQuery(api.comments.getReplies, {
-    teamSlugOrId,
-    commentId,
-  });
+  const repliesQuery = useQuery(
+    getApiCommentsByIdRepliesOptions({ path: { id: commentId } }),
+  );
+  const replies = repliesQuery.data as Array<{
+    id: string;
+    userId: string;
+    content: string;
+    createdAt: number;
+  }> | undefined;
 
   if (!replies || replies.length === 0) {
     return null;
@@ -189,7 +200,7 @@ function CommentReplies({
   return (
     <div className="mt-3 ml-2.5 border-l-2 border-neutral-700 pl-5 space-y-2">
       {replies.map((reply) => (
-        <div key={reply._id} className="flex items-start gap-2">
+        <div key={reply.id} className="flex items-start gap-2">
           <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center text-white text-xs font-medium flex-shrink-0">
             {reply.userId === "cmux" ? "C" : "U"}
           </div>
@@ -453,7 +464,7 @@ function CommentMarker({ comment, onClick, teamSlugOrId }: CommentMarkerProps) {
             </div>
             {/* Always show replies in anchored comment */}
             <CommentReplies
-              commentId={comment._id}
+              commentId={comment.id}
               teamSlugOrId={teamSlugOrId}
             />
           </div>
@@ -496,15 +507,75 @@ export function CmuxComments({ teamSlugOrId }: { teamSlugOrId: string }) {
   const widgetRef = useRef<HTMLDivElement>(null);
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
 
-  const comments = useQuery(api.comments.listComments, {
-    teamSlugOrId,
-    url: window.location.origin,
-    page: window.location.pathname,
-    includeArchived: showArchived,
+  const commentsUrl = window.location.origin;
+  const commentsQuery = useQuery(
+    getApiCommentsOptions({
+      query: { url: commentsUrl },
+    }),
+  );
+  // The HTTP API returns a different shape; cast to the expected Comment interface.
+  const comments = commentsQuery.data as unknown as Comment[] | undefined;
+
+  const queryClient = useQueryClient();
+  const commentsQueryKey = getApiCommentsOptions({ query: { url: commentsUrl } }).queryKey;
+
+  const createCommentMutation = useMutation({
+    mutationFn: async (args: {
+      teamSlugOrId: string;
+      url: string;
+      page: string;
+      pageTitle: string;
+      nodeId: string;
+      x: number;
+      y: number;
+      content: string;
+      profileImageUrl?: string;
+      userAgent: string;
+      screenWidth: number;
+      screenHeight: number;
+      devicePixelRatio: number;
+    }) => {
+      const result = await postApiComments({
+        body: {
+          teamSlugOrId: args.teamSlugOrId,
+          url: args.url,
+          page: args.page,
+          pageTitle: args.pageTitle,
+          nodeId: args.nodeId,
+          x: args.x,
+          y: args.y,
+          content: args.content,
+          profileImageUrl: args.profileImageUrl,
+          userAgent: args.userAgent,
+          screenWidth: args.screenWidth,
+          screenHeight: args.screenHeight,
+          devicePixelRatio: args.devicePixelRatio,
+        },
+      });
+      return result;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: commentsQueryKey });
+    },
+    onError: (error) => {
+      console.error("Failed to create comment:", error);
+    },
   });
 
-  const createComment = useMutation(api.comments.createComment);
-  const archiveComment = useMutation(api.comments.archiveComment);
+  const archiveCommentMutation = useMutation({
+    mutationFn: async (args: { commentId: string; archived: boolean }) => {
+      await patchApiCommentsById({
+        path: { id: args.commentId },
+        body: { archived: args.archived },
+      });
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: commentsQueryKey });
+    },
+    onError: (error) => {
+      console.error("Failed to archive comment:", error);
+    },
+  });
 
   // Handle cursor tracking when commenting
   useEffect(() => {
@@ -674,28 +745,27 @@ export function CmuxComments({ teamSlugOrId }: { teamSlugOrId: string }) {
 
   const handleSubmitComment = async () => {
     if (!pendingCommentData || !commentDraft.trim() || !userId) return;
-    // const userId = user.id;
 
-    // Create the comment in Convex
-    const commentId = await createComment({
+    // Create the comment via HTTP API
+    const result = await createCommentMutation.mutateAsync({
       teamSlugOrId,
       ...pendingCommentData,
       content: commentDraft,
-      // profileImageUrl: user.profileImageUrl || undefined,
       profileImageUrl,
     });
+    const commentId = result.data?.id;
     console.log("Comment created:", commentId);
 
     // Spawn agents via socket.io to address the comment
-    if (socket) {
+    if (socket && commentId) {
+      const resolvedCommentId: string = commentId;
       const spawnData: SpawnFromComment = {
         ...pendingCommentData,
         content: commentDraft,
         userId,
-        // profileImageUrl: user.profileImageUrl || undefined,
         profileImageUrl,
         selectedAgents: ["claude/sonnet-4.5", "codex/gpt-5.1-codex-high"],
-        commentId,
+        commentId: resolvedCommentId,
       };
 
       socket.emit("spawn-from-comment", spawnData, (response) => {
@@ -757,7 +827,7 @@ export function CmuxComments({ teamSlugOrId }: { teamSlugOrId: string }) {
         ?.filter((c) => !c.archived)
         .map((comment: Comment) => (
           <CommentMarker
-            key={comment._id}
+            key={comment.id}
             comment={comment}
             onClick={() => {
               setIsOpen(true);
@@ -959,7 +1029,7 @@ export function CmuxComments({ teamSlugOrId }: { teamSlugOrId: string }) {
             ) : (
               comments?.map((comment: Comment) => (
                 <div
-                  key={comment._id}
+                  key={comment.id}
                   className={clsx(
                     "flex items-start gap-3 group",
                     comment.archived && "opacity-60"
@@ -993,16 +1063,15 @@ export function CmuxComments({ teamSlugOrId }: { teamSlugOrId: string }) {
                     {/* Always show replies */}
                     <div className="transform -translate-x-[40px]">
                       <CommentReplies
-                        commentId={comment._id}
+                        commentId={comment.id}
                         teamSlugOrId={teamSlugOrId}
                       />
                     </div>
                   </div>
                   <button
                     onClick={() =>
-                      archiveComment({
-                        teamSlugOrId,
-                        commentId: comment._id,
+                      archiveCommentMutation.mutate({
+                        commentId: comment.id,
                         archived: !comment.archived,
                       })
                     }

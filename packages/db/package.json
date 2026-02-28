@@ -1,0 +1,59 @@
+{
+  "name": "@cmux/db",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "bunx tsgo --noEmit -p tsconfig.json",
+    "migrate": "bun run src/migrate.ts",
+    "seed": "bun run src/seed.ts",
+    "test": "vitest run"
+  },
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    },
+    "./queries/tasks": "./src/queries/tasks.ts",
+    "./queries/task-runs": "./src/queries/task-runs.ts",
+    "./queries/teams": "./src/queries/teams.ts",
+    "./queries/settings": "./src/queries/settings.ts",
+    "./queries/environments": "./src/queries/environments.ts",
+    "./queries/repos": "./src/queries/repos.ts",
+    "./queries/notifications": "./src/queries/notifications.ts",
+    "./queries/comments": "./src/queries/comments.ts",
+    "./mutations/tasks": "./src/mutations/tasks.ts",
+    "./mutations/task-runs": "./src/mutations/task-runs.ts",
+    "./mutations/teams": "./src/mutations/teams.ts",
+    "./mutations/settings": "./src/mutations/settings.ts",
+    "./mutations/environments": "./src/mutations/environments.ts",
+    "./mutations/repos": "./src/mutations/repos.ts",
+    "./mutations/notifications": "./src/mutations/notifications.ts",
+    "./mutations/comments": "./src/mutations/comments.ts",
+    "./queries/github-prs": "./src/queries/github-prs.ts",
+    "./mutations/github-prs": "./src/mutations/github-prs.ts",
+    "./queries/users": "./src/queries/users.ts",
+    "./queries/warm-pool": "./src/queries/warm-pool.ts",
+    "./mutations/warm-pool": "./src/mutations/warm-pool.ts",
+    "./mutations/morph-instances": "./src/mutations/morph-instances.ts",
+    "./queries/preview-configs": "./src/queries/preview-configs.ts",
+    "./queries/preview-runs": "./src/queries/preview-runs.ts",
+    "./queries/preview-test-jobs": "./src/queries/preview-test-jobs.ts",
+    "./mutations/preview-configs": "./src/mutations/preview-configs.ts",
+    "./mutations/preview-test-jobs": "./src/mutations/preview-test-jobs.ts",
+    "./schema": "./src/schema/index.ts"
+  },
+  "dependencies": {
+    "@cmux/shared": "workspace:*",
+    "drizzle-orm": "^0.44.2"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.11",
+    "@types/node": "^24.9.1",
+    "drizzle-kit": "^0.31.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

@@ -3,7 +3,7 @@
  * This is the mirror of localCloudSync.ts on the server side.
  */
 
-import type { Id } from "@cmux/convex/dataModel";
+
 import type { WorkerSyncFile } from "@cmux/shared";
 import chokidar, { type FSWatcher } from "chokidar";
 import { createHash } from "node:crypto";
@@ -64,14 +64,14 @@ async function buildIgnoreMatcher(workspacePath: string): Promise<Ignore> {
 }
 
 export type SyncFilesEmitter = (data: {
-  taskRunId: Id<"taskRuns">;
+  taskRunId: string;
   files: WorkerSyncFile[];
   timestamp: number;
 }) => void;
 
 export class CloudToLocalSyncSession {
   private readonly workspacePath: string;
-  private readonly taskRunId: Id<"taskRuns">;
+  private readonly taskRunId: string;
   private readonly pending = new Map<string, PendingChange>();
   private readonly ignoreMatcher: Ignore;
   private readonly emitSyncFiles: SyncFilesEmitter;
@@ -91,7 +91,7 @@ export class CloudToLocalSyncSession {
     emitSyncFiles,
   }: {
     workspacePath: string;
-    taskRunId: Id<"taskRuns">;
+    taskRunId: string;
     ignoreMatcher: Ignore;
     emitSyncFiles: SyncFilesEmitter;
   }) {
@@ -453,7 +453,7 @@ export class CloudToLocalSyncManager {
     taskRunId,
     workspacePath,
   }: {
-    taskRunId: Id<"taskRuns">;
+    taskRunId: string;
     workspacePath: string;
   }): Promise<void> {
     const key = taskRunId;
@@ -482,7 +482,7 @@ export class CloudToLocalSyncManager {
     );
   }
 
-  async stopSync(taskRunId: Id<"taskRuns">): Promise<void> {
+  async stopSync(taskRunId: string): Promise<void> {
     const key = taskRunId;
     const session = this.sessions.get(key);
     if (session) {
@@ -499,7 +499,7 @@ export class CloudToLocalSyncManager {
    * Call this BEFORE writing files received from local sync.
    */
   markSyncedFromLocal(
-    taskRunId: Id<"taskRuns">,
+    taskRunId: string,
     relativePaths: string[]
   ): void {
     const session = this.sessions.get(taskRunId);
@@ -552,7 +552,7 @@ export class CloudToLocalSyncManager {
    * Trigger a full sync of all existing files for a given taskRun.
    * Used when a local workspace is first created to download existing cloud changes.
    */
-  async triggerFullSync(taskRunId: Id<"taskRuns">): Promise<{ filesSent: number }> {
+  async triggerFullSync(taskRunId: string): Promise<{ filesSent: number }> {
     const session = this.sessions.get(taskRunId);
     if (!session) {
       console.log(

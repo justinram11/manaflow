@@ -5,7 +5,7 @@ import { useLocation } from "@tanstack/react-router";
 import React, { useEffect, useMemo } from "react";
 import { cachedGetUser } from "../../lib/cachedGetUser";
 import { stackClientApp } from "../../lib/stack";
-import { authJsonQueryOptions } from "../convex/authJsonQueryOptions";
+import { authJsonQueryOptions } from "../auth/authJsonQueryOptions";
 import { setGlobalSocket, socketBoot } from "./socket-boot";
 import { WebSocketContext } from "./socket-context";
 import type { SocketContextType } from "./types";

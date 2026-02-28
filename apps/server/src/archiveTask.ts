@@ -1,9 +1,7 @@
-import { api } from "@cmux/convex/api";
-import type { Id } from "@cmux/convex/dataModel";
-import type { FunctionReturnType } from "convex/server";
+import { getTaskRunsByTask } from "@cmux/db/queries/task-runs";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { getConvex } from "./utils/convexClient";
+import { getDb } from "./utils/dbClient";
 import { serverLogger } from "./utils/fileLogger";
 import { getAuthHeaderJson, getAuthToken } from "./utils/requestContext";
 import { getWwwBaseUrl } from "./utils/server-env";
@@ -76,28 +74,19 @@ async function stopCmuxSandbox(instanceId: string): Promise<void> {
 }
 
 export async function stopContainersForRuns(
-  taskId: Id<"tasks">,
-  teamSlugOrId: string,
-  query: (
-    ref: typeof api.taskRuns.getByTask,
-    args: { teamSlugOrId: string; taskId: Id<"tasks"> }
-  ) => Promise<FunctionReturnType<typeof api.taskRuns.getByTask>> = (
-    ref,
-    args
-  ) => getConvex().query(ref, args)
+  taskId: string,
+  _teamSlugOrId: string,
 ): Promise<StopResult[]> {
-  const tree = await query(api.taskRuns.getByTask, {
-    teamSlugOrId,
-    taskId,
-  });
-  return stopContainersForRunsFromTree(tree, String(taskId));
+  const db = getDb();
+  const runs = getTaskRunsByTask(db, { taskId });
+  return stopContainersForRunsFromTree(runs, taskId);
 }
 
 export function stopContainersForRunsFromTree(
-  tree: FunctionReturnType<typeof api.taskRuns.getByTask>,
+  tree: unknown[],
   taskIdLabel?: string
 ): Promise<StopResult[]> {
-  // Flatten tree without casts
+  // Flatten tree without casts (handles both flat arrays and nested tree structures)
   const flat: unknown[] = [];
   const walk = (nodes: unknown): void => {
     if (!Array.isArray(nodes)) return;
@@ -124,7 +113,8 @@ export function stopContainersForRunsFromTree(
   for (const r of flat) {
     if (typeof r !== "object" || r === null) continue;
     const vscode = Reflect.get(Object(r), "vscode");
-    const runId = Reflect.get(Object(r), "_id");
+    // Support both drizzle `id` and legacy Convex `_id`
+    const runId = Reflect.get(Object(r), "id") ?? Reflect.get(Object(r), "_id");
     const provider =
       typeof vscode === "object" && vscode !== null
         ? Reflect.get(Object(vscode), "provider")

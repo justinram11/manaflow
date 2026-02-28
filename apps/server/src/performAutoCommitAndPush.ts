@@ -1,9 +1,12 @@
-import { api } from "@cmux/convex/api";
-import type { Id } from "@cmux/convex/dataModel";
 import type { AgentConfig } from "@cmux/shared";
+import { getTaskRunById } from "@cmux/db/queries/task-runs";
+import { getTaskById } from "@cmux/db/queries/tasks";
+import { getWorkspaceSettings } from "@cmux/db/queries/settings";
+import { setPullRequestTitle, setPullRequestDescription } from "@cmux/db/mutations/tasks";
+import { updatePullRequestUrlFull } from "@cmux/db/mutations/task-runs";
 import { buildAutoCommitPushCommand } from "./utils/autoCommitPushCommand";
 import { generateCommitMessageFromDiff } from "./utils/commitMessageGenerator";
-import { getConvex } from "./utils/convexClient";
+import { getDb, getUserId } from "./utils/dbClient";
 import { serverLogger } from "./utils/fileLogger";
 import { parseRepoFromUrl } from "./utils/githubPr";
 import { workerExec } from "./utils/workerExec";
@@ -16,7 +19,7 @@ import { VSCodeInstance } from "./vscode/VSCodeInstance";
 export default async function performAutoCommitAndPush(
   vscodeInstance: VSCodeInstance,
   agent: AgentConfig,
-  taskRunId: Id<"taskRuns">,
+  taskRunId: string,
   taskDescription: string,
   teamSlugOrId: string,
   precollectedDiff: string
@@ -25,11 +28,11 @@ export default async function performAutoCommitAndPush(
     serverLogger.info(`[AgentSpawner] Starting auto-commit for ${agent.name}`);
     const workerSocket = vscodeInstance.getWorkerSocket();
 
+    const db = getDb();
+    const userId = getUserId();
+
     // Check if this run is crowned
-    const taskRun = await getConvex().query(api.taskRuns.get, {
-      teamSlugOrId,
-      id: taskRunId,
-    });
+    const taskRun = getTaskRunById(db, taskRunId);
     const isCrowned = taskRun?.isCrowned || false;
 
     serverLogger.info(
@@ -137,9 +140,7 @@ exit $EXIT_CODE
 
     if (isCrowned) {
       // Respect workspace setting for auto-PR
-      const ws = await getConvex().query(api.workspaceSettings.get, {
-        teamSlugOrId,
-      });
+      const ws = getWorkspaceSettings(db, teamSlugOrId, userId);
       const autoPrEnabled =
         (ws as unknown as { autoPrEnabled?: boolean })?.autoPrEnabled ?? false;
       if (!autoPrEnabled) {
@@ -160,18 +161,16 @@ exit $EXIT_CODE
           );
           return;
         }
-        const task = await getConvex().query(api.tasks.getById, {
-          teamSlugOrId,
-          id: taskRun.taskId,
-        });
+        const task = getTaskById(db, teamSlugOrId, taskRun.taskId);
         if (task) {
           // Use existing task PR title when present, otherwise derive and persist
           const prTitle = task.pullRequestTitle || `[Crown] ${task.text}`;
           if (!task.pullRequestTitle || task.pullRequestTitle !== prTitle) {
             try {
-              await getConvex().mutation(api.tasks.setPullRequestTitle, {
+              setPullRequestTitle(db, {
                 teamSlugOrId,
-                id: task._id,
+                userId,
+                id: task.id,
                 pullRequestTitle: prTitle,
               });
             } catch (e) {
@@ -189,16 +188,17 @@ ${taskRun.crownReason || "This implementation was selected as the best solution.
 
 ### Implementation Details
 - **Agent**: ${agent.name}
-- **Task ID**: ${task._id}
-- **Run ID**: ${taskRun._id}
+- **Task ID**: ${task.id}
+- **Run ID**: ${taskRun.id}
 - **Branch**: ${branchName}
 - **Completed**: ${new Date(taskRun.completedAt || Date.now()).toISOString()}`;
 
-          // Persist PR description on the task in Convex
+          // Persist PR description on the task in DB
           try {
-            await getConvex().mutation(api.tasks.setPullRequestDescription, {
+            setPullRequestDescription(db, {
               teamSlugOrId,
-              id: task._id,
+              userId,
+              id: task.id,
               pullRequestDescription: prBody,
             });
           } catch (e) {
@@ -248,9 +248,9 @@ ${taskRun.crownReason || "This implementation was selected as the best solution.
                 ? `${parsed.owner}/${parsed.repo}`
                 : undefined);
 
-            await getConvex().mutation(api.taskRuns.updatePullRequestUrl, {
-              teamSlugOrId,
+            updatePullRequestUrlFull(db, {
               id: taskRunId,
+              teamId: teamSlugOrId,
               pullRequestUrl: prUrlMatch[0],
               isDraft: false,
               ...(repoFullName

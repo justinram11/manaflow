@@ -1,6 +1,8 @@
-import { api } from "@cmux/convex/api";
+import {
+  getApiContainerSettingsOptions,
+} from "@cmux/www-openapi-client/react-query";
 import { Switch } from "@heroui/react";
-import { useQuery } from "convex/react";
+import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -19,9 +21,10 @@ export function ContainerSettings({
   onDataChange,
   teamSlugOrId,
 }: ContainerSettingsProps) {
-  const settings = useQuery(api.containerSettings.get, {
-    teamSlugOrId,
-  });
+  const settingsQuery = useQuery(
+    getApiContainerSettingsOptions({ query: { teamSlugOrId } }),
+  );
+  const settings = settingsQuery.data;
   const isInitialized = useRef(false);
 
   const [formData, setFormData] = useState({

@@ -1,4 +1,3 @@
-import type { Id } from "@cmux/convex/dataModel";
 import type { TaskError, TaskStarted } from "@cmux/shared";
 import type { CmuxSocket } from "@/contexts/socket/types";
 
@@ -9,7 +8,7 @@ interface TaskLifecycleOptions {
 
 export function attachTaskLifecycleListeners(
   socket: CmuxSocket | null,
-  taskId: Id<"tasks">,
+  taskId: string,
   options: TaskLifecycleOptions,
 ) {
   if (!socket) return;

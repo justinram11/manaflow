@@ -8,9 +8,12 @@ import {
   restoreDragPointerEvents,
 } from "@/lib/drag-pointer-events";
 import { isElectron } from "@/lib/electron";
-import { type Doc } from "@cmux/convex/dataModel";
-import { api } from "@cmux/convex/api";
-import { useQuery } from "convex/react";
+import type { DbTask } from "@cmux/www-openapi-client";
+import {
+  getApiTasksPinnedOptions,
+  getApiUnreadTaskRunsOptions,
+} from "@cmux/www-openapi-client/react-query";
+import { useQuery } from "@tanstack/react-query";
 import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
 import { Bell, Home, Plus, Server, Settings } from "lucide-react";
@@ -29,7 +32,7 @@ import { SidebarSectionLink } from "./sidebar/SidebarSectionLink";
 import { SidebarWorkspacesSection } from "./sidebar/SidebarWorkspacesSection";
 
 // Tasks with hasUnread indicator from the query
-type TaskWithUnread = Doc<"tasks"> & { hasUnread: boolean };
+type TaskWithUnread = DbTask & { hasUnread: boolean };
 
 interface SidebarProps {
   tasks: TaskWithUnread[] | undefined;
@@ -110,8 +113,11 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   const { expandTaskIds } = useExpandTasks();
 
   // Fetch pinned items (exclude local workspaces in web mode)
-  const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE || undefined;
-  const pinnedData = useQuery(api.tasks.getPinned, { teamSlugOrId, excludeLocalWorkspaces });
+  const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE ? "true" as const : undefined;
+  const pinnedQuery = useQuery(
+    getApiTasksPinnedOptions({ query: { teamSlugOrId, excludeLocalWorkspaces } }),
+  );
+  const pinnedData = pinnedQuery.data?.tasks as TaskWithUnread[] | undefined;
 
   useWarmLocalWorkspaces({
     teamSlugOrId,
@@ -121,9 +127,10 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   });
 
   // Fetch unread notification count
-  const unreadCount = useQuery(api.taskNotifications.getUnreadCount, {
-    teamSlugOrId,
-  });
+  const unreadCountQuery = useQuery(
+    getApiUnreadTaskRunsOptions({ query: { teamSlugOrId } }),
+  );
+  const unreadCount = unreadCountQuery.data?.unreadTaskRuns?.length;
 
   useEffect(() => {
     localStorage.setItem("sidebarWidth", String(width));
@@ -331,10 +338,10 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                     <>
                       {pinnedData.map((task) => (
                         <TaskTree
-                          key={task._id}
+                          key={task.id}
                           task={task}
                           defaultExpanded={
-                            expandTaskIds?.includes(task._id) ?? false
+                            expandTaskIds?.includes(task.id) ?? false
                           }
                           teamSlugOrId={teamSlugOrId}
                           hasUnreadNotification={task.hasUnread}
@@ -352,10 +359,10 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                     })
                     .map((task) => (
                       <TaskTree
-                        key={task._id}
+                        key={task.id}
                         task={task}
                         defaultExpanded={
-                          expandTaskIds?.includes(task._id) ?? false
+                          expandTaskIds?.includes(task.id) ?? false
                         }
                         teamSlugOrId={teamSlugOrId}
                         hasUnreadNotification={task.hasUnread}

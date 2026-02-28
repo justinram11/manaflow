@@ -20,7 +20,7 @@ import {
 } from "@cmux/shared";
 import WebSocket from "ws";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
-import type { Id } from "@cmux/convex/dataModel";
+
 
 import { getWorkerServerSocketOptions } from "@cmux/shared/node/socket";
 import { CmuxPtyClient } from "@cmux/shared/cmux-pty-client";
@@ -51,14 +51,14 @@ import { log } from "./logger";
 import { startScreenshotCollection } from "./screenshotCollector/startScreenshotCollection";
 import { runTaskScreenshots } from "./screenshotCollector/runTaskScreenshots";
 import { convexRequest } from "./crown/convex";
-import type { WorkerTaskRunResponse } from "@cmux/shared/convex-safe";
-import { verifyTaskRunToken } from "@cmux/shared/convex-safe";
+import type { WorkerTaskRunResponse } from "@cmux/shared";
+import { verifyTaskRunToken } from "@cmux/shared";
 
 const execAsync = promisify(exec);
 
 type PreviewJobContext = {
-  taskId: Id<"tasks">;
-  taskRunId: Id<"taskRuns">;
+  taskId: string;
+  taskRunId: string;
   convexUrl: string;
 };
 
@@ -119,8 +119,8 @@ async function resolvePreviewJobContext({
   }
 
   return {
-    taskId: info.taskRun.taskId as Id<"tasks">,
-    taskRunId: info.taskRun.id as Id<"taskRuns">,
+    taskId: info.taskRun.taskId,
+    taskRunId: info.taskRun.id,
     convexUrl,
   };
 }
@@ -386,12 +386,12 @@ interface PendingEvent<
   timestamp: number;
 }
 
-const hasTaskId = (value: unknown): value is { taskId?: Id<"tasks"> } =>
+const hasTaskId = (value: unknown): value is { taskId?: string } =>
   typeof value === "object" && value !== null && "taskId" in value;
 
 const hasTaskRunId = (
   value: unknown
-): value is { taskRunId?: Id<"taskRuns"> } =>
+): value is { taskRunId?: string } =>
   typeof value === "object" && value !== null && "taskRunId" in value;
 
 const pendingEvents: PendingEvent[] = [];
@@ -665,7 +665,7 @@ managementIO.on("connection", (socket) => {
         WORKER_ID
       );
       callback({
-        error: error instanceof Error ? error : new Error(error as string),
+        error: error instanceof Error ? error : new Error(String(error)),
         data: null,
       });
       socket.emit("worker:error", {
@@ -1360,8 +1360,8 @@ async function createTerminal(
     env?: Record<string, string>;
     command?: string;
     args?: string[];
-    taskId?: Id<"tasks">;
-    taskRunId?: Id<"taskRuns">;
+    taskId?: string;
+    taskRunId?: string;
     agentModel?: string;
     startupCommands?: string[];
     postStartCommands?: PostStartCommand[];

@@ -8,20 +8,16 @@
 #   --docker                Force build Docker image (alias for --force-docker-build)
 #   --force-docker-build    Force rebuild the Docker image (overrides --skip-docker)
 #   --skip-docker[=BOOL]    Skip Docker image build (default: true)
-#   --skip-convex[=BOOL]    Skip Convex backend (default: true)
 #   --show-compose-logs     Show Docker Compose logs in console
 #   --electron              Start Electron app
-#   --convex-agent          Run convex dev in agent mode
 #
 # Environment variables:
 #   SKIP_DOCKER_BUILD       Set to "false" to build Docker image (default: true)
-#   SKIP_CONVEX             Set to "false" to run Convex (default: true)
 #
 # Examples:
 #   ./scripts/dev.sh                          # Start without Docker build
 #   ./scripts/dev.sh --docker                 # Force Docker image rebuild
 #   ./scripts/dev.sh --skip-docker=false      # Build Docker image
-#   ./scripts/dev.sh --skip-convex=false      # Run with Convex enabled
 #
 
 set -e
@@ -155,8 +151,6 @@ trap 'release_lock; rm -f "$PIDFILE" "$PATHFILE" 2>/dev/null || true' EXIT
 # Enable job control for process group management
 set -m
 
-export CONVEX_PORT=9777
-
 if [ -f .env ]; then
     echo "Loading .env file"
     # Support quoted/multiline values (e.g., PEM keys) safely
@@ -187,11 +181,8 @@ echo "IS_DEVCONTAINER: $IS_DEVCONTAINER"
 # Parse command line arguments
 FORCE_DOCKER_BUILD=false
 SHOW_COMPOSE_LOGS=false
-# Default to skipping Convex unless explicitly disabled via env/flag
-SKIP_CONVEX="${SKIP_CONVEX:-true}"
 RUN_ELECTRON=false
 SKIP_DOCKER_BUILD="${SKIP_DOCKER_BUILD:-true}"
-CONVEX_AGENT_MODE=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -209,34 +200,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --electron)
             RUN_ELECTRON=true
-            shift
-            ;;
-        --skip-convex)
-            # Support `--skip-convex true|false` and bare `--skip-convex` (defaults to true)
-            if [[ -n "${2:-}" && "${2}" != --* ]]; then
-                case "$2" in
-                    true|false)
-                        SKIP_CONVEX="$2"
-                        shift 2
-                        ;;
-                    *)
-                        echo "Invalid value for --skip-convex: $2. Use true or false." >&2
-                        exit 1
-                        ;;
-                esac
-            else
-                SKIP_CONVEX=true
-                shift
-            fi
-            ;;
-        --skip-convex=*)
-            val="${1#*=}"
-            if [[ "$val" = "true" || "$val" = "false" ]]; then
-                SKIP_CONVEX="$val"
-            else
-                echo "Invalid value for --skip-convex: $val. Use true or false." >&2
-                exit 1
-            fi
             shift
             ;;
         --skip-docker)
@@ -265,10 +228,6 @@ while [[ $# -gt 0 ]]; do
                 echo "Invalid value for --skip-docker: $val. Use true or false." >&2
                 exit 1
             fi
-            shift
-            ;;
-        --convex-agent)
-            CONVEX_AGENT_MODE=true
             shift
             ;;
         *)
@@ -392,7 +351,7 @@ cleanup() {
 
     echo -e "\n${BLUE}Shutting down...${NC}"
 
-    for pid in "$DOCKER_BUILD_PID" "$DOCKER_COMPOSE_PID" "$CONVEX_DEV_PID" "$SERVER_PID" "$CLIENT_PID" "$WWW_PID" "$COMPUTE_PROVIDER_PID" "$OPENAPI_CLIENT_PID" "$ELECTRON_PID" "$SERVER_GLOBAL_PID"; do
+    for pid in "$DOCKER_BUILD_PID" "$DOCKER_COMPOSE_PID" "$SERVER_PID" "$CLIENT_PID" "$WWW_PID" "$COMPUTE_PROVIDER_PID" "$OPENAPI_CLIENT_PID" "$ELECTRON_PID" "$SERVER_GLOBAL_PID"; do
         kill_process_group "$pid" TERM
     done
 
@@ -403,7 +362,7 @@ cleanup() {
     # Give processes 2 seconds to cleanup gracefully
     sleep 2
 
-    for pid in "$DOCKER_BUILD_PID" "$DOCKER_COMPOSE_PID" "$CONVEX_DEV_PID" "$SERVER_PID" "$CLIENT_PID" "$WWW_PID" "$COMPUTE_PROVIDER_PID" "$OPENAPI_CLIENT_PID" "$ELECTRON_PID" "$SERVER_GLOBAL_PID"; do
+    for pid in "$DOCKER_BUILD_PID" "$DOCKER_COMPOSE_PID" "$SERVER_PID" "$CLIENT_PID" "$WWW_PID" "$COMPUTE_PROVIDER_PID" "$OPENAPI_CLIENT_PID" "$ELECTRON_PID" "$SERVER_GLOBAL_PID"; do
         kill_process_group "$pid" 9
     done
 
@@ -466,21 +425,6 @@ mkdir -p "$APP_DIR/logs"
 export LOG_DIR="$APP_DIR/logs"
 export SHOW_COMPOSE_LOGS
 
-# Start convex dev and log to both stdout and file
-echo -e "${GREEN}Starting convex dev...${NC}"
-# (cd packages/convex && source ~/.nvm/nvm.sh && nvm use 18 && CONVEX_AGENT_MODE=anonymous bun x convex dev 2>&1 | tee ../../logs/convex.log) &
-# (cd packages/convex && source ~/.nvm/nvm.sh && \
-#   nvm use 18 && \
-#   source .env.local && \
-#   ./convex-local-backend \
-#     --port "$CONVEX_PORT" \
-#     --site-proxy-port "$CONVEX_SITE_PROXY_PORT" \
-#     --instance-name "$CONVEX_INSTANCE_NAME" \
-#     --instance-secret "$CONVEX_INSTANCE_SECRET" \
-#     --disable-beacon \
-#     2>&1 | tee ../../logs/convex.log | prefix_output "CONVEX-BACKEND" "$MAGENTA") &
-# CONVEX_BACKEND_PID=$!
-
 # Function to check if a background process started successfully
 check_process() {
     local pid=$1
@@ -522,53 +466,14 @@ wait_for_log_message() {
     done
 }
 
-# Start Convex backend (different for devcontainer vs host)
-if [ "$SKIP_CONVEX" = "true" ]; then
-    echo -e "${YELLOW}Skipping Convex (SKIP_CONVEX=true)${NC}"
-else
-    if [ "$IS_DEVCONTAINER" = "true" ]; then
-        # In devcontainer, Convex is already running as part of docker-compose
-        echo -e "${GREEN}Convex backend already running in devcontainer...${NC}"
-    else
-        # On host, start Convex via docker-compose
-        (cd .devcontainer && exec bash -c 'trap "kill -9 0" EXIT; \
-          COMPOSE_PROJECT_NAME=cmux-convex docker compose -f docker-compose.convex.yml up 2>&1 | tee "$LOG_DIR/docker-compose.log" | { \
-            if [ "${SHOW_COMPOSE_LOGS}" = "true" ]; then \
-              prefix_output "DOCKER-COMPOSE" "$MAGENTA"; \
-            else \
-              cat >/dev/null; \
-            fi; \
-          }') &
-        DOCKER_COMPOSE_PID=$!
-        check_process $DOCKER_COMPOSE_PID "Docker Compose"
-    fi
-fi
+# Initialize database
+echo -e "${GREEN}Initializing database...${NC}"
+(cd "$APP_DIR/packages/db" && bun run migrate && bun run seed) 2>&1 | prefix_output "DB" "$MAGENTA"
 
-# We need to start convex dev even if we're skipping convex
-# Start convex dev (works the same in both environments)
-if [ "$CONVEX_AGENT_MODE" = "true" ]; then
-    echo -e "${GREEN}Starting convex dev in agent mode...${NC}"
-    (cd "$APP_DIR/packages/convex" && exec bash -c 'trap "kill -9 0" EXIT; source ~/.nvm/nvm.sh 2>/dev/null || true; CONVEX_AGENT_MODE=anonymous npx convex dev 2>&1 | tee "$LOG_DIR/convex-dev.log" | prefix_output "CONVEX-DEV" "$BLUE"') &
-else
-    (cd "$APP_DIR/packages/convex" && exec bash -c 'trap "kill -9 0" EXIT; source ~/.nvm/nvm.sh 2>/dev/null || true; bunx convex dev 2>&1 | tee "$LOG_DIR/convex-dev.log" | prefix_output "CONVEX-DEV" "$BLUE"') &
-fi
-CONVEX_DEV_PID=$!
-check_process $CONVEX_DEV_PID "Convex Dev"
-CONVEX_PID=$CONVEX_DEV_PID
-
-# Seed local auth data when AUTH_MODE=local (runs in background after Convex is ready)
+# Seed local auth data when AUTH_MODE=local
 if [ "${AUTH_MODE:-}" = "local" ]; then
-    (
-        # Wait for Convex dev to be ready by checking the log
-        for i in {1..60}; do
-            if [ -f "$LOG_DIR/convex-dev.log" ] && grep -q "Ready" "$LOG_DIR/convex-dev.log" 2>/dev/null; then
-                break
-            fi
-            sleep 1
-        done
-        echo -e "${BLUE}Seeding local auth data...${NC}"
-        cd "$APP_DIR/packages/convex" && bunx convex run seedLocalAuth:seed 2>&1 | prefix_output "SEED" "$MAGENTA"
-    ) &
+    echo -e "${BLUE}Seeding local auth data...${NC}"
+    (cd "$APP_DIR/packages/db" && bun run seed) 2>&1 | prefix_output "SEED" "$MAGENTA"
 fi
 
 # Start the backend server
@@ -640,9 +545,6 @@ echo -e "${GREEN}Terminal app is running!${NC}"
 echo -e "${BLUE}Frontend: http://localhost:5173${NC}"
 echo -e "${BLUE}Backend: http://localhost:9776${NC}"
 echo -e "${BLUE}WWW: http://localhost:9779${NC}"
-if [ "$SKIP_CONVEX" != "true" ]; then
-    echo -e "${BLUE}Convex: http://localhost:$CONVEX_PORT${NC}"
-fi
 if [ "$RUN_ELECTRON" = "true" ]; then
     echo -e "${BLUE}Electron app is starting...${NC}"
 fi

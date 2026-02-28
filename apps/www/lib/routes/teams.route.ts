@@ -1,7 +1,18 @@
-import { getConvex } from "@/lib/utils/get-convex";
 import { getUserFromRequest } from "@/lib/utils/auth";
 import { stackServerApp } from "@/lib/utils/stack";
-import { api } from "@cmux/convex/api";
+import { getDb } from "@cmux/db";
+import {
+  getTeamByTeamId,
+  getTeamBySlug,
+  getTeamBySlugOrId,
+  listTeamMemberships,
+} from "@cmux/db/queries/teams";
+import {
+  setTeamSlug,
+  setTeamName,
+  upsertTeam,
+  ensureTeamMembership,
+} from "@cmux/db/mutations/teams";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 
 const teamsRouter = new OpenAPIHono();
@@ -47,7 +58,7 @@ const CreateTeamResponseSchema = z
       .openapi({ description: "Display name saved in Stack", example: "Frontend Wizards" }),
     slug: z
       .string()
-      .openapi({ description: "Slug stored in Convex", example: "frontend-wizards" }),
+      .openapi({ description: "Slug stored in the database", example: "frontend-wizards" }),
     invitesSent: z
       .number()
       .openapi({ description: "Number of invite emails sent", example: 1 }),
@@ -85,7 +96,7 @@ function normalizeSlug(input: string): string {
 function validateSlug(slug: string): void {
   const normalized = normalizeSlug(slug);
   if (normalized.length < 3 || normalized.length > 48) {
-    throw new Error("Slug must be 3–48 characters long");
+    throw new Error("Slug must be 3\u201348 characters long");
   }
   if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(normalized)) {
     throw new Error(
@@ -132,31 +143,24 @@ teamsRouter.openapi(
       return c.json({ code: 401, message: "Unauthorized" }, 401);
     }
 
-    const authJson = await user.getAuthJson();
-    if (!authJson.accessToken) {
-      return c.json({ code: 401, message: "Unauthorized" }, 401);
-    }
-
     const stackTeams = await user.listTeams();
-    const convex = getConvex({ accessToken: authJson.accessToken });
+    const db = getDb();
 
-    // Fetch slugs from Convex for each team
-    const teams = await Promise.all(
-      stackTeams.map(async (team) => {
-        let slug: string | null = null;
-        try {
-          const convexTeam = await convex.query(api.teams.get, { teamSlugOrId: team.id });
-          slug = convexTeam?.slug ?? null;
-        } catch {
-          // Team might not exist in Convex yet
-        }
-        return {
-          id: team.id,
-          displayName: team.displayName,
-          slug,
-        };
-      })
-    );
+    // Fetch slugs from DB for each team
+    const teams = stackTeams.map((team) => {
+      let slug: string | null = null;
+      try {
+        const dbTeam = getTeamByTeamId(db, team.id);
+        slug = dbTeam?.slug ?? null;
+      } catch {
+        // Team might not exist in DB yet
+      }
+      return {
+        id: team.id,
+        displayName: team.displayName,
+        slug,
+      };
+    });
 
     return c.json({ teams }, 200);
   }
@@ -253,18 +257,12 @@ teamsRouter.openapi(
       return c.json({ code: 401, message: "Unauthorized" }, 401);
     }
 
-    const authJson = await user.getAuthJson();
-    if (!authJson.accessToken) {
-      return c.json({ code: 401, message: "Unauthorized" }, 401);
-    }
-
-    const convex = getConvex({ accessToken: authJson.accessToken });
+    const db = getDb();
 
     try {
-      const existing = await convex
-        .query(api.teams.get, { teamSlugOrId: normalizedSlug })
-        .catch(() => null);
-      if (existing && existing.slug === normalizedSlug) {
+      // Check slug uniqueness
+      const existingBySlug = getTeamBySlug(db, normalizedSlug);
+      if (existingBySlug) {
         return c.json({ code: 409, message: "Slug is already taken" }, 409);
       }
 
@@ -297,28 +295,31 @@ teamsRouter.openapi(
         }
       }
 
+      // Poll for team to sync from Stack Auth into our DB, then set the slug
       const start = Date.now();
       let slugSet = false;
       let lastError: unknown;
       while (Date.now() - start < SLUG_POLL_TIMEOUT_MS) {
         try {
-          await convex.mutation(api.teams.setSlug, {
-            teamSlugOrId: createdTeam.id,
-            slug: normalizedSlug,
-          });
-          slugSet = true;
-          break;
+          const teamRow = getTeamByTeamId(db, createdTeam.id);
+          if (teamRow) {
+            // Check slug uniqueness again before setting
+            const slugConflict = getTeamBySlug(db, normalizedSlug);
+            if (slugConflict && slugConflict.teamId !== createdTeam.id) {
+              return c.json({ code: 409, message: "Slug is already taken" }, 409);
+            }
+            setTeamSlug(db, createdTeam.id, normalizedSlug);
+            slugSet = true;
+            break;
+          }
         } catch (error) {
           lastError = error;
-          if (error instanceof Error && error.message.includes("Slug is already taken")) {
-            return c.json({ code: 409, message: error.message }, 409);
-          }
         }
         await wait(SLUG_POLL_INTERVAL_MS);
       }
 
       if (!slugSet) {
-        console.error("Timed out waiting for team to sync in Convex", {
+        console.error("Timed out waiting for team to sync in DB", {
           teamId: createdTeam.id,
           lastError,
         });
@@ -342,6 +343,386 @@ teamsRouter.openapi(
       return c.json({ code: 500, message: "Failed to create team" }, 500);
     }
   }
+);
+
+// GET /teams/memberships - List current user's team memberships
+teamsRouter.openapi(
+  createRoute({
+    method: "get" as const,
+    path: "/teams/memberships",
+    tags: ["Teams"],
+    summary: "List current user's team memberships",
+    responses: {
+      200: {
+        description: "List of team memberships",
+        content: {
+          "application/json": {
+            schema: z.object({
+              memberships: z.array(
+                z.object({
+                  id: z.string(),
+                  teamId: z.string(),
+                  userId: z.string(),
+                  role: z.string().nullable().optional(),
+                  createdAt: z.number().nullable().optional(),
+                  updatedAt: z.number().nullable().optional(),
+                  team: TeamSchema,
+                }),
+              ),
+            }),
+          },
+        },
+      },
+      401: {
+        description: "Unauthorized",
+        content: { "application/json": { schema: ErrorResponseSchema } },
+      },
+    },
+  }),
+  async (c) => {
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) {
+      return c.json({ code: 401, message: "Unauthorized" }, 401);
+    }
+
+    const db = getDb();
+    const rows = listTeamMemberships(db, user.id);
+    const memberships = rows.map((row) => ({
+      id: row.teamMemberships.id,
+      teamId: row.teamMemberships.teamId,
+      userId: row.teamMemberships.userId,
+      role: row.teamMemberships.role ?? null,
+      createdAt: row.teamMemberships.createdAt ?? null,
+      updatedAt: row.teamMemberships.updatedAt ?? null,
+      team: {
+        id: row.teams.id,
+        displayName: row.teams.displayName ?? row.teams.teamId,
+        slug: row.teams.slug ?? null,
+      },
+    }));
+
+    return c.json({ memberships }, 200);
+  },
+);
+
+// GET /teams/:teamSlugOrId - Get a single team by slug or ID
+teamsRouter.openapi(
+  createRoute({
+    method: "get" as const,
+    path: "/teams/{teamSlugOrId}",
+    tags: ["Teams"],
+    summary: "Get team by slug or ID",
+    request: {
+      params: z.object({ teamSlugOrId: z.string() }),
+    },
+    responses: {
+      200: {
+        description: "Team details",
+        content: {
+          "application/json": {
+            schema: z.object({
+              team: TeamSchema.extend({
+                teamId: z.string(),
+                name: z.string().nullable().optional(),
+              }),
+            }),
+          },
+        },
+      },
+      401: {
+        description: "Unauthorized",
+        content: { "application/json": { schema: ErrorResponseSchema } },
+      },
+      404: {
+        description: "Team not found",
+        content: { "application/json": { schema: ErrorResponseSchema } },
+      },
+    },
+  }),
+  async (c) => {
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) {
+      return c.json({ code: 401, message: "Unauthorized" }, 401);
+    }
+
+    const { teamSlugOrId } = c.req.valid("param");
+    const db = getDb();
+    const team = getTeamBySlugOrId(db, teamSlugOrId);
+    if (!team) {
+      return c.json({ code: 404, message: "Team not found" }, 404);
+    }
+
+    return c.json(
+      {
+        team: {
+          id: team.id,
+          teamId: team.teamId,
+          displayName: team.displayName ?? team.teamId,
+          slug: team.slug ?? null,
+          name: team.name ?? null,
+        },
+      },
+      200,
+    );
+  },
+);
+
+// PATCH /teams/:teamSlugOrId/slug - Set team slug
+teamsRouter.openapi(
+  createRoute({
+    method: "patch" as const,
+    path: "/teams/{teamSlugOrId}/slug",
+    tags: ["Teams"],
+    summary: "Set team slug",
+    request: {
+      params: z.object({ teamSlugOrId: z.string() }),
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({ slug: z.string() }),
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        description: "Slug updated",
+        content: {
+          "application/json": {
+            schema: z.object({ slug: z.string() }),
+          },
+        },
+      },
+      400: {
+        description: "Invalid slug",
+        content: { "application/json": { schema: ErrorResponseSchema } },
+      },
+      401: {
+        description: "Unauthorized",
+        content: { "application/json": { schema: ErrorResponseSchema } },
+      },
+      404: {
+        description: "Team not found",
+        content: { "application/json": { schema: ErrorResponseSchema } },
+      },
+      409: {
+        description: "Slug conflict",
+        content: { "application/json": { schema: ErrorResponseSchema } },
+      },
+    },
+  }),
+  async (c) => {
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) {
+      return c.json({ code: 401, message: "Unauthorized" }, 401);
+    }
+
+    const { teamSlugOrId } = c.req.valid("param");
+    const { slug } = c.req.valid("json");
+    const normalized = normalizeSlug(slug);
+
+    try {
+      validateSlug(normalized);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Invalid slug";
+      return c.json({ code: 400, message }, 400);
+    }
+
+    const db = getDb();
+    const team = getTeamBySlugOrId(db, teamSlugOrId);
+    if (!team) {
+      return c.json({ code: 404, message: "Team not found" }, 404);
+    }
+
+    const existing = getTeamBySlug(db, normalized);
+    if (existing && existing.teamId !== team.teamId) {
+      return c.json({ code: 409, message: "Slug is already taken" }, 409);
+    }
+
+    setTeamSlug(db, team.teamId, normalized);
+    return c.json({ slug: normalized }, 200);
+  },
+);
+
+// PATCH /teams/:teamSlugOrId/name - Set team name
+teamsRouter.openapi(
+  createRoute({
+    method: "patch" as const,
+    path: "/teams/{teamSlugOrId}/name",
+    tags: ["Teams"],
+    summary: "Set team display name",
+    request: {
+      params: z.object({ teamSlugOrId: z.string() }),
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({ name: z.string() }),
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        description: "Name updated",
+        content: {
+          "application/json": {
+            schema: z.object({ name: z.string() }),
+          },
+        },
+      },
+      400: {
+        description: "Invalid name",
+        content: { "application/json": { schema: ErrorResponseSchema } },
+      },
+      401: {
+        description: "Unauthorized",
+        content: { "application/json": { schema: ErrorResponseSchema } },
+      },
+      404: {
+        description: "Team not found",
+        content: { "application/json": { schema: ErrorResponseSchema } },
+      },
+    },
+  }),
+  async (c) => {
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) {
+      return c.json({ code: 401, message: "Unauthorized" }, 401);
+    }
+
+    const { teamSlugOrId } = c.req.valid("param");
+    const { name } = c.req.valid("json");
+    const trimmed = name.trim();
+
+    if (trimmed.length < 1 || trimmed.length > 32) {
+      return c.json(
+        { code: 400, message: "Name must be 1-32 characters long" },
+        400,
+      );
+    }
+
+    const db = getDb();
+    const team = getTeamBySlugOrId(db, teamSlugOrId);
+    if (!team) {
+      return c.json({ code: 404, message: "Team not found" }, 404);
+    }
+
+    setTeamName(db, team.teamId, trimmed);
+    return c.json({ name: trimmed }, 200);
+  },
+);
+
+// POST /teams/upsert - Upsert team (for Stack Auth sync)
+teamsRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/teams/upsert",
+    tags: ["Teams"],
+    summary: "Upsert a team (used for Stack Auth sync)",
+    request: {
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              id: z.string(),
+              displayName: z.string().optional(),
+              profileImageUrl: z.string().optional(),
+              clientMetadata: z.unknown().optional(),
+              clientReadOnlyMetadata: z.unknown().optional(),
+              serverMetadata: z.unknown().optional(),
+              createdAtMillis: z.number(),
+            }),
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        description: "Team upserted",
+        content: {
+          "application/json": {
+            schema: z.object({ success: z.boolean() }),
+          },
+        },
+      },
+      401: {
+        description: "Unauthorized",
+        content: { "application/json": { schema: ErrorResponseSchema } },
+      },
+    },
+  }),
+  async (c) => {
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) {
+      return c.json({ code: 401, message: "Unauthorized" }, 401);
+    }
+
+    const body = c.req.valid("json");
+    const db = getDb();
+    upsertTeam(db, {
+      teamId: body.id,
+      displayName: body.displayName,
+      profileImageUrl: body.profileImageUrl,
+      clientMetadata: body.clientMetadata,
+      clientReadOnlyMetadata: body.clientReadOnlyMetadata,
+      serverMetadata: body.serverMetadata,
+      createdAtMillis: body.createdAtMillis,
+    });
+
+    return c.json({ success: true }, 200);
+  },
+);
+
+// POST /teams/ensure-membership - Ensure team membership exists
+teamsRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/teams/ensure-membership",
+    tags: ["Teams"],
+    summary: "Ensure a team membership exists",
+    request: {
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              teamId: z.string(),
+              userId: z.string(),
+            }),
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        description: "Membership ensured",
+        content: {
+          "application/json": {
+            schema: z.object({ success: z.boolean() }),
+          },
+        },
+      },
+      401: {
+        description: "Unauthorized",
+        content: { "application/json": { schema: ErrorResponseSchema } },
+      },
+    },
+  }),
+  async (c) => {
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) {
+      return c.json({ code: 401, message: "Unauthorized" }, 401);
+    }
+
+    const { teamId, userId } = c.req.valid("json");
+    const db = getDb();
+    ensureTeamMembership(db, teamId, userId);
+
+    return c.json({ success: true }, 200);
+  },
 );
 
 export { teamsRouter };

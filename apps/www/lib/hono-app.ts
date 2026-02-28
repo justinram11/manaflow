@@ -29,6 +29,14 @@ import {
   workspaceConfigsRouter,
   previewRouter,
   localAuthRouter,
+  dbTasksRouter,
+  dbTaskRunsRouter,
+  dbNotificationsRouter,
+  dbSettingsRouter,
+  dbAnalyticsRouter,
+  dbApiKeysRouter,
+  dbCommentsRouter,
+  storageRouter,
 } from "@/lib/routes/index";
 import { authAnonymousRouter } from "@/lib/routes/auth.anonymous.route";
 import { stackServerApp } from "@/lib/utils/stack";
@@ -162,6 +170,14 @@ app.route("/", workspaceConfigsRouter);
 app.route("/", previewRouter);
 app.route("/", editorSettingsRouter);
 app.route("/", localAuthRouter);
+app.route("/", dbTasksRouter);
+app.route("/", dbTaskRunsRouter);
+app.route("/", dbNotificationsRouter);
+app.route("/", dbSettingsRouter);
+app.route("/", dbAnalyticsRouter);
+app.route("/", dbApiKeysRouter);
+app.route("/", dbCommentsRouter);
+app.route("/", storageRouter);
 
 // OpenAPI documentation
 app.doc("/doc", {

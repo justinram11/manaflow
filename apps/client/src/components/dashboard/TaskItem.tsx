@@ -7,14 +7,22 @@ import {
 import { useArchiveTask } from "@/hooks/useArchiveTask";
 import { useTaskRename } from "@/hooks/useTaskRename";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
-import { ContextMenu } from "@base-ui-components/react/context-menu";
-import { api } from "@cmux/convex/api";
-import type { Doc } from "@cmux/convex/dataModel";
 import type { RunEnvironmentSummary } from "@/types/task";
+import { ContextMenu } from "@base-ui-components/react/context-menu";
+import type { DbTask } from "@cmux/www-openapi-client";
+import {
+  getApiTaskRunsOptions,
+  getApiTasksOptions,
+  getApiTasksPinnedOptions,
+} from "@cmux/www-openapi-client/react-query";
+import {
+  postApiTasksByIdPin,
+  postApiTasksByIdUnpin,
+} from "@cmux/www-openapi-client";
 import { useClipboard } from "@mantine/hooks";
+import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import clsx from "clsx";
-import { useQuery as useConvexQuery, useMutation } from "convex/react";
 // Read team slug from path to avoid route type coupling
 import {
   Archive,
@@ -32,7 +40,7 @@ import { memo, useCallback, useMemo } from "react";
 import { EnvironmentName } from "./EnvironmentName";
 
 interface TaskItemProps {
-  task: Doc<"tasks">;
+  task: DbTask;
   teamSlugOrId: string;
 }
 
@@ -41,11 +49,13 @@ export const TaskItem = memo(function TaskItem({
   teamSlugOrId,
 }: TaskItemProps) {
   const clipboard = useClipboard({ timeout: 2000 });
+  const queryClient = useQueryClient();
   const { archiveWithUndo, unarchive, isArchiving } =
     useArchiveTask(teamSlugOrId);
-  const taskIsArchiving = isArchiving(task._id);
+  const taskIsArchiving = isArchiving(task.id);
   const navigate = useNavigate();
-  const isOptimisticUpdate = task._id.includes("-") && task._id.length === 36;
+  // Detect optimistic update (UUID format)
+  const isOptimisticUpdate = task.id.includes("-") && task.id.length === 36;
   const canRename = !isOptimisticUpdate;
 
   const {
@@ -60,79 +70,129 @@ export const TaskItem = memo(function TaskItem({
     handleRenameFocus,
     handleStartRenaming,
   } = useTaskRename({
-    taskId: task._id,
+    taskId: task.id,
     teamSlugOrId,
     currentText: task.text,
     canRename,
   });
 
   // Query for task runs to find VSCode instances
-  const taskRunsQuery = useConvexQuery(
-    api.taskRuns.getByTask,
-    isFakeConvexId(task._id) ? "skip" : { teamSlugOrId, taskId: task._id }
-  );
+  const isFake = isFakeConvexId(task.id);
+  const taskRunsResult = useQuery({
+    ...getApiTaskRunsOptions({ query: { taskId: task.id } }),
+    enabled: !isFake,
+  });
+  const taskRunsQuery = taskRunsResult.data?.taskRuns as Array<Record<string, unknown>> | undefined;
 
   // Check if task has a crown based on crownEvaluationStatus
-  const hasCrown = task.crownEvaluationStatus === "succeeded";
+  const hasCrown = (task as Record<string, unknown>).crownEvaluationStatus === "succeeded";
 
   // Mutation for toggling keep-alive status
-  const toggleKeepAlive = useMutation(api.taskRuns.toggleKeepAlive);
+  // TODO: No HTTP API endpoint for keep-alive yet; this is a no-op placeholder
+  const toggleKeepAlive = useMutation({
+    mutationFn: async (_args: { teamSlugOrId: string; id: string; keepAlive: boolean }) => {
+      console.warn("toggleKeepAlive: no HTTP API endpoint available yet");
+    },
+  });
 
   // Mutations for pinning/unpinning tasks with optimistic updates
-  const pinTask = useMutation(api.tasks.pin).withOptimisticUpdate(
-    (localStore, args) => {
-      const now = Date.now();
+  const pinTask = useMutation({
+    mutationFn: async ({ teamSlugOrId: team, id }: { teamSlugOrId: string; id: string }) => {
+      await postApiTasksByIdPin({ path: { id }, body: { teamSlugOrId: team } });
+    },
+    onMutate: async (args) => {
+      const tasksQueryKey = getApiTasksOptions({ query: { teamSlugOrId: args.teamSlugOrId } }).queryKey;
+      const pinnedQueryKey = getApiTasksPinnedOptions({ query: { teamSlugOrId: args.teamSlugOrId } }).queryKey;
 
-      // Update the task in the main task list
-      const tasks = localStore.getQuery(api.tasks.get, { teamSlugOrId: args.teamSlugOrId });
-      if (tasks) {
-        const updatedTasks = tasks.map(t =>
-          t._id === args.id ? { ...t, pinned: true, updatedAt: now, hasUnread: t.hasUnread ?? false } : t
-        );
-        localStore.setQuery(api.tasks.get, { teamSlugOrId: args.teamSlugOrId }, updatedTasks);
+      await queryClient.cancelQueries({ queryKey: tasksQueryKey });
+      await queryClient.cancelQueries({ queryKey: pinnedQueryKey });
+
+      const previousTasks = queryClient.getQueryData(tasksQueryKey);
+      const previousPinned = queryClient.getQueryData(pinnedQueryKey);
+
+      queryClient.setQueryData(tasksQueryKey, (old: { tasks: DbTask[] } | undefined) => {
+        if (!old) return old;
+        return { tasks: old.tasks.map(t => t.id === args.id ? { ...t, pinned: true, updatedAt: Date.now() } : t) };
+      });
+
+      queryClient.setQueryData(pinnedQueryKey, (old: { tasks: DbTask[] } | undefined) => {
+        if (!old) return old;
+        const taskToPin = (previousTasks as { tasks: DbTask[] } | undefined)?.tasks.find(t => t.id === args.id);
+        if (taskToPin) {
+          return { tasks: [{ ...taskToPin, pinned: true, updatedAt: Date.now() }, ...old.tasks] };
+        }
+        return old;
+      });
+
+      return { previousTasks, previousPinned };
+    },
+    onError: (_err, args, context) => {
+      if (context?.previousTasks) {
+        queryClient.setQueryData(getApiTasksOptions({ query: { teamSlugOrId: args.teamSlugOrId } }).queryKey, context.previousTasks);
       }
-
-      // Update the pinned items query
-      const pinned = localStore.getQuery(api.tasks.getPinned, { teamSlugOrId: args.teamSlugOrId }) || [];
-      const taskToPin = tasks?.find(t => t._id === args.id);
-      if (taskToPin) {
-        // Insert at the beginning since it's the most recently updated
-        localStore.setQuery(api.tasks.getPinned, { teamSlugOrId: args.teamSlugOrId },
-          [{ ...taskToPin, pinned: true, updatedAt: now, hasUnread: taskToPin.hasUnread ?? false }, ...pinned]
-        );
+      if (context?.previousPinned) {
+        queryClient.setQueryData(getApiTasksPinnedOptions({ query: { teamSlugOrId: args.teamSlugOrId } }).queryKey, context.previousPinned);
       }
-    }
-  );
+    },
+    onSettled: (_data, _error, args) => {
+      void queryClient.invalidateQueries({ queryKey: getApiTasksOptions({ query: { teamSlugOrId: args.teamSlugOrId } }).queryKey });
+      void queryClient.invalidateQueries({ queryKey: getApiTasksPinnedOptions({ query: { teamSlugOrId: args.teamSlugOrId } }).queryKey });
+    },
+  });
 
-  const unpinTask = useMutation(api.tasks.unpin).withOptimisticUpdate(
-    (localStore, args) => {
-      const now = Date.now();
+  const unpinTask = useMutation({
+    mutationFn: async ({ teamSlugOrId: team, id }: { teamSlugOrId: string; id: string }) => {
+      await postApiTasksByIdUnpin({ path: { id }, body: { teamSlugOrId: team } });
+    },
+    onMutate: async (args) => {
+      const tasksQueryKey = getApiTasksOptions({ query: { teamSlugOrId: args.teamSlugOrId } }).queryKey;
+      const pinnedQueryKey = getApiTasksPinnedOptions({ query: { teamSlugOrId: args.teamSlugOrId } }).queryKey;
 
-      // Update the task in the main task list
-      const tasks = localStore.getQuery(api.tasks.get, { teamSlugOrId: args.teamSlugOrId });
-      if (tasks) {
-        const updatedTasks = tasks.map(t =>
-          t._id === args.id ? { ...t, pinned: false, updatedAt: now } : t
-        );
-        localStore.setQuery(api.tasks.get, { teamSlugOrId: args.teamSlugOrId }, updatedTasks);
+      await queryClient.cancelQueries({ queryKey: tasksQueryKey });
+      await queryClient.cancelQueries({ queryKey: pinnedQueryKey });
+
+      const previousTasks = queryClient.getQueryData(tasksQueryKey);
+      const previousPinned = queryClient.getQueryData(pinnedQueryKey);
+
+      queryClient.setQueryData(tasksQueryKey, (old: { tasks: DbTask[] } | undefined) => {
+        if (!old) return old;
+        return { tasks: old.tasks.map(t => t.id === args.id ? { ...t, pinned: false, updatedAt: Date.now() } : t) };
+      });
+
+      queryClient.setQueryData(pinnedQueryKey, (old: { tasks: DbTask[] } | undefined) => {
+        if (!old) return old;
+        return { tasks: old.tasks.filter(t => t.id !== args.id) };
+      });
+
+      return { previousTasks, previousPinned };
+    },
+    onError: (_err, args, context) => {
+      if (context?.previousTasks) {
+        queryClient.setQueryData(getApiTasksOptions({ query: { teamSlugOrId: args.teamSlugOrId } }).queryKey, context.previousTasks);
       }
-
-      // Update the pinned items query
-      const pinned = localStore.getQuery(api.tasks.getPinned, { teamSlugOrId: args.teamSlugOrId }) || [];
-      localStore.setQuery(api.tasks.getPinned, { teamSlugOrId: args.teamSlugOrId },
-        pinned.filter(t => t._id !== args.id)
-      );
-    }
-  );
+      if (context?.previousPinned) {
+        queryClient.setQueryData(getApiTasksPinnedOptions({ query: { teamSlugOrId: args.teamSlugOrId } }).queryKey, context.previousPinned);
+      }
+    },
+    onSettled: (_data, _error, args) => {
+      void queryClient.invalidateQueries({ queryKey: getApiTasksOptions({ query: { teamSlugOrId: args.teamSlugOrId } }).queryKey });
+      void queryClient.invalidateQueries({ queryKey: getApiTasksPinnedOptions({ query: { teamSlugOrId: args.teamSlugOrId } }).queryKey });
+    },
+  });
 
   // Find the latest task run with a VSCode instance
   const getLatestVSCodeInstance = useCallback(() => {
     if (!taskRunsQuery || taskRunsQuery.length === 0) return null;
 
     // Define task run type with nested structure
-    interface TaskRunWithChildren extends Doc<"taskRuns"> {
+    interface TaskRunWithChildren {
+      id: string;
+      createdAt?: number | null;
+      vscode?: { status?: string; url?: string; keepAlive?: boolean; provider?: string } | null;
+      worktreePath?: string | null;
       children?: TaskRunWithChildren[];
       environment?: RunEnvironmentSummary | null;
+      [key: string]: unknown;
     }
 
     // Flatten all task runs (including children)
@@ -145,7 +205,7 @@ export const TaskItem = memo(function TaskItem({
         }
       });
     };
-    flattenRuns(taskRunsQuery);
+    flattenRuns(taskRunsQuery as TaskRunWithChildren[]);
 
     // Find the most recent run with VSCode instance that's running or starting
     const runWithVSCode = allRuns
@@ -172,7 +232,7 @@ export const TaskItem = memo(function TaskItem({
     }
     return null;
   }, [hasActiveVSCode, runWithVSCode]);
-  const vscodeProvider = runWithVSCode?.vscode?.provider;
+  const vscodeProvider = runWithVSCode?.vscode?.provider as "docker" | "morph" | "incus" | "daytona" | "other" | undefined;
 
   // For local workspaces, find the run with VSCode to navigate to VSCode view directly
   const localWorkspaceRunWithVscode = useMemo(() => {
@@ -203,14 +263,14 @@ export const TaskItem = memo(function TaskItem({
           to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
           params: {
             teamSlugOrId,
-            taskId: task._id,
-            runId: localWorkspaceRunWithVscode._id,
+            taskId: task.id,
+            runId: localWorkspaceRunWithVscode.id,
           },
         });
         return;
       }
     },
-    [isRenaming, localWorkspaceRunWithVscode, navigate, teamSlugOrId, task._id]
+    [isRenaming, localWorkspaceRunWithVscode, navigate, teamSlugOrId, task.id]
   );
 
   const handleCopy = useCallback(
@@ -229,9 +289,9 @@ export const TaskItem = memo(function TaskItem({
     async (e: React.MouseEvent) => {
       e.stopPropagation();
       if (runWithVSCode) {
-        await toggleKeepAlive({
+        await toggleKeepAlive.mutateAsync({
           teamSlugOrId,
-          id: runWithVSCode._id,
+          id: runWithVSCode.id,
           keepAlive: !runWithVSCode.vscode?.keepAlive,
         });
       }
@@ -252,30 +312,30 @@ export const TaskItem = memo(function TaskItem({
   }, [archiveWithUndo, task]);
 
   const handleUnarchiveFromMenu = useCallback(() => {
-    unarchive(task._id);
-  }, [unarchive, task._id]);
+    unarchive(task.id);
+  }, [unarchive, task.id]);
 
   const handleUnarchive = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      unarchive(task._id);
+      unarchive(task.id);
     },
-    [unarchive, task._id]
+    [unarchive, task.id]
   );
 
   const handlePinFromMenu = useCallback(() => {
-    pinTask({
+    pinTask.mutate({
       teamSlugOrId,
-      id: task._id,
+      id: task.id,
     });
-  }, [pinTask, teamSlugOrId, task._id]);
+  }, [pinTask, teamSlugOrId, task.id]);
 
   const handleUnpinFromMenu = useCallback(() => {
-    unpinTask({
+    unpinTask.mutate({
       teamSlugOrId,
-      id: task._id,
+      id: task.id,
     });
-  }, [unpinTask, teamSlugOrId, task._id]);
+  }, [unpinTask, teamSlugOrId, task.id]);
 
   return (
     <div className="relative group w-full">
@@ -283,7 +343,7 @@ export const TaskItem = memo(function TaskItem({
         <ContextMenu.Trigger>
           <Link
             to="/$teamSlugOrId/task/$taskId"
-            params={{ teamSlugOrId, taskId: task._id }}
+            params={{ teamSlugOrId, taskId: task.id }}
             search={{ runId: undefined }}
             onClick={handleLinkClick}
             className={clsx(

@@ -2,33 +2,32 @@ import { ResizableColumns } from "@/components/ResizableColumns";
 import { FloatingPane } from "@/components/floating-pane";
 import { PRsRightPanel } from "@/components/prs/PRsRightPanel";
 import { PullRequestListPanel } from "@/components/prs/PullRequestListPanel";
-import { convexQueryClient } from "@/contexts/convex/convex-query-client";
-import { api } from "@cmux/convex/api";
+import { queryClient } from "@/query-client";
+import {
+  getApiIntegrationsGithubReposOptions,
+} from "@cmux/www-openapi-client/react-query";
 import { createFileRoute, useLocation } from "@tanstack/react-router";
-import { useQuery as useConvexQuery } from "convex/react";
 import { useMemo, useState } from "react";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/prs")({
   component: PRsPage,
   loader: async (opts) => {
     const { teamSlugOrId } = opts.params;
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.github.listProviderConnections,
-      args: { teamSlugOrId },
-    });
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.github_prs.listPullRequests,
-      args: { teamSlugOrId, state: "open", search: "" },
-    });
+    void queryClient.prefetchQuery(
+      getApiIntegrationsGithubReposOptions({
+        query: { team: teamSlugOrId },
+      })
+    );
   },
 });
 
 function PRsPage() {
   const { teamSlugOrId } = Route.useParams();
-  const connections = useConvexQuery(api.github.listProviderConnections, {
-    teamSlugOrId,
-  });
-  const activeConnections = (connections || []).filter((c) => c.isActive);
+
+  // No dedicated connections endpoint exists yet; pass empty connections.
+  // The PR list panel still works because installationId is optional.
+  const activeConnections: Array<{ installationId: number; accountLogin: string }> = [];
+
   const [installationId, setInstallationId] = useState<number | null>(
     activeConnections.length > 0 ? activeConnections[0]!.installationId : null
   );

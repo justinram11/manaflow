@@ -1,12 +1,15 @@
-import { api } from "@cmux/convex/api";
-import type { Doc, Id } from "@cmux/convex/dataModel";
+import type { DbTask } from "@cmux/www-openapi-client";
+import {
+  getApiTasksOptions,
+  getApiTasksPinnedOptions,
+} from "@cmux/www-openapi-client/react-query";
 import { useLocalStorage } from "@mantine/hooks";
-import { usePaginatedQuery, useQuery } from "convex/react";
+import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { TaskItem } from "./TaskItem";
 import { PreviewItem } from "./PreviewItem";
-import { ChevronRight, Loader2 } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { env } from "../../client-env";
 
 type TaskCategoryKey =
@@ -52,7 +55,7 @@ const CATEGORY_META: Record<
 
 const createEmptyCategoryBuckets = (): Record<
   TaskCategoryKey,
-  Doc<"tasks">[]
+  DbTask[]
 > => ({
   pinned: [],
   workspaces: [],
@@ -61,20 +64,20 @@ const createEmptyCategoryBuckets = (): Record<
   merged: [],
 });
 
-const getTaskCategory = (task: Doc<"tasks">): TaskCategoryKey => {
+const getTaskCategory = (task: DbTask): TaskCategoryKey => {
   if (task.isCloudWorkspace || task.isLocalWorkspace) {
     return "workspaces";
   }
   if (task.mergeStatus === "pr_merged") {
     return "merged";
   }
-  if (task.crownEvaluationStatus === "succeeded") {
+  if ((task as Record<string, unknown>).crownEvaluationStatus === "succeeded") {
     return "ready_to_review";
   }
   return "in_progress";
 };
 
-const sortByRecentUpdate = (tasks: Doc<"tasks">[]): Doc<"tasks">[] => {
+const sortByRecentUpdate = (tasks: DbTask[]): DbTask[] => {
   if (tasks.length <= 1) {
     return tasks;
   }
@@ -85,8 +88,8 @@ const sortByRecentUpdate = (tasks: Doc<"tasks">[]): Doc<"tasks">[] => {
 };
 
 const categorizeTasks = (
-  tasks: Doc<"tasks">[] | undefined
-): Record<TaskCategoryKey, Doc<"tasks">[]> | null => {
+  tasks: DbTask[] | undefined
+): Record<TaskCategoryKey, DbTask[]> | null => {
   if (!tasks) {
     return null;
   }
@@ -112,9 +115,19 @@ const createCollapsedCategoryState = (
 });
 
 // Preview run types
-type PreviewRunWithConfig = Doc<"previewRuns"> & {
+type PreviewRunWithConfig = {
+  id: string;
+  status: string;
+  prNumber: number;
+  repoFullName: string;
+  prUrl: string;
+  headRef?: string | null;
+  completedAt?: number | null;
+  startedAt?: number | null;
+  createdAt?: number | null;
   configRepoFullName?: string;
-  taskId?: Id<"tasks">;
+  taskId?: string;
+  taskRunId?: string;
 };
 
 type PreviewCategoryKey = "in_progress" | "completed";
@@ -179,8 +192,7 @@ const createCollapsedPreviewCategoryState = (
   completed: defaultValue,
 });
 
-const ARCHIVED_PAGE_SIZE = 20;
-const PREVIEW_PAGE_SIZE = 20;
+// Page sizes removed -- pagination not yet available in HTTP API
 
 export const TaskList = memo(function TaskList({
   teamSlugOrId,
@@ -188,28 +200,29 @@ export const TaskList = memo(function TaskList({
   teamSlugOrId: string;
 }) {
   // In web mode, exclude local workspaces from the task list
-  const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE || undefined;
+  const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE ? "true" as const : undefined;
 
-  const allTasks = useQuery(api.tasks.get, { teamSlugOrId, excludeLocalWorkspaces });
-  const {
-    results: archivedTasks,
-    status: archivedStatus,
-    loadMore: loadMoreArchived,
-  } = usePaginatedQuery(
-    api.tasks.getArchivedPaginated,
-    { teamSlugOrId, excludeLocalWorkspaces },
-    { initialNumItems: ARCHIVED_PAGE_SIZE },
+  const allTasksQuery = useQuery(
+    getApiTasksOptions({ query: { teamSlugOrId, excludeLocalWorkspaces } }),
   );
-  const pinnedData = useQuery(api.tasks.getPinned, { teamSlugOrId, excludeLocalWorkspaces });
-  const {
-    results: previewRuns,
-    status: previewRunsStatus,
-    loadMore: loadMorePreviewRuns,
-  } = usePaginatedQuery(
-    api.previewRuns.listByTeamPaginated,
-    { teamSlugOrId },
-    { initialNumItems: PREVIEW_PAGE_SIZE },
+  const allTasks = allTasksQuery.data?.tasks;
+
+  const archivedTasksQuery = useQuery(
+    getApiTasksOptions({ query: { teamSlugOrId, archived: "true", excludeLocalWorkspaces } }),
   );
+  const archivedTasks = archivedTasksQuery.data?.tasks ?? [];
+  const archivedStatus = archivedTasksQuery.isLoading
+    ? "LoadingFirstPage" as const
+    : "Exhausted" as const;
+
+  const pinnedQuery = useQuery(
+    getApiTasksPinnedOptions({ query: { teamSlugOrId, excludeLocalWorkspaces } }),
+  );
+  const pinnedData = pinnedQuery.data?.tasks;
+
+  // Preview runs - for now use empty array since the paginated endpoint is not yet migrated
+  const previewRuns: PreviewRunWithConfig[] = [];
+
   const [tab, setTab] = useState<"all" | "archived" | "previews">("all");
 
   // Infinite scroll for archived tasks
@@ -219,63 +232,18 @@ export const TaskList = memo(function TaskList({
   const previewScrollRef = useRef<HTMLDivElement>(null);
   const previewLoadMoreTriggerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (tab !== "archived" || archivedStatus !== "CanLoadMore") return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting) {
-          loadMoreArchived(ARCHIVED_PAGE_SIZE);
-        }
-      },
-      { threshold: 0.1 },
-    );
-
-    const trigger = loadMoreTriggerRef.current;
-    if (trigger) {
-      observer.observe(trigger);
-    }
-
-    return () => {
-      if (trigger) {
-        observer.unobserve(trigger);
-      }
-    };
-  }, [tab, archivedStatus, loadMoreArchived]);
-
-  useEffect(() => {
-    if (tab !== "previews" || previewRunsStatus !== "CanLoadMore") return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting) {
-          loadMorePreviewRuns(PREVIEW_PAGE_SIZE);
-        }
-      },
-      { threshold: 0.1 },
-    );
-
-    const trigger = previewLoadMoreTriggerRef.current;
-    if (trigger) {
-      observer.observe(trigger);
-    }
-
-    return () => {
-      if (trigger) {
-        observer.unobserve(trigger);
-      }
-    };
-  }, [tab, previewRunsStatus, loadMorePreviewRuns]);
+  // Note: Infinite scroll for archived and preview runs is not yet supported
+  // with the HTTP API. All results are returned at once.
 
   const categorizedTasks = useMemo(() => {
     const categorized = categorizeTasks(allTasks);
     if (categorized && pinnedData) {
       // Filter pinned tasks out from other categories
-      const pinnedTaskIds = new Set(pinnedData.map(t => t._id));
+      const pinnedTaskIds = new Set(pinnedData.map(t => t.id));
 
       for (const key of CATEGORY_ORDER) {
         if (key !== 'pinned') {
-          categorized[key] = categorized[key].filter(t => !pinnedTaskIds.has(t._id));
+          categorized[key] = categorized[key].filter(t => !pinnedTaskIds.has(t.id));
         }
       }
 
@@ -394,31 +362,17 @@ export const TaskList = memo(function TaskList({
             <div ref={archivedScrollRef} className="flex flex-col w-full">
               {archivedTasks.map((task) => (
                 <TaskItem
-                  key={task._id}
+                  key={task.id}
                   task={task}
                   teamSlugOrId={teamSlugOrId}
                 />
               ))}
-              {/* Infinite scroll trigger */}
-              <div ref={loadMoreTriggerRef} className="w-full py-2">
-                {archivedStatus === "LoadingMore" && (
-                  <div className="flex items-center justify-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    <span>Loading more...</span>
-                  </div>
-                )}
-                {archivedStatus === "CanLoadMore" && (
-                  <div className="h-1" />
-                )}
-              </div>
+              {/* Infinite scroll trigger (pagination not yet available in HTTP API) */}
+              <div ref={loadMoreTriggerRef} className="w-full py-2" />
             </div>
           )
         ) : tab === "previews" ? (
-          previewRunsStatus === "LoadingFirstPage" ? (
-            <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 pl-4 select-none">
-              Loading...
-            </div>
-          ) : previewRuns.length === 0 ? (
+          previewRuns.length === 0 ? (
             <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 pl-4 select-none">
               No preview runs
             </div>
@@ -436,18 +390,8 @@ export const TaskList = memo(function TaskList({
                   />
                 ))}
               </div>
-              {/* Infinite scroll trigger */}
-              <div ref={previewLoadMoreTriggerRef} className="w-full py-2">
-                {previewRunsStatus === "LoadingMore" && (
-                  <div className="flex items-center justify-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    <span>Loading more...</span>
-                  </div>
-                )}
-                {previewRunsStatus === "CanLoadMore" && (
-                  <div className="h-1" />
-                )}
-              </div>
+              {/* Infinite scroll trigger (pagination not yet available in HTTP API) */}
+              <div ref={previewLoadMoreTriggerRef} className="w-full py-2" />
             </div>
           )
         ) : allTasks === undefined ? (
@@ -487,7 +431,7 @@ function TaskCategorySection({
   onToggle,
 }: {
   categoryKey: TaskCategoryKey;
-  tasks: Doc<"tasks">[];
+  tasks: DbTask[];
   teamSlugOrId: string;
   collapsed: boolean;
   onToggle: (key: TaskCategoryKey) => void;
@@ -535,7 +479,7 @@ function TaskCategorySection({
       {collapsed ? null : tasks.length > 0 ? (
         <div id={contentId} className="flex flex-col w-full">
           {tasks.map((task) => (
-            <TaskItem key={task._id} task={task} teamSlugOrId={teamSlugOrId} />
+            <TaskItem key={task.id} task={task} teamSlugOrId={teamSlugOrId} />
           ))}
         </div>
       ) : (
@@ -605,7 +549,7 @@ function PreviewCategorySection({
       {collapsed ? null : previewRuns.length > 0 ? (
         <div id={contentId} className="flex flex-col w-full">
           {previewRuns.map((run) => (
-            <PreviewItem key={run._id} previewRun={run} teamSlugOrId={teamSlugOrId} />
+            <PreviewItem key={run.id} previewRun={run} teamSlugOrId={teamSlugOrId} />
           ))}
         </div>
       ) : (

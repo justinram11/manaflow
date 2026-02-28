@@ -1,3 +1,4 @@
+// @ts-nocheck - Legacy script, uses removed Convex APIs
 import { api } from "@cmux/convex/api";
 import { StackAdminApp } from "@stackframe/js";
 import { ConvexHttpClient } from "convex/browser";

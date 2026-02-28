@@ -1,7 +1,8 @@
 import { normalizeGitRef } from "@/lib/refWithOrigin";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
-import { api } from "@cmux/convex/api";
-import { convexQuery } from "@convex-dev/react-query";
+import {
+  getApiIntegrationsGithubPrsOptions,
+} from "@cmux/www-openapi-client/react-query";
 import type { QueryClient } from "@tanstack/react-query";
 
 export async function preloadPullRequestDetail({
@@ -19,25 +20,36 @@ export async function preloadPullRequestDetail({
 }) {
   await queryClient
     .ensureQueryData(
-      convexQuery(api.github_prs.listPullRequests, {
-        teamSlugOrId,
-        state: "all",
+      getApiIntegrationsGithubPrsOptions({
+        query: {
+          team: teamSlugOrId,
+          state: "all",
+        },
       })
     )
-    .then(async (prs) => {
+    .then(async (result) => {
+      const prs = result?.pullRequests ?? [];
       const key = `${owner}/${repo}`;
       const num = Number(number);
-      const target = (prs || []).find(
-        (p) => p.repoFullName === key && p.number === num
+      const target = prs.find(
+        (p) => p.repository_full_name === key && p.number === num
       );
-      if (target?.repoFullName && target.baseRef && target.headRef) {
-        await queryClient.ensureQueryData(
-          gitDiffQueryOptions({
-            repoFullName: target.repoFullName,
-            baseRef: normalizeGitRef(target.baseRef),
-            headRef: normalizeGitRef(target.headRef),
-          })
-        );
+      if (target?.repository_full_name) {
+        // The GitHub PRs API response uses different field names than Convex
+        // We need baseRef and headRef which may not be in this response
+        // If they are present (from extended data), use them for preloading
+        const extended = target as Record<string, unknown>;
+        const baseRef = extended.baseRef as string | undefined;
+        const headRef = extended.headRef as string | undefined;
+        if (baseRef && headRef) {
+          await queryClient.ensureQueryData(
+            gitDiffQueryOptions({
+              repoFullName: target.repository_full_name,
+              baseRef: normalizeGitRef(baseRef),
+              headRef: normalizeGitRef(headRef),
+            })
+          );
+        }
       }
     });
 }

@@ -32,7 +32,6 @@
   },
   "dependencies": {
     "@base-ui-components/react": "1.0.0-beta.2",
-    "@cmux/convex": "workspace:*",
     "@cmux/server": "workspace:*",
     "@cmux/shared": "workspace:*",
     "@cmux/www-openapi-client": "workspace:*",
@@ -55,7 +54,6 @@
     "@codemirror/merge": "^6.10.2",
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.38.4",
-    "@convex-dev/react-query": "^0.0.0-alpha.11",
     "@emotion/is-prop-valid": "^1.2.2",
     "@heroui/react": "^2.8.2",
     "@heroui/theme": "^2.4.23",
@@ -109,7 +107,6 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
-    "convex": "1.31.5",
     "date-fns": "^4.1.0",
     "debug": "^4.4.1",
     "diff": "^8.0.2",

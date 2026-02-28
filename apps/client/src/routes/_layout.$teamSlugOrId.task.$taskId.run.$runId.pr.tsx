@@ -1,14 +1,18 @@
 import { FloatingPane } from "@/components/floating-pane";
 import { PersistentWebView } from "@/components/persistent-webview";
 import { getTaskRunPullRequestPersistKey } from "@/lib/persistent-webview-keys";
-import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
 import z from "zod";
-import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { queryClient } from "@/query-client";
+import {
+  getApiTasksByIdOptions,
+  getApiTaskRunsOptions,
+} from "@cmux/www-openapi-client/react-query";
+import { useQuery as useRQ } from "@tanstack/react-query";
+import type { TaskRunWithChildren } from "@/types/task";
 
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
@@ -30,37 +34,33 @@ export const Route = createFileRoute(
   },
   loader: async (opts) => {
     const { teamSlugOrId, taskId } = opts.params;
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.taskRuns.getByTask,
-      args: {
-        teamSlugOrId,
-        taskId,
-      },
-    });
-
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.tasks.getById,
-      args: { teamSlugOrId, id: taskId },
-    });
+    void queryClient.prefetchQuery(
+      getApiTaskRunsOptions({ query: { taskId } })
+    );
+    void queryClient.prefetchQuery(
+      getApiTasksByIdOptions({ path: { id: taskId }, query: { teamSlugOrId } })
+    );
   },
 });
 
 function RunPullRequestPage() {
   const { taskId, teamSlugOrId, runId } = Route.useParams();
 
-  const task = useQuery(api.tasks.getById, {
-    teamSlugOrId,
-    id: taskId,
+  const taskQuery = useRQ({
+    ...getApiTasksByIdOptions({ path: { id: taskId }, query: { teamSlugOrId } }),
+    enabled: Boolean(teamSlugOrId && taskId),
   });
+  const task = taskQuery.data;
 
-  const taskRuns = useQuery(api.taskRuns.getByTask, {
-    teamSlugOrId,
-    taskId,
+  const taskRunsQuery = useRQ({
+    ...getApiTaskRunsOptions({ query: { taskId } }),
+    enabled: Boolean(teamSlugOrId && taskId),
   });
+  const taskRuns = (taskRunsQuery.data?.taskRuns ?? undefined) as unknown as TaskRunWithChildren[] | undefined;
 
   // Get the specific run from the URL parameter
   const selectedRun = useMemo(() => {
-    return taskRuns?.find((run) => run._id === runId);
+    return taskRuns?.find((run) => run.id === runId);
   }, [runId, taskRuns]);
 
   const pullRequests = useMemo(

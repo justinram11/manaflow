@@ -1,26 +1,37 @@
 import { TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
 import { FloatingPane } from "@/components/floating-pane";
-import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
-import { api } from "@cmux/convex/api";
-import { convexQuery } from "@convex-dev/react-query";
+import { queryClient } from "@/query-client";
+import {
+  getApiTasksOptions,
+} from "@cmux/www-openapi-client/react-query";
+import { useQuery as useRQ } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "convex/react";
+import { useMemo } from "react";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/previews")({
   component: PreviewsRoute,
   loader: async ({ params }) => {
     const { teamSlugOrId } = params;
-    void convexQueryClient.queryClient.ensureQueryData(
-      convexQuery(api.tasks.getPreviewTasks, { teamSlugOrId })
+    void queryClient.prefetchQuery(
+      getApiTasksOptions({ query: { teamSlugOrId } })
     );
   },
 });
 
 function PreviewsRoute() {
   const { teamSlugOrId } = Route.useParams();
-  const tasks = useQuery(api.tasks.getPreviewTasks, { teamSlugOrId });
+  const tasksQuery = useRQ({
+    ...getApiTasksOptions({ query: { teamSlugOrId } }),
+    enabled: Boolean(teamSlugOrId),
+  });
+  const allTasks = tasksQuery.data?.tasks;
+  // Filter to preview tasks client-side (no dedicated REST endpoint)
+  const tasks = useMemo(
+    () => allTasks?.filter((task) => task.isPreview === true),
+    [allTasks]
+  );
   const { expandTaskIds } = useExpandTasks();
 
   return (
@@ -42,9 +53,9 @@ function PreviewsRoute() {
             <div className="mt-2 space-y-1">
               {tasks.map((task) => (
                 <TaskTree
-                  key={task._id}
+                  key={task.id}
                   task={task}
-                  defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
+                  defaultExpanded={expandTaskIds?.includes(task.id) ?? false}
                   teamSlugOrId={teamSlugOrId}
                 />
               ))}

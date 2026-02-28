@@ -1,8 +1,11 @@
-import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
-import { convexQuery } from "@convex-dev/react-query";
+import {
+  getApiTaskRunsByIdOptions,
+  getApiWorkspaceSettingsOptions,
+  getApiTasksLinkedLocalWorkspaceOptions,
+} from "@cmux/www-openapi-client/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "convex/react";
+import { useQuery as useRQ } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSocket } from "@/contexts/socket/use-socket";
 import z from "zod";
@@ -21,7 +24,7 @@ import {
   localVSCodeServeWebQueryOptions,
   useLocalVSCodeServeWebQuery,
 } from "@/queries/local-vscode-serve-web";
-import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { queryClient } from "@/query-client";
 import { ResumeWorkspaceOverlay } from "@/components/resume-workspace-overlay";
 import { useElectronWindowFocus } from "@/hooks/useElectronWindowFocus";
 import { useWebviewActions } from "@/hooks/useWebviewActions";
@@ -45,23 +48,20 @@ export const Route = createFileRoute(
     },
   },
   loader: async (opts) => {
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.taskRuns.get,
-      args: { teamSlugOrId: opts.params.teamSlugOrId, id: opts.params.runId },
-    });
+    void queryClient.prefetchQuery(
+      getApiTaskRunsByIdOptions({ path: { id: opts.params.runId } })
+    );
 
     void (async () => {
-      const [result, localServeWeb] = await Promise.all([
+      const [rawResult, localServeWeb] = await Promise.all([
         opts.context.queryClient.ensureQueryData(
-          convexQuery(api.taskRuns.get, {
-            teamSlugOrId: opts.params.teamSlugOrId,
-            id: opts.params.runId,
-          })
+          getApiTaskRunsByIdOptions({ path: { id: opts.params.runId } })
         ),
         opts.context.queryClient.ensureQueryData(
           localVSCodeServeWebQueryOptions()
         ),
       ]);
+      const result = rawResult as { vscode?: { workspaceUrl?: string; provider?: "docker" | "morph" | "incus" | "other" | "daytona" } } | null;
       if (result) {
         const workspaceUrl = getWorkspaceUrl(
           result.vscode?.workspaceUrl,
@@ -82,21 +82,29 @@ export const Route = createFileRoute(
 function VSCodeComponent() {
   const { runId: taskRunId, teamSlugOrId } = Route.useParams();
   const localServeWeb = useLocalVSCodeServeWebQuery();
-  const taskRun = useQuery(api.taskRuns.get, {
-    teamSlugOrId,
-    id: taskRunId,
+  const taskRunQuery = useRQ({
+    ...getApiTaskRunsByIdOptions({ path: { id: taskRunId } }),
+    enabled: Boolean(teamSlugOrId && taskRunId),
   });
+  const taskRunRaw = taskRunQuery.data;
+  const taskRun = taskRunRaw as { id: string; vscode?: { url?: string; workspaceUrl?: string; provider?: "docker" | "morph" | "incus" | "other" | "daytona"; statusMessage?: string; containerName?: string; ports?: Record<string, unknown>; status?: string }; status?: string; errorMessage?: string; [key: string]: unknown } | null | undefined;
   const { socket } = useSocket();
 
   // Query for linked local workspace to trigger sync
-  const linkedLocalWorkspace = useQuery(
-    api.tasks.getLinkedLocalWorkspace,
-    { teamSlugOrId, cloudTaskRunId: taskRunId }
-  );
+  const linkedLocalWorkspaceQuery = useRQ({
+    ...getApiTasksLinkedLocalWorkspaceOptions({
+      query: { teamSlugOrId, cloudTaskRunId: taskRunId },
+    }),
+    enabled: Boolean(taskRunId),
+  });
+  const linkedLocalWorkspace = linkedLocalWorkspaceQuery.data;
 
   // Query workspace settings for auto-sync preference
-  const workspaceSettings = useQuery(api.workspaceSettings.get, { teamSlugOrId });
-  const autoSyncEnabled = workspaceSettings?.autoSyncEnabled ?? true;
+  const workspaceSettingsQuery = useRQ({
+    ...getApiWorkspaceSettingsOptions({ query: { teamSlugOrId } }),
+    enabled: Boolean(teamSlugOrId),
+  });
+  const autoSyncEnabled = (workspaceSettingsQuery.data as Record<string, unknown> | undefined)?.autoSyncEnabled as boolean ?? true;
 
   // Debug logging for sync trigger
   console.log("[VSCode route] Sync debug:", {

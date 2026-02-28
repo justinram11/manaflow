@@ -1,9 +1,9 @@
-import { api } from "@cmux/convex/api";
 import fs from "fs/promises";
 import os from "os";
 import path from "path";
 import { RepositoryManager } from "./repositoryManager";
-import { getConvex } from "./utils/convexClient";
+import { getDb, getUserId } from "./utils/dbClient";
+import { getWorkspaceSettings } from "@cmux/db/queries/settings";
 import { serverLogger } from "./utils/fileLogger";
 
 interface WorkspaceResult {
@@ -54,9 +54,9 @@ export async function getWorktreePath(
   teamSlugOrId: string
 ): Promise<WorktreeInfo> {
   // Check for custom worktree path setting
-  const settings = await getConvex().query(api.workspaceSettings.get, {
-    teamSlugOrId,
-  });
+  const db = getDb();
+  const userId = getUserId();
+  const settings = getWorkspaceSettings(db, teamSlugOrId, userId);
 
   let projectsPath: string;
 
@@ -102,9 +102,9 @@ export async function getProjectPaths(
   worktreesPath: string;
   repoName: string;
 }> {
-  const settings = await getConvex().query(api.workspaceSettings.get, {
-    teamSlugOrId,
-  });
+  const db = getDb();
+  const userId = getUserId();
+  const settings = getWorkspaceSettings(db, teamSlugOrId, userId);
 
   let projectsPath: string;
   if (settings?.worktreePath) {

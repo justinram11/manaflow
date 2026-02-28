@@ -1,16 +1,15 @@
-import { api } from "@cmux/convex/api";
-import type { Id } from "@cmux/convex/dataModel";
 import type { ReplaceDiffEntry } from "@cmux/shared/diff-types";
 import { GitDiffManager } from "../gitDiff";
 import { getGitDiff } from "./gitDiff";
 import type { RealtimeServer } from "../realtime";
 import { ensureRunWorktreeAndBranch } from "../utils/ensureRunWorktree";
 import { serverLogger } from "../utils/fileLogger";
-import { getConvex } from "../utils/convexClient";
+import { getDb } from "../utils/dbClient";
+import { getBranchesByRepo } from "@cmux/db/queries/repos";
 // Stop using workspace diff; we rely on native ref diff.
 
 export interface GetRunDiffsOptions {
-  taskRunId: Id<"taskRuns">;
+  taskRunId: string;
   teamSlugOrId: string;
   gitDiffManager: GitDiffManager;
   rt?: RealtimeServer;
@@ -50,13 +49,17 @@ export async function getRunDiffs(
     | undefined;
   if (ensured.task.projectFullName && ensured.baseBranch) {
     try {
-      const rows = await getConvex().query(api.github.getBranchesByRepo, {
-        teamSlugOrId,
-        repo: ensured.task.projectFullName,
-      });
-      baseBranchMetadata = rows?.find(
+      const db = getDb();
+      const rows = getBranchesByRepo(db, ensured.task.projectFullName);
+      const found = rows?.find(
         (branch) => branch.name === ensured.baseBranch
       );
+      if (found) {
+        baseBranchMetadata = {
+          lastKnownBaseSha: found.lastKnownBaseSha ?? undefined,
+          lastKnownMergeCommitSha: found.lastKnownMergeCommitSha ?? undefined,
+        };
+      }
     } catch (error) {
       serverLogger.warn(
         `Failed to load branch metadata for ${ensured.task.projectFullName}#${ensured.baseBranch}: ${String(error)}`

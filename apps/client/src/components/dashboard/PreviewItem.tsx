@@ -4,7 +4,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useArchiveTask } from "@/hooks/useArchiveTask";
-import type { Doc, Id } from "@cmux/convex/dataModel";
 import { useClipboard } from "@mantine/hooks";
 import { Link } from "@tanstack/react-router";
 import clsx from "clsx";
@@ -17,9 +16,19 @@ import {
 } from "lucide-react";
 import { memo, useCallback } from "react";
 
-type PreviewRunWithConfig = Doc<"previewRuns"> & {
+type PreviewRunWithConfig = {
+  id: string;
+  status: string;
+  prNumber: number;
+  repoFullName: string;
+  prUrl: string;
+  headRef?: string | null;
+  completedAt?: number | null;
+  startedAt?: number | null;
+  createdAt?: number | null;
   configRepoFullName?: string;
-  taskId?: Id<"tasks">;
+  taskId?: string;
+  taskRunId?: string;
 };
 
 interface PreviewItemProps {
@@ -87,7 +96,7 @@ export const PreviewItem = memo(function PreviewItem({
       : date.toLocaleDateString([], { month: "short", day: "numeric" });
   };
 
-  const timestamp = previewRun.completedAt || previewRun.startedAt || previewRun.createdAt;
+  const timestamp = previewRun.completedAt ?? previewRun.startedAt ?? previewRun.createdAt ?? undefined;
 
   const rowContent = (
     <>

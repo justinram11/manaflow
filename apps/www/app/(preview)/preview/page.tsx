@@ -1,14 +1,15 @@
 import type { Metadata } from "next";
 import { waitUntil } from "@vercel/functions";
 import { stackServerApp } from "@/lib/utils/stack";
-import { getConvex } from "@/lib/utils/get-convex";
-import { api } from "@cmux/convex/api";
 import { PreviewDashboard } from "@/components/preview/preview-dashboard";
 import {
   getTeamDisplayName,
   getTeamSlugOrId,
   type StackTeam,
 } from "@/lib/team-utils";
+import { getDb } from "@cmux/db";
+import { listProviderConnections } from "@cmux/db/queries/repos";
+import { listByTeam as listPreviewConfigsByTeam } from "@cmux/db/queries/preview-configs";
 
 export const metadata: Metadata = {
   title: "Screenshot previews for GitHub PRs",
@@ -57,7 +58,7 @@ function serializeProviderConnections(
     installationId: number;
     accountLogin: string | null | undefined;
     accountType: string | null | undefined;
-    isActive: boolean;
+    isActive: boolean | null;
   }>
 ) {
   return connections.map((conn) => ({
@@ -65,7 +66,7 @@ function serializeProviderConnections(
     installationId: conn.installationId,
     accountLogin: conn.accountLogin ?? null,
     accountType: conn.accountType ?? null,
-    isActive: conn.isActive,
+    isActive: conn.isActive ?? false,
   }));
 }
 
@@ -271,60 +272,46 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
     displayName: getTeamDisplayName(team),
   }));
 
-  const convex = getConvex({ accessToken });
-  const [providerConnectionsByTeamEntries, previewConfigs] = await Promise.all([
-    Promise.all(
-      teams.map(async (team) => {
-        const teamSlugOrId = getTeamSlugOrId(team);
-        try {
-          const connections = await convex.query(api.github.listProviderConnections, {
-            teamSlugOrId,
-          });
-          const serialized = serializeProviderConnections(connections);
-          return [teamSlugOrId, serialized];
-        } catch (error) {
-          // This can happen for new users before webhook syncs membership to Convex.
-          // Return empty connections for this team - it will populate on next page load.
-          console.error("[PreviewLandingPage] Failed to load provider connections", {
-            teamSlugOrId,
-            error,
-          });
-          return [teamSlugOrId, []];
-        }
-      }),
-    ),
-    Promise.all(
-      teams.map(async (team) => {
-        const teamSlugOrId = getTeamSlugOrId(team);
-        try {
-          const configs = await convex.query(api.previewConfigs.listByTeam, {
-            teamSlugOrId,
-          });
-          return configs.map(
-            (config): PreviewConfigListItem => ({
-              id: config._id,
-              repoFullName: config.repoFullName,
-              environmentId: config.environmentId ?? null,
-              repoInstallationId: config.repoInstallationId ?? null,
-              repoDefaultBranch: config.repoDefaultBranch ?? null,
-              status: config.status ?? "active",
-              lastRunAt: config.lastRunAt ?? null,
-              teamSlugOrId,
-              teamName: getTeamDisplayName(team),
-            })
-          );
-        } catch (error) {
-          // This can happen for new users before webhook syncs membership to Convex.
-          // Return empty configs for this team - it will populate on next page load.
-          console.error("[PreviewLandingPage] Failed to load preview configs", {
-            teamSlugOrId,
-            error,
-          });
-          return [];
-        }
-      })
-    ).then((results) => results.flat()),
-  ]);
+  const db = getDb();
+  const providerConnectionsByTeamEntries = teams.map((team) => {
+    const teamSlugOrId = getTeamSlugOrId(team);
+    try {
+      const connections = listProviderConnections(db, teamSlugOrId);
+      const serialized = serializeProviderConnections(connections);
+      return [teamSlugOrId, serialized];
+    } catch (error) {
+      console.error("[PreviewLandingPage] Failed to load provider connections", {
+        teamSlugOrId,
+        error,
+      });
+      return [teamSlugOrId, []];
+    }
+  });
+  const previewConfigs = teams.flatMap((team) => {
+    const teamSlugOrId = getTeamSlugOrId(team);
+    try {
+      const configs = listPreviewConfigsByTeam(db, teamSlugOrId);
+      return configs.map(
+        (config): PreviewConfigListItem => ({
+          id: config.id,
+          repoFullName: config.repoFullName,
+          environmentId: config.environmentId ?? null,
+          repoInstallationId: config.repoInstallationId ?? null,
+          repoDefaultBranch: config.repoDefaultBranch ?? null,
+          status: (config.status as "active" | "paused" | "disabled") ?? "active",
+          lastRunAt: config.lastRunAt ?? null,
+          teamSlugOrId,
+          teamName: getTeamDisplayName(team),
+        })
+      );
+    } catch (error) {
+      console.error("[PreviewLandingPage] Failed to load preview configs", {
+        teamSlugOrId,
+        error,
+      });
+      return [];
+    }
+  });
   const providerConnectionsByTeam = Object.fromEntries(
     providerConnectionsByTeamEntries,
   );

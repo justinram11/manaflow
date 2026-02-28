@@ -4,7 +4,6 @@ import { TitleBar } from "@/components/TitleBar";
 import { parseEnvBlock } from "@/lib/parseEnvBlock";
 import { toMorphVncUrl } from "@/lib/toProxyWorkspaceUrl";
 import { clearEnvironmentDraft } from "@/state/environment-draft-store";
-import type { Id } from "@cmux/convex/dataModel";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import {
   getApiEnvironmentsByIdOptions,
@@ -39,7 +38,7 @@ function NewSnapshotVersionPage() {
   const searchParams = Route.useSearch();
   const sourceEnvironmentId = typedZid("environments").parse(
     searchParams.sourceEnvironmentId
-  ) as Id<"environments">;
+  );
   const urlSelectedRepos = searchParams.selectedRepos ?? [];
   const urlInstanceId = searchParams.instanceId;
   const urlVscodeUrl = searchParams.vscodeUrl;

@@ -1,14 +1,16 @@
 import { VncViewer, type VncConnectionStatus } from "@cmux/shared/components/vnc-viewer";
 import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indicator";
 import { toVncWebsocketUrl } from "@/lib/toProxyWorkspaceUrl";
-import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { createFileRoute } from "@tanstack/react-router";
 import clsx from "clsx";
 import { useCallback, useMemo, useState } from "react";
 import z from "zod";
-import { convexQueryClient } from "@/contexts/convex/convex-query-client";
-import { useQuery } from "convex/react";
+import { queryClient } from "@/query-client";
+import {
+  getApiTaskRunsByIdOptions,
+} from "@cmux/www-openapi-client/react-query";
+import { useQuery as useRQ } from "@tanstack/react-query";
 
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
@@ -27,21 +29,23 @@ export const Route = createFileRoute(
     }),
   },
   loader: async (opts) => {
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.taskRuns.get,
-      args: { teamSlugOrId: opts.params.teamSlugOrId, id: opts.params.runId },
-    });
+    void queryClient.prefetchQuery(
+      getApiTaskRunsByIdOptions({
+        path: { id: opts.params.runId },
+      })
+    );
   },
 });
 
 function BrowserComponent() {
   const { runId: taskRunId, teamSlugOrId } = Route.useParams();
-  const taskRun = useQuery(api.taskRuns.get, {
-    teamSlugOrId,
-    id: taskRunId,
+  const taskRunQuery = useRQ({
+    ...getApiTaskRunsByIdOptions({ path: { id: taskRunId } }),
+    enabled: Boolean(teamSlugOrId && taskRunId),
   });
+  const taskRun = taskRunQuery.data;
 
-  const vscodeInfo = taskRun?.vscode ?? null;
+  const vscodeInfo = (taskRun?.vscode ?? null) as { url?: string; workspaceUrl?: string; provider?: string; ports?: Record<string, unknown> } | null;
   const rawUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
   const provider = vscodeInfo?.provider;
   const ports = vscodeInfo?.ports;

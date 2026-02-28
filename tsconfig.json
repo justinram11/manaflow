@@ -7,7 +7,7 @@
     { "path": "apps/worker" },
     { "path": "apps/www" },
     { "path": "packages/cmux" },
-    { "path": "packages/convex" },
+    { "path": "packages/db" },
     { "path": "packages/host-screenshot-collector" },
     { "path": "packages/morphcloud-openapi-client" },
     { "path": "packages/shared" },

@@ -1,15 +1,12 @@
-import { api } from "@cmux/convex/api";
 import { HTTPException } from "hono/http-exception";
-import { getAccessTokenFromRequest } from "./auth";
-import { getConvex } from "./get-convex";
+import { getDb } from "@cmux/db";
+import { getTeamBySlugOrId } from "@cmux/db/queries/teams";
 
 /**
  * Verifies that a user has access to a team and returns the team object.
  * Throws HTTPException if the user doesn't have access.
  */
 export async function verifyTeamAccess({
-  req,
-  accessToken,
   teamSlugOrId,
 }: {
   req?: Request;
@@ -21,39 +18,24 @@ export async function verifyTeamAccess({
   displayName: string | null;
   name: string | null;
 }> {
-  let token = accessToken;
-  if (!token) {
-    if (!req) {
-      throw new HTTPException(401, {
-        message: "Unauthorized: No access token",
-      });
-    }
-    token = await getAccessTokenFromRequest(req);
-  }
-  if (!token) {
-    throw new HTTPException(401, { message: "Unauthorized: No access token" });
-  }
-
-  const convexClient = getConvex({ accessToken: token });
+  const db = getDb();
 
   try {
-    // This query will throw if the user doesn't have access to the team
-    const team = await convexClient.query(api.teams.get, { teamSlugOrId });
+    const team = getTeamBySlugOrId(db, teamSlugOrId);
 
     if (!team) {
       throw new HTTPException(404, { message: "Team not found" });
     }
 
-    return team;
+    return {
+      uuid: team.teamId,
+      slug: team.slug,
+      displayName: team.displayName,
+      name: team.displayName,
+    };
   } catch (error) {
     if (error instanceof HTTPException) {
       throw error;
-    }
-    // If Convex throws a "Forbidden" error, convert to HTTPException
-    if (error instanceof Error && error.message.includes("Forbidden")) {
-      throw new HTTPException(403, {
-        message: "Forbidden: Not a member of this team",
-      });
     }
     throw new HTTPException(500, { message: "Failed to verify team access" });
   }

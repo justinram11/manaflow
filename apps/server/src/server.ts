@@ -1,4 +1,4 @@
-import { api } from "@cmux/convex/api";
+import { upsertRepo } from "@cmux/db/mutations/repos";
 import { exec } from "node:child_process";
 import { createServer } from "node:http";
 import { promisify } from "node:util";
@@ -6,7 +6,7 @@ import { GitDiffManager } from "./gitDiff";
 
 import { setupSocketHandlers } from "./socket-handlers";
 import { createSocketIOTransport } from "./transports/socketio-transport";
-import { getConvex } from "./utils/convexClient";
+import { getDb, getUserId } from "./utils/dbClient";
 import { dockerLogger, serverLogger } from "./utils/fileLogger";
 import { DockerVSCodeInstance } from "./vscode/DockerVSCodeInstance";
 import { VSCodeInstance } from "./vscode/VSCodeInstance";
@@ -74,8 +74,11 @@ export async function startServer({
         serverLogger.info(
           `Storing default repository: ${defaultRepo.remoteName}`
         );
-        await getConvex().mutation(api.github.upsertRepo, {
+        const db = getDb();
+        const userId = getUserId();
+        upsertRepo(db, {
           teamSlugOrId: "default",
+          userId,
           fullName: defaultRepo.remoteName,
           org: defaultRepo.remoteName.split("/")[0] || "",
           name: defaultRepo.remoteName.split("/")[1] || "",

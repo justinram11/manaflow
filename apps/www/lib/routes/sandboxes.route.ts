@@ -2,13 +2,28 @@ import {
   getAccessTokenFromRequest,
   getUserFromRequest,
 } from "@/lib/utils/auth";
-import { getConvex } from "@/lib/utils/get-convex";
 import { selectGitIdentity } from "@/lib/utils/gitIdentity";
 import { stackServerAppJs } from "@/lib/utils/stack";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
-import { api } from "@cmux/convex/api";
-import type { Doc, Id } from "@cmux/convex/dataModel";
+import { getDb } from "@cmux/db";
+import { getApiKeysForAgents } from "@cmux/db/queries/settings";
+import { getEnvironmentByTeam } from "@cmux/db/queries/environments";
+import { getWorkspaceConfig } from "@cmux/db/queries/settings";
+import { getTaskRunById, getTaskRunByContainerName } from "@cmux/db/queries/task-runs";
+import { listTeamMemberships } from "@cmux/db/queries/teams";
+import {
+  updateTaskRunVSCode,
+  updateTaskRunVSCodeStatus,
+  updateTaskRunNetworking,
+} from "@cmux/db/mutations/task-runs";
+import {
+  claimInstance,
+  createPrewarmEntry,
+  markInstanceReady,
+  markInstanceFailed,
+} from "@cmux/db/mutations/warm-pool";
+import { recordResume } from "@cmux/db/mutations/morph-instances";
 import { DEFAULT_MORPH_SNAPSHOT_ID } from "@/lib/utils/morph-defaults";
 import { RESERVED_CMUX_PORT_SET } from "@cmux/shared/utils/reserved-cmux-ports";
 import { parseGithubRepoUrl } from "@cmux/shared/utils/parse-github-repo-url";
@@ -321,10 +336,7 @@ sandboxesRouter.openapi(
     if (!user) {
       return c.text("Unauthorized", 401);
     }
-    const { accessToken } = await user.getAuthJson();
-    if (!accessToken) {
-      return c.text("Unauthorized", 401);
-    }
+    const db = getDb();
     const githubAccessTokenPromise = (async () => {
       const githubAccount = await user.getConnectedAccount("github");
       if (!githubAccount) {
@@ -348,10 +360,7 @@ sandboxesRouter.openapi(
     // Shared API keys promise — used for GITHUB_PAT fallback and Claude credentials
     const apiKeysPromise = (async () => {
       try {
-        const convex = getConvex({ accessToken });
-        return await convex.query(api.apiKeys.getAllForAgents, {
-          teamSlugOrId: c.req.valid("json").teamSlugOrId,
-        });
+        return getApiKeysForAgents(db, c.req.valid("json").teamSlugOrId, user.id);
       } catch (error) {
         console.error(`[sandboxes.start] Failed to fetch API keys:`, error);
         return {} as Record<string, string>;
@@ -372,8 +381,6 @@ sandboxesRouter.openapi(
     }
 
     try {
-      const convex = getConvex({ accessToken });
-
       const {
         team,
         resolvedSnapshotId,
@@ -382,7 +389,6 @@ sandboxesRouter.openapi(
         environmentDevScript,
       } = await resolveTeamAndSnapshot({
         req: c.req.raw,
-        convex,
         teamSlugOrId: body.teamSlugOrId,
         environmentId: body.environmentId,
         snapshotId: body.snapshotId,
@@ -399,10 +405,12 @@ sandboxesRouter.openapi(
       let workspaceConfig: { maintenanceScript?: string; envVarsContent?: string } | null = null;
       if (parsedRepoUrl && !body.environmentId) {
         try {
-          const config = await convex.query(api.workspaceConfigs.get, {
-            teamSlugOrId: body.teamSlugOrId,
-            projectFullName: parsedRepoUrl.fullName,
-          });
+          const config = getWorkspaceConfig(
+            db,
+            body.teamSlugOrId,
+            user.id,
+            parsedRepoUrl.fullName,
+          );
           if (config) {
             const envVarsContent = config.dataVaultKey
               ? await loadEnvironmentEnvVars(config.dataVaultKey)
@@ -439,7 +447,7 @@ sandboxesRouter.openapi(
           if (!githubAccessToken) {
             throw new Error("GitHub access token not found");
           }
-          return fetchGitIdentityInputs(convex, githubAccessToken);
+          return fetchGitIdentityInputs(user.id, githubAccessToken);
         },
       );
       // Prevent unhandled rejection — actual error handling happens in consumers below
@@ -451,10 +459,11 @@ sandboxesRouter.openapi(
       let environmentIncusSnapshotId: string | undefined;
       if (body.environmentId && !body.provider) {
         try {
-          const envDoc = await convex.query(api.environments.get, {
-            teamSlugOrId: body.teamSlugOrId,
-            id: body.environmentId as Id<"environments">,
-          });
+          const envDoc = getEnvironmentByTeam(
+            db,
+            body.teamSlugOrId,
+            body.environmentId,
+          );
           if (envDoc?.provider === "incus") {
             resolvedProvider = "incus";
             environmentIncusSnapshotId = envDoc.incusSnapshotId ?? undefined;
@@ -483,27 +492,23 @@ sandboxesRouter.openapi(
           );
         }
 
-        // Persist VSCode info to Convex
+        // Persist VSCode info to DB
         let vscodePersisted = false;
         if (body.taskRunId) {
           try {
-            await convex.mutation(api.taskRuns.updateVSCodeInstance, {
-              teamSlugOrId: body.teamSlugOrId,
-              id: body.taskRunId as Id<"taskRuns">,
-              vscode: {
-                provider: "docker",
-                containerName: dockerResult.containerName,
-                status: "starting",
-                url: dockerResult.vscodeUrl,
-                workspaceUrl: `${dockerResult.vscodeUrl}/?folder=/root/workspace`,
-                startedAt: Date.now(),
-                ports: {
-                  vscode: dockerResult.hostPorts[39378],
-                  worker: dockerResult.hostPorts[39377],
-                  proxy: dockerResult.hostPorts[39379],
-                  vnc: dockerResult.hostPorts[39380],
-                  pty: dockerResult.hostPorts[39383],
-                },
+            updateTaskRunVSCode(db, body.taskRunId, {
+              provider: "docker",
+              containerName: dockerResult.containerName,
+              status: "starting",
+              url: dockerResult.vscodeUrl,
+              workspaceUrl: `${dockerResult.vscodeUrl}/?folder=/root/workspace`,
+              startedAt: Date.now(),
+              ports: {
+                vscode: dockerResult.hostPorts[39378],
+                worker: dockerResult.hostPorts[39377],
+                proxy: dockerResult.hostPorts[39379],
+                vnc: dockerResult.hostPorts[39380],
+                pty: dockerResult.hostPorts[39383],
               },
             });
             vscodePersisted = true;
@@ -598,18 +603,14 @@ sandboxesRouter.openapi(
 
         // Update status to running
         if (body.taskRunId && vscodePersisted) {
-          void convex
-            .mutation(api.taskRuns.updateVSCodeStatus, {
-              teamSlugOrId: body.teamSlugOrId,
-              id: body.taskRunId as Id<"taskRuns">,
-              status: "running",
-            })
-            .catch((error) => {
-              console.error(
-                "[sandboxes.start] Failed to update Docker VSCode status:",
-                error,
-              );
-            });
+          try {
+            updateTaskRunVSCodeStatus(db, body.taskRunId, "running");
+          } catch (error) {
+            console.error(
+              "[sandboxes.start] Failed to update Docker VSCode status:",
+              error,
+            );
+          }
         }
 
         // Run maintenance/dev scripts if configured
@@ -665,26 +666,22 @@ sandboxesRouter.openapi(
         let vscodePersisted = false;
         if (body.taskRunId) {
           try {
-            await convex.mutation(api.taskRuns.updateVSCodeInstance, {
-              teamSlugOrId: body.teamSlugOrId,
-              id: body.taskRunId as Id<"taskRuns">,
-              vscode: {
-                provider: "incus",
-                containerName: incusContainerId,
-                status: "starting",
-                url: incusVscodeUrl,
-                workspaceUrl: `${incusVscodeUrl}/?folder=/root/workspace`,
-                startedAt: Date.now(),
-                ports: {
-                  vscode: incusResult.hostPorts[39378],
-                  worker: incusResult.hostPorts[39377],
-                  proxy: incusResult.hostPorts[39379],
-                  vnc: incusResult.hostPorts[39380],
-                  pty: incusResult.hostPorts[39383],
-                  ...(incusResult.hostPorts[39384]
-                    ? { androidVnc: incusResult.hostPorts[39384] }
-                    : {}),
-                },
+            updateTaskRunVSCode(db, body.taskRunId, {
+              provider: "incus",
+              containerName: incusContainerId,
+              status: "starting",
+              url: incusVscodeUrl,
+              workspaceUrl: `${incusVscodeUrl}/?folder=/root/workspace`,
+              startedAt: Date.now(),
+              ports: {
+                vscode: incusResult.hostPorts[39378],
+                worker: incusResult.hostPorts[39377],
+                proxy: incusResult.hostPorts[39379],
+                vnc: incusResult.hostPorts[39380],
+                pty: incusResult.hostPorts[39383],
+                ...(incusResult.hostPorts[39384]
+                  ? { androidVnc: incusResult.hostPorts[39384] }
+                  : {}),
               },
             });
             vscodePersisted = true;
@@ -796,18 +793,14 @@ sandboxesRouter.openapi(
 
             // Update status to running
             if (body.taskRunId && vscodePersisted) {
-              void convex
-                .mutation(api.taskRuns.updateVSCodeStatus, {
-                  teamSlugOrId: body.teamSlugOrId,
-                  id: body.taskRunId as Id<"taskRuns">,
-                  status: "running",
-                })
-                .catch((error) => {
-                  console.error(
-                    "[sandboxes.start] Failed to update Incus VSCode status:",
-                    error,
-                  );
-                });
+              try {
+                updateTaskRunVSCodeStatus(db, body.taskRunId, "running");
+              } catch (error) {
+                console.error(
+                  "[sandboxes.start] Failed to update Incus VSCode status:",
+                  error,
+                );
+              }
             }
 
             // Run maintenance/dev scripts if configured
@@ -858,7 +851,7 @@ sandboxesRouter.openapi(
 
       if (!body.environmentId) {
         try {
-          const claimed = await convex.mutation(api.warmPool.claimInstance, {
+          const claimed = claimInstance(db, {
             teamId: team.uuid,
             repoUrl: body.repoUrl,
             taskRunId: body.taskRunId || "",
@@ -872,7 +865,7 @@ sandboxesRouter.openapi(
               instanceId: claimed.instanceId,
             });
             usedWarmPool = true;
-            warmPoolRepoUrl = claimed.repoUrl;
+            warmPoolRepoUrl = claimed.repoUrl ?? undefined;
 
             void (async () => {
               await instance.setWakeOn(true, true);
@@ -946,33 +939,27 @@ sandboxesRouter.openapi(
 
         // Persist VSCode info immediately (don't wait for VSCode ready check)
         let vscodePersisted = false;
-        const persistPromise = body.taskRunId
-          ? convex
-              .mutation(api.taskRuns.updateVSCodeInstance, {
-                teamSlugOrId: body.teamSlugOrId,
-                id: body.taskRunId as Id<"taskRuns">,
-                vscode: {
-                  provider: "morph",
-                  containerName: instance.id,
-                  status: "starting",
-                  url: vscodeService.url,
-                  workspaceUrl: `${vscodeService.url}/?folder=/root/workspace`,
-                  startedAt: Date.now(),
-                },
-              })
-              .then(() => {
-                vscodePersisted = true;
-                console.log(
-                  `[sandboxes.start] Persisted VSCode info for ${body.taskRunId}`,
-                );
-              })
-              .catch((error: unknown) => {
-                console.error(
-                  "[sandboxes.start] Failed to persist VSCode info (non-fatal):",
-                  error,
-                );
-              })
-          : Promise.resolve();
+        if (body.taskRunId) {
+          try {
+            updateTaskRunVSCode(db, body.taskRunId, {
+              provider: "morph",
+              containerName: instance.id,
+              status: "starting",
+              url: vscodeService.url,
+              workspaceUrl: `${vscodeService.url}/?folder=/root/workspace`,
+              startedAt: Date.now(),
+            });
+            vscodePersisted = true;
+            console.log(
+              `[sandboxes.start] Persisted VSCode info for ${body.taskRunId}`,
+            );
+          } catch (error) {
+            console.error(
+              "[sandboxes.start] Failed to persist VSCode info (non-fatal):",
+              error,
+            );
+          }
+        }
 
         // Prepare env vars content
         const environmentEnvVarsContent = await environmentEnvVarsPromise;
@@ -1030,8 +1017,6 @@ sandboxesRouter.openapi(
                 error,
               );
             }),
-          // Persist VSCode info
-          persistPromise,
         ]);
 
         // Skip hydration - repo already cloned during prewarm
@@ -1067,18 +1052,14 @@ sandboxesRouter.openapi(
 
         // Update status + maintenance scripts (fire-and-forget)
         if (body.taskRunId && vscodePersisted) {
-          void convex
-            .mutation(api.taskRuns.updateVSCodeStatus, {
-              teamSlugOrId: body.teamSlugOrId,
-              id: body.taskRunId as Id<"taskRuns">,
-              status: "running",
-            })
-            .catch((error) => {
-              console.error(
-                "[sandboxes.start] Failed to update VSCode status to running:",
-                error,
-              );
-            });
+          try {
+            updateTaskRunVSCodeStatus(db, body.taskRunId, "running");
+          } catch (error) {
+            console.error(
+              "[sandboxes.start] Failed to update VSCode status to running:",
+              error,
+            );
+          }
         }
 
         if (maintenanceScript || devScript) {
@@ -1132,17 +1113,13 @@ sandboxesRouter.openapi(
       let vscodePersisted = false;
       if (body.taskRunId) {
         try {
-          await convex.mutation(api.taskRuns.updateVSCodeInstance, {
-            teamSlugOrId: body.teamSlugOrId,
-            id: body.taskRunId as Id<"taskRuns">,
-            vscode: {
-              provider: "morph",
-              containerName: instance.id,
-              status: "starting",
-              url: vscodeService.url,
-              workspaceUrl: `${vscodeService.url}/?folder=/root/workspace`,
-              startedAt: Date.now(),
-            },
+          updateTaskRunVSCode(db, body.taskRunId, {
+            provider: "morph",
+            containerName: instance.id,
+            status: "starting",
+            url: vscodeService.url,
+            workspaceUrl: `${vscodeService.url}/?folder=/root/workspace`,
+            startedAt: Date.now(),
           });
           vscodePersisted = true;
           console.log(
@@ -1258,18 +1235,14 @@ sandboxesRouter.openapi(
 
       // Update status to "running" after hydration completes
       if (body.taskRunId && vscodePersisted) {
-        void convex
-          .mutation(api.taskRuns.updateVSCodeStatus, {
-            teamSlugOrId: body.teamSlugOrId,
-            id: body.taskRunId as Id<"taskRuns">,
-            status: "running",
-          })
-          .catch((error) => {
-            console.error(
-              "[sandboxes.start] Failed to update VSCode status to running:",
-              error,
-            );
-          });
+        try {
+          updateTaskRunVSCodeStatus(db, body.taskRunId, "running");
+        } catch (error) {
+          console.error(
+            "[sandboxes.start] Failed to update VSCode status to running:",
+            error,
+          );
+        }
       }
 
       if (maintenanceScript || devScript) {
@@ -1369,16 +1342,11 @@ sandboxesRouter.openapi(
     if (!user) {
       return c.text("Unauthorized", 401);
     }
-    const { accessToken } = await user.getAuthJson();
-    if (!accessToken) {
-      return c.text("Unauthorized", 401);
-    }
 
     const body = c.req.valid("json");
+    const db = getDb();
 
     try {
-      const convex = getConvex({ accessToken });
-
       const team = await verifyTeamAccess({
         req: c.req.raw,
         teamSlugOrId: body.teamSlugOrId,
@@ -1387,7 +1355,7 @@ sandboxesRouter.openapi(
       const snapshotId = DEFAULT_MORPH_SNAPSHOT_ID;
 
       // Create or find existing prewarm entry
-      const result = await convex.mutation(api.warmPool.createPrewarmEntry, {
+      const result = createPrewarmEntry(db, {
         teamId: team.uuid,
         userId: user.id,
         snapshotId,
@@ -1475,7 +1443,7 @@ sandboxesRouter.openapi(
           }
 
           // Mark as ready in the warm pool
-          await convex.mutation(api.warmPool.markInstanceReady, {
+          markInstanceReady(db, {
             id: prewarmEntryId,
             instanceId: instance.id,
             vscodeUrl: vscodeService.url,
@@ -1488,7 +1456,7 @@ sandboxesRouter.openapi(
         } catch (error) {
           console.error("[sandboxes.prewarm] Background provisioning failed:", error);
           try {
-            await convex.mutation(api.warmPool.markInstanceFailed, {
+            markInstanceFailed(db, {
               id: prewarmEntryId,
               errorMessage:
                 error instanceof Error ? error.message : String(error),
@@ -1885,17 +1853,16 @@ sandboxesRouter.openapi(
       ).metadata;
 
       // Resolve environment-exposed ports (preferred)
-      const convex = getConvex({ accessToken: token });
+      const db = getDb();
       let environmentPorts: number[] | undefined;
       if (instanceMeta?.environmentId) {
         try {
-          const envDoc = await convex.query(api.environments.get, {
+          const envDoc = getEnvironmentByTeam(
+            db,
             teamSlugOrId,
-            id: instanceMeta.environmentId as string & {
-              __tableName: "environments";
-            },
-          });
-          environmentPorts = envDoc?.exposedPorts ?? undefined;
+            instanceMeta.environmentId,
+          );
+          environmentPorts = (envDoc?.exposedPorts as number[] | null) ?? undefined;
         } catch {
           // ignore lookup errors; fall back to devcontainer ports
         }
@@ -1967,12 +1934,8 @@ sandboxesRouter.openapi(
         .filter((s) => allowedPorts.has(s.port))
         .map((s) => ({ status: "running" as const, port: s.port, url: s.url }));
 
-      // Persist to Convex
-      await convex.mutation(api.taskRuns.updateNetworking, {
-        teamSlugOrId,
-        id: taskRunId as unknown as string & { __tableName: "taskRuns" },
-        networking,
-      });
+      // Persist to DB
+      updateTaskRunNetworking(db, taskRunId, networking);
 
       return c.json(networking);
     } catch (error) {
@@ -2028,17 +1991,12 @@ sandboxesRouter.openapi(
     if (!user) {
       return c.text("Unauthorized", 401);
     }
-    const { accessToken } = await user.getAuthJson();
-    if (!accessToken) {
-      return c.text("Unauthorized", 401);
-    }
 
     const { id } = c.req.valid("param");
     const { teamSlugOrId } = c.req.valid("query");
+    const db = getDb();
 
     try {
-      const convex = getConvex({ accessToken });
-
       let morphInstanceId: string | null = null;
 
       // Check if the id is a Morph instance ID (starts with "morphvm_")
@@ -2050,14 +2008,11 @@ sandboxesRouter.openapi(
         if (teamSlugOrId) {
           let taskRun = null;
           try {
-            taskRun = await convex.query(api.taskRuns.getByContainerName, {
-              teamSlugOrId,
-              containerName: id,
-            });
-          } catch (convexError) {
+            taskRun = getTaskRunByContainerName(db, id);
+          } catch (dbError) {
             console.log(
-              `[sandboxes.ssh] Convex query failed for ${id}:`,
-              convexError,
+              `[sandboxes.ssh] DB query failed for ${id}:`,
+              dbError,
             );
           }
 
@@ -2067,7 +2022,8 @@ sandboxesRouter.openapi(
               req: c.req.raw,
               teamSlugOrId,
             });
-            if (taskRun.vscode?.provider !== "morph") {
+            const vscode = taskRun.vscode as Record<string, unknown> | null;
+            if (vscode?.provider !== "morph") {
               return c.text("Sandbox type not supported for SSH", 404);
             }
             morphInstanceId = id;
@@ -2081,8 +2037,8 @@ sandboxesRouter.openapi(
             id,
             user.id,
             async () => {
-              const memberships = await convex.query(api.teams.listTeamMemberships, {});
-              return memberships.map((m) => ({ teamId: m.team.teamId }));
+              const memberships = listTeamMemberships(db, user.id);
+              return memberships.map((m) => ({ teamId: m.teams.teamId }));
             }
           );
           if (!result.authorized) {
@@ -2102,13 +2058,13 @@ sandboxesRouter.openapi(
           teamSlugOrId,
         });
         // Assume it's a task-run ID - look up the sandbox
-        let taskRun: Doc<"taskRuns"> | null = null;
+        let taskRun: Record<string, unknown> | null = null;
 
         try {
-          taskRun = await convex.query(api.taskRuns.get, {
-            teamSlugOrId,
-            id: id as Id<"taskRuns">,
-          });
+          const run = getTaskRunById(db, id);
+          if (run && run.teamId === team.uuid) {
+            taskRun = run as unknown as Record<string, unknown>;
+          }
         } catch {
           // Not a valid task run ID
           return c.text("Invalid sandbox or task-run ID", 404);
@@ -2124,27 +2080,28 @@ sandboxesRouter.openapi(
         }
 
         // Check if this task run has an active Morph sandbox
-        if (!taskRun.vscode) {
+        const vscodeField = taskRun.vscode as Record<string, unknown> | null;
+        if (!vscodeField) {
           return c.text("No sandbox associated with this task run", 404);
         }
 
-        if (taskRun.vscode.provider !== "morph") {
+        if (vscodeField.provider !== "morph") {
           return c.text("Sandbox type not supported for SSH", 404);
         }
 
-        if (!taskRun.vscode.containerName) {
+        if (!vscodeField.containerName) {
           return c.text("Sandbox container name not found", 404);
         }
 
         // Only return SSH info for running/starting sandboxes
         if (
-          taskRun.vscode.status !== "running" &&
-          taskRun.vscode.status !== "starting"
+          vscodeField.status !== "running" &&
+          vscodeField.status !== "starting"
         ) {
           return c.text("Sandbox is not running", 404);
         }
 
-        morphInstanceId = taskRun.vscode.containerName;
+        morphInstanceId = vscodeField.containerName as string;
       }
 
       if (!morphInstanceId) {
@@ -2250,16 +2207,12 @@ sandboxesRouter.openapi(
     if (!user) {
       return c.text("Unauthorized", 401);
     }
-    const { accessToken } = await user.getAuthJson();
-    if (!accessToken) {
-      return c.text("Unauthorized", 401);
-    }
 
     const { id } = c.req.valid("param");
     const { teamSlugOrId } = c.req.valid("query");
+    const db = getDb();
 
     try {
-      const convex = getConvex({ accessToken });
       let morphInstanceId: string | null = null;
 
       // Check if the id is a direct VM ID
@@ -2271,14 +2224,11 @@ sandboxesRouter.openapi(
         if (teamSlugOrId) {
           let taskRun = null;
           try {
-            taskRun = await convex.query(api.taskRuns.getByContainerName, {
-              teamSlugOrId,
-              containerName: id,
-            });
-          } catch (convexError) {
+            taskRun = getTaskRunByContainerName(db, id);
+          } catch (dbError) {
             console.log(
-              `[sandboxes.resume] Convex query failed for ${id}:`,
-              convexError,
+              `[sandboxes.resume] DB query failed for ${id}:`,
+              dbError,
             );
           }
 
@@ -2299,8 +2249,8 @@ sandboxesRouter.openapi(
             id,
             user.id,
             async () => {
-              const memberships = await convex.query(api.teams.listTeamMemberships, {});
-              return memberships.map((m) => ({ teamId: m.team.teamId }));
+              const memberships = listTeamMemberships(db, user.id);
+              return memberships.map((m) => ({ teamId: m.teams.teamId }));
             }
           );
           if (!result.authorized) {
@@ -2319,20 +2269,18 @@ sandboxesRouter.openapi(
           teamSlugOrId,
         });
 
-        const taskRun = await convex.query(api.taskRuns.get, {
-          teamSlugOrId,
-          id: id as Id<"taskRuns">,
-        });
+        const taskRun = getTaskRunById(db, id);
+        const vscode = taskRun?.vscode as Record<string, unknown> | null;
 
-        if (!taskRun || !taskRun.vscode?.containerName) {
+        if (!taskRun || !vscode?.containerName) {
           return c.text("Sandbox not found", 404);
         }
 
-        if (taskRun.vscode.provider !== "morph") {
+        if (vscode.provider !== "morph") {
           return c.text("Sandbox type not supported", 404);
         }
 
-        morphInstanceId = taskRun.vscode.containerName;
+        morphInstanceId = vscode.containerName as string;
       }
 
       if (!morphInstanceId) {
@@ -2356,7 +2304,7 @@ sandboxesRouter.openapi(
       const effectiveTeamSlugOrId = teamSlugOrId ?? (instanceMetadata?.teamId as string | undefined);
       if (effectiveTeamSlugOrId && morphInstanceId) {
         try {
-          await convex.mutation(api.morphInstances.recordResume, {
+          recordResume(db, {
             instanceId: morphInstanceId,
             teamSlugOrId: effectiveTeamSlugOrId,
           });
@@ -2748,29 +2696,29 @@ sandboxesRouter.openapi(
     if (!accessToken) return c.text("Unauthorized", 401);
 
     const { taskRunId } = c.req.valid("param");
-    const { teamSlugOrId } = c.req.valid("json");
+    const { teamSlugOrId: _teamSlugOrId } = c.req.valid("json");
+    const db = getDb();
 
     try {
-      const convex = getConvex({ accessToken });
-      const taskRun = await convex.query(api.taskRuns.get, {
-        teamSlugOrId,
-        id: taskRunId as Id<"taskRuns">,
-      });
+      const taskRun = getTaskRunById(db, taskRunId);
+      const vscode = taskRun?.vscode as Record<string, unknown> | null;
 
-      if (!taskRun?.vscode?.containerName) {
+      if (!vscode?.containerName) {
         return c.text("Task run or container not found", 404);
       }
 
+      const containerName = vscode.containerName as string;
+
       // Check if this is an Incus container (provider is "incus" or legacy "docker" with cmux- prefix)
       const isIncus =
-        taskRun.vscode.provider === "incus" ||
-        (taskRun.vscode.provider === "docker" && taskRun.vscode.containerName.startsWith("cmux-"));
+        vscode.provider === "incus" ||
+        (vscode.provider === "docker" && containerName.startsWith("cmux-"));
 
       if (!isIncus) {
         return c.json({ paused: false });
       }
 
-      const instance = incusVmRegistry.get(taskRun.vscode.containerName);
+      const instance = incusVmRegistry.get(containerName);
       if (instance) {
         return c.json({ paused: instance.isPaused });
       }
@@ -2780,7 +2728,7 @@ sandboxesRouter.openapi(
         const cpClient = getComputeProviderClient();
         const statusResult = await cpClient.get({
           url: "/api/instances/{id}",
-          path: { id: taskRun.vscode.containerName },
+          path: { id: containerName },
         });
         if (statusResult.data) {
           const data = statusResult.data as { paused: boolean };
@@ -2834,31 +2782,31 @@ sandboxesRouter.openapi(
     if (!accessToken) return c.text("Unauthorized", 401);
 
     const { taskRunId } = c.req.valid("param");
-    const { teamSlugOrId } = c.req.valid("json");
+    const { teamSlugOrId: _teamSlugOrId } = c.req.valid("json");
+    const db = getDb();
 
     try {
-      const convex = getConvex({ accessToken });
-      const taskRun = await convex.query(api.taskRuns.get, {
-        teamSlugOrId,
-        id: taskRunId as Id<"taskRuns">,
-      });
+      const taskRun = getTaskRunById(db, taskRunId);
+      const vscode = taskRun?.vscode as Record<string, unknown> | null;
 
-      if (!taskRun?.vscode?.containerName) {
+      if (!vscode?.containerName) {
         return c.text("Task run or container not found", 404);
       }
 
+      const containerName = vscode.containerName as string;
+
       const isIncus =
-        taskRun.vscode.provider === "incus" ||
-        (taskRun.vscode.provider === "docker" && taskRun.vscode.containerName.startsWith("cmux-"));
+        vscode.provider === "incus" ||
+        (vscode.provider === "docker" && containerName.startsWith("cmux-"));
 
       if (!isIncus) {
         return c.text("Not an Incus container", 404);
       }
 
-      let instance = incusVmRegistry.get(taskRun.vscode.containerName);
+      let instance = incusVmRegistry.get(containerName);
       if (!instance) {
         // Registry lost — create a remote instance to resume via compute-provider
-        instance = new RemoteIncusSandboxInstance({ id: taskRun.vscode.containerName });
+        instance = new RemoteIncusSandboxInstance({ id: containerName });
       }
 
       await instance.resume();

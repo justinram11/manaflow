@@ -1,8 +1,8 @@
 import { testApiClient } from "@/lib/test-utils/openapi-client";
-import { api } from "@cmux/convex/api";
 import { getApiIntegrationsGithubRepos } from "@cmux/www-openapi-client";
 import { describe, expect, it } from "vitest";
-import { getConvex } from "../utils/get-convex";
+import { getDb } from "@cmux/db";
+import { listProviderConnections } from "@cmux/db/queries/repos";
 import { __TEST_INTERNAL_ONLY_GET_STACK_TOKENS } from "@/lib/test-utils/__TEST_INTERNAL_ONLY_GET_STACK_TOKENS";
 
 describe("githubReposRouter via SDK", () => {
@@ -49,18 +49,16 @@ describe("githubReposRouter via SDK", () => {
 
   it("can limit to a single installation when specified", async () => {
     const tokens = await __TEST_INTERNAL_ONLY_GET_STACK_TOKENS();
-    const convex = getConvex({ accessToken: tokens.accessToken });
 
     let installationId: number | undefined;
     try {
-      const conns = await convex.query(api.github.listProviderConnections, {
-        teamSlugOrId: "manaflow",
-      });
+      const db = getDb();
+      const conns = listProviderConnections(db, "manaflow");
       console.log("conns", conns);
       installationId = conns.find((c) => c.isActive !== false)?.installationId;
     } catch (error) {
-      // If convex is unreachable in this test env, skip the test
-      console.log("Skipping test - Convex unreachable:", error);
+      // If DB is unreachable in this test env, skip the test
+      console.log("Skipping test - DB unreachable:", error);
       return;
     }
     if (!installationId) {

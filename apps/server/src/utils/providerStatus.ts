@@ -1,4 +1,3 @@
-import { api } from "@cmux/convex/api";
 import {
   AGENT_CONFIGS,
   type DockerStatus,
@@ -6,7 +5,8 @@ import {
   type ProviderStatus as SharedProviderStatus,
 } from "@cmux/shared";
 import { checkDockerStatus } from "@cmux/shared/providers/common/check-docker";
-import { getConvex } from "./convexClient.js";
+import { getDb, getUserId } from "./dbClient";
+import { getApiKeysForAgents } from "@cmux/db/queries/settings";
 
 type CheckAllProvidersStatusOptions = {
   teamSlugOrId?: string;
@@ -25,9 +25,9 @@ export async function checkAllProvidersStatus(
 
   if (options.teamSlugOrId) {
     try {
-      apiKeys = await getConvex().query(api.apiKeys.getAllForAgents, {
-        teamSlugOrId: options.teamSlugOrId,
-      });
+      const db = getDb();
+      const userId = getUserId();
+      apiKeys = getApiKeysForAgents(db, options.teamSlugOrId, userId);
     } catch (error) {
       console.warn(
         `Failed to load API keys for team ${options.teamSlugOrId}:`,
@@ -64,7 +64,7 @@ export async function checkAllProvidersStatus(
 
 /**
  * Web-mode variant of checkAllProvidersStatus.
- * Only checks if required API keys are present in Convex - does not check
+ * Only checks if required API keys are present in DB - does not check
  * local files, keychains, or Docker status (which don't exist in web deployments).
  */
 export async function checkAllProvidersStatusWebMode(options: {
@@ -79,10 +79,9 @@ export async function checkAllProvidersStatusWebMode(options: {
   let apiKeys: Record<string, string> = {};
 
   try {
-    apiKeys =
-      (await getConvex().query(api.apiKeys.getAllForAgents, {
-        teamSlugOrId: options.teamSlugOrId,
-      })) ?? {};
+    const db = getDb();
+    const userId = getUserId();
+    apiKeys = getApiKeysForAgents(db, options.teamSlugOrId, userId) ?? {};
   } catch (error) {
     console.warn(
       `Failed to load API keys for team ${options.teamSlugOrId}:`,

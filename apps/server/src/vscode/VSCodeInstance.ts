@@ -1,4 +1,4 @@
-import type { Id } from "@cmux/convex/dataModel";
+
 import { connectToWorkerManagement } from "@cmux/shared/socket";
 import { EventEmitter } from "node:events";
 import { dockerLogger } from "../utils/fileLogger";
@@ -7,8 +7,8 @@ export interface VSCodeInstanceConfig {
   workspacePath?: string;
   initialCommand?: string;
   agentName?: string;
-  taskRunId: Id<"taskRuns">;
-  taskId: Id<"tasks">;
+  taskRunId: string;
+  taskId: string;
   theme?: "dark" | "light" | "system";
   teamSlugOrId: string;
   // Optional: for CmuxVSCodeInstance to hydrate repo on start
@@ -16,7 +16,7 @@ export interface VSCodeInstanceConfig {
   branch?: string;
   newBranch?: string;
   // Optional: when starting from an environment
-  environmentId?: Id<"environments"> | string;
+  environmentId?: string;
   // Optional: JWT token for crown workflow authentication
   taskRunJwt?: string;
   // Optional: environment variables to pass to the container
@@ -27,19 +27,19 @@ export interface VSCodeInstanceInfo {
   url: string;
   workspaceUrl: string;
   instanceId: string;
-  taskRunId: Id<"taskRuns">;
+  taskRunId: string;
   provider: "docker" | "morph" | "daytona" | "incus";
-  /** If true, VSCode URLs were already persisted to Convex by www */
+  /** If true, VSCode URLs were already persisted to the database by www */
   vscodePersisted?: boolean;
 }
 
 export abstract class VSCodeInstance extends EventEmitter {
   // Static registry of all VSCode instances
-  protected static instances = new Map<Id<"taskRuns">, VSCodeInstance>();
+  protected static instances = new Map<string, VSCodeInstance>();
 
   // Callback for when instance connects - used by LocalCloudSyncManager for lazy sync
   private static onInstanceConnectedCallback:
-    | ((taskRunId: Id<"taskRuns">, instance: VSCodeInstance) => void)
+    | ((taskRunId: string, instance: VSCodeInstance) => void)
     | null = null;
 
   /**
@@ -48,16 +48,16 @@ export abstract class VSCodeInstance extends EventEmitter {
    */
   static setOnInstanceConnected(
     callback:
-      | ((taskRunId: Id<"taskRuns">, instance: VSCodeInstance) => void)
+      | ((taskRunId: string, instance: VSCodeInstance) => void)
       | null
   ): void {
     VSCodeInstance.onInstanceConnectedCallback = callback;
   }
 
   protected config: VSCodeInstanceConfig;
-  protected instanceId: Id<"taskRuns">;
-  protected taskRunId: Id<"taskRuns">;
-  protected taskId: Id<"tasks">;
+  protected instanceId: string;
+  protected taskRunId: string;
+  protected taskId: string;
   protected workerSocket: ReturnType<typeof connectToWorkerManagement> | null =
     null;
   protected workerConnected: boolean = false;
@@ -81,7 +81,7 @@ export abstract class VSCodeInstance extends EventEmitter {
     return VSCodeInstance.instances;
   }
 
-  static getInstance(instanceId: Id<"taskRuns">): VSCodeInstance | undefined {
+  static getInstance(instanceId: string): VSCodeInstance | undefined {
     return VSCodeInstance.instances.get(instanceId);
   }
 
@@ -286,11 +286,11 @@ export abstract class VSCodeInstance extends EventEmitter {
     }
   }
 
-  getInstanceId(): Id<"taskRuns"> {
+  getInstanceId(): string {
     return this.instanceId;
   }
 
-  getTaskRunId(): Id<"taskRuns"> {
+  getTaskRunId(): string {
     return this.taskRunId;
   }
 

@@ -4,15 +4,12 @@ import { ScriptTextareaField } from "@/components/ScriptTextareaField";
 import { SCRIPT_COPY } from "@/components/scriptCopy";
 import { TitleBar } from "@/components/TitleBar";
 import { queryClient } from "@/query-client";
-import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { api } from "@cmux/convex/api";
-import type { Id } from "@cmux/convex/dataModel";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { validateExposedPorts } from "@cmux/shared/utils/validate-exposed-ports";
 import type { StartSandboxResponse } from "@cmux/www-openapi-client";
@@ -21,14 +18,15 @@ import {
   patchApiEnvironmentsByIdMutation,
   postApiEnvironmentsByIdSnapshotsBySnapshotVersionIdActivateMutation,
   postApiSandboxesStartMutation,
+  getApiEnvironmentsByIdOptions,
+  getApiEnvironmentsByIdSnapshotsOptions,
 } from "@cmux/www-openapi-client/react-query";
-import { convexQuery } from "@convex-dev/react-query";
 import {
   useMutation as useRQMutation,
   useSuspenseQuery,
+  useQuery as useRQ,
 } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useMutation, useQuery } from "convex/react";
 import { formatDistanceToNow } from "date-fns";
 import {
   ArrowLeft,
@@ -54,24 +52,16 @@ export const Route = createFileRoute(
     environmentId: typedZid("environments").parse(params.environmentId),
   }),
   loader: async ({ params }) => {
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.environments.get,
-      args: {
-        teamSlugOrId: params.teamSlugOrId,
-        id: params.environmentId,
-      },
-    });
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.environmentSnapshots.list,
-      args: {
-        teamSlugOrId: params.teamSlugOrId,
-        environmentId: params.environmentId,
-      },
-    });
-    void convexQueryClient.queryClient.ensureQueryData(
-      convexQuery(api.environments.get, {
-        teamSlugOrId: params.teamSlugOrId,
-        id: params.environmentId,
+    void queryClient.prefetchQuery(
+      getApiEnvironmentsByIdOptions({
+        path: { id: params.environmentId },
+        query: { teamSlugOrId: params.teamSlugOrId },
+      })
+    );
+    void queryClient.prefetchQuery(
+      getApiEnvironmentsByIdSnapshotsOptions({
+        path: { id: params.environmentId },
+        query: { teamSlugOrId: params.teamSlugOrId },
       })
     );
   },
@@ -84,22 +74,24 @@ function EnvironmentDetailsPage() {
   const navigate = useNavigate({ from: Route.fullPath });
   const [isDeleting, setIsDeleting] = useState(false);
   const environmentQuery = useSuspenseQuery(
-    convexQuery(api.environments.get, {
-      teamSlugOrId,
-      id: environmentId,
+    getApiEnvironmentsByIdOptions({
+      path: { id: environmentId },
+      query: { teamSlugOrId },
     })
   );
   const environment = environmentQuery.data;
   if (!environment) {
     throw new Error("Environment not found");
   }
-  const snapshotVersions =
-    useQuery(api.environmentSnapshots.list, {
-      teamSlugOrId,
-      environmentId,
-    }) ?? [];
-  const deleteEnvironment = useMutation(api.environments.remove);
-  const deleteSnapshotVersion = useMutation(api.environmentSnapshots.remove);
+  const snapshotVersionsQuery = useRQ({
+    ...getApiEnvironmentsByIdSnapshotsOptions({
+      path: { id: environmentId },
+      query: { teamSlugOrId },
+    }),
+    enabled: Boolean(environmentId),
+  });
+  const snapshotVersions = snapshotVersionsQuery.data ?? [];
+  // deleteEnvironment and deleteSnapshotVersion use SDK calls
   const updatePortsMutation = useRQMutation(
     patchApiEnvironmentsByIdPortsMutation()
   );
@@ -362,7 +354,7 @@ function EnvironmentDetailsPage() {
   };
 
   const handleActivateSnapshot = (
-    versionId: Id<"environmentSnapshotVersions">
+    versionId: string
   ) => {
     const versionIdString = String(versionId);
     setActivatingVersionId(versionIdString);
@@ -402,9 +394,10 @@ function EnvironmentDetailsPage() {
 
     setIsDeleting(true);
     try {
-      await deleteEnvironment({
-        teamSlugOrId,
-        id: environmentId,
+      const { deleteApiEnvironmentsById } = await import("@cmux/www-openapi-client");
+      await deleteApiEnvironmentsById({
+        path: { id: environmentId },
+        query: { teamSlugOrId },
       });
       toast.success("Environment deleted successfully");
       navigate({
@@ -431,7 +424,7 @@ function EnvironmentDetailsPage() {
   const isSnapshotPending = snapshotLaunchMutation.isPending;
 
   const handleDeleteSnapshotVersion = async (
-    versionId: Id<"environmentSnapshotVersions">
+    versionId: string
   ) => {
     if (
       !confirm(
@@ -444,16 +437,15 @@ function EnvironmentDetailsPage() {
     const versionIdString = String(versionId);
     setDeletingVersionId(versionIdString);
     try {
-      await deleteSnapshotVersion({
-        teamSlugOrId,
-        environmentId,
-        snapshotVersionId: versionId,
+      const { deleteApiSandboxesIncusSnapshotsBySnapshotId } = await import("@cmux/www-openapi-client");
+      await deleteApiSandboxesIncusSnapshotsBySnapshotId({
+        path: { snapshotId: versionIdString },
       });
       toast.success("Snapshot version deleted");
       await queryClient.invalidateQueries({
-        queryKey: convexQuery(api.environmentSnapshots.list, {
-          teamSlugOrId,
-          environmentId,
+        queryKey: getApiEnvironmentsByIdSnapshotsOptions({
+          path: { id: environmentId },
+          query: { teamSlugOrId },
         }).queryKey,
       });
     } catch (error) {
@@ -1002,7 +994,7 @@ function EnvironmentDetailsPage() {
                   ) : (
                     snapshotVersions.map((version) => (
                       <div
-                        key={version._id}
+                        key={version.id as string}
                         className="rounded-md border border-neutral-200 p-3 dark:border-neutral-800"
                       >
                         <div className="flex items-center justify-between gap-3">
@@ -1026,16 +1018,16 @@ function EnvironmentDetailsPage() {
                               <button
                                 type="button"
                                 onClick={() =>
-                                  handleActivateSnapshot(version._id)
+                                  handleActivateSnapshot(version.id as string)
                                 }
                                 disabled={
                                   activateSnapshotMutation.isPending &&
-                                  activatingVersionId === String(version._id)
+                                  activatingVersionId === String(version.id)
                                 }
                                 className="inline-flex items-center rounded-md border border-neutral-300 px-3 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100 disabled:opacity-60 disabled:cursor-not-allowed dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
                               >
                                 {activateSnapshotMutation.isPending &&
-                                activatingVersionId === String(version._id)
+                                activatingVersionId === String(version.id)
                                   ? "Activating..."
                                   : "Activate"}
                               </button>
@@ -1043,11 +1035,11 @@ function EnvironmentDetailsPage() {
                             <button
                               type="button"
                               onClick={() =>
-                                handleDeleteSnapshotVersion(version._id)
+                                handleDeleteSnapshotVersion(version.id as string)
                               }
                               disabled={
                                 version.isActive ||
-                                deletingVersionId === String(version._id)
+                                deletingVersionId === String(version.id)
                               }
                               title={
                                 version.isActive
@@ -1056,7 +1048,7 @@ function EnvironmentDetailsPage() {
                               }
                               className="inline-flex items-center gap-1 rounded-md border border-neutral-300 px-3 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
                             >
-                              {deletingVersionId === String(version._id) ? (
+                              {deletingVersionId === String(version.id) ? (
                                 <>
                                   <Loader2 className="h-3 w-3 animate-spin" />
                                   Deleting…

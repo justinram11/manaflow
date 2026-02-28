@@ -10,13 +10,15 @@ import {
 } from "@/components/ui/card";
 import { stackClientApp } from "@/lib/stack";
 import { isElectron } from "@/lib/electron";
-import { api } from "@cmux/convex/api";
 import { postApiTeams } from "@cmux/www-openapi-client";
+import {
+  getApiTeamsByTeamSlugOrIdOptions,
+} from "@cmux/www-openapi-client/react-query";
 import { Skeleton } from "@heroui/react";
 import { useStackApp, useUser, type Team } from "@stackframe/react";
 import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
 import { setLastTeamSlugOrId } from "@/lib/lastTeam";
-import { useQuery as useConvexQuery, useMutation } from "convex/react";
+import { useQuery as useRQ } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import type React from "react";
 
@@ -46,10 +48,6 @@ function TeamPicker() {
   // Call the Stack teams hook at the top level (no memo to satisfy hook rules)
   const teams: Team[] = user?.useTeams() ?? [];
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-
-  // Convex helpers to immediately reflect team creation/membership locally
-  const upsertTeamPublic = useMutation(api.stack.upsertTeamPublic);
-  const ensureMembershipPublic = useMutation(api.stack.ensureMembershipPublic);
 
   const getClientSlug = (meta: unknown): string | undefined => {
     if (meta && typeof meta === "object" && meta !== null) {
@@ -92,14 +90,6 @@ function TeamPicker() {
           throwOnError: true,
         });
 
-        await upsertTeamPublic({
-          id: data.teamId,
-          displayName: data.displayName,
-          profileImageUrl: undefined,
-          createdAtMillis: Date.now(),
-        });
-        await ensureMembershipPublic({ teamId: data.teamId, userId: user.id });
-
         const teamSlugOrId = data.slug ?? data.teamId;
 
         let stackTeam: Team | null = null;
@@ -133,7 +123,7 @@ function TeamPicker() {
         throw new Error(message);
       }
     },
-    [ensureMembershipPublic, navigate, upsertTeamPublic, user, app.urls.accountSettings]
+    [navigate, user, app.urls.accountSettings]
   );
 
   return (
@@ -159,7 +149,7 @@ function TeamPicker() {
               <div className="flex flex-col items-center justify-center gap-4 py-12">
                 <div className="text-center">
                   <p className="text-neutral-800 dark:text-neutral-200 text-lg font-medium">
-                    You’re not in any teams yet
+                    You're not in any teams yet
                   </p>
                   <p className="text-neutral-600 dark:text-neutral-400 mt-1">
                     Create a team to get started.
@@ -210,8 +200,14 @@ interface TeamItemProps {
 }
 
 function TeamItem({ team, getClientSlug }: TeamItemProps) {
-  const teamInfo = useConvexQuery(api.teams.get, { teamSlugOrId: team.id });
-  const slug = teamInfo?.slug || getClientSlug(team.clientMetadata);
+  const teamInfoQuery = useRQ({
+    ...getApiTeamsByTeamSlugOrIdOptions({
+      path: { teamSlugOrId: team.id },
+    }),
+    enabled: Boolean(team.id),
+  });
+  const teamInfo = teamInfoQuery.data as Record<string, unknown> | undefined;
+  const slug = (teamInfo?.slug as string | undefined) || getClientSlug(team.clientMetadata);
   const teamSlugOrId = slug ?? team.id;
 
   return (

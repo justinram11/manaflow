@@ -1,13 +1,13 @@
-import { convexAuthReadyPromise } from "@/contexts/convex/convex-auth-ready";
-import { ConvexClientProvider } from "@/contexts/convex/convex-client-provider";
-import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { cachedGetUser } from "@/lib/cachedGetUser";
 import { stackClientApp } from "@/lib/stack";
-import { api } from "@cmux/convex/api";
+import { queryClient } from "@/query-client";
+import {
+  getApiTeamsOptions,
+} from "@cmux/www-openapi-client/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/$teamSlugOrId/feed")({
-  component: FeedPageWrapper,
+  component: FeedPage,
   beforeLoad: async ({ params, location }) => {
     const user = await cachedGetUser(stackClientApp);
     if (!user) {
@@ -19,33 +19,17 @@ export const Route = createFileRoute("/$teamSlugOrId/feed")({
       });
     }
 
-    await convexAuthReadyPromise;
-
     const { teamSlugOrId } = params;
-    const teamMemberships = await convexQueryClient.convexClient.query(
-      api.teams.listTeamMemberships
-    );
-    const teamMembership = teamMemberships.find((membership) => {
-      const team = membership.team;
-      const membershipTeamId = team?.teamId ?? membership.teamId;
-      const membershipSlug = team?.slug;
-      return (
-        membershipSlug === teamSlugOrId || membershipTeamId === teamSlugOrId
-      );
+    const teamsData = await queryClient.ensureQueryData(getApiTeamsOptions());
+    const teams = teamsData.teams as Array<{ id?: string; slug?: string; teamId?: string }>;
+    const teamMembership = teams.find((team) => {
+      return team.slug === teamSlugOrId || team.id === teamSlugOrId || team.teamId === teamSlugOrId;
     });
     if (!teamMembership) {
       throw redirect({ to: "/team-picker" });
     }
   },
 });
-
-function FeedPageWrapper() {
-  return (
-    <ConvexClientProvider>
-      <FeedPage />
-    </ConvexClientProvider>
-  );
-}
 
 function FeedPage() {
   const { teamSlugOrId } = Route.useParams();

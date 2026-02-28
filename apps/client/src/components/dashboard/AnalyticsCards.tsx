@@ -1,5 +1,6 @@
-import { api } from "@cmux/convex/api";
-import { convexQuery } from "@convex-dev/react-query";
+import {
+  getApiAnalyticsDashboardOptions,
+} from "@cmux/www-openapi-client/react-query";
 import { useQuery } from "@tanstack/react-query";
 import { memo, useId, useMemo } from "react";
 import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
@@ -111,7 +112,7 @@ export const AnalyticsCards = memo(function AnalyticsCards({
   teamSlugOrId: string;
 }) {
   const analyticsQuery = useQuery(
-    convexQuery(api.analytics.getDashboardStats, { teamSlugOrId }),
+    getApiAnalyticsDashboardOptions({ query: { teamSlugOrId } }),
   );
 
   if (analyticsQuery.isLoading) {
@@ -124,11 +125,16 @@ export const AnalyticsCards = memo(function AnalyticsCards({
     );
   }
 
-  if (!analyticsQuery.data) {
+  const stats = analyticsQuery.data;
+
+  if (!stats) {
     return null;
   }
 
-  const { tasksStarted, tasksMerged, runsCompleted } = analyticsQuery.data;
+  // The new API returns aggregate stats; build the card data from what's available
+  const tasksStarted = { total: stats.totalTasks, daily: [] as number[] };
+  const tasksMerged = { total: stats.completedTasks, daily: [] as number[] };
+  const runsCompleted = { total: stats.totalRuns, daily: [] as number[] };
 
   return (
     <div className="grid grid-cols-3 gap-3 mt-4 mb-2">

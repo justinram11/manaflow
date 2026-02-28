@@ -1,14 +1,21 @@
 import { TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
-import { api } from "@cmux/convex/api";
-import { useQuery } from "convex/react";
+import {
+  getApiTasksOptions,
+} from "@cmux/www-openapi-client/react-query";
+import { useQuery } from "@tanstack/react-query";
 
 type Props = {
   teamSlugOrId: string;
 };
 
 export function SidebarPreviewList({ teamSlugOrId }: Props) {
-  const tasks = useQuery(api.tasks.getPreviewTasks, { teamSlugOrId });
+  // Preview tasks are not a separate endpoint in the HTTP API;
+  // we filter tasks that have isPreview set
+  const tasksQuery = useQuery(
+    getApiTasksOptions({ query: { teamSlugOrId } }),
+  );
+  const tasks = tasksQuery.data?.tasks?.filter((t) => t.isPreview);
 
   if (tasks === undefined) {
     return <TaskTreeSkeleton count={3} />;
@@ -26,7 +33,7 @@ export function SidebarPreviewList({ teamSlugOrId }: Props) {
     <div className="space-y-px">
       {tasks.map((task) => (
         <TaskTree
-          key={task._id}
+          key={task.id}
           task={task}
           defaultExpanded={false}
           teamSlugOrId={teamSlugOrId}

@@ -11,7 +11,7 @@ If you make code changes, run `bun check` and fix errors after completing a task
 
 # Backend
 
-This project uses Convex and Hono.
+This project uses SQLite (via Drizzle ORM in packages/db) and Hono.
 Hono is defined in apps/www/lib/hono-app.ts as well as apps/www/lib/routes/\*
 The Hono app generates a client in @cmux/www-openapi-client. This is automatically re-generated when the dev-server is running. If you change the Hono app (and the dev server isn't running), you should run `(cd apps/www && bun run generate-openapi-client)` to re-generate the client. Note that the generator is in www and not www-openapi-client.
 We MUST force validation of requests that do not have the proper `Content-Type`. Set the value of `request.body.required` to `true`. For example:
@@ -43,13 +43,16 @@ app.openapi(
 );
 ```
 
-## Convex
+## Database
 
-Schemas are defined in packages/convex/convex/schema.ts.
-If you're working in Convex dir, you cannot use node APIs/import from "node:\*"
-Use crypto.subtle instead of node:crypto
-Exception is if the file defines only actions and includes a "use node" directive at the top of the file
-To query Convex data during development, first cd into packages/convex, and run `bunx convex data <table> --format jsonl | rg "pattern"` (e.g., `bunx convex data sessions --format jsonl | rg "mn7abc123"`).
+The database layer is in `packages/db/` using Drizzle ORM with SQLite (via `bun:sqlite`).
+- Schemas: `packages/db/src/schema/`
+- Queries: `packages/db/src/queries/`
+- Mutations: `packages/db/src/mutations/`
+- DB location: `CMUX_DB_PATH` env var, defaults to `~/.cmux/cmux.db`
+- Run migrations: `cd packages/db && bun run migrate`
+- Seed data: `cd packages/db && bun run seed`
+Both `apps/server` and `apps/www` import directly from `@cmux/db` (shared SQLite with WAL mode).
 
 ## Sandboxes
 
@@ -101,7 +104,6 @@ Make tests resilient
 When running `./scripts/dev.sh`, service logs are written to `logs/{type}.log`:
 
 - docker-compose.log: Output from `.devcontainer` Docker Compose stack. Hidden from console by default; use `--show-compose-logs` to stream.
-- convex-dev.log: Convex development server (`bunx convex dev`).
 - server.log: Backend dev server in `apps/server`.
 - client.log: Frontend dev server in `apps/client` (Vite).
 

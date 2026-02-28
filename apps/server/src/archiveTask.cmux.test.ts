@@ -1,15 +1,9 @@
-import { api } from "@cmux/convex/api";
-import { typedZid } from "@cmux/shared/utils/typed-zid";
-import type { FunctionReturnType } from "convex/server";
 import { createServer } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { stopContainersForRunsFromTree } from "./archiveTask";
 
 describe("stopContainersForRunsFromTree - cmux sandbox path", () => {
-  const zidRun = typedZid("taskRuns");
-  const zidTask = typedZid("tasks");
-
   let server: ReturnType<typeof createServer> | null = null;
   let serverUrl = "";
   const calls: { method: string; url: string }[] = [];
@@ -55,9 +49,9 @@ describe("stopContainersForRunsFromTree - cmux sandbox path", () => {
 
     const tree = [
       {
-        _id: zidRun.parse("rm1"),
+        _id: "rm1",
         _creationTime: now,
-        taskId: zidTask.parse("tm1"),
+        taskId: "tm1",
         prompt: "p",
         status: "running",
         log: "",
@@ -73,7 +67,7 @@ describe("stopContainersForRunsFromTree - cmux sandbox path", () => {
         environment: null,
         children: [],
       },
-    ] satisfies FunctionReturnType<typeof api.taskRuns.getByTask>;
+    ];
 
     const results = await stopContainersForRunsFromTree(tree, "tm1");
     expect(results).toHaveLength(1);

@@ -1,13 +1,14 @@
 import { DEFAULT_MORPH_SNAPSHOT_ID } from "@/lib/utils/morph-defaults";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
-import { api } from "@cmux/convex/api";
+import { getDb } from "@cmux/db";
+import {
+  getEnvironmentByTeam,
+  listEnvironments,
+  findSnapshotVersionBySnapshotId,
+} from "@cmux/db/queries/environments";
 import { MORPH_SNAPSHOT_PRESETS } from "@cmux/shared";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { HTTPException } from "hono/http-exception";
-
-import type { getConvex } from "@/lib/utils/get-convex";
-
-export type ConvexClient = ReturnType<typeof getConvex>;
 
 export interface SnapshotResolution {
   team: Awaited<ReturnType<typeof verifyTeamAccess>>;
@@ -19,24 +20,24 @@ export interface SnapshotResolution {
 
 export const resolveTeamAndSnapshot = async ({
   req,
-  convex,
   teamSlugOrId,
   environmentId,
   snapshotId,
 }: {
   req: Request;
-  convex: ConvexClient;
   teamSlugOrId: string;
   environmentId?: string;
   snapshotId?: string;
 }): Promise<SnapshotResolution> => {
   const team = await verifyTeamAccess({ req, teamSlugOrId });
+  const db = getDb();
 
   if (environmentId) {
-    const environmentDoc = await convex.query(api.environments.get, {
+    const environmentDoc = getEnvironmentByTeam(
+      db,
       teamSlugOrId,
-      id: typedZid("environments").parse(environmentId),
-    });
+      typedZid("environments").parse(environmentId),
+    );
 
     if (!environmentDoc) {
       throw new HTTPException(403, {
@@ -66,9 +67,7 @@ export const resolveTeamAndSnapshot = async ({
       };
     }
 
-    const environments = await convex.query(api.environments.list, {
-      teamSlugOrId,
-    });
+    const environments = listEnvironments(db, teamSlugOrId);
     const matchedEnvironment = environments.find(
       (environment) => environment.morphSnapshotId === snapshotId
     );
@@ -81,9 +80,10 @@ export const resolveTeamAndSnapshot = async ({
       };
     }
 
-    const snapshotVersion = await convex.query(
-      api.environmentSnapshots.findBySnapshotId,
-      { teamSlugOrId, snapshotId }
+    const snapshotVersion = findSnapshotVersionBySnapshotId(
+      db,
+      teamSlugOrId,
+      snapshotId,
     );
 
     if (!snapshotVersion) {

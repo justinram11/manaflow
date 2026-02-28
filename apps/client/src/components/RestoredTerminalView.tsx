@@ -1,32 +1,33 @@
-import { api } from "@cmux/convex/api";
-import { type Id } from "@cmux/convex/dataModel";
 import { createTerminalOptions } from "@cmux/shared/terminal-config";
+import { getApiTaskRunsByIdLogChunksOptions } from "@cmux/www-openapi-client/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal as XTerm } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { useQuery } from "convex/react";
 // Read team slug from path to avoid route type coupling
 import { useEffect, useRef } from "react";
 
 export interface RestoredTerminalViewProps {
-  runId: Id<"taskRuns">;
+  runId: string;
   teamSlugOrId: string;
 }
 
 export function RestoredTerminalView({
   runId,
-  teamSlugOrId,
+  teamSlugOrId: _teamSlugOrId,
 }: RestoredTerminalViewProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
 
-  // Fetch log chunks from Convex
-  const logChunks = useQuery(api.taskRunLogChunks.getChunks, {
-    teamSlugOrId,
-    taskRunId: runId,
-  });
+  // Fetch log chunks via HTTP API
+  const { data: logChunksData } = useQuery(
+    getApiTaskRunsByIdLogChunksOptions({
+      path: { id: runId },
+    })
+  );
+  const logChunks = logChunksData?.logChunks ?? null;
 
   useEffect(() => {
     if (!terminalRef.current) return;

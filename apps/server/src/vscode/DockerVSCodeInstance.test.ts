@@ -1,4 +1,4 @@
-import type { Id } from "@cmux/convex/dataModel";
+
 import { spawn } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
@@ -28,8 +28,8 @@ vi.mock("../utils/fileLogger.js", () => ({
 describe("DockerVSCodeInstance", () => {
   it("should prefix container names with 'docker-'", () => {
     // Create instance with a test taskRunId
-    const taskRunId = "test123456789012345678901234" as Id<"taskRuns">;
-    const taskId = "task123456789012345678901234" as Id<"tasks">;
+    const taskRunId = "test123456789012345678901234";
+    const taskId = "task123456789012345678901234";
 
     const instance = new DockerVSCodeInstance({
       taskRunId,
@@ -45,12 +45,12 @@ describe("DockerVSCodeInstance", () => {
 
   it("should always return docker- prefixed names for different taskRunIds", () => {
     const testCases = [
-      "abcd1234567890abcdef12345678" as Id<"taskRuns">,
-      "xyz9876543210xyzabc123456789" as Id<"taskRuns">,
-      "000000000000111122223333444" as Id<"taskRuns">,
+      "abcd1234567890abcdef12345678",
+      "xyz9876543210xyzabc123456789",
+      "000000000000111122223333444",
     ];
 
-    const taskId = "task123456789012345678901234" as Id<"tasks">;
+    const taskId = "task123456789012345678901234";
 
     for (const taskRunId of testCases) {
       const instance = new DockerVSCodeInstance({
@@ -64,8 +64,8 @@ describe("DockerVSCodeInstance", () => {
 
   it("ensures docker- prefix distinguishes from other providers", () => {
     // This test verifies the docker- prefix is used as a failsafe to identify Docker instances
-    const taskRunId = "jn75ppcyksmh1234567890123456" as Id<"taskRuns">;
-    const taskId = "task123456789012345678901234" as Id<"tasks">;
+    const taskRunId = "jn75ppcyksmh1234567890123456";
+    const taskId = "task123456789012345678901234";
 
     const instance = new DockerVSCodeInstance({
       taskRunId,
@@ -129,7 +129,7 @@ describe("DockerVSCodeInstance", () => {
 
         containerMappings.set("cmux-test", {
           containerName: "cmux-test",
-          instanceId: "test-instance" as Id<"taskRuns">,
+          instanceId: "test-instance",
           teamSlugOrId: "default",
         ports: { vscode: "", worker: "", proxy: "" },
           status: "starting",

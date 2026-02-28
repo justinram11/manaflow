@@ -28,6 +28,7 @@ export const env = createEnv({
     OPENAI_API_KEY: z.string().min(1).optional(),
     GEMINI_API_KEY: z.string().min(1).optional(),
     ANTHROPIC_API_KEY: z.string().min(1).optional(),
+    INSTALL_STATE_SECRET: z.string().min(1).optional(),
     CMUX_TASK_RUN_JWT_SECRET: z.string().min(1),
     // AWS Bedrock credentials (optional - only required when spawning Claude agents)
     AWS_BEARER_TOKEN_BEDROCK: z.string().min(1).optional(),
@@ -36,7 +37,8 @@ export const env = createEnv({
   client: {
     NEXT_PUBLIC_STACK_PROJECT_ID: z.string().min(1).optional(),
     NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY: z.string().min(1).optional(),
-    NEXT_PUBLIC_CONVEX_URL: z.string().min(1),
+    // Legacy: kept optional for code paths that still reference it (code review, etc.)
+    NEXT_PUBLIC_CONVEX_URL: z.string().min(1).optional(),
     NEXT_PUBLIC_GITHUB_APP_SLUG: z.string().min(1).optional(),
   },
   runtimeEnv: process.env,

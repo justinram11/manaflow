@@ -1,4 +1,3 @@
-import { api } from "@cmux/convex/api";
 import {
   reconcilePullRequestRecords,
   type AggregatePullRequestSummary,
@@ -6,7 +5,11 @@ import {
   type RunPullRequestState,
   type StoredPullRequestInfo,
 } from "@cmux/shared/pull-request-state";
-import { getConvex } from "./utils/convexClient";
+import { getDb, getUserId } from "./utils/dbClient";
+import { getEnvironmentById } from "@cmux/db/queries/environments";
+import { resolveTeamId } from "@cmux/db/queries/teams";
+import { updatePullRequestStateFull } from "@cmux/db/mutations/task-runs";
+import { updateTaskMergeStatus } from "@cmux/db/mutations/tasks";
 import { serverLogger } from "./utils/fileLogger";
 import { fetchPrByHead, fetchPrDetail } from "./utils/githubPr";
 import type { TaskDoc, TaskRunDoc } from "./types/taskDocs";
@@ -25,7 +28,7 @@ export const EMPTY_AGGREGATE: AggregatePullRequestSummary = {
 export async function collectRepoFullNamesForRun(
   run: TaskRunDoc,
   task: TaskDoc,
-  teamSlugOrId: string,
+  _teamSlugOrId: string,
 ): Promise<string[]> {
   const repos = new Set<string>();
   const project = task.projectFullName?.trim();
@@ -34,11 +37,10 @@ export async function collectRepoFullNamesForRun(
   }
   if (run.environmentId) {
     try {
-      const environment = await getConvex().query(api.environments.get, {
-        teamSlugOrId,
-        id: run.environmentId,
-      });
-      environment?.selectedRepos?.forEach((repo) => {
+      const db = getDb();
+      const environment = getEnvironmentById(db, run.environmentId);
+      const selectedRepos = (environment?.selectedRepos ?? []) as string[];
+      selectedRepos.forEach((repo) => {
         const trimmed = typeof repo === "string" ? repo.trim() : "";
         if (trimmed) {
           repos.add(trimmed);
@@ -169,16 +171,20 @@ export async function persistPullRequestResults({
   repoFullNames: readonly string[];
   results: PullRequestActionResult[];
 }): Promise<PersistedPullRequestState> {
-  const existing = run.pullRequests ?? [];
+  const existing = (run.pullRequests ?? []) as StoredPullRequestInfo[];
   const { records, aggregate } = reconcilePullRequestRecords({
     existing,
     updates: results,
     repoFullNames,
   });
 
-  await getConvex().mutation(api.taskRuns.updatePullRequestState, {
-    teamSlugOrId,
-    id: run._id,
+  const db = getDb();
+  const userId = getUserId();
+  const teamId = resolveTeamId(db, teamSlugOrId);
+
+  updatePullRequestStateFull(db, {
+    id: run.id,
+    teamId,
     state: aggregate.state,
     isDraft: aggregate.isDraft,
     number: aggregate.number,
@@ -186,9 +192,10 @@ export async function persistPullRequestResults({
     pullRequests: records,
   });
 
-  await getConvex().mutation(api.tasks.updateMergeStatus, {
+  updateTaskMergeStatus(db, {
     teamSlugOrId,
-    id: task._id,
+    userId,
+    id: task.id,
     mergeStatus: aggregate.mergeStatus,
   });
 

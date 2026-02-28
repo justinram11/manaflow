@@ -1,83 +1,87 @@
 import { FloatingPane } from "@/components/floating-pane";
 import { TitleBar } from "@/components/TitleBar";
-import { convexQueryClient } from "@/contexts/convex/convex-query-client";
-import { api } from "@cmux/convex/api";
-import type { Id } from "@cmux/convex/dataModel";
-import { convexQuery } from "@convex-dev/react-query";
+import { queryClient } from "@/query-client";
+import type { DbNotification } from "@cmux/www-openapi-client";
+import {
+  postApiNotificationsByIdRead,
+  postApiNotificationsReadAll,
+} from "@cmux/www-openapi-client";
+import {
+  getApiNotificationsOptions,
+} from "@cmux/www-openapi-client/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import clsx from "clsx";
-import { useMutation, useQuery } from "convex/react";
+import {
+  useMutation as useRQMutation,
+  useQuery as useRQ,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { CheckCircle, Circle, MessageCircleQuestion, XCircle } from "lucide-react";
 import { useCallback, type MouseEvent } from "react";
-
-// Type for notifications from the API
-interface NotificationData {
-  _id: Id<"taskNotifications">;
-  taskId: Id<"tasks">;
-  taskRunId?: Id<"taskRuns">;
-  teamId: string;
-  userId: string;
-  type: "run_completed" | "run_failed" | "run_needs_input";
-  message?: string;
-  createdAt: number;
-  isUnread: boolean;
-  task: {
-    _id: Id<"tasks">;
-    text: string;
-    description?: string;
-  } | null;
-  taskRun: {
-    _id: Id<"taskRuns">;
-    agentName?: string;
-  } | null;
-}
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/notifications")({
   component: NotificationsRoute,
   loader: async ({ params }) => {
     const { teamSlugOrId } = params;
-    void convexQueryClient.queryClient.ensureQueryData(
-      convexQuery(api.taskNotifications.list, { teamSlugOrId })
+    void queryClient.prefetchQuery(
+      getApiNotificationsOptions({ query: { teamSlugOrId } })
     );
   },
 });
 
 function NotificationsRoute() {
   const { teamSlugOrId } = Route.useParams();
-  const notifications = useQuery(api.taskNotifications.list, {
-    teamSlugOrId,
+  const rqQueryClient = useQueryClient();
+  const notificationsQuery = useRQ({
+    ...getApiNotificationsOptions({ query: { teamSlugOrId } }),
+    enabled: Boolean(teamSlugOrId),
   });
-  const markTaskRunAsRead = useMutation(
-    api.taskNotifications.markTaskRunAsRead
-  );
-  const markTaskRunAsUnread = useMutation(
-    api.taskNotifications.markTaskRunAsUnread
-  );
-  const markAllAsRead = useMutation(api.taskNotifications.markAllAsRead);
+  const notifications = notificationsQuery.data?.notifications;
+
+  const markAsReadMutation = useRQMutation({
+    mutationFn: async (notificationId: string) => {
+      const { data } = await postApiNotificationsByIdRead({
+        path: { id: notificationId },
+        throwOnError: true,
+      });
+      return data;
+    },
+    onSettled: () => {
+      void rqQueryClient.invalidateQueries({
+        queryKey: getApiNotificationsOptions({ query: { teamSlugOrId } }).queryKey,
+      });
+    },
+  });
+
+  const markAllAsReadMutation = useRQMutation({
+    mutationFn: async () => {
+      const { data } = await postApiNotificationsReadAll({
+        body: { teamSlugOrId },
+        throwOnError: true,
+      });
+      return data;
+    },
+    onSettled: () => {
+      void rqQueryClient.invalidateQueries({
+        queryKey: getApiNotificationsOptions({ query: { teamSlugOrId } }).queryKey,
+      });
+    },
+  });
 
   const handleMarkAsRead = useCallback(
-    async (taskRunId: Id<"taskRuns"> | undefined) => {
-      if (taskRunId) {
-        await markTaskRunAsRead({ teamSlugOrId, taskRunId });
+    (notificationId: string | undefined) => {
+      if (notificationId) {
+        markAsReadMutation.mutate(notificationId);
       }
     },
-    [markTaskRunAsRead, teamSlugOrId]
+    [markAsReadMutation]
   );
 
-  const handleMarkAsUnread = useCallback(
-    async (taskRunId: Id<"taskRuns"> | undefined) => {
-      if (taskRunId) {
-        await markTaskRunAsUnread({ teamSlugOrId, taskRunId });
-      }
-    },
-    [markTaskRunAsUnread, teamSlugOrId]
-  );
+  const handleMarkAllAsRead = useCallback(() => {
+    markAllAsReadMutation.mutate();
+  }, [markAllAsReadMutation]);
 
-  const handleMarkAllAsRead = useCallback(async () => {
-    await markAllAsRead({ teamSlugOrId });
-  }, [markAllAsRead, teamSlugOrId]);
-
-  const hasUnread = notifications?.some((n) => n.isUnread) ?? false;
+  const hasUnread = notifications?.some((n) => n.readAt == null) ?? false;
 
   return (
     <FloatingPane header={<TitleBar title="Notifications" />}>
@@ -112,11 +116,10 @@ function NotificationsRoute() {
               <div className="mt-2 space-y-2">
                 {notifications.map((notification) => (
                   <NotificationItem
-                    key={notification._id}
+                    key={notification.id}
                     notification={notification}
                     teamSlugOrId={teamSlugOrId}
                     onMarkAsRead={handleMarkAsRead}
-                    onMarkAsUnread={handleMarkAsUnread}
                   />
                 ))}
               </div>
@@ -132,12 +135,10 @@ function NotificationItem({
   notification,
   teamSlugOrId,
   onMarkAsRead,
-  onMarkAsUnread,
 }: {
-  notification: NotificationData;
+  notification: DbNotification;
   teamSlugOrId: string;
-  onMarkAsRead: (taskRunId: Id<"taskRuns"> | undefined) => void;
-  onMarkAsUnread: (taskRunId: Id<"taskRuns"> | undefined) => void;
+  onMarkAsRead: (notificationId: string | undefined) => void;
 }) {
   const notificationType = notification.type;
   const Icon =
@@ -146,21 +147,14 @@ function NotificationItem({
       : notificationType === "run_needs_input"
         ? MessageCircleQuestion
         : XCircle;
-  const isUnread = notification.isUnread;
-
-  const taskName =
-    notification.task?.text?.slice(0, 60) ||
-    notification.task?.description?.slice(0, 60) ||
-    "Task";
-
-  const truncatedTaskName = taskName.length >= 60 ? `${taskName}...` : taskName;
+  const isUnread = notification.readAt == null;
 
   const timeAgo = getTimeAgo(notification.createdAt);
 
   const handleClick = () => {
     // Only mark as read if currently unread
     if (isUnread) {
-      onMarkAsRead(notification.taskRunId);
+      onMarkAsRead(notification.id);
     }
   };
 
@@ -168,10 +162,9 @@ function NotificationItem({
     e.preventDefault();
     e.stopPropagation();
     if (isUnread) {
-      onMarkAsRead(notification.taskRunId);
-    } else {
-      onMarkAsUnread(notification.taskRunId);
+      onMarkAsRead(notification.id);
     }
+    // No "mark as unread" endpoint available
   };
 
   // Navigate to the specific run if available, otherwise to the task
@@ -241,19 +234,16 @@ function NotificationItem({
               {timeAgo}
             </span>
           </div>
-          <p
-            className={clsx(
-              "text-sm mt-0.5 truncate",
-              isUnread
-                ? "text-neutral-700 dark:text-neutral-300"
-                : "text-neutral-600 dark:text-neutral-400"
-            )}
-          >
-            {truncatedTaskName}
-          </p>
-          {notification.taskRun?.agentName && (
-            <p className="text-xs text-neutral-500 dark:text-neutral-500 mt-1">
-              {notification.taskRun.agentName}
+          {notification.message && (
+            <p
+              className={clsx(
+                "text-sm mt-0.5 truncate",
+                isUnread
+                  ? "text-neutral-700 dark:text-neutral-300"
+                  : "text-neutral-600 dark:text-neutral-400"
+              )}
+            >
+              {notification.message}
             </p>
           )}
         </div>

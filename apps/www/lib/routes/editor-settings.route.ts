@@ -1,7 +1,11 @@
-import { getAccessTokenFromRequest } from "@/lib/utils/auth";
-import { getConvex } from "@/lib/utils/get-convex";
+import { getUserFromRequest } from "@/lib/utils/auth";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
-import { api } from "@cmux/convex/api";
+import { getDb } from "@cmux/db";
+import { getUserEditorSettings } from "@cmux/db/queries/settings";
+import {
+  upsertUserEditorSettings,
+  clearUserEditorSettings,
+} from "@cmux/db/mutations/settings";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 
 export const editorSettingsRouter = new OpenAPIHono();
@@ -60,8 +64,8 @@ editorSettingsRouter.openapi(
     },
   }),
   async (c) => {
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) return c.text("Unauthorized", 401);
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) return c.text("Unauthorized", 401);
 
     const query = c.req.valid("query");
 
@@ -70,10 +74,8 @@ editorSettingsRouter.openapi(
       teamSlugOrId: query.teamSlugOrId,
     });
 
-    const convex = getConvex({ accessToken });
-    const settings = await convex.query(api.userEditorSettings.get, {
-      teamSlugOrId: query.teamSlugOrId,
-    });
+    const db = getDb();
+    const settings = getUserEditorSettings(db, query.teamSlugOrId, user.id);
 
     if (!settings) {
       return c.json(null);
@@ -82,7 +84,7 @@ editorSettingsRouter.openapi(
     return c.json({
       settingsJson: settings.settingsJson ?? undefined,
       keybindingsJson: settings.keybindingsJson ?? undefined,
-      snippets: settings.snippets ?? undefined,
+      snippets: (settings.snippets as Array<{ name: string; content: string }>) ?? undefined,
       extensions: settings.extensions ?? undefined,
       updatedAt: settings.updatedAt,
     });
@@ -119,8 +121,8 @@ editorSettingsRouter.openapi(
     },
   }),
   async (c) => {
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) return c.text("Unauthorized", 401);
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) return c.text("Unauthorized", 401);
 
     const body = c.req.valid("json");
 
@@ -129,13 +131,16 @@ editorSettingsRouter.openapi(
       teamSlugOrId: body.teamSlugOrId,
     });
 
-    const convex = getConvex({ accessToken });
-    await convex.mutation(api.userEditorSettings.upsert, {
+    const db = getDb();
+    upsertUserEditorSettings(db, {
       teamSlugOrId: body.teamSlugOrId,
-      settingsJson: body.settingsJson,
-      keybindingsJson: body.keybindingsJson,
-      snippets: body.snippets,
-      extensions: body.extensions,
+      userId: user.id,
+      patch: {
+        settingsJson: body.settingsJson,
+        keybindingsJson: body.keybindingsJson,
+        snippets: body.snippets,
+        extensions: body.extensions,
+      },
     });
 
     return c.json({
@@ -164,8 +169,8 @@ editorSettingsRouter.openapi(
     },
   }),
   async (c) => {
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) return c.text("Unauthorized", 401);
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) return c.text("Unauthorized", 401);
 
     const query = c.req.valid("query");
 
@@ -174,9 +179,10 @@ editorSettingsRouter.openapi(
       teamSlugOrId: query.teamSlugOrId,
     });
 
-    const convex = getConvex({ accessToken });
-    await convex.mutation(api.userEditorSettings.clear, {
+    const db = getDb();
+    clearUserEditorSettings(db, {
       teamSlugOrId: query.teamSlugOrId,
+      userId: user.id,
     });
 
     return c.body(null, 204);

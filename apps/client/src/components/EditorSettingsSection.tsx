@@ -1,7 +1,11 @@
-import { api } from "@cmux/convex/api";
-import { convexQuery } from "@convex-dev/react-query";
+import {
+  getApiEditorSettingsOptions,
+} from "@cmux/www-openapi-client/react-query";
+import {
+  postApiEditorSettings,
+  deleteApiEditorSettings,
+} from "@cmux/www-openapi-client";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useConvex } from "convex/react";
 import { Plus, Trash2, HelpCircle, Copy, Check } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -101,7 +105,6 @@ export function EditorSettingsSection({
   teamSlugOrId,
   onDataChange,
 }: EditorSettingsSectionProps) {
-  const convex = useConvex();
   const [settingsJson, setSettingsJson] = useState("");
   const [keybindingsJson, setKeybindingsJson] = useState("");
   const [snippets, setSnippets] = useState<Snippet[]>([]);
@@ -117,7 +120,7 @@ export function EditorSettingsSection({
 
   // Query existing settings
   const { data: existingSettings, refetch } = useQuery(
-    convexQuery(api.userEditorSettings.get, { teamSlugOrId })
+    getApiEditorSettingsOptions({ query: { teamSlugOrId } })
   );
 
   // Initialize form values when data loads
@@ -167,12 +170,14 @@ export function EditorSettingsSection({
   // Save mutation
   const saveMutation = useMutation({
     mutationFn: async () => {
-      await convex.mutation(api.userEditorSettings.upsert, {
-        teamSlugOrId,
-        settingsJson: settingsJson || undefined,
-        keybindingsJson: keybindingsJson || undefined,
-        snippets: snippets.length > 0 ? snippets : undefined,
-        extensions: extensions || undefined,
+      await postApiEditorSettings({
+        body: {
+          teamSlugOrId,
+          settingsJson: settingsJson || undefined,
+          keybindingsJson: keybindingsJson || undefined,
+          snippets: snippets.length > 0 ? snippets : undefined,
+          extensions: extensions || undefined,
+        },
       });
     },
     onSuccess: () => {
@@ -194,8 +199,8 @@ export function EditorSettingsSection({
   // Clear mutation
   const clearMutation = useMutation({
     mutationFn: async () => {
-      await convex.mutation(api.userEditorSettings.clear, {
-        teamSlugOrId,
+      await deleteApiEditorSettings({
+        query: { teamSlugOrId },
       });
     },
     onSuccess: () => {

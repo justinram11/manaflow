@@ -1,4 +1,3 @@
-import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { useClipboard } from "@mantine/hooks";
 import {
@@ -10,11 +9,14 @@ import {
 } from "@tanstack/react-router";
 import clsx from "clsx";
 import { Suspense, useEffect } from "react";
-import { convexQueryClient } from "@/contexts/convex/convex-query-client";
-import { convexQuery } from "@convex-dev/react-query";
+import { queryClient } from "@/query-client";
+import {
+  getApiTasksByIdOptions,
+  getApiTaskRunsOptions,
+} from "@cmux/www-openapi-client/react-query";
 import { useQuery as useRQ } from "@tanstack/react-query";
-import { useQuery } from "convex/react";
 import { useSetTaskReadState } from "@/hooks/useMarkTaskAsRead";
+import type { TaskRunWithChildren } from "@/types/task";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId")({
   component: TaskDetailPage,
@@ -23,49 +25,43 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId")({
     taskId: typedZid("tasks").parse(params.taskId),
   }),
   loader: async (opts) => {
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.taskRuns.getByTask,
-      args: {
-        teamSlugOrId: opts.params.teamSlugOrId,
-        taskId: opts.params.taskId,
-      },
-    });
+    void queryClient.prefetchQuery(
+      getApiTaskRunsOptions({
+        query: {
+          taskId: opts.params.taskId,
+        },
+      })
+    );
 
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.tasks.getById,
-      args: { teamSlugOrId: opts.params.teamSlugOrId, id: opts.params.taskId },
-    });
+    void queryClient.prefetchQuery(
+      getApiTasksByIdOptions({
+        path: { id: opts.params.taskId },
+        query: { teamSlugOrId: opts.params.teamSlugOrId },
+      })
+    );
   },
 });
 
 const WITH_HEADER = false;
 const WITH_TABS = false;
 
-// type TaskRunWithChildren = DataModel["taskRuns"] & { children: TaskRunWithChildren[] };
-type GetByTaskResultItem = (typeof api.taskRuns.getByTask._returnType)[number];
-
 function TaskDetailPage() {
   const { taskId, teamSlugOrId } = Route.useParams();
-  // Use React Query-wrapped Convex queries to avoid real-time subscriptions
-  // that cause excessive re-renders cascading to all child components.
   const taskQuery = useRQ({
-    ...convexQuery(api.tasks.getById, { teamSlugOrId, id: taskId }),
+    ...getApiTasksByIdOptions({ path: { id: taskId }, query: { teamSlugOrId } }),
     enabled: Boolean(teamSlugOrId && taskId),
   });
   const task = taskQuery.data;
   const taskRunsQuery = useRQ({
-    ...convexQuery(api.taskRuns.getByTask, { teamSlugOrId, taskId }),
+    ...getApiTaskRunsOptions({ query: { taskId } }),
     enabled: Boolean(teamSlugOrId && taskId),
   });
-  const taskRuns = taskRunsQuery.data;
+  const taskRuns = (taskRunsQuery.data?.taskRuns ?? undefined) as unknown as TaskRunWithChildren[] | undefined;
   const clipboard = useClipboard({ timeout: 2000 });
   const setTaskReadState = useSetTaskReadState(teamSlugOrId);
 
-  // Real-time subscription to unread state for mark-as-read triggering
-  const hasUnread = useQuery(api.taskNotifications.hasUnreadForTask, {
-    teamSlugOrId,
-    taskId,
-  });
+  // Check for unread notifications via the task query data
+  const hasUnread = task && "hasUnread" in task ? (task as Record<string, unknown>).hasUnread : false;
 
   // Mark as read when viewing AND focused, triggers when unread state changes
   useEffect(() => {
@@ -99,13 +95,13 @@ function TaskDetailPage() {
 
   // Flatten the task runs tree structure for tab display
   const flattenRuns = (
-    runs: GetByTaskResultItem[]
-  ): Array<GetByTaskResultItem & { depth: number }> => {
-    const result: Array<GetByTaskResultItem & { depth: number }> = [];
-    const traverse = (run: GetByTaskResultItem, depth: number = 0) => {
+    runs: TaskRunWithChildren[]
+  ): Array<TaskRunWithChildren & { depth: number }> => {
+    const result: Array<TaskRunWithChildren & { depth: number }> = [];
+    const traverse = (run: TaskRunWithChildren, depth: number = 0) => {
       result.push({ ...run, depth });
       if (run.children) {
-        run.children.forEach((child: GetByTaskResultItem) =>
+        run.children.forEach((child: TaskRunWithChildren) =>
           traverse(child, depth + 1)
         );
       }
@@ -142,14 +138,16 @@ function TaskDetailPage() {
           runIndex = keyNum - 1;
         }
 
-        if (flatRuns[runIndex]) {
+        const targetRun = flatRuns[runIndex];
+        const runId = targetRun?.id;
+        if (targetRun && runId) {
           navigate({
             to: "/$teamSlugOrId/task/$taskId/run/$runId",
             params: {
               teamSlugOrId,
               taskId,
-              runId: flatRuns[runIndex]._id,
-              taskRunId: flatRuns[runIndex]._id,
+              runId,
+              taskRunId: runId,
             },
           });
         }
@@ -221,39 +219,41 @@ function TaskDetailPage() {
       {WITH_TABS && flatRuns.length > 0 && (
         <div className="border-b border-neutral-200 dark:border-neutral-700">
           <div className="flex overflow-x-auto">
-            {flatRuns.map((run, index) => (
-              <Link
-                key={run._id}
-                to="/$teamSlugOrId/task/$taskId/run/$runId"
-                params={{
-                  teamSlugOrId,
-                  taskId,
-                  runId: run._id,
-                  taskRunId: run._id,
-                }}
-                className={clsx(
-                  "px-4 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors select-none",
-                  activeRunId === run._id
-                    ? "text-blue-600 dark:text-blue-400 border-blue-600 dark:border-blue-400"
-                    : "text-neutral-600 dark:text-neutral-400 border-transparent hover:text-neutral-900 dark:hover:text-neutral-100"
-                )}
-                // No onClick needed; active class controlled by URL
-              >
-                <span style={{ paddingLeft: `${run.depth * 12}px` }}>
-                  {(() => {
-                    const name = run.agentName?.trim();
-                    if (name && name.length > 0) return name;
-                    const summary = run.summary?.trim();
-                    if (summary && summary.length > 0) return summary;
-                    return `Run ${index + 1}`;
-                  })()}
-                  {run.status === "running" && " 🟢"}
-                  {run.status === "completed" && " ✅"}
-                  {run.status === "failed" && " ❌"}
-                  {run.isCrowned && " 🏆"}
-                </span>
-              </Link>
-            ))}
+            {flatRuns.map((run, index) => {
+              const runId = run.id ?? "";
+              return (
+                <Link
+                  key={runId}
+                  to="/$teamSlugOrId/task/$taskId/run/$runId"
+                  params={{
+                    teamSlugOrId,
+                    taskId,
+                    runId,
+                    taskRunId: runId,
+                  }}
+                  className={clsx(
+                    "px-4 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors select-none",
+                    activeRunId === runId
+                      ? "text-blue-600 dark:text-blue-400 border-blue-600 dark:border-blue-400"
+                      : "text-neutral-600 dark:text-neutral-400 border-transparent hover:text-neutral-900 dark:hover:text-neutral-100"
+                  )}
+                >
+                  <span style={{ paddingLeft: `${run.depth * 12}px` }}>
+                    {(() => {
+                      const name = run.agentName?.trim();
+                      if (name && name.length > 0) return name;
+                      const summary = run.summary?.trim();
+                      if (summary && summary.length > 0) return summary;
+                      return `Run ${index + 1}`;
+                    })()}
+                    {run.status === "running" && " 🟢"}
+                    {run.status === "completed" && " ✅"}
+                    {run.status === "failed" && " ❌"}
+                    {run.isCrowned && " 🏆"}
+                  </span>
+                </Link>
+              );
+            })}
           </div>
         </div>
       )}

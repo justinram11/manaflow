@@ -14,7 +14,7 @@ import clsx from "clsx";
 import type { PanelType } from "@/lib/panel-config";
 import { PANEL_LABELS } from "@/lib/panel-config";
 import type { PersistentIframeStatus } from "@/components/persistent-iframe";
-import type { Doc, Id } from "@cmux/convex/dataModel";
+import type { DbTask } from "@cmux/www-openapi-client";
 import type { TaskRunWithChildren } from "@/types/task";
 import type { TaskRunChatPaneProps } from "./TaskRunChatPane";
 import type { PersistentWebViewProps } from "./persistent-webview";
@@ -142,11 +142,11 @@ interface PanelFactoryProps {
   isExpanded?: boolean;
   isAnyPanelExpanded?: boolean;
   // Chat panel props
-  task?: Doc<"tasks"> | null;
+  task?: DbTask | null;
   taskRuns?: TaskRunWithChildren[] | null;
   crownEvaluation?: {
     evaluatedAt?: number;
-    winnerRunId?: Id<"taskRuns">;
+    winnerRunId?: string;
     reason?: string;
   } | null;
   // Workspace panel props
@@ -190,7 +190,7 @@ interface PanelFactoryProps {
   TASK_RUN_IFRAME_SANDBOX?: string;
   // Git diff panel props
   teamSlugOrId?: string;
-  taskId?: Id<"tasks">;
+  taskId?: string;
 }
 
 const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
@@ -451,7 +451,7 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
         >
           {renderDropOverlay()}
           <TaskRunChatPane
-            key={task?._id}
+            key={task?.id}
             task={task}
             taskRuns={taskRuns}
             crownEvaluation={crownEvaluation}
@@ -634,12 +634,12 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
         PANEL_LABELS.gitDiff,
         <div className="relative flex-1 min-h-0 overflow-auto">
           <TaskRunGitDiffPanel
-            key={selectedRun?._id}
+            key={selectedRun?.id}
             task={task}
             selectedRun={selectedRun}
             teamSlugOrId={teamSlugOrId}
             taskId={taskId}
-            selectedRunId={selectedRun?._id}
+            selectedRunId={selectedRun?.id}
           />
         </div>
       );
@@ -671,7 +671,7 @@ export const RenderPanel = React.memo(RenderPanelComponent, (prevProps, nextProp
       prevProps.browserUrl !== nextProps.browserUrl ||
       prevProps.browserPlaceholder?.title !== nextProps.browserPlaceholder?.title ||
       prevProps.browserPlaceholder?.description !== nextProps.browserPlaceholder?.description ||
-      prevProps.selectedRun?._id !== nextProps.selectedRun?._id) {
+      prevProps.selectedRun?.id !== nextProps.selectedRun?.id) {
       return false;
     }
   }
@@ -685,7 +685,7 @@ export const RenderPanel = React.memo(RenderPanelComponent, (prevProps, nextProp
 
   // For chat panel, check task and run changes
   if (prevProps.type === "chat") {
-    if (prevProps.task?._id !== nextProps.task?._id ||
+    if (prevProps.task?.id !== nextProps.task?.id ||
       prevProps.taskRuns !== nextProps.taskRuns ||
       prevProps.crownEvaluation !== nextProps.crownEvaluation) {
       return false;
@@ -694,8 +694,8 @@ export const RenderPanel = React.memo(RenderPanelComponent, (prevProps, nextProp
 
   // For gitDiff panel, check task and selectedRun changes
   if (prevProps.type === "gitDiff") {
-    if (prevProps.task?._id !== nextProps.task?._id ||
-      prevProps.selectedRun?._id !== nextProps.selectedRun?._id ||
+    if (prevProps.task?.id !== nextProps.task?.id ||
+      prevProps.selectedRun?.id !== nextProps.selectedRun?.id ||
       prevProps.teamSlugOrId !== nextProps.teamSlugOrId ||
       prevProps.taskId !== nextProps.taskId) {
       return false;

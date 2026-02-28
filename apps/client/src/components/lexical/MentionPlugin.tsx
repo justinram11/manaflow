@@ -1,4 +1,3 @@
-import type { Id } from "@cmux/convex/dataModel";
 import type { FileInfo } from "@cmux/shared";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import clsx from "clsx";
@@ -159,7 +158,7 @@ function MentionMenu({
 interface MentionPluginProps {
   repoUrl?: string;
   branch?: string;
-  environmentId?: Id<"environments">;
+  environmentId?: string;
 }
 
 export function MentionPlugin({

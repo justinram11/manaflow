@@ -2,8 +2,6 @@ import { client as wwwOpenAPIClient } from "@cmux/www-openapi-client/client.gen"
 import { StackClientApp } from "@stackframe/react";
 import { useNavigate as useTanstackNavigate } from "@tanstack/react-router";
 import { env } from "../client-env";
-import { signalConvexAuthReady } from "../contexts/convex/convex-auth-ready";
-import { convexQueryClient } from "../contexts/convex/convex-query-client";
 import { cachedGetUser } from "./cachedGetUser";
 import { WWW_ORIGIN } from "./wwwOrigin";
 
@@ -22,20 +20,6 @@ export const stackClientApp = new StackClientApp({
     },
   },
 });
-
-if (isLocalAuth) {
-  // In local mode, Convex cloud can't validate JWTs (can't reach localhost JWKS).
-  // Signal ready immediately — Convex uses the local identity fallback.
-  // JWT auth is handled by the www API and socket server directly.
-  signalConvexAuthReady(true);
-} else {
-  convexQueryClient.convexClient.setAuth(
-    stackClientApp.getConvexClientAuth({ tokenStore: "cookie" }),
-    (isAuthenticated) => {
-      signalConvexAuthReady(isAuthenticated);
-    },
-  );
-}
 
 /**
  * Checks if a response indicates an expired/invalid auth token.

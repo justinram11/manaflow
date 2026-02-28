@@ -1,9 +1,9 @@
-import { api } from "@cmux/convex/api";
-import { type Doc, type Id } from "@cmux/convex/dataModel";
-import type { RunEnvironmentSummary } from "@/types/task";
+import type { DbTask } from "@cmux/www-openapi-client";
+import type { TaskRunWithChildren as TaskRunWithChildrenType } from "@/types/task";
 import { useUser } from "@stackframe/react";
 import { Link, useParams } from "@tanstack/react-router";
-import { useQuery } from "convex/react";
+import { useQuery } from "@tanstack/react-query";
+import { getApiTaskCommentsOptions } from "@cmux/www-openapi-client/react-query";
 import { formatDistanceToNow } from "date-fns";
 import {
   AlertCircle,
@@ -30,7 +30,7 @@ interface TimelineEvent {
     | "run_skipped"
     | "crown_evaluation";
   timestamp: number;
-  runId?: Id<"taskRuns">;
+  runId?: string;
   agentName?: string;
   status?: TaskRunStatus;
   exitCode?: number;
@@ -40,17 +40,14 @@ interface TimelineEvent {
   userId?: string;
 }
 
-type TaskRunWithChildren = Doc<"taskRuns"> & {
-  children?: TaskRunWithChildren[];
-  environment?: RunEnvironmentSummary | null;
-};
+type TaskRunWithChildren = TaskRunWithChildrenType;
 
 interface TaskTimelineProps {
-  task?: Doc<"tasks"> | null;
+  task?: DbTask | null;
   taskRuns: TaskRunWithChildren[] | null;
   crownEvaluation?: {
     evaluatedAt?: number;
-    winnerRunId?: Id<"taskRuns">;
+    winnerRunId?: string;
     reason?: string;
   } | null;
 }
@@ -62,10 +59,12 @@ export function TaskTimeline({
 }: TaskTimelineProps) {
   const user = useUser({ or: "return-null" });
   const params = useParams({ from: "/_layout/$teamSlugOrId/task/$taskId" });
-  const taskComments = useQuery(api.taskComments.listByTask, {
-    teamSlugOrId: params.teamSlugOrId,
-    taskId: params.taskId as Id<"tasks">,
-  });
+  const { data: taskCommentsData } = useQuery(
+    getApiTaskCommentsOptions({
+      query: { taskId: params.taskId },
+    })
+  );
+  const taskComments = taskCommentsData?.comments ?? null;
 
   const events = useMemo(() => {
     const timelineEvents: TimelineEvent[] = [];
@@ -83,8 +82,8 @@ export function TaskTimeline({
     if (!taskRuns) return timelineEvents;
 
     // Flatten the tree structure to get all runs
-    const flattenRuns = (runs: TaskRunWithChildren[]): Doc<"taskRuns">[] => {
-      const result: Doc<"taskRuns">[] = [];
+    const flattenRuns = (runs: TaskRunWithChildren[]): TaskRunWithChildren[] => {
+      const result: TaskRunWithChildren[] = [];
       runs.forEach((run) => {
         result.push(run);
         if (run.children?.length) {
@@ -100,10 +99,10 @@ export function TaskTimeline({
     allRuns.forEach((run) => {
       // Run started event
       timelineEvents.push({
-        id: `${run._id}-start`,
+        id: `${run.id}-start`,
         type: "run_started",
         timestamp: run.createdAt,
-        runId: run._id,
+        runId: run.id,
         agentName: run.agentName,
         status: run.status,
       });
@@ -118,10 +117,10 @@ export function TaskTimeline({
               : "run_completed";
 
         timelineEvents.push({
-          id: `${run._id}-end`,
+          id: `${run.id}-end`,
           type: endEventType,
           timestamp: run.completedAt,
-          runId: run._id,
+          runId: run.id,
           agentName: run.agentName,
           status: run.status,
           exitCode: run.exitCode,
@@ -484,7 +483,7 @@ export function TaskTimeline({
           }
           authorImageUrl={user?.profileImageUrl || ""}
           authorAlt={user?.primaryEmail || "User"}
-          timestamp={task.createdAt}
+          timestamp={task.createdAt ?? undefined}
           content={task.text}
         />
       )}
@@ -507,7 +506,7 @@ export function TaskTimeline({
         <div className="space-y-2 pt-2">
           {taskComments.map((c) => (
             <TaskMessage
-              key={c._id}
+              key={c.id}
               authorName={
                 c.userId === "cmux"
                   ? "cmux"

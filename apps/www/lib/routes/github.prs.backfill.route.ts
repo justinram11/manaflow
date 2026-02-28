@@ -1,10 +1,11 @@
-import { getAccessTokenFromRequest } from "@/lib/utils/auth";
+import { getUserFromRequest } from "@/lib/utils/auth";
 import { env } from "@/lib/utils/www-env";
-import { api } from "@cmux/convex/api";
+import { getDb } from "@cmux/db";
+import { listProviderConnections } from "@cmux/db/queries/repos";
+import { upsertPullRequest } from "@cmux/db/mutations/github-prs";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { createAppAuth } from "@octokit/auth-app";
 import { Octokit } from "octokit";
-import { getConvex } from "../utils/get-convex";
 import { githubPrivateKey } from "../utils/githubPrivateKey";
 
 export const githubPrsBackfillRouter = new OpenAPIHono();
@@ -24,7 +25,7 @@ githubPrsBackfillRouter.openapi(
     method: "post" as const,
     path: "/integrations/github/prs/backfill",
     tags: ["Integrations"],
-    summary: "Backfill a single PR by URL and persist to Convex",
+    summary: "Backfill a single PR by URL and persist to DB",
     request: {
       body: {
         content: {
@@ -44,8 +45,8 @@ githubPrsBackfillRouter.openapi(
     },
   }),
   async (c) => {
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) return c.text("Unauthorized", 401);
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) return c.text("Unauthorized", 401);
     const { team, url } = c.req.valid("json");
 
     const m = url.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/i);
@@ -54,17 +55,10 @@ githubPrsBackfillRouter.openapi(
     const repo = m[2];
     const number = Number(m[3]);
 
-    const convex = getConvex({ accessToken });
-    const connections = await convex.query(api.github.listProviderConnections, {
-      teamSlugOrId: team,
-    });
-    type Conn = {
-      installationId: number;
-      accountLogin?: string | null;
-      isActive?: boolean | null;
-    };
-    const target = (connections as Conn[]).find(
-      (co: Conn) => co.isActive !== false && (co.accountLogin ?? "").toLowerCase() === owner.toLowerCase()
+    const db = getDb();
+    const connections = listProviderConnections(db, team);
+    const target = connections.find(
+      (co) => (co.isActive ?? true) !== false && (co.accountLogin ?? "").toLowerCase() === owner.toLowerCase()
     );
     if (!target) return c.text("Installation not found for owner", 404);
 
@@ -106,7 +100,7 @@ githubPrsBackfillRouter.openapi(
     };
 
     const ts = (s?: string | null) => (s ? Date.parse(s) : undefined);
-    await convex.mutation(api.github_prs.upsertFromServer, {
+    upsertPullRequest(db, {
       teamSlugOrId: team,
       installationId: target.installationId,
       repoFullName: `${owner}/${repo}`,

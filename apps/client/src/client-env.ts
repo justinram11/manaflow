@@ -9,7 +9,8 @@ export const env = createEnv({
    */
   clientPrefix: "NEXT_PUBLIC_",
   client: {
-    NEXT_PUBLIC_CONVEX_URL: z.string().min(1),
+    // Legacy: kept optional for backward compatibility
+    NEXT_PUBLIC_CONVEX_URL: z.string().min(1).optional(),
     NEXT_PUBLIC_STACK_PROJECT_ID: z.string().min(1).optional(),
     NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY: z.string().min(1).optional(),
     NEXT_PUBLIC_GITHUB_APP_SLUG: z.string().optional(),

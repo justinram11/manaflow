@@ -1,7 +1,7 @@
-import { api } from "@cmux/convex/api";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { spawnAgent } from "../agentSpawner.ts";
-import { getConvex } from "../utils/convexClient.ts";
+import { getDb } from "../utils/dbClient.ts";
+import { createTask } from "@cmux/db/mutations/tasks";
 
 const agentConfig = AGENT_CONFIGS.find(
   (agent) => agent.name === "codex/gpt-5.1-codex-high"
@@ -13,8 +13,10 @@ if (!agentConfig) {
 
 console.log("Running with agent config:", agentConfig);
 
-const { taskId } = await getConvex().mutation(api.tasks.create, {
+const db = getDb();
+const { taskId } = createTask(db, {
   teamSlugOrId: "default",
+  userId: "test-user",
   projectFullName: "manaflow-ai/manaflow",
   text: "whats the time rn?",
 });
