@@ -38,9 +38,11 @@ export default tseslint.config(
     // Generated files
     'packages/morphcloud-openapi-client/src/client/**',
     'packages/www-openapi-client/src/client/**',
+    'packages/compute-provider-client/src/client/**',
     'packages/convex/convex/_generated/**',
     // Directories not previously linted (maintain backward compatibility)
     // TODO: Enable linting for these directories and fix errors
+    'apps/compute-provider/**',
     'apps/server/**',
     'apps/worker/**',
     'apps/preview-proxy/**',

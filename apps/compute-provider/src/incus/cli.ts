@@ -1,10 +1,12 @@
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 
 /**
  * Low-level CLI wrapper for Incus system containers (LXC).
  *
  * All operations are performed by shelling out to the `incus` CLI tool
- * using child_process.execFile for safety (no shell injection).
+ * using child_process.spawn for safety (no shell injection).
+ *
+ * Moved from apps/www/lib/routes/sandboxes/incus-api.ts
  */
 
 export interface IncusExecResult {
@@ -39,37 +41,75 @@ interface IncusContainerState {
 /**
  * Run an incus CLI command and return the result.
  */
-function incusCommand(args: string[]): Promise<IncusExecResult> {
-  return new Promise((resolve, _reject) => {
-    execFile(
-      "incus",
-      args,
-      { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 },
-      (error, stdout, stderr) => {
-        if (error) {
-          // Still resolve with exit code so callers can handle gracefully
-          const code =
-            error.code !== undefined && typeof error.code === "number"
-              ? error.code
-              : 1;
-          resolve({ exitCode: code, stdout, stderr });
-          return;
+function incusCommand(
+  args: string[],
+  options?: { timeout?: number },
+): Promise<IncusExecResult> {
+  const timeout = options?.timeout ?? 120_000;
+  console.log(`[incus-cli] exec: incus ${args.join(" ")}`);
+  return new Promise((resolve) => {
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    let settled = false;
+
+    const proc = spawn("incus", args, {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    proc.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+    proc.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        proc.kill("SIGKILL");
+        const stdout = Buffer.concat(stdoutChunks).toString();
+        const stderr = Buffer.concat(stderrChunks).toString();
+        console.error(
+          `[incus-cli] command timed out after ${timeout}ms: incus ${args.join(" ")}`,
+          stderr,
+        );
+        resolve({
+          exitCode: 1,
+          stdout,
+          stderr: stderr || `Command timed out after ${timeout}ms`,
+        });
+      }
+    }, timeout);
+
+    proc.on("close", (code) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        const stdout = Buffer.concat(stdoutChunks).toString();
+        const stderr = Buffer.concat(stderrChunks).toString();
+        const exitCode = code ?? 1;
+        if (exitCode !== 0) {
+          console.error(
+            `[incus-cli] command failed (exit=${exitCode}): incus ${args.join(" ")}`,
+            stderr,
+          );
         }
-        resolve({ exitCode: 0, stdout, stderr });
-      },
-    );
+        resolve({ exitCode, stdout, stderr });
+      }
+    });
+
+    proc.on("error", (err) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        console.error(
+          `[incus-cli] spawn error: incus ${args.join(" ")}`,
+          err.message,
+        );
+        resolve({ exitCode: 1, stdout: "", stderr: err.message });
+      }
+    });
   });
 }
 
 /**
  * Launch a new Incus container with security.nesting enabled for DinD support.
- *
- * Runs:
- *   incus launch <image> <name> \
- *     -c security.nesting=true \
- *     -c security.syscalls.intercept.mknod=true \
- *     -c security.syscalls.intercept.setxattr=true \
- *     [-c key=value ...]
  */
 export async function incusLaunch(
   image: string,
@@ -94,14 +134,15 @@ export async function incusLaunch(
     }
   }
 
-  const result = await incusCommand(args);
+  // First launch may need to unpack a large image; allow up to 5 minutes
+  const result = await incusCommand(args, { timeout: 300_000 });
   if (result.exitCode !== 0) {
     throw new Error(
       `Failed to launch Incus container ${name}: ${result.stderr}`,
     );
   }
 
-  console.log(`[incus-api] Launched container ${name} from image ${image}`);
+  console.log(`[incus-cli] Launched container ${name} from image ${image}`);
 }
 
 /**
@@ -118,9 +159,6 @@ export async function incusContainerExec(
 
 /**
  * Get container info (IP address and status) by parsing `incus list --format json`.
- *
- * The IPv4 address is extracted from state.network.eth0.addresses
- * where family === "inet".
  */
 export async function incusContainerInfo(
   container: string,
@@ -128,7 +166,7 @@ export async function incusContainerInfo(
   const result = await incusCommand(["list", container, "--format", "json"]);
   if (result.exitCode !== 0) {
     console.error(
-      `[incus-api] Failed to get container info for ${container}: ${result.stderr}`,
+      `[incus-cli] Failed to get container info for ${container}: ${result.stderr}`,
     );
     return null;
   }
@@ -138,7 +176,7 @@ export async function incusContainerInfo(
     containers = JSON.parse(result.stdout) as IncusContainerState[];
   } catch (parseError) {
     console.error(
-      `[incus-api] Failed to parse incus list output:`,
+      `[incus-cli] Failed to parse incus list output:`,
       parseError,
     );
     return null;
@@ -160,9 +198,6 @@ export async function incusContainerInfo(
 
 /**
  * Wait for a container to obtain an IPv4 address by polling incus list.
- *
- * Polls every 500ms until the container reports an inet address on eth0,
- * or until the timeout expires.
  */
 export async function waitForContainerIp(
   container: string,
@@ -175,7 +210,7 @@ export async function waitForContainerIp(
     const info = await incusContainerInfo(container);
     if (info && info.ip) {
       console.log(
-        `[incus-api] Container ${container} got IP: ${info.ip}`,
+        `[incus-cli] Container ${container} got IP: ${info.ip}`,
       );
       return info.ip;
     }
@@ -190,7 +225,8 @@ export async function waitForContainerIp(
 /**
  * Create a snapshot of a container.
  *
- * Runs: incus snapshot create <container> <snapshotName> --stateful
+ * Uses stateless snapshots (filesystem only) because stateful (CRIU) snapshots
+ * fail with security.nesting=true due to nested UTS namespaces from DinD.
  */
 export async function incusSnapshotCreate(
   container: string,
@@ -201,7 +237,6 @@ export async function incusSnapshotCreate(
     "create",
     container,
     snapshotName,
-    "--stateful",
   ]);
   if (result.exitCode !== 0) {
     throw new Error(
@@ -209,16 +244,12 @@ export async function incusSnapshotCreate(
     );
   }
   console.log(
-    `[incus-api] Created snapshot ${container}/${snapshotName}`,
+    `[incus-cli] Created snapshot ${container}/${snapshotName}`,
   );
 }
 
 /**
  * Restore a container from a snapshot by copying it to a new container name.
- *
- * Runs:
- *   incus copy <source>/<snapshotName> <newContainer>
- *   incus start <newContainer>
  */
 export async function incusSnapshotCopy(
   source: string,
@@ -236,6 +267,33 @@ export async function incusSnapshotCopy(
     );
   }
 
+  // Remove proxy devices inherited from the snapshot — they have stale port
+  // bindings that will fail on start. Fresh devices are added by the provider.
+  const proxyDeviceNames = [
+    "cmux-exec",
+    "cmux-worker",
+    "cmux-vscode",
+    "cmux-proxy",
+    "cmux-vnc",
+    "cmux-devtools",
+    "cmux-pty",
+    "cmux-androidVnc",
+  ];
+  for (const deviceName of proxyDeviceNames) {
+    const removeResult = await incusCommand([
+      "config",
+      "device",
+      "remove",
+      newContainer,
+      deviceName,
+    ]);
+    if (removeResult.exitCode === 0) {
+      console.log(
+        `[incus-cli] Removed stale proxy device ${deviceName} from ${newContainer}`,
+      );
+    }
+  }
+
   const startResult = await incusCommand(["start", newContainer]);
   if (startResult.exitCode !== 0) {
     // Attempt cleanup of the copied container
@@ -246,14 +304,12 @@ export async function incusSnapshotCopy(
   }
 
   console.log(
-    `[incus-api] Restored snapshot ${source}/${snapshotName} as ${newContainer}`,
+    `[incus-cli] Restored snapshot ${source}/${snapshotName} as ${newContainer}`,
   );
 }
 
 /**
  * Delete a snapshot from a container.
- *
- * Runs: incus snapshot delete <container> <snapshotName>
  */
 export async function incusSnapshotDelete(
   container: string,
@@ -271,14 +327,12 @@ export async function incusSnapshotDelete(
     );
   }
   console.log(
-    `[incus-api] Deleted snapshot ${container}/${snapshotName}`,
+    `[incus-cli] Deleted snapshot ${container}/${snapshotName}`,
   );
 }
 
 /**
  * Pause (freeze) a running container.
- *
- * Runs: incus pause <container>
  */
 export async function incusPause(container: string): Promise<void> {
   const result = await incusCommand(["pause", container]);
@@ -287,14 +341,11 @@ export async function incusPause(container: string): Promise<void> {
       `Failed to pause container ${container}: ${result.stderr}`,
     );
   }
-  console.log(`[incus-api] Paused container ${container}`);
+  console.log(`[incus-cli] Paused container ${container}`);
 }
 
 /**
  * Resume a frozen container.
- *
- * Runs: incus start <container>
- * (Incus uses `start` to resume a frozen/paused container.)
  */
 export async function incusResume(container: string): Promise<void> {
   const result = await incusCommand(["start", container]);
@@ -303,13 +354,11 @@ export async function incusResume(container: string): Promise<void> {
       `Failed to resume container ${container}: ${result.stderr}`,
     );
   }
-  console.log(`[incus-api] Resumed container ${container}`);
+  console.log(`[incus-cli] Resumed container ${container}`);
 }
 
 /**
  * Stop a running container gracefully.
- *
- * Runs: incus stop <container>
  */
 export async function incusStop(container: string): Promise<void> {
   const result = await incusCommand(["stop", container]);
@@ -318,13 +367,11 @@ export async function incusStop(container: string): Promise<void> {
       `Failed to stop container ${container}: ${result.stderr}`,
     );
   }
-  console.log(`[incus-api] Stopped container ${container}`);
+  console.log(`[incus-cli] Stopped container ${container}`);
 }
 
 /**
  * Force-delete a container (running or stopped).
- *
- * Runs: incus delete <container> --force
  */
 export async function incusDelete(container: string): Promise<void> {
   const result = await incusCommand(["delete", container, "--force"]);
@@ -333,12 +380,91 @@ export async function incusDelete(container: string): Promise<void> {
       `Failed to delete container ${container}: ${result.stderr}`,
     );
   }
-  console.log(`[incus-api] Deleted container ${container}`);
+  console.log(`[incus-cli] Deleted container ${container}`);
+}
+
+/**
+ * Add a generic device to a container.
+ */
+export async function incusAddDevice(
+  container: string,
+  deviceName: string,
+  deviceType: string,
+  properties: Record<string, string>,
+): Promise<void> {
+  const args = [
+    "config",
+    "device",
+    "add",
+    container,
+    deviceName,
+    deviceType,
+    ...Object.entries(properties).map(([k, v]) => `${k}=${v}`),
+  ];
+  const result = await incusCommand(args);
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Failed to add ${deviceType} device ${deviceName} to ${container}: ${result.stderr}`,
+    );
+  }
+}
+
+/**
+ * Add a proxy device to forward a host port to a container port.
+ */
+export async function incusAddProxyDevice(
+  container: string,
+  deviceName: string,
+  hostPort: number,
+  containerPort: number,
+): Promise<void> {
+  const result = await incusCommand([
+    "config",
+    "device",
+    "add",
+    container,
+    deviceName,
+    "proxy",
+    `listen=tcp:0.0.0.0:${hostPort}`,
+    `connect=tcp:127.0.0.1:${containerPort}`,
+  ]);
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Failed to add proxy device ${deviceName} to ${container}: ${result.stderr}`,
+    );
+  }
+}
+
+/**
+ * Get the IPv4 gateway address and prefix length for the default Incus bridge network.
+ */
+export async function incusGetBridgeNetwork(
+  bridgeName = "incusbr0",
+): Promise<{ gateway: string; prefix: number }> {
+  const result = await incusCommand([
+    "network",
+    "get",
+    bridgeName,
+    "ipv4.address",
+  ]);
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Failed to get bridge network info for ${bridgeName}: ${result.stderr}`,
+    );
+  }
+  // Output is like "10.61.176.1/24"
+  const cidr = result.stdout.trim();
+  const [gateway, prefixStr] = cidr.split("/");
+  if (!gateway || !prefixStr) {
+    throw new Error(
+      `Unexpected bridge network format: "${cidr}" (expected CIDR like "10.x.x.1/24")`,
+    );
+  }
+  return { gateway, prefix: parseInt(prefixStr, 10) };
 }
 
 /**
  * List all Incus containers matching a name prefix.
- * Returns parsed container state objects.
  */
 export async function incusListContainers(
   namePrefix: string,
@@ -346,7 +472,7 @@ export async function incusListContainers(
   const result = await incusCommand(["list", "--format", "json"]);
   if (result.exitCode !== 0) {
     console.error(
-      `[incus-api] Failed to list containers: ${result.stderr}`,
+      `[incus-cli] Failed to list containers: ${result.stderr}`,
     );
     return [];
   }
@@ -356,7 +482,7 @@ export async function incusListContainers(
     containers = JSON.parse(result.stdout) as IncusContainerState[];
   } catch (parseError) {
     console.error(
-      `[incus-api] Failed to parse incus list output:`,
+      `[incus-cli] Failed to parse incus list output:`,
       parseError,
     );
     return [];

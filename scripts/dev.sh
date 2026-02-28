@@ -392,7 +392,7 @@ cleanup() {
 
     echo -e "\n${BLUE}Shutting down...${NC}"
 
-    for pid in "$DOCKER_BUILD_PID" "$DOCKER_COMPOSE_PID" "$CONVEX_DEV_PID" "$SERVER_PID" "$CLIENT_PID" "$WWW_PID" "$OPENAPI_CLIENT_PID" "$ELECTRON_PID" "$SERVER_GLOBAL_PID"; do
+    for pid in "$DOCKER_BUILD_PID" "$DOCKER_COMPOSE_PID" "$CONVEX_DEV_PID" "$SERVER_PID" "$CLIENT_PID" "$WWW_PID" "$COMPUTE_PROVIDER_PID" "$OPENAPI_CLIENT_PID" "$ELECTRON_PID" "$SERVER_GLOBAL_PID"; do
         kill_process_group "$pid" TERM
     done
 
@@ -403,7 +403,7 @@ cleanup() {
     # Give processes 2 seconds to cleanup gracefully
     sleep 2
 
-    for pid in "$DOCKER_BUILD_PID" "$DOCKER_COMPOSE_PID" "$CONVEX_DEV_PID" "$SERVER_PID" "$CLIENT_PID" "$WWW_PID" "$OPENAPI_CLIENT_PID" "$ELECTRON_PID" "$SERVER_GLOBAL_PID"; do
+    for pid in "$DOCKER_BUILD_PID" "$DOCKER_COMPOSE_PID" "$CONVEX_DEV_PID" "$SERVER_PID" "$CLIENT_PID" "$WWW_PID" "$COMPUTE_PROVIDER_PID" "$OPENAPI_CLIENT_PID" "$ELECTRON_PID" "$SERVER_GLOBAL_PID"; do
         kill_process_group "$pid" 9
     done
 
@@ -588,6 +588,14 @@ echo -e "${GREEN}Starting www app on port 9779...${NC}"
 (cd "$APP_DIR/apps/www" && exec bash -c 'trap "kill -9 0" EXIT; bun run dev 2>&1 | tee "$LOG_DIR/www.log" | prefix_output "WWW" "$GREEN"') &
 WWW_PID=$!
 check_process $WWW_PID "WWW App"
+
+# Start the compute provider (only when SANDBOX_PROVIDER=incus)
+if [ "${SANDBOX_PROVIDER:-}" = "incus" ]; then
+    echo -e "${GREEN}Starting compute provider on port 9780...${NC}"
+    (cd "$APP_DIR/apps/compute-provider" && exec bash -c 'trap "kill -9 0" EXIT; bun run dev 2>&1 | tee "$LOG_DIR/compute-provider.log" | prefix_output "COMPUTE" "$RED"') &
+    COMPUTE_PROVIDER_PID=$!
+    check_process $COMPUTE_PROVIDER_PID "Compute Provider"
+fi
 
 # Warm up www server in background (non-blocking)
 (bash -c '

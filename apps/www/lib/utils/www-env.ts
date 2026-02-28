@@ -20,6 +20,9 @@ export const env = createEnv({
     // Incus provider
     INCUS_IMAGE: z.string().optional(),
     INCUS_BASE_SNAPSHOT: z.string().optional(),
+    // Compute provider
+    COMPUTE_PROVIDER_URL: z.string().optional(),
+    COMPUTE_PROVIDER_API_KEY: z.string().optional(),
     // Morph
     MORPH_API_KEY: z.string().min(1).optional(),
     OPENAI_API_KEY: z.string().min(1).optional(),

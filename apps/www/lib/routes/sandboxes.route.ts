@@ -39,12 +39,16 @@ import {
   startIncusSandbox,
   listSnapshots as listIncusSnapshots,
   deleteSnapshot as deleteIncusSnapshot,
+  RemoteIncusSandboxInstance,
 } from "./sandboxes/incus-provider";
-import type { IncusSandboxInstance } from "./sandboxes/incus-sandbox-instance";
+import { getComputeProviderClient } from "@/lib/utils/compute-provider";
+import { injectClaudeCredentials } from "./sandboxes/claude-credentials";
 import { injectHostSshKeys } from "./sandboxes/ssh-keys";
 
-// Track running Incus containers for snapshot operations
-export const incusVmRegistry = new Map<string, IncusSandboxInstance>();
+// Track running Incus containers for snapshot operations.
+// State now also lives in compute-provider, but we keep a local map
+// for quick lookups without HTTP round-trips during the same session.
+export const incusVmRegistry = new Map<string, RemoteIncusSandboxInstance>();
 
 /**
  * Wait for the VSCode server to be ready by polling the service URL.
@@ -255,6 +259,7 @@ const StartSandboxBody = z
     branch: z.string().optional(),
     newBranch: z.string().optional(),
     depth: z.number().optional().default(1),
+    displays: z.array(z.enum(["android"])).optional(),
   })
   .openapi("StartSandboxBody");
 
@@ -338,6 +343,19 @@ sandboxesRouter.openapi(
       }
 
       return { githubAccessTokenError: null, githubAccessToken } as const;
+    })();
+
+    // Shared API keys promise — used for GITHUB_PAT fallback and Claude credentials
+    const apiKeysPromise = (async () => {
+      try {
+        const convex = getConvex({ accessToken });
+        return await convex.query(api.apiKeys.getAllForAgents, {
+          teamSlugOrId: c.req.valid("json").teamSlugOrId,
+        });
+      } catch (error) {
+        console.error(`[sandboxes.start] Failed to fetch API keys:`, error);
+        return {} as Record<string, string>;
+      }
     })();
 
     const body = c.req.valid("json");
@@ -424,6 +442,8 @@ sandboxesRouter.openapi(
           return fetchGitIdentityInputs(convex, githubAccessToken);
         },
       );
+      // Prevent unhandled rejection — actual error handling happens in consumers below
+      gitIdentityPromise.catch(() => {});
 
       // --- Resolve provider ---
       // If an environment is specified and it uses Incus, override the provider
@@ -506,8 +526,10 @@ sandboxesRouter.openapi(
           envVarsToApply += `\nCMUX_TASK_RUN_JWT="${body.taskRunJwt}"`;
         }
 
-        const { githubAccessToken } =
-          await githubAccessTokenPromise;
+        const [{ githubAccessToken }, userApiKeys] =
+          await Promise.all([githubAccessTokenPromise, apiKeysPromise]);
+
+        const effectiveGithubToken = githubAccessToken || userApiKeys.GITHUB_PAT || null;
 
         const dockerInstance = dockerResult.instance;
 
@@ -530,9 +552,9 @@ sandboxesRouter.openapi(
                 }
               })()
             : Promise.resolve(),
-          // Configure GitHub access (skip if no token — SSH keys are mounted instead)
-          githubAccessToken
-            ? configureGithubAccess(dockerInstance, githubAccessToken)
+          // Configure GitHub access (OAuth token or PAT fallback)
+          effectiveGithubToken
+            ? configureGithubAccess(dockerInstance, effectiveGithubToken)
             : Promise.resolve(),
           // Configure git identity
           gitIdentityPromise
@@ -627,19 +649,19 @@ sandboxesRouter.openapi(
           snapshotId: body.snapshotId ?? environmentIncusSnapshotId,
           ttlSeconds: body.ttlSeconds ?? 3600,
           metadata: body.metadata,
+          displays: body.displays,
         });
 
-        // Wait for VSCode server to be ready
-        const vscodeReady = await waitForVSCodeReady(incusResult.vscodeUrl, {
-          timeoutMs: 30_000,
-        });
-        if (!vscodeReady) {
-          console.warn(
-            `[sandboxes.start] Incus VSCode server did not become ready within timeout for ${incusResult.containerId}, proceeding anyway`,
-          );
-        }
+        // Register in container registry immediately for snapshot operations
+        const incusInstance = incusResult.instance;
+        incusVmRegistry.set(incusResult.containerId, incusInstance);
 
-        // Persist VSCode info to Convex
+        const incusContainerId = incusResult.containerId;
+        const incusVscodeUrl = incusResult.vscodeUrl;
+
+        // Persist VSCode info to Convex BEFORE returning response so the
+        // server (agentSpawner) sees vscodePersisted=true and skips its own
+        // persistence (which would lack port data).
         let vscodePersisted = false;
         if (body.taskRunId) {
           try {
@@ -648,10 +670,10 @@ sandboxesRouter.openapi(
               id: body.taskRunId as Id<"taskRuns">,
               vscode: {
                 provider: "incus",
-                containerName: incusResult.containerId,
+                containerName: incusContainerId,
                 status: "starting",
-                url: incusResult.vscodeUrl,
-                workspaceUrl: `${incusResult.vscodeUrl}/?folder=/root/workspace`,
+                url: incusVscodeUrl,
+                workspaceUrl: `${incusVscodeUrl}/?folder=/root/workspace`,
                 startedAt: Date.now(),
                 ports: {
                   vscode: incusResult.hostPorts[39378],
@@ -659,6 +681,9 @@ sandboxesRouter.openapi(
                   proxy: incusResult.hostPorts[39379],
                   vnc: incusResult.hostPorts[39380],
                   pty: incusResult.hostPorts[39383],
+                  ...(incusResult.hostPorts[39384]
+                    ? { androidVnc: incusResult.hostPorts[39384] }
+                    : {}),
                 },
               },
             });
@@ -671,134 +696,147 @@ sandboxesRouter.openapi(
           }
         }
 
-        // Apply env vars, git config, hydration — same as Docker path
-        const environmentEnvVarsContent = await environmentEnvVarsPromise;
-        let envVarsToApply =
-          environmentEnvVarsContent || workspaceConfig?.envVarsContent || "";
-        if (body.taskRunId) {
-          envVarsToApply += `\nCMUX_TASK_RUN_ID="${body.taskRunId}"`;
-        }
-        if (body.taskRunJwt) {
-          envVarsToApply += `\nCMUX_TASK_RUN_JWT="${body.taskRunJwt}"`;
-        }
-
-        const { githubAccessToken } = await githubAccessTokenPromise;
-
-        const incusInstance = incusResult.instance;
-
-        await Promise.all([
-          // Apply env vars
-          envVarsToApply.trim().length > 0
-            ? (async () => {
-                const encodedEnv = encodeEnvContentForEnvctl(envVarsToApply);
-                const loadRes = await incusInstance.exec(
-                  envctlLoadCommand(encodedEnv),
-                );
-                if (loadRes.exit_code === 0) {
-                  console.log(
-                    `[sandboxes.start] Applied environment variables via envctl (incus)`,
-                  );
-                } else {
-                  console.error(
-                    `[sandboxes.start] Incus env var bootstrap failed exit=${loadRes.exit_code}`,
-                  );
-                }
-              })()
-            : Promise.resolve(),
-          // Configure GitHub access (skip if no token)
-          githubAccessToken
-            ? configureGithubAccess(incusInstance, githubAccessToken)
-            : Promise.resolve(),
-          // Configure git identity
-          gitIdentityPromise
-            .then(([who, gh]) => {
-              const { name, email } = selectGitIdentity(who, gh);
-              return configureGitIdentity(incusInstance, { name, email });
-            })
-            .catch((error) => {
-              console.log(
-                `[sandboxes.start] Failed to configure git identity; continuing...`,
-                error,
-              );
-            }),
-          // Inject host SSH keys for git clone over SSH
-          injectHostSshKeys(incusInstance).catch((error) => {
-            console.log(
-              `[sandboxes.start] Failed to inject SSH keys; continuing...`,
-              error,
-            );
-          }),
-        ]);
-
-        // Hydrate repo if requested — use parseGitUrl for Incus to preserve SSH URLs
-        if (body.repoUrl) {
-          const incusParsedRepo = parseGitUrl(body.repoUrl);
-          if (!incusParsedRepo) {
-            return c.text("Unsupported repo URL", 400);
-          }
+        // Fire-and-forget: background provisioning (env vars, git config, repo clone, scripts)
+        (async () => {
           try {
-            await hydrateWorkspace({
-              instance: incusInstance,
-              repo: {
-                owner: incusParsedRepo.owner,
-                name: incusParsedRepo.repo,
-                repoFull: incusParsedRepo.fullName,
-                cloneUrl: incusParsedRepo.cloneUrl,
-                maskedCloneUrl: incusParsedRepo.cloneUrl,
-                depth: Math.max(1, Math.floor(body.depth ?? 1)),
-                baseBranch: body.branch || "main",
-                newBranch: body.newBranch ?? "",
-              },
+            // Wait for VSCode server to be ready
+            const vscodeReady = await waitForVSCodeReady(incusVscodeUrl, {
+              timeoutMs: 30_000,
             });
-          } catch (error) {
-            console.error(`[sandboxes.start] Incus hydration failed:`, error);
-            await incusInstance.stop().catch(() => {});
-            return c.text("Failed to hydrate sandbox", 500);
-          }
-        }
-
-        // Update status to running
-        if (body.taskRunId && vscodePersisted) {
-          void convex
-            .mutation(api.taskRuns.updateVSCodeStatus, {
-              teamSlugOrId: body.teamSlugOrId,
-              id: body.taskRunId as Id<"taskRuns">,
-              status: "running",
-            })
-            .catch((error) => {
-              console.error(
-                "[sandboxes.start] Failed to update Incus VSCode status:",
-                error,
+            if (!vscodeReady) {
+              console.warn(
+                `[sandboxes.start] Incus VSCode server did not become ready within timeout for ${incusContainerId}, proceeding anyway`,
               );
-            });
-        }
+            }
 
-        // Run maintenance/dev scripts if configured
-        if (maintenanceScript || devScript) {
-          (async () => {
-            await runMaintenanceAndDevScripts({
-              instance: incusInstance,
-              maintenanceScript: maintenanceScript || undefined,
-              devScript: devScript || undefined,
-              identifiers: scriptIdentifiers ?? undefined,
-              convexUrl: env.NEXT_PUBLIC_CONVEX_URL,
-              taskRunJwt: body.taskRunJwt || undefined,
-              isCloudWorkspace,
-            });
-          })().catch((error) => {
+            // Apply env vars, git config, hydration
+            const environmentEnvVarsContent = await environmentEnvVarsPromise;
+            let envVarsToApply =
+              environmentEnvVarsContent || workspaceConfig?.envVarsContent || "";
+            if (body.taskRunId) {
+              envVarsToApply += `\nCMUX_TASK_RUN_ID="${body.taskRunId}"`;
+            }
+            if (body.taskRunJwt) {
+              envVarsToApply += `\nCMUX_TASK_RUN_JWT="${body.taskRunJwt}"`;
+            }
+
+            const [{ githubAccessToken: incusGithubToken }, incusApiKeys] =
+              await Promise.all([githubAccessTokenPromise, apiKeysPromise]);
+
+            const effectiveIncusGithubToken = incusGithubToken || incusApiKeys.GITHUB_PAT || null;
+            const claudeCredentialsValue = incusApiKeys.CLAUDE_CREDENTIALS_JSON;
+
+            await Promise.all([
+              envVarsToApply.trim().length > 0
+                ? (async () => {
+                    const encodedEnv = encodeEnvContentForEnvctl(envVarsToApply);
+                    const loadRes = await incusInstance.exec(
+                      envctlLoadCommand(encodedEnv),
+                    );
+                    if (loadRes.exit_code === 0) {
+                      console.log(
+                        `[sandboxes.start] Applied environment variables via envctl (incus)`,
+                      );
+                    } else {
+                      console.error(
+                        `[sandboxes.start] Incus env var bootstrap failed exit=${loadRes.exit_code}`,
+                      );
+                    }
+                  })()
+                : Promise.resolve(),
+              effectiveIncusGithubToken
+                ? configureGithubAccess(incusInstance, effectiveIncusGithubToken)
+                : Promise.resolve(),
+              gitIdentityPromise
+                .then(([who, gh]) => {
+                  const { name, email } = selectGitIdentity(who, gh);
+                  return configureGitIdentity(incusInstance, { name, email });
+                })
+                .catch((error) => {
+                  console.log(
+                    `[sandboxes.start] Failed to configure git identity; continuing...`,
+                    error,
+                  );
+                }),
+              injectHostSshKeys(incusInstance).catch((error) => {
+                console.log(
+                  `[sandboxes.start] Failed to inject SSH keys; continuing...`,
+                  error,
+                );
+              }),
+              claudeCredentialsValue
+                ? injectClaudeCredentials(incusInstance, claudeCredentialsValue).catch((error) => {
+                    console.log(
+                      `[sandboxes.start] Failed to inject Claude credentials; continuing...`,
+                      error,
+                    );
+                  })
+                : Promise.resolve(),
+            ]);
+
+            // Hydrate repo if requested
+            if (body.repoUrl) {
+              const incusParsedRepo = parseGitUrl(body.repoUrl);
+              if (incusParsedRepo) {
+                await hydrateWorkspace({
+                  instance: incusInstance,
+                  repo: {
+                    owner: incusParsedRepo.owner,
+                    name: incusParsedRepo.repo,
+                    repoFull: incusParsedRepo.fullName,
+                    cloneUrl: incusParsedRepo.cloneUrl,
+                    maskedCloneUrl: incusParsedRepo.cloneUrl,
+                    depth: Math.max(1, Math.floor(body.depth ?? 1)),
+                    baseBranch: body.branch || "main",
+                    newBranch: body.newBranch ?? "",
+                  },
+                });
+              }
+            }
+
+            // Update status to running
+            if (body.taskRunId && vscodePersisted) {
+              void convex
+                .mutation(api.taskRuns.updateVSCodeStatus, {
+                  teamSlugOrId: body.teamSlugOrId,
+                  id: body.taskRunId as Id<"taskRuns">,
+                  status: "running",
+                })
+                .catch((error) => {
+                  console.error(
+                    "[sandboxes.start] Failed to update Incus VSCode status:",
+                    error,
+                  );
+                });
+            }
+
+            // Run maintenance/dev scripts if configured
+            if (maintenanceScript || devScript) {
+              await runMaintenanceAndDevScripts({
+                instance: incusInstance,
+                maintenanceScript: maintenanceScript || undefined,
+                devScript: devScript || undefined,
+                identifiers: scriptIdentifiers ?? undefined,
+                convexUrl: env.NEXT_PUBLIC_CONVEX_URL,
+                taskRunJwt: body.taskRunJwt || undefined,
+                isCloudWorkspace,
+              });
+            }
+
+            console.log(
+              `[sandboxes.start] Incus background provisioning complete for ${incusContainerId}`,
+            );
+          } catch (error) {
             console.error(
-              "[sandboxes.start] Incus background script execution failed:",
+              `[sandboxes.start] Incus background provisioning failed for ${incusContainerId}:`,
               error,
             );
-          });
-        }
-
-        // Register in container registry for snapshot operations
-        incusVmRegistry.set(incusResult.containerId, incusInstance);
+          }
+        })();
 
         return c.json({
-          instanceId: incusResult.containerId,
-          vscodeUrl: incusResult.vscodeUrl,
+          instanceId: incusContainerId,
+          vscodeUrl: incusVscodeUrl,
           workerUrl: incusResult.workerUrl,
           provider: "incus" as const,
           vscodePersisted,
@@ -2386,9 +2424,10 @@ sandboxesRouter.openapi(
     const { snapshotId } = c.req.valid("json");
 
     try {
-      const instance = incusVmRegistry.get(id);
+      let instance = incusVmRegistry.get(id);
       if (!instance) {
-        return c.text("Incus container not found or not running", 404);
+        // Registry lost — create remote instance to snapshot via compute-provider
+        instance = new RemoteIncusSandboxInstance({ id });
       }
 
       await instance.snapshot(snapshotId);
@@ -2509,9 +2548,10 @@ sandboxesRouter.openapi(
     if (!token) return c.text("Unauthorized", 401);
 
     const { id } = c.req.valid("param");
-    const instance = incusVmRegistry.get(id);
+    let instance = incusVmRegistry.get(id);
     if (!instance) {
-      return c.text("Incus container not found or not running", 404);
+      // Registry lost — create remote instance to pause via compute-provider
+      instance = new RemoteIncusSandboxInstance({ id });
     }
 
     try {
@@ -2553,9 +2593,10 @@ sandboxesRouter.openapi(
     if (!token) return c.text("Unauthorized", 401);
 
     const { id } = c.req.valid("param");
-    const instance = incusVmRegistry.get(id);
+    let instance = incusVmRegistry.get(id);
     if (!instance) {
-      return c.text("Incus container not found or not running", 404);
+      // Registry lost — create remote instance to resume via compute-provider
+      instance = new RemoteIncusSandboxInstance({ id });
     }
 
     try {
@@ -2600,11 +2641,25 @@ sandboxesRouter.openapi(
 
     const { id } = c.req.valid("param");
     const instance = incusVmRegistry.get(id);
-    if (!instance) {
-      return c.json({ running: false, paused: false });
+    if (instance) {
+      return c.json({ running: true, paused: instance.isPaused });
     }
 
-    return c.json({ running: true, paused: instance.isPaused });
+    // Registry lost — query compute-provider
+    try {
+      const cpClient = getComputeProviderClient();
+      const statusResult = await cpClient.get({
+        url: "/api/instances/{id}",
+        path: { id },
+      });
+      if (statusResult.data) {
+        const data = statusResult.data as { status: string; paused: boolean };
+        return c.json({ running: data.status === "running", paused: data.paused });
+      }
+    } catch {
+      // Compute provider unavailable
+    }
+    return c.json({ running: false, paused: false });
   },
 );
 
@@ -2637,14 +2692,16 @@ sandboxesRouter.openapi(
     if (!token) return c.text("Unauthorized", 401);
 
     const { id } = c.req.valid("param");
-    const instance = incusVmRegistry.get(id);
-    if (!instance) {
-      return c.text("Incus container not found", 404);
-    }
-
     try {
-      await instance.destroy();
-      incusVmRegistry.delete(id);
+      const instance = incusVmRegistry.get(id);
+      if (instance) {
+        await instance.destroy();
+        incusVmRegistry.delete(id);
+      } else {
+        // Registry lost (server restart / HMR) — delete via compute-provider
+        const remoteInstance = new RemoteIncusSandboxInstance({ id });
+        await remoteInstance.destroy();
+      }
       return c.json({ destroyed: true as const });
     } catch (error) {
       console.error("[sandboxes.incus] Failed to destroy container:", error);
@@ -2714,12 +2771,25 @@ sandboxesRouter.openapi(
       }
 
       const instance = incusVmRegistry.get(taskRun.vscode.containerName);
-      if (!instance) {
-        // Container not in registry — could be server restarted; treat as not paused
-        return c.json({ paused: false });
+      if (instance) {
+        return c.json({ paused: instance.isPaused });
       }
 
-      return c.json({ paused: instance.isPaused });
+      // Registry lost — query compute-provider for status
+      try {
+        const cpClient = getComputeProviderClient();
+        const statusResult = await cpClient.get({
+          url: "/api/instances/{id}",
+          path: { id: taskRun.vscode.containerName },
+        });
+        if (statusResult.data) {
+          const data = statusResult.data as { paused: boolean };
+          return c.json({ paused: data.paused });
+        }
+      } catch {
+        // Compute provider unavailable — fall through
+      }
+      return c.json({ paused: false });
     } catch (error) {
       console.error("[sandboxes.incus] Failed to check pause status:", error);
       return c.json({ paused: false });
@@ -2785,9 +2855,10 @@ sandboxesRouter.openapi(
         return c.text("Not an Incus container", 404);
       }
 
-      const instance = incusVmRegistry.get(taskRun.vscode.containerName);
+      let instance = incusVmRegistry.get(taskRun.vscode.containerName);
       if (!instance) {
-        return c.text("Incus container not found in registry", 404);
+        // Registry lost — create a remote instance to resume via compute-provider
+        instance = new RemoteIncusSandboxInstance({ id: taskRun.vscode.containerName });
       }
 
       await instance.resume();
