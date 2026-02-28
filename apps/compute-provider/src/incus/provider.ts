@@ -99,7 +99,8 @@ export class IncusProvider implements ComputeProvider {
       };
 
       // Register in the in-memory registry
-      registry.register(containerName, result, opts.metadata);
+      const ttlMs = opts.ttlSeconds ? opts.ttlSeconds * 1000 : undefined;
+      registry.register(containerName, result, opts.metadata, ttlMs);
 
       return result;
     } catch (error) {

@@ -148,6 +148,7 @@ export async function startIncusSandbox(options?: {
       snapshotId: options?.snapshotId,
       displays: options?.displays,
       metadata: options?.metadata,
+      ttlSeconds: options?.ttlSeconds,
     },
   });
 

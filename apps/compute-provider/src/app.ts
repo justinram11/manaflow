@@ -67,4 +67,4 @@ app.onError((err, c) => {
   );
 });
 
-export { app };
+export { app, provider };

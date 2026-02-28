@@ -32,6 +32,7 @@ export function createInstanceRoutes(provider: ComputeProvider) {
                 displays: z.array(z.literal("android")).optional(),
                 metadata: z.record(z.string(), z.string()).optional(),
                 region: z.string().optional(),
+                ttlSeconds: z.number().int().positive().optional(),
               }),
             },
           },

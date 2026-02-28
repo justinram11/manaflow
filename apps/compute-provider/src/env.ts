@@ -11,6 +11,16 @@ export const env = createEnv({
     COMPUTE_PROVIDER_API_KEY: z.string().min(1),
     SANDBOX_HOST: z.string().optional(),
     INCUS_IMAGE: z.string().optional(),
+    CMUX_GC_INTERVAL_MS: z
+      .string()
+      .transform((s) => parseInt(s, 10))
+      .pipe(z.number().int().positive())
+      .optional(),
+    CMUX_GC_DEFAULT_TTL_MS: z
+      .string()
+      .transform((s) => parseInt(s, 10))
+      .pipe(z.number().int().positive())
+      .optional(),
   },
   runtimeEnv: process.env,
   emptyStringAsUndefined: true,

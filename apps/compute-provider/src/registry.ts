@@ -14,12 +14,18 @@ interface RegistryEntry {
   host: string;
   metadata?: Record<string, string>;
   createdAt: number;
+  ttlMs: number;
 }
 
 class InstanceRegistry {
   private entries = new Map<string, RegistryEntry>();
 
-  register(id: string, result: LaunchResult, metadata?: Record<string, string>): void {
+  register(
+    id: string,
+    result: LaunchResult,
+    metadata?: Record<string, string>,
+    ttlMs?: number,
+  ): void {
     this.entries.set(id, {
       id,
       status: "running",
@@ -28,6 +34,7 @@ class InstanceRegistry {
       host: result.host,
       metadata,
       createdAt: Date.now(),
+      ttlMs: ttlMs ?? 3_600_000,
     });
   }
 
@@ -59,6 +66,12 @@ class InstanceRegistry {
 
   has(id: string): boolean {
     return this.entries.has(id);
+  }
+
+  getExpired(now: number): RegistryEntry[] {
+    return [...this.entries.values()].filter(
+      (entry) => now - entry.createdAt > entry.ttlMs,
+    );
   }
 }
 

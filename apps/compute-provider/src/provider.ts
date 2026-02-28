@@ -10,6 +10,7 @@ export interface LaunchOptions {
   displays?: Array<"android">;
   metadata?: Record<string, string>;
   region?: string;
+  ttlSeconds?: number;
 }
 
 export interface LaunchResult {
