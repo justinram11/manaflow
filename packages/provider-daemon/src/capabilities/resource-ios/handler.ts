@@ -21,7 +21,7 @@ export function createResourceIosHandler(): CapabilityHandler {
   async function getMcpHandler() {
     if (!mcpHandler) {
       // Dynamic import since this package may not be installed on Linux
-      const { handleJsonRpcRequest } = await import("@cmux/mac-resource-provider/mcp-handler");
+      const { handleJsonRpcMessage: handleJsonRpcRequest } = await import("@cmux/mac-resource-provider/mcp-handler");
       const { setupAllocation, cleanupAllocation } = await import(
         "@cmux/mac-resource-provider/workspace-manager"
       );

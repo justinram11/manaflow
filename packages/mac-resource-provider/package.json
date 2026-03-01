@@ -4,6 +4,11 @@
   "type": "module",
   "private": true,
   "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./mcp-handler": "./src/mcp-handler.ts",
+    "./workspace-manager": "./src/workspace-manager.ts"
+  },
   "scripts": {
     "start": "bun run src/index.ts",
     "typecheck": "bunx tsgo --noEmit -p tsconfig.json"

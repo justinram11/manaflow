@@ -58,7 +58,7 @@ import {
 } from "./sandboxes/incus-provider";
 import { sendProviderRequest } from "@/lib/utils/provider-client";
 import { getOnlineByCapability } from "@cmux/db/queries/providers";
-import { injectClaudeCredentials } from "./sandboxes/claude-credentials";
+import { injectClaudeCredentials, injectClaudeAuth } from "./sandboxes/claude-credentials";
 import { injectHostSshKeys } from "./sandboxes/ssh-keys";
 
 // Track running Incus containers for snapshot operations.
@@ -615,6 +615,13 @@ sandboxesRouter.openapi(
                 error,
               );
             }),
+          // Inject Claude auth (OAuth token or API key) for manual terminal use
+          injectClaudeAuth(dockerInstance, userApiKeys).catch((error) => {
+            console.log(
+              `[sandboxes.start] Failed to inject Claude auth (docker); continuing...`,
+              error,
+            );
+          }),
         ]);
 
         // Hydrate repo if requested
@@ -820,6 +827,12 @@ sandboxesRouter.openapi(
                     );
                   })
                 : Promise.resolve(),
+              injectClaudeAuth(incusInstance, incusApiKeys).catch((error) => {
+                console.log(
+                  `[sandboxes.start] Failed to inject Claude auth; continuing...`,
+                  error,
+                );
+              }),
             ]);
 
             // Hydrate repo if requested

@@ -74,6 +74,8 @@
     "packages/shared",
     "packages/vscode-extension",
     "packages/www-openapi-client",
+    "packages/provider-daemon",
+    "packages/mac-resource-provider",
     "scripts"
   ],
   "dependencies": {
