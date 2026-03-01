@@ -58,6 +58,9 @@ import {
 } from "./sandboxes/incus-provider";
 import { sendProviderRequest } from "@/lib/utils/provider-client";
 import { getOnlineByCapability } from "@cmux/db/queries/providers";
+import { createAllocation, releaseAllocation } from "@cmux/db/mutations/providers";
+import { getAllocationById } from "@cmux/db/queries/providers";
+import * as crypto from "node:crypto";
 import { injectClaudeCredentials, injectClaudeAuth } from "./sandboxes/claude-credentials";
 import { injectHostSshKeys } from "./sandboxes/ssh-keys";
 
@@ -702,12 +705,18 @@ sandboxesRouter.openapi(
 
         console.log(`[sandboxes.start] Using Incus provider ${resolvedProviderId}`);
 
+        // Check if an iOS simulator provider is available to decide whether to allocate iOS ports
+        const hasIosProvider = body.taskRunId
+          ? getOnlineByCapability(db, body.teamSlugOrId, "resource:ios-simulator").length > 0
+          : false;
+
         const incusResult = await startIncusSandbox({
           providerId: resolvedProviderId,
           snapshotId: body.snapshotId ?? environmentSnapshotId,
           ttlSeconds: body.ttlSeconds ?? 3600,
           metadata: body.metadata,
           displays: body.displays,
+          wantsIos: hasIosProvider,
         });
 
         // Register in container registry immediately for snapshot operations
@@ -721,6 +730,76 @@ sandboxesRouter.openapi(
         // server (agentSpawner) sees vscodePersisted=true and skips its own
         // persistence (which would lack port data).
         let vscodePersisted = false;
+
+        // Check for online iOS simulator provider and create allocation
+        let iosResourceAllocationId: string | undefined;
+        let iosDirectToken: string | undefined;
+        if (body.taskRunId) {
+          try {
+            const iosProviders = getOnlineByCapability(db, body.teamSlugOrId, "resource:ios-simulator");
+            if (iosProviders.length > 0) {
+              const iosProvider = iosProviders[0];
+              iosDirectToken = crypto.randomBytes(32).toString("hex");
+              const { id: allocId } = createAllocation(db, {
+                providerId: iosProvider.id,
+                taskRunId: body.taskRunId,
+                teamSlugOrId: body.teamSlugOrId,
+                userId: user.id,
+                type: "resource",
+                data: { directToken: iosDirectToken },
+              });
+              iosResourceAllocationId = allocId;
+              console.log(`[sandboxes.start] Created iOS allocation ${allocId} on provider ${iosProvider.id}`);
+
+              // Setup the allocation on the Mac daemon and then establish direct connection
+              const serverUrl = process.env.CMUX_SERVER_INTERNAL_URL ?? "http://localhost:3001";
+              const sandboxHost = env.SANDBOX_HOST ?? "localhost";
+              const iosMcpHostPort = incusResult.hostPorts[39385];
+              const iosVncInHostPort = incusResult.hostPorts[39386];
+
+              // Fire-and-forget: setup allocation, then connect_direct
+              (async () => {
+                try {
+                  const setupRes = await fetch(
+                    `${serverUrl}/internal/provider/${iosProvider.id}/setup-allocation`,
+                    {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        allocationId: allocId,
+                        buildDir: `/tmp/cmux-builds/${allocId}`,
+                        simulatorDeviceType: "iPhone 16 Pro",
+                        simulatorRuntime: "iOS-18-6",
+                      }),
+                    },
+                  );
+                  if (!setupRes.ok) {
+                    console.error("[sandboxes.start] Failed to setup iOS allocation on daemon:", await setupRes.text());
+                    return;
+                  }
+
+                  // After setup, tell the Mac daemon to connect directly to the workspace
+                  if (iosMcpHostPort) {
+                    const connectParams = {
+                      allocationId: allocId,
+                      mcpEndpoint: `ws://${sandboxHost}:${iosMcpHostPort}?token=${iosDirectToken}`,
+                      ...(iosVncInHostPort ? {
+                        vncEndpoint: `tcp://${sandboxHost}:${iosVncInHostPort}`,
+                      } : {}),
+                    };
+                    await sendProviderRequest(iosProvider.id, "connect_direct", connectParams);
+                    console.log(`[sandboxes.start] Sent connect_direct to Mac daemon for allocation ${allocId}`);
+                  }
+                } catch (error) {
+                  console.error("[sandboxes.start] iOS allocation setup/connect_direct failed:", error);
+                }
+              })();
+            }
+          } catch (error) {
+            console.error("[sandboxes.start] Failed to create iOS allocation:", error);
+          }
+        }
+
         if (body.taskRunId) {
           try {
             updateTaskRunVSCode(db, body.taskRunId, {
@@ -740,7 +819,19 @@ sandboxesRouter.openapi(
                 ...(incusResult.hostPorts[39384]
                   ? { androidVnc: incusResult.hostPorts[39384] }
                   : {}),
+                ...(incusResult.hostPorts[39385]
+                  ? { iosMcp: incusResult.hostPorts[39385] }
+                  : {}),
+                ...(incusResult.hostPorts[39386]
+                  ? { iosVncIn: incusResult.hostPorts[39386] }
+                  : {}),
+                ...(incusResult.hostPorts[39387]
+                  ? { iosVnc: incusResult.hostPorts[39387] }
+                  : {}),
               },
+              ...(iosResourceAllocationId
+                ? { iosResourceAllocationId, iosDirectToken }
+                : {}),
             });
             vscodePersisted = true;
           } catch (error) {
@@ -2720,13 +2811,46 @@ sandboxesRouter.openapi(
 
     const { id } = c.req.valid("param");
     try {
+      // Clean up iOS resource allocation if one exists for this container
+      const db = getDb();
+      try {
+        const taskRun = getTaskRunByContainerName(db, id);
+        const vscodeData = taskRun?.vscode as Record<string, unknown> | undefined;
+        if (vscodeData?.iosResourceAllocationId) {
+          const allocId = vscodeData.iosResourceAllocationId as string;
+          const allocation = getAllocationById(db, allocId);
+          if (allocation && allocation.status === "active") {
+            releaseAllocation(db, allocId);
+            // Notify daemon to clean up simulator
+            const serverUrl = process.env.CMUX_SERVER_INTERNAL_URL ?? "http://localhost:3001";
+            const allocData = allocation.data as Record<string, unknown> | undefined;
+            fetch(
+              `${serverUrl}/internal/provider/${allocation.providerId}/cleanup-allocation`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  allocationId: allocId,
+                  buildDir: allocData?.buildDir,
+                  simulatorUdid: allocData?.simulatorUdid,
+                }),
+              },
+            ).catch((error) => {
+              console.error("[sandboxes.incus] Failed to notify iOS allocation cleanup:", error);
+            });
+            console.log(`[sandboxes.incus] Released iOS allocation ${allocId} for container ${id}`);
+          }
+        }
+      } catch (error) {
+        console.error("[sandboxes.incus] Failed to clean up iOS allocation:", error);
+      }
+
       const instance = incusVmRegistry.get(id);
       if (instance) {
         await instance.destroy();
         incusVmRegistry.delete(id);
       } else {
         // Registry lost (server restart / HMR) — delete via provider daemon
-        const db = getDb();
         const providerId = resolveIncusProviderId(db, "default");
         if (!providerId) return c.text("No Incus provider available", 502);
         const remoteInstance = new RemoteIncusSandboxInstance({ id, providerId });

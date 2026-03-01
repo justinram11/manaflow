@@ -9,6 +9,7 @@ import {
   X,
   Maximize2,
   Minimize2,
+  Smartphone,
 } from "lucide-react";
 import clsx from "clsx";
 import type { PanelType } from "@/lib/panel-config";
@@ -188,6 +189,9 @@ interface PanelFactoryProps {
   // Constants
   TASK_RUN_IFRAME_ALLOW?: string;
   TASK_RUN_IFRAME_SANDBOX?: string;
+  // Simulator panel props
+  simulatorUrl?: string | null;
+  simulatorPersistKey?: string | null;
   // Git diff panel props
   teamSlugOrId?: string;
   taskId?: string;
@@ -645,6 +649,47 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
       );
     }
 
+    case "simulator": {
+      const {
+        simulatorUrl,
+        selectedRun,
+        WorkspaceLoadingIndicator,
+      } = props;
+
+      const hasSimulatorView = Boolean(simulatorUrl);
+      const showSimLoader = Boolean(selectedRun) && !hasSimulatorView;
+
+      // Dynamically import VncViewer (same as browser panel uses)
+      return panelWrapper(
+        <Smartphone className="size-3" aria-hidden />,
+        PANEL_LABELS.simulator,
+        <div className={clsx("relative flex-1", isExpanded && "h-full")} style={{ aspectRatio: "9/19.5" }}>
+          {simulatorUrl ? (
+            <iframe
+              src={simulatorUrl}
+              className="size-full border-0"
+              title="iOS Simulator"
+              allow="autoplay"
+            />
+          ) : showSimLoader && WorkspaceLoadingIndicator ? (
+            <div className="flex h-full items-center justify-center">
+              <WorkspaceLoadingIndicator variant="browser" status="loading" />
+            </div>
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-neutral-500 dark:text-neutral-400">
+              <Smartphone className="size-8 text-neutral-300 dark:text-neutral-600" />
+              <div className="text-sm font-medium text-neutral-600 dark:text-neutral-200">
+                iOS Simulator
+              </div>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                The simulator panel will show when an iOS simulator is running.
+              </p>
+            </div>
+          )}
+        </div>
+      );
+    }
+
     case null:
       return null;
 
@@ -698,6 +743,14 @@ export const RenderPanel = React.memo(RenderPanelComponent, (prevProps, nextProp
       prevProps.selectedRun?.id !== nextProps.selectedRun?.id ||
       prevProps.teamSlugOrId !== nextProps.teamSlugOrId ||
       prevProps.taskId !== nextProps.taskId) {
+      return false;
+    }
+  }
+
+  // For simulator panel, check URL changes
+  if (prevProps.type === "simulator") {
+    if (prevProps.simulatorUrl !== nextProps.simulatorUrl ||
+      prevProps.selectedRun?.id !== nextProps.selectedRun?.id) {
       return false;
     }
   }

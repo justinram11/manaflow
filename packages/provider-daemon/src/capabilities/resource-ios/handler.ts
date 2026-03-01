@@ -1,4 +1,5 @@
 import type { CapabilityHandler, JsonRpcRequest, JsonRpcResponse } from "../../types";
+import { DirectMcpBridge, DirectVncBridge } from "./direct-connection";
 
 /**
  * Resource:ios-simulator capability handler.
@@ -17,6 +18,10 @@ export function createResourceIosHandler(): CapabilityHandler {
     handleSetupAllocation: (params: Record<string, unknown>) => Promise<unknown>;
     handleCleanupAllocation: (params: Record<string, unknown>) => Promise<unknown>;
   } | null = null;
+
+  // Active direct connections keyed by allocation ID
+  const directBridges = new Map<string, DirectMcpBridge>();
+  const vncBridges = new Map<string, DirectVncBridge>();
 
   async function getMcpHandler() {
     if (!mcpHandler) {
@@ -43,6 +48,8 @@ export function createResourceIosHandler(): CapabilityHandler {
       "setup_allocation",
       "cleanup_allocation",
       "initialize",
+      "connect_direct",
+      "disconnect_direct",
     ],
 
     async handle(request: JsonRpcRequest): Promise<JsonRpcResponse> {
@@ -59,7 +66,91 @@ export function createResourceIosHandler(): CapabilityHandler {
 
           case "cleanup_allocation":
             result = await handler.handleCleanupAllocation(params);
+            // Also clean up any direct connections for this allocation
+            {
+              const allocId = params.allocationId as string | undefined;
+              if (allocId) {
+                const bridge = directBridges.get(allocId);
+                if (bridge) {
+                  bridge.disconnect();
+                  directBridges.delete(allocId);
+                }
+                const vncBridge = vncBridges.get(allocId);
+                if (vncBridge) {
+                  vncBridge.disconnect();
+                  vncBridges.delete(allocId);
+                }
+              }
+            }
             break;
+
+          case "connect_direct": {
+            const allocId = params.allocationId as string;
+            const mcpEndpoint = params.mcpEndpoint as string | undefined;
+            const vncEndpoint = params.vncEndpoint as string | undefined;
+
+            if (!allocId) {
+              return {
+                jsonrpc: "2.0",
+                error: { code: -32602, message: "Missing allocationId" },
+                id: request.id,
+              };
+            }
+
+            // Set up direct MCP bridge
+            if (mcpEndpoint) {
+              // Disconnect existing bridge if any
+              const existing = directBridges.get(allocId);
+              if (existing) existing.disconnect();
+
+              const bridge = new DirectMcpBridge({
+                endpoint: mcpEndpoint,
+                allocationId: allocId,
+                mcpHandler: handler,
+              });
+              directBridges.set(allocId, bridge);
+              bridge.connect();
+              console.log(`[resource:ios] Direct MCP bridge created for allocation ${allocId}`);
+            }
+
+            // Set up direct VNC bridge
+            if (vncEndpoint) {
+              const existing = vncBridges.get(allocId);
+              if (existing) existing.disconnect();
+
+              // Parse tcp://host:port format
+              const vncUrl = new URL(vncEndpoint);
+              const vncBridge = new DirectVncBridge({
+                remoteHost: vncUrl.hostname,
+                remotePort: parseInt(vncUrl.port, 10),
+                localPort: (params.localVncPort as number) ?? 5900,
+              });
+              vncBridges.set(allocId, vncBridge);
+              vncBridge.connect();
+              console.log(`[resource:ios] Direct VNC bridge created for allocation ${allocId}`);
+            }
+
+            result = { connected: true };
+            break;
+          }
+
+          case "disconnect_direct": {
+            const allocId = params.allocationId as string;
+            if (allocId) {
+              const bridge = directBridges.get(allocId);
+              if (bridge) {
+                bridge.disconnect();
+                directBridges.delete(allocId);
+              }
+              const vncBridge = vncBridges.get(allocId);
+              if (vncBridge) {
+                vncBridge.disconnect();
+                vncBridges.delete(allocId);
+              }
+            }
+            result = { disconnected: true };
+            break;
+          }
 
           default:
             // Forward all other methods (tools/list, tools/call, initialize)
@@ -96,8 +187,16 @@ export function createResourceIosHandler(): CapabilityHandler {
     },
 
     async shutdown() {
-      // Clean up all allocations on shutdown
       console.log("[resource:ios] Shutting down...");
+      // Clean up all direct connections
+      for (const [, bridge] of directBridges) {
+        bridge.disconnect();
+      }
+      directBridges.clear();
+      for (const [, bridge] of vncBridges) {
+        bridge.disconnect();
+      }
+      vncBridges.clear();
     },
   };
 }

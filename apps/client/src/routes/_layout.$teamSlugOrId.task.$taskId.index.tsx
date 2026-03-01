@@ -26,6 +26,7 @@ import {
 import {
   toVncUrl,
   toXtermBaseUrl,
+  toIosVncWebsocketUrl,
 } from "@/lib/toProxyWorkspaceUrl";
 import { getWorkspaceUrl } from "@/lib/workspace-url";
 import {
@@ -61,6 +62,7 @@ import {
   TerminalSquare,
   GitCompare,
   MessageCircle,
+  Smartphone,
 } from "lucide-react";
 import z from "zod";
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
@@ -257,6 +259,8 @@ function EmptyPanelSlot({
         return <Globe2 className="size-4" />;
       case "gitDiff":
         return <GitCompare className="size-4" />;
+      case "simulator":
+        return <Smartphone className="size-4" />;
     }
   };
 
@@ -688,7 +692,14 @@ function TaskDetailPage() {
     ? getTaskRunBrowserPersistKey(selectedRunId)
     : null;
   const hasBrowserView = Boolean(browserUrl);
-  const hasCloudBackend = selectedProvider === "morph" || selectedProvider === "docker";
+  const hasCloudBackend = selectedProvider === "morph" || selectedProvider === "docker" || selectedProvider === "incus";
+
+  const simulatorUrl = useMemo(() => {
+    if (!rawBrowserUrl || !selectedProvider) {
+      return null;
+    }
+    return toIosVncWebsocketUrl(rawBrowserUrl, selectedProvider, selectedPorts ?? undefined);
+  }, [rawBrowserUrl, selectedProvider, selectedPorts]);
 
   const handleBrowserStatusChange = useCallback(
     (status: PersistentIframeStatus) => {
@@ -929,6 +940,7 @@ function TaskDetailPage() {
       onClose: handlePanelClose,
       teamSlugOrId,
       taskId,
+      simulatorUrl,
     }),
     [
       task,
@@ -958,6 +970,7 @@ function TaskDetailPage() {
       handlePanelClose,
       teamSlugOrId,
       taskId,
+      simulatorUrl,
     ]
   );
 

@@ -150,6 +150,12 @@ export async function getClaudeEnvironment(
     } catch (error) {
       console.error("Failed to read iOS resource proxy script:", error);
     }
+
+    // Pass direct MCP connection token and port for low-latency Mac ↔ workspace path
+    if (ctx.iosDirectToken) {
+      env.CMUX_DIRECT_MCP_TOKEN = ctx.iosDirectToken;
+      env.CMUX_DIRECT_MCP_PORT = "39385";
+    }
   }
 
   // Ensure directories exist

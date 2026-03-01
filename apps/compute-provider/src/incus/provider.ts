@@ -76,7 +76,8 @@ export class IncusProvider implements ComputeProvider {
       }
 
       // Set up proxy devices for port forwarding
-      const hostPortMap = await setupProxyDevices(containerName, { wantsAndroid });
+      const wantsIos = opts.wantsIos ?? false;
+      const hostPortMap = await setupProxyDevices(containerName, { wantsAndroid, wantsIos });
 
       const ports: LaunchResult["ports"] = {
         exec: hostPortMap[CONTAINER_PORTS.exec]!,
@@ -88,6 +89,15 @@ export class IncusProvider implements ComputeProvider {
         pty: hostPortMap[CONTAINER_PORTS.pty]!,
         ...(wantsAndroid && hostPortMap[CONTAINER_PORTS.androidVnc] !== undefined
           ? { androidVnc: hostPortMap[CONTAINER_PORTS.androidVnc] }
+          : {}),
+        ...(wantsIos && hostPortMap[CONTAINER_PORTS.iosMcp] !== undefined
+          ? { iosMcp: hostPortMap[CONTAINER_PORTS.iosMcp] }
+          : {}),
+        ...(wantsIos && hostPortMap[CONTAINER_PORTS.iosVncIn] !== undefined
+          ? { iosVncIn: hostPortMap[CONTAINER_PORTS.iosVncIn] }
+          : {}),
+        ...(wantsIos && hostPortMap[CONTAINER_PORTS.iosVnc] !== undefined
+          ? { iosVnc: hostPortMap[CONTAINER_PORTS.iosVnc] }
           : {}),
       };
 

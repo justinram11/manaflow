@@ -23,6 +23,9 @@ export interface IncusSandboxResult {
     vnc: string;
     pty: string;
     androidVnc?: string;
+    iosMcp?: string;
+    iosVncIn?: string;
+    iosVnc?: string;
   };
 }
 
@@ -38,6 +41,9 @@ interface LaunchResult {
     devtools: number;
     pty: number;
     androidVnc?: number;
+    iosMcp?: number;
+    iosVncIn?: number;
+    iosVnc?: number;
   };
   host: string;
 }
@@ -116,12 +122,14 @@ export async function startIncusSandbox(options: {
   ttlSeconds?: number;
   metadata?: Record<string, string>;
   displays?: Array<"android">;
+  wantsIos?: boolean;
 }): Promise<IncusSandboxResult> {
   const sandboxHost = env.SANDBOX_HOST ?? "localhost";
 
   const data = await sendProviderRequest(options.providerId, "compute.launch", {
     snapshotId: options.snapshotId,
     displays: options.displays,
+    wantsIos: options.wantsIos,
     metadata: options.metadata,
     ttlSeconds: options.ttlSeconds,
   }) as LaunchResult;
@@ -139,6 +147,15 @@ export async function startIncusSandbox(options: {
   };
   if (data.ports.androidVnc !== undefined) {
     hostPorts[39384] = String(data.ports.androidVnc);
+  }
+  if (data.ports.iosMcp !== undefined) {
+    hostPorts[39385] = String(data.ports.iosMcp);
+  }
+  if (data.ports.iosVncIn !== undefined) {
+    hostPorts[39386] = String(data.ports.iosVncIn);
+  }
+  if (data.ports.iosVnc !== undefined) {
+    hostPorts[39387] = String(data.ports.iosVnc);
   }
 
   const instance = new RemoteIncusSandboxInstance({
@@ -161,6 +178,15 @@ export async function startIncusSandbox(options: {
       pty: makeUrl(data.ports.pty),
       ...(data.ports.androidVnc !== undefined
         ? { androidVnc: makeUrl(data.ports.androidVnc) }
+        : {}),
+      ...(data.ports.iosMcp !== undefined
+        ? { iosMcp: makeUrl(data.ports.iosMcp) }
+        : {}),
+      ...(data.ports.iosVncIn !== undefined
+        ? { iosVncIn: makeUrl(data.ports.iosVncIn) }
+        : {}),
+      ...(data.ports.iosVnc !== undefined
+        ? { iosVnc: makeUrl(data.ports.iosVnc) }
         : {}),
     },
   };

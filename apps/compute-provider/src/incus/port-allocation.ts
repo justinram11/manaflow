@@ -11,6 +11,9 @@ export const CONTAINER_PORTS = {
   devtools: 39381,
   pty: 39383,
   androidVnc: 39384,
+  iosMcp: 39385,
+  iosVncIn: 39386,
+  iosVnc: 39387,
 } as const;
 
 /**
@@ -43,14 +46,19 @@ export function findFreePort(): Promise<number> {
  */
 export async function setupProxyDevices(
   containerName: string,
-  options?: { wantsAndroid?: boolean },
+  options?: { wantsAndroid?: boolean; wantsIos?: boolean },
 ): Promise<Record<number, number>> {
   const wantsAndroid = options?.wantsAndroid ?? false;
+  const wantsIos = options?.wantsIos ?? false;
   const hostPorts: Record<number, number> = {};
 
-  // Determine which ports to forward — androidVnc only when requested
+  // iOS ports (iosMcp, iosVncIn, iosVnc) only when requested
+  const iosPortNames = new Set(["iosMcp", "iosVncIn", "iosVnc"]);
+  // Determine which ports to forward — androidVnc only when requested, iOS ports only when requested
   const portsToForward = Object.entries(CONTAINER_PORTS).filter(
-    ([name]) => name !== "androidVnc" || wantsAndroid,
+    ([name]) =>
+      (name !== "androidVnc" || wantsAndroid) &&
+      (!iosPortNames.has(name) || wantsIos),
   );
 
   for (const [name, containerPort] of portsToForward) {

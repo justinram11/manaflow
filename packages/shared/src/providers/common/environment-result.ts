@@ -31,4 +31,5 @@ export type EnvironmentContext = {
   apiKeys?: Record<string, string>;
   callbackUrl: string;
   iosResourceAllocationId?: string;
+  iosDirectToken?: string;
 };

@@ -8,6 +8,7 @@ export interface LaunchOptions {
   image?: string;
   snapshotId?: string;
   displays?: Array<"android">;
+  wantsIos?: boolean;
   metadata?: Record<string, string>;
   region?: string;
   ttlSeconds?: number;
@@ -25,6 +26,9 @@ export interface LaunchResult {
     devtools: number;
     pty: number;
     androidVnc?: number;
+    iosMcp?: number;
+    iosVncIn?: number;
+    iosVnc?: number;
   };
   host: string;
 }

@@ -1,6 +1,6 @@
 import { VncViewer, type VncConnectionStatus } from "@cmux/shared/components/vnc-viewer";
 import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indicator";
-import { toVncWebsocketUrl } from "@/lib/toProxyWorkspaceUrl";
+import { toIosVncWebsocketUrl } from "@/lib/toProxyWorkspaceUrl";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { createFileRoute } from "@tanstack/react-router";
 import clsx from "clsx";
@@ -18,9 +18,9 @@ const paramsSchema = z.object({
 });
 
 export const Route = createFileRoute(
-  "/_layout/$teamSlugOrId/task/$taskId/run/$runId/browser"
+  "/_layout/$teamSlugOrId/task/$taskId/run/$runId/simulator"
 )({
-  component: BrowserComponent,
+  component: SimulatorComponent,
   params: {
     parse: paramsSchema.parse,
     stringify: (params) => ({
@@ -37,7 +37,7 @@ export const Route = createFileRoute(
   },
 });
 
-function BrowserComponent() {
+function SimulatorComponent() {
   const { runId: taskRunId, teamSlugOrId } = Route.useParams();
   const taskRunQuery = useRQ({
     ...getApiTaskRunsByIdOptions({ path: { id: taskRunId } }),
@@ -53,33 +53,33 @@ function BrowserComponent() {
     if (!rawUrl || !provider) {
       return null;
     }
-    return toVncWebsocketUrl(rawUrl, provider, ports ?? undefined);
+    return toIosVncWebsocketUrl(rawUrl, provider, ports ?? undefined);
   }, [rawUrl, provider, ports]);
 
-  const hasBrowserView = Boolean(vncWebsocketUrl);
-  const hasCloudBackend = provider === "morph" || provider === "docker" || provider === "incus";
-  const showLoader = hasCloudBackend && !hasBrowserView;
+  const hasSimulatorView = Boolean(vncWebsocketUrl);
+  const hasCloudBackend = provider === "docker" || provider === "incus";
+  const showLoader = hasCloudBackend && !hasSimulatorView;
 
   const [vncStatus, setVncStatus] = useState<VncConnectionStatus>("disconnected");
 
   const overlayMessage = useMemo(() => {
     if (!hasCloudBackend) {
-      return "Browser preview is loading. Note that browser preview is only supported in cloud mode.";
+      return "iOS Simulator is only available in cloud mode with a Mac provider.";
     }
-    if (!hasBrowserView) {
-      return "Waiting for the workspace to expose a browser preview...";
+    if (!hasSimulatorView) {
+      return "Waiting for the iOS simulator to start...";
     }
-    return "Launching browser preview...";
-  }, [hasBrowserView, hasCloudBackend]);
+    return "Connecting to iOS simulator...";
+  }, [hasSimulatorView, hasCloudBackend]);
 
   const onConnect = useCallback(() => {
-    console.log(`Browser VNC connected for task run ${taskRunId}`);
+    console.log(`Simulator VNC connected for task run ${taskRunId}`);
   }, [taskRunId]);
 
   const onDisconnect = useCallback(
     (_rfb: unknown, detail: { clean: boolean }) => {
       console.log(
-        `Browser VNC disconnected for task run ${taskRunId} (clean: ${detail.clean})`
+        `Simulator VNC disconnected for task run ${taskRunId} (clean: ${detail.clean})`
       );
     },
     [taskRunId]
@@ -94,14 +94,14 @@ function BrowserComponent() {
     []
   );
 
-  const isBrowserBusy = !hasBrowserView || vncStatus !== "connected";
+  const isSimulatorBusy = !hasSimulatorView || vncStatus !== "connected";
 
   return (
     <div className="flex flex-col grow bg-neutral-50 dark:bg-black">
       <div className="flex flex-col grow min-h-0 border-l border-neutral-200 dark:border-neutral-800">
         <div
           className="flex flex-row grow min-h-0 relative"
-          aria-busy={isBrowserBusy}
+          aria-busy={isSimulatorBusy}
         >
           {vncWebsocketUrl ? (
             <VncViewer
@@ -127,8 +127,8 @@ function BrowserComponent() {
             className={clsx(
               "absolute inset-0 flex items-center justify-center transition pointer-events-none",
               {
-                "opacity-100": !hasBrowserView,
-                "opacity-0": hasBrowserView,
+                "opacity-100": !hasSimulatorView,
+                "opacity-0": hasSimulatorView,
               }
             )}
           >

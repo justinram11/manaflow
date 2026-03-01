@@ -19,6 +19,7 @@ import {
 import { getDb, getUserId } from "./utils/dbClient";
 import { SignJWT } from "jose";
 import { getTaskById } from "@cmux/db/queries/tasks";
+import { getTaskRunById } from "@cmux/db/queries/task-runs";
 import { resolveTeamId } from "@cmux/db/queries/teams";
 import { getApiKeysForAgents, getUserEditorSettings, getWorkspaceConfig } from "@cmux/db/queries/settings";
 import {
@@ -338,12 +339,32 @@ export async function spawnAgent(
 
     // Use environment property if available
     if (agent.environment) {
+      // Read iosResourceAllocationId and iosDirectToken from task run vscode data (set during sandbox start)
+      let iosResourceAllocationId: string | undefined;
+      let iosDirectToken: string | undefined;
+      if (taskRunId) {
+        try {
+          const taskRunData = getTaskRunById(db, taskRunId);
+          const vscodeData = taskRunData?.vscode as Record<string, unknown> | undefined;
+          if (vscodeData?.iosResourceAllocationId) {
+            iosResourceAllocationId = vscodeData.iosResourceAllocationId as string;
+          }
+          if (vscodeData?.iosDirectToken) {
+            iosDirectToken = vscodeData.iosDirectToken as string;
+          }
+        } catch (error) {
+          serverLogger.error("[AgentSpawner] Failed to read task run vscode data:", error);
+        }
+      }
+
       const envResult = await agent.environment({
         taskRunId: taskRunId,
         prompt: processedTaskDescription,
         taskRunJwt,
         apiKeys,
         callbackUrl,
+        iosResourceAllocationId,
+        iosDirectToken,
       });
       envVars = {
         ...envVars,

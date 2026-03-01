@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"nhooyr.io/websocket"
@@ -27,6 +28,7 @@ type proxyConfig struct {
 	webRoot       string
 	dialTimeout   time.Duration
 	idleTimeout   time.Duration
+	reverseMode   bool // When true, listen on targetPort for incoming VNC source instead of dialing out
 }
 
 func getenv(key, fallback string) string {
@@ -88,6 +90,7 @@ func loadConfig() (proxyConfig, error) {
 	if err != nil {
 		return proxyConfig{}, err
 	}
+	reverseMode := strings.EqualFold(getenv("CMUX_VNC_REVERSE", ""), "true")
 	return proxyConfig{
 		listenHost:    listenHost,
 		listenPort:    listenPort,
@@ -97,6 +100,7 @@ func loadConfig() (proxyConfig, error) {
 		webRoot:       webRoot,
 		dialTimeout:   dialTimeout,
 		idleTimeout:   idleTimeout,
+		reverseMode:   reverseMode,
 	}, nil
 }
 
@@ -130,6 +134,11 @@ func main() {
 		log.Fatalf("failed to load config: %v", err)
 	}
 
+	if cfg.reverseMode {
+		// In reverse mode, start the reverse backend listener first
+		startReverseBackendListener(cfg)
+	}
+
 	handler := newServeMux(cfg)
 
 	if info, err := os.Stat(cfg.webRoot); err != nil {
@@ -144,11 +153,15 @@ func main() {
 		IdleTimeout:       90 * time.Second,
 	}
 
+	mode := "forward"
+	if cfg.reverseMode {
+		mode = "reverse (accepting VNC source on " + cfg.targetAddr() + ")"
+	}
 	log.Printf(
-		"cmux VNC proxy listening on %s, forwarding websockets at %s to %s (static from %s)",
+		"cmux VNC proxy listening on %s, websockets at %s, backend=%s (static from %s)",
 		cfg.listenAddr(),
 		cfg.websocketPath,
-		cfg.targetAddr(),
+		mode,
 		filepath.Clean(cfg.webRoot),
 	)
 
@@ -161,6 +174,56 @@ func main() {
 
 	if err := httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("server exited: %v", err)
+	}
+}
+
+// ── Reverse mode: accept inbound VNC source connections ──────────────
+
+var (
+	reverseBackendMu   sync.Mutex
+	reverseBackendChan = make(chan net.Conn, 1)
+)
+
+func startReverseBackendListener(cfg proxyConfig) {
+	ln, err := net.Listen("tcp", cfg.targetAddr())
+	if err != nil {
+		log.Fatalf("failed to listen for reverse VNC backend on %s: %v", cfg.targetAddr(), err)
+	}
+	log.Printf("reverse mode: listening for VNC source on %s", cfg.targetAddr())
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				log.Printf("reverse backend accept error: %v", err)
+				continue
+			}
+			if tcpConn, ok := conn.(*net.TCPConn); ok {
+				_ = tcpConn.SetNoDelay(true)
+			}
+			log.Printf("reverse mode: VNC source connected from %s", conn.RemoteAddr())
+
+			reverseBackendMu.Lock()
+			// Drain any old connection from the channel
+			select {
+			case old := <-reverseBackendChan:
+				old.Close()
+			default:
+			}
+			reverseBackendChan <- conn
+			reverseBackendMu.Unlock()
+		}
+	}()
+}
+
+// getOrWaitReverseBackend returns the current reverse backend connection,
+// waiting up to the dial timeout if none is available.
+func getOrWaitReverseBackend(cfg proxyConfig) (net.Conn, error) {
+	select {
+	case conn := <-reverseBackendChan:
+		return conn, nil
+	case <-time.After(cfg.dialTimeout):
+		return nil, fmt.Errorf("no VNC source connected within %s", cfg.dialTimeout)
 	}
 }
 
@@ -242,13 +305,18 @@ func newWebsocketHandler(cfg proxyConfig) http.Handler {
 			return
 		}
 
-		dialer := &net.Dialer{Timeout: cfg.dialTimeout}
+		var backend net.Conn
+		var err error
 
-		ctx := r.Context()
-
-		backend, err := dialer.DialContext(ctx, "tcp", cfg.targetAddr())
+		if cfg.reverseMode {
+			// In reverse mode, get the inbound VNC source connection
+			backend, err = getOrWaitReverseBackend(cfg)
+		} else {
+			dialer := &net.Dialer{Timeout: cfg.dialTimeout}
+			backend, err = dialer.DialContext(r.Context(), "tcp", cfg.targetAddr())
+		}
 		if err != nil {
-			log.Printf("backend dial failed: %v", err)
+			log.Printf("backend connection failed: %v", err)
 			http.Error(w, "backend unavailable", http.StatusBadGateway)
 			return
 		}
@@ -277,7 +345,7 @@ func newWebsocketHandler(cfg proxyConfig) http.Handler {
 
 		log.Printf("websocket connection established from %s", r.RemoteAddr)
 
-		bridgeCtx, cancel := context.WithCancel(ctx)
+		bridgeCtx, cancel := context.WithCancel(r.Context())
 		defer cancel()
 
 		wsConn := websocket.NetConn(bridgeCtx, conn, websocket.MessageBinary)

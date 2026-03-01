@@ -185,6 +185,7 @@ interface PortMap {
   proxy?: string;
   vscode?: string;
   worker?: string;
+  iosVnc?: string;
 }
 
 /**
@@ -197,7 +198,7 @@ export function toVncWebsocketUrl(
   ports?: PortMap,
 ): string | null {
   if (provider === "morph") return toMorphVncWebsocketUrl(vscodeUrl);
-  if (provider === "docker" && ports?.vnc) {
+  if ((provider === "docker" || provider === "incus") && ports?.vnc) {
     try {
       const url = new URL(vscodeUrl);
       url.port = ports.vnc;
@@ -222,7 +223,7 @@ export function toVncUrl(
   ports?: PortMap,
 ): string | null {
   if (provider === "morph") return toMorphVncUrl(vscodeUrl);
-  if (provider === "docker" && ports?.vnc) {
+  if ((provider === "docker" || provider === "incus") && ports?.vnc) {
     try {
       const url = new URL(vscodeUrl);
       url.protocol = url.protocol === "wss:" ? "https:" : "http:";
@@ -252,11 +253,36 @@ export function toXtermBaseUrl(
   ports?: PortMap,
 ): string | null {
   if (provider === "morph") return toMorphXtermBaseUrl(vscodeUrl);
-  if (provider === "docker" && ports?.pty) {
+  if ((provider === "docker" || provider === "incus") && ports?.pty) {
     try {
       const url = new URL(vscodeUrl);
       url.port = ports.pty;
       url.pathname = "/";
+      url.search = "";
+      url.hash = "";
+      return url.toString();
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Build an iOS simulator VNC websocket URL for noVNC connection.
+ * Uses the iosVnc port from the port map.
+ */
+export function toIosVncWebsocketUrl(
+  vscodeUrl: string,
+  provider: string,
+  ports?: PortMap,
+): string | null {
+  if ((provider === "docker" || provider === "incus") && ports?.iosVnc) {
+    try {
+      const url = new URL(vscodeUrl);
+      url.port = ports.iosVnc;
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+      url.pathname = "/websockify";
       url.search = "";
       url.hash = "";
       return url.toString();
