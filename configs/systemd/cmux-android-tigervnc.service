@@ -1,0 +1,15 @@
+[Unit]
+Description=Cmux Android TigerVNC bridge
+After=cmux-android-xvfb.service
+Requires=cmux-android-xvfb.service
+
+[Service]
+Type=simple
+Environment=DISPLAY=:2
+ExecStartPre=/bin/mkdir -p /var/log/cmux
+ExecStart=/usr/bin/Xtigervnc :2 -geometry 1080x1920 -depth 24 -localhost -SecurityTypes None -rfbport 5902 -AlwaysShared -AcceptSetDesktopSize=1 -nolisten tcp
+ExecStartPost=/bin/sh -c 'command -v xsetroot >/dev/null 2>&1 && xsetroot -display :2 -solid "#000000" || true'
+Restart=always
+RestartSec=3
+StandardOutput=append:/var/log/cmux/android-tigervnc.log
+StandardError=append:/var/log/cmux/android-tigervnc.log

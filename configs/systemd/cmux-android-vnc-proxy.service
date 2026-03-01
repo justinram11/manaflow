@@ -1,0 +1,15 @@
+[Unit]
+Description=Cmux Android VNC websocket proxy
+After=cmux-android-tigervnc.service
+Requires=cmux-android-tigervnc.service
+
+[Service]
+Type=simple
+Environment=CMUX_VNC_PROXY_PORT=39384
+Environment=CMUX_VNC_TARGET_PORT=5902
+ExecStartPre=/bin/mkdir -p /var/log/cmux
+ExecStart=/usr/local/lib/cmux/cmux-vnc-proxy
+Restart=always
+RestartSec=3
+StandardOutput=append:/var/log/cmux/android-vnc-proxy.log
+StandardError=append:/var/log/cmux/android-vnc-proxy.log

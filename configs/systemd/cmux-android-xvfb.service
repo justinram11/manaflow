@@ -1,0 +1,15 @@
+[Unit]
+Description=Cmux Android virtual framebuffer display
+After=network.target
+Requires=network.target
+
+[Service]
+Type=simple
+Environment=DISPLAY=:2
+ExecStartPre=/bin/mkdir -p /var/log/cmux
+ExecStart=/usr/bin/Xvfb :2 -screen 0 1080x1920x24 -nolisten tcp -noreset
+ExecStartPost=/bin/sh -c 'command -v xsetroot >/dev/null 2>&1 && xsetroot -display :2 -solid "#000000" || true'
+Restart=always
+RestartSec=3
+StandardOutput=append:/var/log/cmux/android-xvfb.log
+StandardError=append:/var/log/cmux/android-xvfb.log
