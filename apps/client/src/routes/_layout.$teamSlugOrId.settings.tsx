@@ -1094,126 +1094,6 @@ function SettingsComponent() {
               </div>
             </div>
 
-            {/* Claude Credentials JSON */}
-            <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
-              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
-                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                  Claude Credentials
-                </h2>
-                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-                  Contents of <code className="px-1 py-0.5 bg-neutral-100 dark:bg-neutral-800 rounded text-[11px]">~/.claude/.credentials.json</code> — injected
-                  into sandboxes so MCP OAuth tokens (e.g. Figma) work without re-authenticating.
-                </p>
-              </div>
-              <div className="p-4">
-                <div className="flex items-start gap-3">
-                  <div className="w-9 h-9 bg-orange-100 dark:bg-orange-900/30 rounded-lg flex items-center justify-center flex-shrink-0">
-                    <svg className="w-4.5 h-4.5 text-orange-600 dark:text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-                    </svg>
-                  </div>
-                  <div className="flex-1 min-w-0 space-y-2">
-                    <div>
-                      <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                        .credentials.json
-                      </p>
-                      <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                        Paste the contents of <code className="px-1 py-0.5 bg-neutral-100 dark:bg-neutral-800 rounded text-[11px]">~/.claude/.credentials.json</code> from
-                        your host machine. Run <code className="px-1 py-0.5 bg-neutral-100 dark:bg-neutral-800 rounded text-[11px]">cat ~/.claude/.credentials.json</code> to
-                        get the value.
-                      </p>
-                    </div>
-                    <div className="md:w-[min(100%,480px)]">
-                      <div className="relative">
-                        {showKeys.CLAUDE_CREDENTIALS_JSON ? (
-                          <textarea
-                            id="CLAUDE_CREDENTIALS_JSON"
-                            value={apiKeyValues.CLAUDE_CREDENTIALS_JSON || ""}
-                            onChange={(e) =>
-                              handleApiKeyChange("CLAUDE_CREDENTIALS_JSON", e.target.value)
-                            }
-                            rows={4}
-                            className="w-full px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs resize-y"
-                            placeholder='{"claudeAiOauth":{"token_type":"Bearer",...}}'
-                          />
-                        ) : (
-                          <div
-                            onClick={() => toggleShowKey("CLAUDE_CREDENTIALS_JSON")}
-                            className="w-full px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs cursor-pointer h-[82px]"
-                          >
-                            {apiKeyValues.CLAUDE_CREDENTIALS_JSON
-                              ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
-                              : <span className="text-neutral-400">Click to edit</span>}
-                          </div>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => toggleShowKey("CLAUDE_CREDENTIALS_JSON")}
-                          className="absolute top-2 right-2 p-1 text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
-                        >
-                          {showKeys.CLAUDE_CREDENTIALS_JSON ? (
-                            <svg
-                              className="h-5 w-5"
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"
-                              />
-                            </svg>
-                          ) : (
-                            <svg
-                              className="h-5 w-5"
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                              />
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
-                              />
-                            </svg>
-                          )}
-                        </button>
-                      </div>
-                      {originalApiKeyValues.CLAUDE_CREDENTIALS_JSON && (
-                        <div className="flex items-center gap-1 mt-1">
-                          <svg
-                            className="w-3 h-3 text-green-500 dark:text-green-400"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M5 13l4 4L19 7"
-                            />
-                          </svg>
-                          <span className="text-xs text-green-600 dark:text-green-400">
-                            Credentials configured
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
             {/* Appearance */}
             <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
               <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
@@ -1530,6 +1410,75 @@ function SettingsComponent() {
                         access. No API keys needed.
                       </p>
                     </div>
+                  </div>
+                </div>
+
+                {/* Claude Credentials JSON */}
+                <div className="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 space-y-2 mb-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="min-w-0">
+                      <label
+                        htmlFor="CLAUDE_CREDENTIALS_JSON"
+                        className="block text-sm font-medium text-neutral-700 dark:text-neutral-300"
+                      >
+                        Claude Credentials JSON
+                      </label>
+                      <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                        Contents of <code className="px-1 py-0.5 bg-neutral-100 dark:bg-neutral-800 rounded text-[11px]">~/.claude/.credentials.json</code> — injected
+                        into sandboxes so MCP OAuth tokens (e.g. Figma) work without re-authenticating.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="md:w-[min(100%,480px)]">
+                    <div className="relative">
+                      {showKeys.CLAUDE_CREDENTIALS_JSON ? (
+                        <textarea
+                          id="CLAUDE_CREDENTIALS_JSON"
+                          value={apiKeyValues.CLAUDE_CREDENTIALS_JSON || ""}
+                          onChange={(e) =>
+                            handleApiKeyChange("CLAUDE_CREDENTIALS_JSON", e.target.value)
+                          }
+                          rows={4}
+                          className="w-full px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs resize-y"
+                          placeholder='{"claudeAiOauth":{"token_type":"Bearer",...}}'
+                        />
+                      ) : (
+                        <div
+                          onClick={() => toggleShowKey("CLAUDE_CREDENTIALS_JSON")}
+                          className="w-full px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs cursor-pointer h-[82px]"
+                        >
+                          {apiKeyValues.CLAUDE_CREDENTIALS_JSON
+                            ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
+                            : <span className="text-neutral-400">Click to edit</span>}
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => toggleShowKey("CLAUDE_CREDENTIALS_JSON")}
+                        className="absolute top-2 right-2 p-1 text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
+                      >
+                        {showKeys.CLAUDE_CREDENTIALS_JSON ? (
+                          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                          </svg>
+                        ) : (
+                          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+                    {originalApiKeyValues.CLAUDE_CREDENTIALS_JSON && (
+                      <div className="flex items-center gap-1 mt-1">
+                        <svg className="w-3 h-3 text-green-500 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        <span className="text-xs text-green-600 dark:text-green-400">
+                          Credentials configured
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
