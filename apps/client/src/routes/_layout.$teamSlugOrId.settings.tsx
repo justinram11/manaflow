@@ -7,7 +7,7 @@ import { ProviderStatusSettings } from "@/components/provider-status-settings";
 import { useTheme } from "@/components/theme/use-theme";
 import { TitleBar } from "@/components/TitleBar";
 import { useOnboardingOptional } from "@/contexts/onboarding";
-import { ChevronDown, HelpCircle } from "lucide-react";
+import { ChevronDown, HelpCircle, LogOut } from "lucide-react";
 import { AGENT_CONFIGS, type AgentConfig } from "@cmux/shared/agentConfig";
 import { API_KEY_MODELS_BY_ENV } from "@cmux/shared/model-usage";
 import {
@@ -16,6 +16,7 @@ import {
   getApiWorkspaceSettingsOptions,
 } from "@cmux/www-openapi-client/react-query";
 import { Switch } from "@heroui/react";
+import { isLocalAuth, stackClientApp } from "@/lib/stack";
 import { useUser } from "@stackframe/react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
@@ -1860,6 +1861,48 @@ function SettingsComponent() {
 
             {/* Resource Providers (Mac) */}
             <ProviderSettings teamSlugOrId={teamSlugOrId} />
+
+            {/* Sign Out */}
+            <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+              <div className="px-4 py-3 flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                    Account
+                  </h2>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                    Sign out of your account on this device
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      if (isLocalAuth) {
+                        localStorage.removeItem("cmux-local-jwt");
+                        localStorage.removeItem("cmux-local-user");
+                        window.location.href = "/sign-in";
+                      } else {
+                        const user = await stackClientApp.getUser();
+                        if (user) {
+                          await user.signOut({
+                            redirectUrl: stackClientApp.urls.afterSignOut,
+                          });
+                        } else {
+                          await stackClientApp.redirectToSignOut({ replace: true });
+                        }
+                      }
+                    } catch (error) {
+                      console.error("Sign out failed:", error);
+                      toast.error("Unable to sign out");
+                    }
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  Sign out
+                </button>
+              </div>
+            </div>
 
             {/* Notifications */}
             <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800 hidden">
