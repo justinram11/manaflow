@@ -125,6 +125,10 @@
     "./modal-snapshots": {
       "import": "./src/modal-snapshots.ts",
       "types": "./src/modal-snapshots.ts"
+    },
+    "./aws-config": {
+      "import": "./src/aws-config.ts",
+      "types": "./src/aws-config.ts"
     }
   },
   "peerDependencies": {

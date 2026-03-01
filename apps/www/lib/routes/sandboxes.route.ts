@@ -56,6 +56,12 @@ import {
   deleteProviderSnapshot,
   RemoteIncusSandboxInstance,
 } from "./sandboxes/incus-provider";
+import {
+  startAwsSandbox,
+  stopAwsSandbox,
+  resumeAwsSandbox,
+  getAwsRegistryEntry,
+} from "./sandboxes/aws-provider";
 import { sendProviderRequest } from "@/lib/utils/provider-client";
 import { getOnlineByCapability } from "@cmux/db/queries/providers";
 import { createAllocation, releaseAllocation } from "@cmux/db/mutations/providers";
@@ -281,7 +287,7 @@ const StartSandboxBody = z
     teamSlugOrId: z.string(),
     environmentId: z.string().optional(),
     snapshotId: z.string().optional(),
-    provider: z.enum(["morph", "docker", "incus"]).optional(),
+    provider: z.enum(["morph", "docker", "incus", "aws"]).optional(),
     ttlSeconds: z
       .number()
       .optional()
@@ -296,6 +302,9 @@ const StartSandboxBody = z
     newBranch: z.string().optional(),
     depth: z.number().optional().default(1),
     displays: z.array(z.enum(["android"])).optional(),
+    // AWS-specific options
+    awsRegion: z.string().optional(),
+    awsInstanceType: z.string().optional(),
   })
   .openapi("StartSandboxBody");
 
@@ -304,7 +313,7 @@ const StartSandboxResponse = z
     instanceId: z.string(),
     vscodeUrl: z.string(),
     workerUrl: z.string(),
-    provider: z.enum(["morph", "docker", "incus"]).default("morph"),
+    provider: z.enum(["morph", "docker", "incus", "aws"]).default("morph"),
     vscodePersisted: z.boolean().optional(),
   })
   .openapi("StartSandboxResponse");
@@ -987,6 +996,194 @@ sandboxesRouter.openapi(
           vscodeUrl: incusVscodeUrl,
           workerUrl: incusResult.workerUrl,
           provider: "incus" as const,
+          vscodePersisted,
+        });
+      }
+
+      // --- AWS provider path ---
+      if (resolvedProvider === "aws") {
+        console.log(`[sandboxes.start] Using AWS EC2 provider`);
+
+        const awsResult = await startAwsSandbox({
+          region: body.awsRegion,
+          instanceType: body.awsInstanceType,
+          ttlSeconds: body.ttlSeconds ?? 3600,
+          metadata: body.metadata,
+        });
+
+        // Wait for VSCode server to be ready over Tailscale
+        const vscodeReady = await waitForVSCodeReady(awsResult.vscodeUrl, {
+          timeoutMs: 60_000, // AWS instances take longer to fully boot
+        });
+        if (!vscodeReady) {
+          console.warn(
+            `[sandboxes.start] AWS VSCode server did not become ready within timeout for ${awsResult.instanceId}, proceeding anyway`,
+          );
+        }
+
+        // Persist VSCode info to DB
+        let vscodePersisted = false;
+        if (body.taskRunId) {
+          try {
+            updateTaskRunVSCode(db, body.taskRunId, {
+              provider: "aws",
+              containerName: awsResult.instanceId,
+              status: "starting",
+              url: awsResult.vscodeUrl,
+              workspaceUrl: `${awsResult.vscodeUrl}/?folder=/root/workspace`,
+              startedAt: Date.now(),
+              ports: {
+                vscode: awsResult.hostPorts[39378],
+                worker: awsResult.hostPorts[39377],
+                proxy: awsResult.hostPorts[39379],
+                vnc: awsResult.hostPorts[39380],
+                pty: awsResult.hostPorts[39383],
+              },
+            });
+            vscodePersisted = true;
+          } catch (error) {
+            console.error(
+              "[sandboxes.start] Failed to persist AWS VSCode info:",
+              error,
+            );
+          }
+        }
+
+        // Background provisioning: env vars, git config, credentials, hydration, scripts
+        (async () => {
+          try {
+            const environmentEnvVarsContent = await environmentEnvVarsPromise;
+            let envVarsToApply =
+              environmentEnvVarsContent || workspaceConfig?.envVarsContent || "";
+            if (body.taskRunId) {
+              envVarsToApply += `\nCMUX_TASK_RUN_ID="${body.taskRunId}"`;
+            }
+            if (body.taskRunJwt) {
+              envVarsToApply += `\nCMUX_TASK_RUN_JWT="${body.taskRunJwt}"`;
+            }
+
+            const [{ githubAccessToken: awsGithubToken }, awsApiKeys] =
+              await Promise.all([githubAccessTokenPromise, apiKeysPromise]);
+
+            const effectiveAwsGithubToken = awsGithubToken || awsApiKeys.GITHUB_PAT || null;
+            const awsClaudeCredentials = awsApiKeys.CLAUDE_CREDENTIALS_JSON;
+            const awsInstance = awsResult.instance;
+
+            await Promise.all([
+              envVarsToApply.trim().length > 0
+                ? (async () => {
+                    const encodedEnv = encodeEnvContentForEnvctl(envVarsToApply);
+                    const loadRes = await awsInstance.exec(
+                      envctlLoadCommand(encodedEnv),
+                    );
+                    if (loadRes.exit_code === 0) {
+                      console.log(
+                        `[sandboxes.start] Applied environment variables via envctl (aws)`,
+                      );
+                    } else {
+                      console.error(
+                        `[sandboxes.start] AWS env var bootstrap failed exit=${loadRes.exit_code}`,
+                      );
+                    }
+                  })()
+                : Promise.resolve(),
+              effectiveAwsGithubToken
+                ? configureGithubAccess(awsInstance, effectiveAwsGithubToken)
+                : Promise.resolve(),
+              gitIdentityPromise
+                .then(([who, gh]) => {
+                  const { name, email } = selectGitIdentity(who, gh);
+                  return configureGitIdentity(awsInstance, { name, email });
+                })
+                .catch((error) => {
+                  console.log(
+                    `[sandboxes.start] Failed to configure git identity (aws); continuing...`,
+                    error,
+                  );
+                }),
+              injectHostSshKeys(awsInstance).catch((error) => {
+                console.log(
+                  `[sandboxes.start] Failed to inject SSH keys (aws); continuing...`,
+                  error,
+                );
+              }),
+              awsClaudeCredentials
+                ? injectClaudeCredentials(awsInstance, awsClaudeCredentials).catch((error) => {
+                    console.log(
+                      `[sandboxes.start] Failed to inject Claude credentials (aws); continuing...`,
+                      error,
+                    );
+                  })
+                : Promise.resolve(),
+              injectClaudeAuth(awsInstance, awsApiKeys).catch((error) => {
+                console.log(
+                  `[sandboxes.start] Failed to inject Claude auth (aws); continuing...`,
+                  error,
+                );
+              }),
+            ]);
+
+            // Hydrate repo if requested
+            if (body.repoUrl) {
+              const awsParsedRepo = parseGitUrl(body.repoUrl);
+              if (awsParsedRepo) {
+                await hydrateWorkspace({
+                  instance: awsInstance,
+                  repo: {
+                    owner: awsParsedRepo.owner,
+                    name: awsParsedRepo.repo,
+                    repoFull: awsParsedRepo.fullName,
+                    cloneUrl: awsParsedRepo.cloneUrl,
+                    maskedCloneUrl: awsParsedRepo.cloneUrl,
+                    depth: Math.max(1, Math.floor(body.depth ?? 1)),
+                    baseBranch: body.branch || "main",
+                    newBranch: body.newBranch ?? "",
+                  },
+                });
+              }
+            }
+
+            // Update status to running
+            if (body.taskRunId && vscodePersisted) {
+              try {
+                updateTaskRunVSCodeStatus(db, body.taskRunId, "running");
+              } catch (error) {
+                console.error(
+                  "[sandboxes.start] Failed to update AWS VSCode status:",
+                  error,
+                );
+              }
+            }
+
+            // Run maintenance/dev scripts if configured
+            if (maintenanceScript || devScript) {
+              await runMaintenanceAndDevScripts({
+                instance: awsInstance,
+                maintenanceScript: maintenanceScript || undefined,
+                devScript: devScript || undefined,
+                identifiers: scriptIdentifiers ?? undefined,
+                convexUrl: env.NEXT_PUBLIC_CONVEX_URL,
+                taskRunJwt: body.taskRunJwt || undefined,
+                isCloudWorkspace,
+              });
+            }
+
+            console.log(
+              `[sandboxes.start] AWS background provisioning complete for ${awsResult.instanceId}`,
+            );
+          } catch (error) {
+            console.error(
+              `[sandboxes.start] AWS background provisioning failed for ${awsResult.instanceId}:`,
+              error,
+            );
+          }
+        })();
+
+        return c.json({
+          instanceId: awsResult.instanceId,
+          vscodeUrl: awsResult.vscodeUrl,
+          workerUrl: awsResult.workerUrl,
+          provider: "aws" as const,
           vscodePersisted,
         });
       }
@@ -1865,6 +2062,15 @@ sandboxesRouter.openapi(
     if (!token) return c.text("Unauthorized", 401);
 
     try {
+      // Check if this is an AWS instance
+      const awsEntry = getAwsRegistryEntry(id);
+      if (awsEntry) {
+        await awsEntry.instance.exec(VM_CLEANUP_COMMANDS);
+        await stopAwsSandbox(id);
+        return c.body(null, 204);
+      }
+
+      // Default: Morph
       const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
       const instance = await client.instances.get({ instanceId: id });
       // Kill all dev servers and user processes before pausing to avoid port conflicts on resume
@@ -2429,6 +2635,35 @@ sandboxesRouter.openapi(
 
         if (!taskRun || !vscode?.containerName) {
           return c.text("Sandbox not found", 404);
+        }
+
+        // Handle AWS provider resume
+        if (vscode.provider === "aws") {
+          const awsInstanceId = vscode.containerName as string;
+          const awsResult = await resumeAwsSandbox(awsInstanceId);
+          // Update DB with new URLs (Tailscale IP may change)
+          if (id) {
+            try {
+              updateTaskRunVSCode(db, id, {
+                provider: "aws",
+                containerName: awsInstanceId,
+                status: "running",
+                url: awsResult.vscodeUrl,
+                workspaceUrl: `${awsResult.vscodeUrl}/?folder=/root/workspace`,
+                startedAt: Date.now(),
+                ports: {
+                  vscode: awsResult.hostPorts[39378],
+                  worker: awsResult.hostPorts[39377],
+                  proxy: awsResult.hostPorts[39379],
+                  vnc: awsResult.hostPorts[39380],
+                  pty: awsResult.hostPorts[39383],
+                },
+              });
+            } catch (updateErr) {
+              console.error("[sandboxes.resume] Failed to update AWS VSCode info:", updateErr);
+            }
+          }
+          return c.json({ resumed: true });
         }
 
         if (vscode.provider !== "morph") {

@@ -14,7 +14,7 @@ export const env = createEnv({
     CMUX_GITHUB_APP_ID: z.string().min(1).optional(),
     CMUX_GITHUB_APP_PRIVATE_KEY: z.string().min(1).optional(),
     // Sandbox provider
-    SANDBOX_PROVIDER: z.enum(["morph", "docker", "incus"]).optional(),
+    SANDBOX_PROVIDER: z.enum(["morph", "docker", "incus", "aws"]).optional(),
     SANDBOX_HOST: z.string().optional(),
     SANDBOX_IMAGE: z.string().optional(),
     // Incus provider
@@ -30,6 +30,18 @@ export const env = createEnv({
     // AWS Bedrock credentials (optional - only required when spawning Claude agents)
     AWS_BEARER_TOKEN_BEDROCK: z.string().min(1).optional(),
     AWS_REGION: z.string().min(1).optional(),
+    // AWS EC2 compute provider
+    AWS_EC2_ACCESS_KEY_ID: z.string().min(1).optional(),
+    AWS_EC2_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+    AWS_EC2_REGION: z.string().min(1).optional(),
+    AWS_EC2_INSTANCE_TYPE: z.string().min(1).optional(),
+    AWS_EC2_AMI_IDS: z.string().min(1).optional(), // JSON: {"us-east-2":"ami-xxx"}
+    AWS_EC2_SUBNET_IDS: z.string().min(1).optional(), // JSON: {"us-east-2":"subnet-xxx"}
+    AWS_EC2_SECURITY_GROUP_IDS: z.string().min(1).optional(), // JSON: {"us-east-2":"sg-xxx"}
+    // Tailscale networking (used by AWS provider)
+    TAILSCALE_API_KEY: z.string().min(1).optional(),
+    TAILSCALE_TAILNET: z.string().min(1).optional(),
+    TAILSCALE_SHARE_TO_TAILNETS: z.string().min(1).optional(), // JSON: ["my-tailnet"]
   },
   client: {
     NEXT_PUBLIC_STACK_PROJECT_ID: z.string().min(1).optional(),

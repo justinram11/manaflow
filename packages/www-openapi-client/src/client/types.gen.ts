@@ -550,7 +550,7 @@ export type StartSandboxResponse = {
     instanceId: string;
     vscodeUrl: string;
     workerUrl: string;
-    provider?: 'morph' | 'docker' | 'incus';
+    provider?: 'morph' | 'docker' | 'incus' | 'aws';
     vscodePersisted?: boolean;
 };
 
@@ -558,7 +558,7 @@ export type StartSandboxBody = {
     teamSlugOrId: string;
     environmentId?: string;
     snapshotId?: string;
-    provider?: 'morph' | 'docker' | 'incus';
+    provider?: 'morph' | 'docker' | 'incus' | 'aws';
     ttlSeconds?: number;
     metadata?: {
         [key: string]: string;
@@ -571,6 +571,8 @@ export type StartSandboxBody = {
     newBranch?: string;
     depth?: number;
     displays?: Array<'android'>;
+    awsRegion?: string;
+    awsInstanceType?: string;
 };
 
 export type PrewarmSandboxResponse = {

@@ -57,7 +57,7 @@ function BrowserComponent() {
   }, [rawUrl, provider, ports]);
 
   const hasBrowserView = Boolean(vncWebsocketUrl);
-  const hasCloudBackend = provider === "morph" || provider === "docker" || provider === "incus";
+  const hasCloudBackend = provider === "morph" || provider === "docker" || provider === "incus" || provider === "aws";
   const showLoader = hasCloudBackend && !hasBrowserView;
 
   const [vncStatus, setVncStatus] = useState<VncConnectionStatus>("disconnected");

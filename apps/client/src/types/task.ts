@@ -72,7 +72,7 @@ export interface TaskRunWithChildren {
   }>;
   claimsGeneratedAt?: number;
   vscode?: {
-    provider: "docker" | "morph" | "daytona" | "incus" | "other";
+    provider: "docker" | "morph" | "daytona" | "incus" | "aws" | "other";
     containerName?: string;
     status: "starting" | "running" | "stopped";
     statusMessage?: string;

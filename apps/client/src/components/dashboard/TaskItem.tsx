@@ -232,7 +232,7 @@ export const TaskItem = memo(function TaskItem({
     }
     return null;
   }, [hasActiveVSCode, runWithVSCode]);
-  const vscodeProvider = runWithVSCode?.vscode?.provider as "docker" | "morph" | "incus" | "daytona" | "other" | undefined;
+  const vscodeProvider = runWithVSCode?.vscode?.provider as "docker" | "morph" | "incus" | "aws" | "daytona" | "other" | undefined;
 
   // For local workspaces, find the run with VSCode to navigate to VSCode view directly
   const localWorkspaceRunWithVscode = useMemo(() => {

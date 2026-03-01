@@ -23,6 +23,7 @@
     "@ai-sdk/google": "^3.0.3",
     "@ai-sdk/openai": "^3.0.4",
     "@asteasolutions/zod-to-openapi": "^8.1.0",
+    "@aws-sdk/client-ec2": "^3.1000.0",
     "@base-ui-components/react": "^1.0.0-beta.7",
     "@cmux/shared": "workspace:*",
     "@cmux/www-openapi-client": "workspace:*",

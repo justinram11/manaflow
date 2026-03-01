@@ -19,6 +19,7 @@ function hasIncusRuns(task: DbTask & { taskRuns?: Array<{ vscode?: { provider?: 
   if (!Array.isArray(runs)) return false;
   return runs.some((run: { vscode?: { provider?: string; containerName?: string } }) => {
     if (run.vscode?.provider === "incus") return true;
+    if (run.vscode?.provider === "aws") return true;
     if (run.vscode?.provider === "docker" && run.vscode.containerName?.startsWith("cmux-")) return true;
     return false;
   });

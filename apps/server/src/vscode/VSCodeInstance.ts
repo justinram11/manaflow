@@ -28,7 +28,7 @@ export interface VSCodeInstanceInfo {
   workspaceUrl: string;
   instanceId: string;
   taskRunId: string;
-  provider: "docker" | "morph" | "daytona" | "incus";
+  provider: "docker" | "morph" | "daytona" | "incus" | "aws";
   /** If true, VSCode URLs were already persisted to the database by www */
   vscodePersisted?: boolean;
 }

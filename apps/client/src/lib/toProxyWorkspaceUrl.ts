@@ -198,7 +198,7 @@ export function toVncWebsocketUrl(
   ports?: PortMap,
 ): string | null {
   if (provider === "morph") return toMorphVncWebsocketUrl(vscodeUrl);
-  if ((provider === "docker" || provider === "incus") && ports?.vnc) {
+  if ((provider === "docker" || provider === "incus" || provider === "aws") && ports?.vnc) {
     try {
       const url = new URL(vscodeUrl);
       url.port = ports.vnc;
@@ -223,7 +223,7 @@ export function toVncUrl(
   ports?: PortMap,
 ): string | null {
   if (provider === "morph") return toMorphVncUrl(vscodeUrl);
-  if ((provider === "docker" || provider === "incus") && ports?.vnc) {
+  if ((provider === "docker" || provider === "incus" || provider === "aws") && ports?.vnc) {
     try {
       const url = new URL(vscodeUrl);
       url.protocol = url.protocol === "wss:" ? "https:" : "http:";
@@ -253,7 +253,7 @@ export function toXtermBaseUrl(
   ports?: PortMap,
 ): string | null {
   if (provider === "morph") return toMorphXtermBaseUrl(vscodeUrl);
-  if ((provider === "docker" || provider === "incus") && ports?.pty) {
+  if ((provider === "docker" || provider === "incus" || provider === "aws") && ports?.pty) {
     try {
       const url = new URL(vscodeUrl);
       url.port = ports.pty;
@@ -277,7 +277,7 @@ export function toIosVncWebsocketUrl(
   provider: string,
   ports?: PortMap,
 ): string | null {
-  if ((provider === "docker" || provider === "incus") && ports?.iosVnc) {
+  if ((provider === "docker" || provider === "incus" || provider === "aws") && ports?.iosVnc) {
     try {
       const url = new URL(vscodeUrl);
       url.port = ports.iosVnc;

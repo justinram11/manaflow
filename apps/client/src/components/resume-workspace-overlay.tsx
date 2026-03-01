@@ -29,6 +29,7 @@ interface TaskRunForResume {
  */
 function isIncusRun(taskRun: TaskRunForResume): boolean {
   if (taskRun.vscode?.provider === "incus") return true;
+  if (taskRun.vscode?.provider === "aws") return true;
   if (taskRun.vscode?.provider === "docker" && taskRun.vscode.containerName?.startsWith("cmux-")) return true;
   return false;
 }

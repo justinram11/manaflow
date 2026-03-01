@@ -8,7 +8,7 @@ import { getWwwBaseUrl } from "./utils/server-env";
 
 const execAsync = promisify(exec);
 
-export type VSCodeProvider = "docker" | "morph" | "daytona" | "incus" | "other";
+export type VSCodeProvider = "docker" | "morph" | "daytona" | "incus" | "aws" | "other";
 
 export interface StopResult {
   success: boolean;
@@ -138,6 +138,8 @@ export function stopContainersForRunsFromTree(
       targets.push({ provider: "docker", containerName: name, runId });
     } else if (provider === "morph") {
       targets.push({ provider: "morph", containerName: name, runId });
+    } else if (provider === "aws") {
+      targets.push({ provider: "aws", containerName: name, runId });
     }
   }
 
@@ -177,6 +179,17 @@ export function stopContainersForRunsFromTree(
           await stopCmuxSandbox(t.containerName);
           serverLogger.info(
             `Successfully paused Morph instance: ${t.containerName}`
+          );
+          return {
+            success: true,
+            containerName: t.containerName,
+            provider: t.provider,
+          };
+        }
+        if (t.provider === "aws") {
+          await stopCmuxSandbox(t.containerName);
+          serverLogger.info(
+            `Successfully stopped AWS instance: ${t.containerName}`
           );
           return {
             success: true,

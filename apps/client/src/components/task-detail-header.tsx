@@ -288,6 +288,7 @@ export function TaskDetailHeader({
     const provider = selectedRun?.vscode?.provider;
     const containerName = selectedRun?.vscode?.containerName;
     if (provider === "incus") return true;
+    if (provider === "aws") return true;
     if (provider === "docker" && containerName?.startsWith("cmux-")) return true;
     return false;
   }, [selectedRun?.vscode?.provider, selectedRun?.vscode?.containerName]);

@@ -10,7 +10,7 @@ type NetworkingInfo = Array<{
   port: number;
   url: string;
 }>;
-type VSCodeProvider = "docker" | "morph" | "incus" | "daytona" | "other" | undefined;
+type VSCodeProvider = "docker" | "morph" | "incus" | "aws" | "daytona" | "other" | undefined;
 
 type OpenWithAction = {
   id: EditorType;

@@ -692,7 +692,7 @@ function TaskDetailPage() {
     ? getTaskRunBrowserPersistKey(selectedRunId)
     : null;
   const hasBrowserView = Boolean(browserUrl);
-  const hasCloudBackend = selectedProvider === "morph" || selectedProvider === "docker" || selectedProvider === "incus";
+  const hasCloudBackend = selectedProvider === "morph" || selectedProvider === "docker" || selectedProvider === "incus" || selectedProvider === "aws";
 
   const simulatorUrl = useMemo(() => {
     if (!rawBrowserUrl || !selectedProvider) {

@@ -61,7 +61,7 @@ export const Route = createFileRoute(
           localVSCodeServeWebQueryOptions()
         ),
       ]);
-      const result = rawResult as { vscode?: { workspaceUrl?: string; provider?: "docker" | "morph" | "incus" | "other" | "daytona" } } | null;
+      const result = rawResult as { vscode?: { workspaceUrl?: string; provider?: "docker" | "morph" | "incus" | "aws" | "other" | "daytona" } } | null;
       if (result) {
         const workspaceUrl = getWorkspaceUrl(
           result.vscode?.workspaceUrl,
@@ -87,7 +87,7 @@ function VSCodeComponent() {
     enabled: Boolean(teamSlugOrId && taskRunId),
   });
   const taskRunRaw = taskRunQuery.data;
-  const taskRun = taskRunRaw as { id: string; vscode?: { url?: string; workspaceUrl?: string; provider?: "docker" | "morph" | "incus" | "other" | "daytona"; statusMessage?: string; containerName?: string; ports?: Record<string, unknown>; status?: string }; status?: string; errorMessage?: string; [key: string]: unknown } | null | undefined;
+  const taskRun = taskRunRaw as { id: string; vscode?: { url?: string; workspaceUrl?: string; provider?: "docker" | "morph" | "incus" | "aws" | "other" | "daytona"; statusMessage?: string; containerName?: string; ports?: Record<string, unknown>; status?: string }; status?: string; errorMessage?: string; [key: string]: unknown } | null | undefined;
   const { socket } = useSocket();
 
   // Query for linked local workspace to trigger sync
