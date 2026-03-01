@@ -3,14 +3,14 @@ import type { NextConfig } from "next";
 import { SENTRY_RELEASE } from "./lib/sentry-release";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["morphcloud", "ssh2", "node-ssh", "cpu-features"],
+  serverExternalPackages: ["morphcloud", "ssh2", "node-ssh", "cpu-features", "@libsql/client"],
   outputFileTracingIncludes: {
     "/": ["./scripts/pr-review/pr-review-inject.bundle.js"],
   },
   transpilePackages: [
     "@cmux/server",
     "@cmux/shared",
-    "@cmux/convex",
+    "@cmux/db",
     "refractor",
   ],
   async rewrites() {

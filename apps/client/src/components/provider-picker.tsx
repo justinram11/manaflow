@@ -1,4 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
+import { WWW_ORIGIN } from "@/lib/wwwOrigin";
+import { fetchWithAuth } from "@/lib/stack";
 
 interface Provider {
   id: string;
@@ -10,7 +12,7 @@ interface Provider {
   activeAllocations: number;
 }
 
-const API_BASE = "/api";
+const API_BASE = `${WWW_ORIGIN}/api`;
 
 export function ProviderPicker({
   teamSlugOrId,
@@ -28,7 +30,7 @@ export function ProviderPicker({
     queryFn: async () => {
       const params = new URLSearchParams({ teamSlugOrId });
       if (capability) params.set("capability", capability);
-      const res = await fetch(`${API_BASE}/providers?${params}`);
+      const res = await fetchWithAuth(new Request(`${API_BASE}/providers?${params}`));
       if (!res.ok) throw new Error("Failed to fetch providers");
       return res.json() as Promise<{ providers: Provider[] }>;
     },

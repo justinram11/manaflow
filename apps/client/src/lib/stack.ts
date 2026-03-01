@@ -73,7 +73,7 @@ async function refreshAuthToken(): Promise<void> {
   return refreshPromise;
 }
 
-const fetchWithAuth = isLocalAuth
+export const fetchWithAuth = isLocalAuth
   ? ((async (request: Request) => {
       const jwt = localStorage.getItem("cmux-local-jwt");
       if (!jwt) {

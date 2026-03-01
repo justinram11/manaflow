@@ -40,16 +40,16 @@ export const LOCAL_USERS: LocalUser[] = [
     email: "justin@getsenes.com",
     password: "password",
     displayName: "Justin",
-    teamSlug: "justin",
-    teamId: "local-team-00000000-0000-0000-0000-000000000010",
+    teamSlug: "senes",
+    teamId: "local-team-00000000-0000-0000-0000-000000000001",
   },
   {
     id: "local-user-00000000-0000-0000-0000-000000000020",
     email: "colby@getsenes.com",
     password: "password",
     displayName: "Colby",
-    teamSlug: "colby",
-    teamId: "local-team-00000000-0000-0000-0000-000000000020",
+    teamSlug: "senes",
+    teamId: "local-team-00000000-0000-0000-0000-000000000001",
   },
 ];
 

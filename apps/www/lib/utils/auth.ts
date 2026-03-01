@@ -2,6 +2,8 @@ import { env } from "@/lib/utils/www-env";
 import { stackServerAppJs } from "@/lib/utils/stack";
 import { LOCAL_USERS, LOCAL_AUTH_ISSUER } from "@/lib/utils/local-jwt";
 import { decodeJwt } from "jose";
+import { getDb } from "@cmux/db";
+import { listTeamMemberships } from "@cmux/db/queries/teams";
 
 export async function getAccessTokenFromRequest(
   req: Request
@@ -123,15 +125,20 @@ function getLocalUser(req: Request) {
     const user = LOCAL_USERS.find((u) => u.id === claims.sub);
     if (!user) return null;
 
+    const db = getDb();
+    const memberships = listTeamMemberships(db, user.id);
+    const userTeams = memberships.map((m: { teams: { teamId: string; displayName: string } }) => ({
+      id: m.teams.teamId,
+      displayName: m.teams.displayName,
+    }));
+
     return {
       id: user.id,
       getAuthJson: async () => ({ accessToken: token }),
       getAuthHeaders: async () => ({
         Authorization: `Bearer ${token}`,
       }) as Record<string, string>,
-      listTeams: async () => [
-        { id: user.teamId, displayName: user.displayName },
-      ],
+      listTeams: async () => userTeams,
       getConnectedAccount: async () => null,
     };
   } catch {

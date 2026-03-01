@@ -2,6 +2,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useCallback } from "react";
 import { toast } from "sonner";
 import { Trash2, Plus, Copy, Server } from "lucide-react";
+import { WWW_ORIGIN } from "@/lib/wwwOrigin";
+import { fetchWithAuth } from "@/lib/stack";
 
 interface Provider {
   id: string;
@@ -19,7 +21,12 @@ interface ProviderSettingsProps {
   teamSlugOrId: string;
 }
 
-const API_BASE = "/api";
+const API_BASE = `${WWW_ORIGIN}/api`;
+
+/** Fetch wrapper that adds auth headers */
+function authFetch(url: string, init?: RequestInit): Promise<Response> {
+  return fetchWithAuth(new Request(url, init));
+}
 
 export function ProviderSettings({ teamSlugOrId }: ProviderSettingsProps) {
   const queryClient = useQueryClient();
@@ -36,7 +43,7 @@ export function ProviderSettings({ teamSlugOrId }: ProviderSettingsProps) {
   const providersQuery = useQuery({
     queryKey,
     queryFn: async () => {
-      const res = await fetch(
+      const res = await authFetch(
         `${API_BASE}/providers?teamSlugOrId=${encodeURIComponent(teamSlugOrId)}`,
       );
       if (!res.ok) throw new Error("Failed to fetch providers");
@@ -48,7 +55,7 @@ export function ProviderSettings({ teamSlugOrId }: ProviderSettingsProps) {
 
   const registerMutation = useMutation({
     mutationFn: async (opts: { name: string; platform: string }) => {
-      const res = await fetch(`${API_BASE}/providers/register`, {
+      const res = await authFetch(`${API_BASE}/providers/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -73,7 +80,7 @@ export function ProviderSettings({ teamSlugOrId }: ProviderSettingsProps) {
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const res = await fetch(`${API_BASE}/providers/${id}`, {
+      const res = await authFetch(`${API_BASE}/providers/${id}`, {
         method: "DELETE",
       });
       if (!res.ok) throw new Error("Failed to delete provider");
@@ -94,7 +101,7 @@ export function ProviderSettings({ teamSlugOrId }: ProviderSettingsProps) {
       name?: string;
       maxConcurrentSlots?: number;
     }) => {
-      const res = await fetch(`${API_BASE}/providers/${opts.id}`, {
+      const res = await authFetch(`${API_BASE}/providers/${opts.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

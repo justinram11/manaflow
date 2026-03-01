@@ -513,8 +513,9 @@ export function CmuxComments({ teamSlugOrId }: { teamSlugOrId: string }) {
       query: { url: commentsUrl },
     }),
   );
-  // The HTTP API returns a different shape; cast to the expected Comment interface.
-  const comments = commentsQuery.data as unknown as Comment[] | undefined;
+  // The HTTP API returns { comments: [...] }; unwrap and cast to the expected Comment interface.
+  const rawData = commentsQuery.data as unknown as { comments: Comment[] } | Comment[] | undefined;
+  const comments = Array.isArray(rawData) ? rawData : rawData?.comments;
 
   const queryClient = useQueryClient();
   const commentsQueryKey = getApiCommentsOptions({ query: { url: commentsUrl } }).queryKey;
