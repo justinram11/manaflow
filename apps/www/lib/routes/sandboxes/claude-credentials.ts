@@ -13,7 +13,27 @@ export async function injectClaudeCredentials(
 ): Promise<void> {
   await instance.exec("mkdir -p /root/.claude && chmod 700 /root/.claude");
 
-  const b64 = Buffer.from(credentialsJson).toString("base64");
+  // Strip claudeAiOauth from the credentials JSON before injecting.
+  // The CLAUDE_CREDENTIALS_JSON setting is intended for MCP OAuth tokens
+  // (e.g. Figma), but users may have saved their full ~/.claude/.credentials.json
+  // which includes claudeAiOauth. If injected, this stale/mismatched token
+  // takes priority over CLAUDE_CODE_OAUTH_TOKEN env var and causes Claude Code
+  // to show a login prompt instead of using the configured auth.
+  let sanitized = credentialsJson;
+  try {
+    const parsed = JSON.parse(credentialsJson);
+    if (parsed.claudeAiOauth) {
+      delete parsed.claudeAiOauth;
+      sanitized = JSON.stringify(parsed);
+      console.log(
+        `[claude-credentials] Stripped claudeAiOauth from .credentials.json to avoid auth conflict`,
+      );
+    }
+  } catch {
+    // If it's not valid JSON, write it as-is
+  }
+
+  const b64 = Buffer.from(sanitized).toString("base64");
   const res = await instance.exec(
     `echo '${b64}' | base64 -d > /root/.claude/.credentials.json && chmod 600 /root/.claude/.credentials.json`,
   );
@@ -86,6 +106,20 @@ export async function injectClaudeAuth(
   const rcSnippet = `\n${marker}\n${exportLines}`;
   const rcB64 = Buffer.from(rcSnippet).toString("base64");
 
+  // Ensure ~/.claude.json has hasCompletedOnboarding so Claude Code
+  // skips the interactive login/setup flow and uses the token directly.
+  const onboardingScript = `python3 -c "
+import json, os
+p = os.path.expanduser('~/.claude.json')
+try:
+    d = json.load(open(p))
+except Exception:
+    d = {}
+d['hasCompletedOnboarding'] = True
+d['hasAcknowledgedCostThreshold'] = True
+json.dump(d, open(p, 'w'))
+" 2>/dev/null`;
+
   await Promise.all([
     instance.exec(
       `grep -q '${marker}' /root/.bashrc 2>/dev/null || echo '${rcB64}' | base64 -d >> /root/.bashrc`,
@@ -93,6 +127,7 @@ export async function injectClaudeAuth(
     instance.exec(
       `grep -q '${marker}' /root/.zshrc 2>/dev/null || echo '${rcB64}' | base64 -d >> /root/.zshrc`,
     ),
+    instance.exec(onboardingScript),
   ]);
 
   console.log(
