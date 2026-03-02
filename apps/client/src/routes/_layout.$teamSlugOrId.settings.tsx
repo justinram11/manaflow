@@ -107,7 +107,19 @@ const CLAUDE_CREDENTIALS_KEY = {
   description: "Contents of ~/.claude/.credentials.json for MCP OAuth tokens (e.g. Figma)",
 } as const;
 
-const EXTRA_KEYS = [GITHUB_PAT_KEY, CLAUDE_CREDENTIALS_KEY];
+const AWS_CREDENTIALS_KEY = {
+  envVar: "AWS_CREDENTIALS_FILE",
+  displayName: "AWS Credentials File",
+  description: "Contents of ~/.aws/credentials",
+} as const;
+
+const AWS_CONFIG_KEY = {
+  envVar: "AWS_CONFIG_FILE",
+  displayName: "AWS Config File",
+  description: "Contents of ~/.aws/config",
+} as const;
+
+const EXTRA_KEYS = [GITHUB_PAT_KEY, CLAUDE_CREDENTIALS_KEY, AWS_CREDENTIALS_KEY, AWS_CONFIG_KEY];
 
 function GitHubIcon({ className }: { className?: string }) {
   return (
@@ -1768,6 +1780,151 @@ function SettingsComponent() {
                       })}
                     </>
                   )}
+                </div>
+              </div>
+            </div>
+
+            {/* AWS Configuration */}
+            <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  AWS Configuration
+                </h2>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                  AWS credentials and config files are injected into every sandbox on startup
+                </p>
+              </div>
+              <div className="p-4 space-y-4">
+                {/* AWS Credentials */}
+                <div className="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 space-y-2">
+                  <div className="flex-1 min-w-0">
+                    <label
+                      htmlFor="AWS_CREDENTIALS_FILE"
+                      className="block text-sm font-medium text-neutral-700 dark:text-neutral-300"
+                    >
+                      AWS Credentials
+                    </label>
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                      Contents of <code className="px-1 py-0.5 bg-neutral-100 dark:bg-neutral-800 rounded text-[11px]">~/.aws/credentials</code> — supports aws-mfa and multiple profiles.
+                    </p>
+                  </div>
+                  <div className="md:w-[min(100%,480px)]">
+                    <div className="relative">
+                      {showKeys.AWS_CREDENTIALS_FILE ? (
+                        <textarea
+                          id="AWS_CREDENTIALS_FILE"
+                          value={apiKeyValues.AWS_CREDENTIALS_FILE || ""}
+                          onChange={(e) =>
+                            handleApiKeyChange("AWS_CREDENTIALS_FILE", e.target.value)
+                          }
+                          rows={6}
+                          className="w-full px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs resize-y"
+                          placeholder={"[default]\naws_access_key_id = AKIA...\naws_secret_access_key = ...\naws_session_token = ..."}
+                        />
+                      ) : (
+                        <div
+                          onClick={() => toggleShowKey("AWS_CREDENTIALS_FILE")}
+                          className="w-full px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs cursor-pointer h-[82px]"
+                        >
+                          {apiKeyValues.AWS_CREDENTIALS_FILE
+                            ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
+                            : <span className="text-neutral-400">Click to edit</span>}
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => toggleShowKey("AWS_CREDENTIALS_FILE")}
+                        className="absolute top-2 right-2 p-1 text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
+                      >
+                        {showKeys.AWS_CREDENTIALS_FILE ? (
+                          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                          </svg>
+                        ) : (
+                          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+                    {originalApiKeyValues.AWS_CREDENTIALS_FILE && (
+                      <div className="flex items-center gap-1 mt-1">
+                        <svg className="w-3 h-3 text-green-500 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        <span className="text-xs text-green-600 dark:text-green-400">
+                          Credentials configured
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* AWS Config */}
+                <div className="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 space-y-2">
+                  <div className="flex-1 min-w-0">
+                    <label
+                      htmlFor="AWS_CONFIG_FILE"
+                      className="block text-sm font-medium text-neutral-700 dark:text-neutral-300"
+                    >
+                      AWS Config
+                    </label>
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                      Contents of <code className="px-1 py-0.5 bg-neutral-100 dark:bg-neutral-800 rounded text-[11px]">~/.aws/config</code> — default region, output format, etc.
+                    </p>
+                  </div>
+                  <div className="md:w-[min(100%,480px)]">
+                    <div className="relative">
+                      {showKeys.AWS_CONFIG_FILE ? (
+                        <textarea
+                          id="AWS_CONFIG_FILE"
+                          value={apiKeyValues.AWS_CONFIG_FILE || ""}
+                          onChange={(e) =>
+                            handleApiKeyChange("AWS_CONFIG_FILE", e.target.value)
+                          }
+                          rows={4}
+                          className="w-full px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs resize-y"
+                          placeholder={"[default]\nregion = us-east-2\noutput = json"}
+                        />
+                      ) : (
+                        <div
+                          onClick={() => toggleShowKey("AWS_CONFIG_FILE")}
+                          className="w-full px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs cursor-pointer h-[82px]"
+                        >
+                          {apiKeyValues.AWS_CONFIG_FILE
+                            ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
+                            : <span className="text-neutral-400">Click to edit</span>}
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => toggleShowKey("AWS_CONFIG_FILE")}
+                        className="absolute top-2 right-2 p-1 text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
+                      >
+                        {showKeys.AWS_CONFIG_FILE ? (
+                          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                          </svg>
+                        ) : (
+                          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+                    {originalApiKeyValues.AWS_CONFIG_FILE && (
+                      <div className="flex items-center gap-1 mt-1">
+                        <svg className="w-3 h-3 text-green-500 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        <span className="text-xs text-green-600 dark:text-green-400">
+                          Config configured
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

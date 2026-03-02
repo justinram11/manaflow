@@ -69,6 +69,7 @@ import { getAllocationById } from "@cmux/db/queries/providers";
 import * as crypto from "node:crypto";
 import { injectClaudeCredentials, injectClaudeAuth } from "./sandboxes/claude-credentials";
 import { injectHostSshKeys } from "./sandboxes/ssh-keys";
+import { injectAwsCredentials } from "./sandboxes/aws-credentials";
 
 // Track running Incus containers for snapshot operations.
 // State now also lives in the provider daemon, but we keep a local map
@@ -634,6 +635,13 @@ sandboxesRouter.openapi(
               error,
             );
           }),
+          // Inject AWS credentials and config
+          injectAwsCredentials(dockerInstance, userApiKeys).catch((error) => {
+            console.log(
+              `[sandboxes.start] Failed to inject AWS credentials (docker); continuing...`,
+              error,
+            );
+          }),
         ]);
 
         // Hydrate repo if requested
@@ -933,6 +941,12 @@ sandboxesRouter.openapi(
                   error,
                 );
               }),
+              injectAwsCredentials(incusInstance, incusApiKeys).catch((error) => {
+                console.log(
+                  `[sandboxes.start] Failed to inject AWS credentials (incus); continuing...`,
+                  error,
+                );
+              }),
             ]);
 
             // Hydrate repo if requested
@@ -1118,6 +1132,12 @@ sandboxesRouter.openapi(
               injectClaudeAuth(awsInstance, awsApiKeys).catch((error) => {
                 console.log(
                   `[sandboxes.start] Failed to inject Claude auth (aws); continuing...`,
+                  error,
+                );
+              }),
+              injectAwsCredentials(awsInstance, awsApiKeys).catch((error) => {
+                console.log(
+                  `[sandboxes.start] Failed to inject AWS credentials (aws); continuing...`,
                   error,
                 );
               }),
@@ -2399,7 +2419,7 @@ sandboxesRouter.openapi(
             user.id,
             async () => {
               const memberships = listTeamMemberships(db, user.id);
-              return memberships.map((m) => ({ teamId: m.teams.teamId }));
+              return memberships.map((m: ReturnType<typeof listTeamMemberships>[number]) => ({ teamId: m.teams.teamId }));
             }
           );
           if (!result.authorized) {
@@ -2611,7 +2631,7 @@ sandboxesRouter.openapi(
             user.id,
             async () => {
               const memberships = listTeamMemberships(db, user.id);
-              return memberships.map((m) => ({ teamId: m.teams.teamId }));
+              return memberships.map((m: ReturnType<typeof listTeamMemberships>[number]) => ({ teamId: m.teams.teamId }));
             }
           );
           if (!result.authorized) {

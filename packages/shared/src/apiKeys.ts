@@ -61,3 +61,15 @@ export const CODEX_AUTH_JSON: AgentConfigApiKey = {
   description:
     "Contents of ~/.codex/auth.json. Copy and paste the full JSON contents here.",
 };
+
+export const AWS_CREDENTIALS_FILE: AgentConfigApiKey = {
+  envVar: "AWS_CREDENTIALS_FILE",
+  displayName: "AWS Credentials File",
+  description: "Contents of ~/.aws/credentials",
+};
+
+export const AWS_CONFIG_FILE: AgentConfigApiKey = {
+  envVar: "AWS_CONFIG_FILE",
+  displayName: "AWS Config File",
+  description: "Contents of ~/.aws/config",
+};
