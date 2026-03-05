@@ -62,6 +62,11 @@ export class IncusProvider implements ComputeProvider {
       // Configure IPv4 networking
       await configureContainerNetwork(containerName);
 
+      // Ensure localhost resolves (Docker build can't write /etc/hosts)
+      await incusContainerExec(containerName, [
+        "sh", "-c", "printf '127.0.0.1 localhost\\n::1 localhost\\n' > /etc/hosts",
+      ]);
+
       // Enable graphical environment
       await enableGraphicalServices(containerName);
 
@@ -98,6 +103,9 @@ export class IncusProvider implements ComputeProvider {
           : {}),
         ...(wantsIos && hostPortMap[CONTAINER_PORTS.iosVnc] !== undefined
           ? { iosVnc: hostPortMap[CONTAINER_PORTS.iosVnc] }
+          : {}),
+        ...(wantsIos && hostPortMap[CONTAINER_PORTS.iosRsyncd] !== undefined
+          ? { iosRsyncd: hostPortMap[CONTAINER_PORTS.iosRsyncd] }
           : {}),
       };
 

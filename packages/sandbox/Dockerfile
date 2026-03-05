@@ -221,6 +221,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   sudo \
   git \
   ripgrep \
+  rsync \
+  isc-dhcp-client \
   wget \
   gnupg \
   make \
@@ -384,7 +386,10 @@ RUN arch="$(uname -m)"; \
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
   mv /root/.local/bin/uv /usr/local/bin/uv && \
-  rm -rf /root/.local
+  rm -rf /root/.local && \
+  sed -i '/\.local\/bin\/env/d' /root/.profile && \
+  sed -i '/\.local\/bin\/env/d' /root/.zshrc && \
+  sed -i '/\.local\/bin\/env/d' /root/.bashrc
 
 ARG RUST_VERSION
 ENV RUSTUP_HOME=/usr/local/rustup \
@@ -466,18 +471,31 @@ COPY --link packages/sandbox/agent-config /usr/share/cmux/agent-config
 COPY --link packages/sandbox/systemd/dockerd.service /etc/systemd/system/dockerd.service
 COPY --link packages/sandbox/systemd/buildkitd.service /etc/systemd/system/buildkitd.service
 COPY --link packages/sandbox/systemd/cmux-sandboxd.service /etc/systemd/system/cmux-sandboxd.service
+COPY --link configs/systemd/cmux-cmux-code.service /etc/systemd/system/cmux-cmux-code.service
+COPY --link configs/systemd/cmux-pty.service /etc/systemd/system/cmux-pty.service
+COPY --link configs/systemd/cmux-worker.service /etc/systemd/system/cmux-worker.service
+# cmux-ide is a proxy unit that cmux-worker depends on; resolve the template for cmux-code
+RUN printf '[Unit]\nDescription=Cmux IDE Service (proxy for cmux-cmux-code)\nAfter=cmux-cmux-code.service\nWants=cmux-cmux-code.service\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/true\n\n[Install]\nWantedBy=multi-user.target\n' > /etc/systemd/system/cmux-ide.service
+COPY --link configs/systemd/bin/configure-cmux-code /usr/local/lib/cmux/configure-cmux-code
+COPY --link configs/systemd/ide.env.cmux-code /etc/cmux/ide.env
 RUN echo "CMUX_SANDBOX_PORT=46831" > /etc/default/cmux-sandboxd && \
   { echo "CMUX_DOCKER_MODE=dind"; echo "CMUX_DOCKER_SOCKET=/var/run/docker.sock"; } > /etc/default/cmux-docker && \
   mkdir -p /etc/systemd/system/multi-user.target.wants && \
   ln -s /etc/systemd/system/dockerd.service /etc/systemd/system/multi-user.target.wants/dockerd.service && \
   ln -s /etc/systemd/system/buildkitd.service /etc/systemd/system/multi-user.target.wants/buildkitd.service && \
-  ln -s /etc/systemd/system/cmux-sandboxd.service /etc/systemd/system/multi-user.target.wants/cmux-sandboxd.service
+  ln -s /etc/systemd/system/cmux-sandboxd.service /etc/systemd/system/multi-user.target.wants/cmux-sandboxd.service && \
+  ln -s /etc/systemd/system/cmux-cmux-code.service /etc/systemd/system/multi-user.target.wants/cmux-cmux-code.service && \
+  ln -s /etc/systemd/system/cmux-pty.service /etc/systemd/system/multi-user.target.wants/cmux-pty.service && \
+  ln -s /etc/systemd/system/cmux-ide.service /etc/systemd/system/multi-user.target.wants/cmux-ide.service && \
+  ln -s /etc/systemd/system/cmux-worker.service /etc/systemd/system/multi-user.target.wants/cmux-worker.service
 
 ENV CMUX_SANDBOX_PORT=46831 \
   CMUX_DOCKER_MODE=dind \
   CMUX_DOCKER_SOCKET=/var/run/docker.sock \
   DOCKER_HOST=unix:///var/run/docker.sock \
   BROWSER=/usr/local/bin/open-url
+
+RUN mkdir -p /root/workspace
 
 EXPOSE 46831
 VOLUME ["/var/lib/docker", "/var/lib/cmux/sandboxes"]

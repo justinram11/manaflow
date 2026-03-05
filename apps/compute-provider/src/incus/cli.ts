@@ -41,7 +41,7 @@ interface IncusContainerState {
 /**
  * Run an incus CLI command and return the result.
  */
-function incusCommand(
+export function incusCommand(
   args: string[],
   options?: { timeout?: number },
 ): Promise<IncusExecResult> {

@@ -60,25 +60,27 @@ function hashToken(token: string): string {
 export function setupProviderWS(httpServer: HttpServer): void {
   const wss = new WebSocketServer({ noServer: true });
 
-  // We must intercept upgrade events BEFORE Socket.IO claims them.
-  // Socket.IO also listens for 'upgrade' on the httpServer and will close
-  // WebSocket connections it doesn't recognize. We use a raw listener on the
-  // underlying server that captures the upgrade event and prevents propagation
-  // to other listeners (including Socket.IO) for /provider-ws paths.
-
-  // Store a reference so we can monkey-patch the emit
+  // Intercept upgrade events for /provider-ws BEFORE Socket.IO claims them.
+  // We monkey-patch httpServer.emit to consume /provider-ws upgrades and
+  // prevent them from reaching Socket.IO's upgrade handler.
   const origEmit = httpServer.emit.bind(httpServer);
+  const handledUpgrades = new WeakSet<IncomingMessage>();
   httpServer.emit = function (event: string, ...args: unknown[]) {
     if (event === "upgrade") {
       const request = args[0] as IncomingMessage;
       const url = new URL(request.url ?? "/", `http://${request.headers.host}`);
       if (url.pathname === "/provider-ws") {
+        if (handledUpgrades.has(request)) {
+          serverLogger.warn("Provider WS: duplicate upgrade emit for same request, ignoring");
+          return true;
+        }
+        handledUpgrades.add(request);
         const socket = args[1] as Duplex;
         const head = args[2] as Buffer;
         wss.handleUpgrade(request, socket, head, (ws) => {
           wss.emit("connection", ws, request);
         });
-        return true; // Prevent other listeners from firing
+        return true; // Prevent Socket.IO from seeing this upgrade
       }
     }
     return origEmit(event, ...args);
@@ -157,14 +159,22 @@ export function setupProviderWS(httpServer: HttpServer): void {
 
     ws.on("close", () => {
       if (providerId) {
-        cleanupConnection(providerId);
+        // Only clean up if this WS is still the active connection for this provider.
+        // A newer connection may have already replaced us via registerConnection.
+        const conn = connections.get(providerId);
+        if (conn && conn.ws === ws) {
+          cleanupConnection(providerId);
+        }
       }
     });
 
     ws.on("error", (error) => {
       console.error(`Provider WS error (${providerId}):`, error);
       if (providerId) {
-        cleanupConnection(providerId);
+        const conn = connections.get(providerId);
+        if (conn && conn.ws === ws) {
+          cleanupConnection(providerId);
+        }
       }
     });
 

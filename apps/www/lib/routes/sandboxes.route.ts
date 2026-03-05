@@ -966,7 +966,16 @@ sandboxesRouter.openapi(
                   })()
                 : Promise.resolve(),
               effectiveIncusGithubToken
-                ? configureGithubAccess(incusInstance, effectiveIncusGithubToken)
+                ? configureGithubAccess(incusInstance, effectiveIncusGithubToken).catch((error) => {
+                    console.error(
+                      `[sandboxes.start] Failed to configure GitHub access (incus); falling back to credential helper...`,
+                      error,
+                    );
+                    // Fall back to direct git credential helper since gh (cmux-bridge) may not be connected
+                    return incusInstance.exec(
+                      `git config --global credential.helper '!f() { echo "password=${effectiveIncusGithubToken}"; }; f' && git config --global credential.https://github.com.username x-access-token`
+                    ).catch((e) => console.error("[sandboxes.start] credential helper fallback failed:", e));
+                  })
                 : Promise.resolve(),
               gitIdentityPromise
                 .then(([who, gh]) => {
