@@ -36,22 +36,33 @@ export class IncusProvider implements ComputeProvider {
     const containerName = `cmux-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     try {
+      let launchedFromSnapshot = false;
       if (opts.snapshotId) {
         // Snapshot restore: incus copy source/snapshot newContainer && incus start
         const slashIndex = opts.snapshotId.indexOf("/");
         if (slashIndex === -1) {
-          throw new Error(
-            `Invalid snapshotId format: "${opts.snapshotId}". Expected "containerName/snapshotName".`,
+          console.warn(
+            `[incus-provider] Invalid snapshotId format: "${opts.snapshotId}". Expected "containerName/snapshotName". Falling back to fresh image.`,
           );
-        }
-        const sourceContainer = opts.snapshotId.slice(0, slashIndex);
-        const snapshotName = opts.snapshotId.slice(slashIndex + 1);
+        } else {
+          const sourceContainer = opts.snapshotId.slice(0, slashIndex);
+          const snapshotName = opts.snapshotId.slice(slashIndex + 1);
 
-        await incusSnapshotCopy(sourceContainer, snapshotName, containerName);
-        console.log(
-          `[incus-provider] Container ${containerName} restored from snapshot ${opts.snapshotId}`,
-        );
-      } else {
+          try {
+            await incusSnapshotCopy(sourceContainer, snapshotName, containerName);
+            console.log(
+              `[incus-provider] Container ${containerName} restored from snapshot ${opts.snapshotId}`,
+            );
+            launchedFromSnapshot = true;
+          } catch (snapshotErr) {
+            console.warn(
+              `[incus-provider] Snapshot restore failed for "${opts.snapshotId}", falling back to fresh image:`,
+              snapshotErr,
+            );
+          }
+        }
+      }
+      if (!launchedFromSnapshot) {
         // Fresh launch
         await incusLaunch(imageName, containerName);
         console.log(
