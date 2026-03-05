@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
 import { mkdirSync, rmSync, existsSync } from "node:fs";
+import { captureManager } from "./capture-manager";
 
 interface AllocationInfo {
   allocationId: string;
@@ -7,6 +8,7 @@ interface AllocationInfo {
   simulatorUdid?: string;
   simulatorDeviceType: string;
   simulatorRuntime: string;
+  capturePort?: number;
   rsyncEndpoint?: string;
   rsyncSecret?: string;
 }
@@ -66,6 +68,8 @@ export function cleanupAllocation(params: {
   const { allocationId, buildDir, simulatorUdid } = params;
   const info = allocations.get(allocationId);
 
+  captureManager.stopCapture(allocationId);
+
   // Clean up build directory
   const dir = buildDir ?? info?.buildDir;
   if (dir && existsSync(dir)) {
@@ -109,11 +113,30 @@ export function bootSimulator(allocationId: string): string | undefined {
 
   try {
     execSync(`xcrun simctl boot "${info.simulatorUdid}" 2>/dev/null || true`, { encoding: "utf-8" });
+    execSync(`open -a Simulator --args -CurrentDeviceUDID "${info.simulatorUdid}"`, {
+      encoding: "utf-8",
+    });
     return info.simulatorUdid;
   } catch (error) {
     console.error("Failed to boot simulator:", error);
     return info.simulatorUdid;
   }
+}
+
+export function ensureSimulatorCapture(
+  allocationId: string,
+  localPort: number,
+  fps = 30,
+): string | undefined {
+  const info = allocations.get(allocationId);
+  if (!info?.simulatorUdid) return undefined;
+
+  const simulatorUdid = bootSimulator(allocationId);
+  if (!simulatorUdid) return undefined;
+
+  info.capturePort = localPort;
+  captureManager.startCapture(allocationId, simulatorUdid, localPort, fps);
+  return simulatorUdid;
 }
 
 /**

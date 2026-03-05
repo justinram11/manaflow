@@ -9,7 +9,10 @@
 // Requirements: macOS 14+, ScreenCaptureKit framework
 
 import Foundation
+import AppKit
 import CoreGraphics
+import CoreVideo
+import ScreenCaptureKit
 
 // MARK: - Argument Parsing
 
@@ -53,9 +56,7 @@ struct Config {
 
 // MARK: - Simulator Window Finder
 
-/// Finds the Simulator.app window for the given UDID by matching the window title.
-func findSimulatorWindowId(udid: String) -> CGWindowID? {
-    // Get the PID of the Simulator process that has this UDID
+func getSimulatorDeviceName(udid: String) -> String? {
     let task = Process()
     task.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
     task.arguments = ["simctl", "list", "devices", "-j", "booted"]
@@ -71,37 +72,51 @@ func findSimulatorWindowId(udid: String) -> CGWindowID? {
         return nil
     }
 
-    // Find the device name for this UDID
-    var deviceName: String?
     for (_, deviceList) in devices {
         for device in deviceList {
             if let deviceUdid = device["udid"] as? String, deviceUdid == udid {
-                deviceName = device["name"] as? String
-                break
+                return device["name"] as? String
             }
         }
-        if deviceName != nil { break }
     }
 
-    guard let name = deviceName else {
+    return nil
+}
+
+func getShareableContent() -> SCShareableContent? {
+    let semaphore = DispatchSemaphore(value: 0)
+    var content: SCShareableContent?
+
+    SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: true) { shareableContent, error in
+        if let error {
+            fputs("Failed to enumerate shareable content: \(error)\n", stderr)
+        }
+        content = shareableContent
+        semaphore.signal()
+    }
+
+    semaphore.wait()
+    return content
+}
+
+/// Finds the Simulator.app window for the given UDID by matching the window title.
+func findSimulatorWindow(udid: String) -> SCWindow? {
+    guard let name = getSimulatorDeviceName(udid: udid) else {
         fputs("Warning: Could not find device name for UDID \(udid)\n", stderr)
         return nil
     }
 
-    // Find the window matching this simulator name
-    guard let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else {
+    guard let shareableContent = getShareableContent() else {
         return nil
     }
 
-    for window in windowList {
-        guard let ownerName = window[kCGWindowOwnerName as String] as? String,
-              ownerName == "Simulator",
-              let windowName = window[kCGWindowName as String] as? String,
-              windowName.contains(name),
-              let windowId = window[kCGWindowNumber as String] as? CGWindowID else {
+    for window in shareableContent.windows {
+        guard window.owningApplication?.applicationName == "Simulator",
+              let windowTitle = window.title,
+              windowTitle.contains(name) else {
             continue
         }
-        return windowId
+        return window
     }
 
     return nil
@@ -116,7 +131,7 @@ class RfbServer {
     let serverSocket: Int32
     var clientSocket: Int32 = -1
     var running = true
-    var windowId: CGWindowID?
+    var window: SCWindow?
     var lastWidth: Int = 0
     var lastHeight: Int = 0
 
@@ -156,16 +171,16 @@ class RfbServer {
     func run() {
         while running {
             // Wait for the simulator window
-            while windowId == nil && running {
-                windowId = findSimulatorWindowId(udid: config.simulatorUdid)
-                if windowId == nil {
+            while window == nil && running {
+                window = findSimulatorWindow(udid: config.simulatorUdid)
+                if window == nil {
                     fputs("Waiting for simulator window...\n", stderr)
                     Thread.sleep(forTimeInterval: 1.0)
                 }
             }
 
             guard running else { break }
-            fputs("Found simulator window ID: \(windowId!)\n", stderr)
+            fputs("Found simulator window for \(config.simulatorUdid)\n", stderr)
 
             // Accept client connection
             fputs("Waiting for VNC client connection...\n", stderr)
@@ -272,13 +287,29 @@ class RfbServer {
     }
 
     func captureFrame() -> CGImage? {
-        guard let wid = windowId else { return nil }
-        return CGWindowListCreateImage(
-            .null,
-            .optionIncludingWindow,
-            wid,
-            [.bestResolution, .boundsIgnoreFraming]
-        )
+        guard let window else { return nil }
+
+        let scale = window.owningApplication != nil ? (NSScreen.main?.backingScaleFactor ?? 2.0) : 2.0
+        let config = SCStreamConfiguration()
+        config.width = max(Int(window.frame.width * scale), 1)
+        config.height = max(Int(window.frame.height * scale), 1)
+        config.pixelFormat = kCVPixelFormatType_32BGRA
+        config.showsCursor = false
+
+        let filter = SCContentFilter(desktopIndependentWindow: window)
+        let semaphore = DispatchSemaphore(value: 0)
+        var image: CGImage?
+
+        SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) { capturedImage, error in
+            if let error {
+                fputs("ScreenCaptureKit capture failed: \(error)\n", stderr)
+            }
+            image = capturedImage
+            semaphore.signal()
+        }
+
+        semaphore.wait()
+        return image
     }
 
     func streamFrames() {

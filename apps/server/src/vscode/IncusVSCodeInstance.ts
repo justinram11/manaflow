@@ -102,7 +102,7 @@ export class IncusVSCodeInstance extends VSCodeInstance {
       workspaceUrl,
       instanceId: this.instanceId,
       taskRunId: this.taskRunId,
-      provider: "docker",
+      provider: "incus",
       vscodePersisted,
     };
   }
@@ -132,7 +132,7 @@ export class IncusVSCodeInstance extends VSCodeInstance {
           workspaceUrl: this.getWorkspaceUrl(this.vscodeBaseUrl),
           instanceId: this.instanceId,
           taskRunId: this.taskRunId,
-          provider: "docker",
+          provider: "incus",
         },
       };
     }

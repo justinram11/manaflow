@@ -1,6 +1,14 @@
 import type { CapabilityHandler, JsonRpcRequest, JsonRpcResponse } from "../../types";
 import { DirectMcpBridge, DirectVncBridge } from "./direct-connection";
 
+function getDefaultLocalVncPort(allocationId: string): number {
+  let hash = 0;
+  for (const char of allocationId) {
+    hash = (hash * 31 + char.charCodeAt(0)) % 10000;
+  }
+  return 45000 + hash;
+}
+
 /**
  * Resource:ios-simulator capability handler.
  *
@@ -129,16 +137,32 @@ export function createResourceIosHandler(): CapabilityHandler {
               const existing = vncBridges.get(allocId);
               if (existing) existing.disconnect();
 
+              const { ensureSimulatorCapture } = await import(
+                "@cmux/mac-resource-provider/workspace-manager"
+              );
+              const localVncPort =
+                typeof params.localVncPort === "number"
+                  ? params.localVncPort
+                  : getDefaultLocalVncPort(allocId);
+              const captureUdid = ensureSimulatorCapture(allocId, localVncPort);
+              if (!captureUdid) {
+                throw new Error(
+                  `No simulator available for allocation ${allocId}; cannot start VNC capture`,
+                );
+              }
+
               // Parse tcp://host:port format
               const vncUrl = new URL(vncEndpoint);
               const vncBridge = new DirectVncBridge({
                 remoteHost: vncUrl.hostname,
                 remotePort: parseInt(vncUrl.port, 10),
-                localPort: (params.localVncPort as number) ?? 5900,
+                localPort: localVncPort,
               });
               vncBridges.set(allocId, vncBridge);
               vncBridge.connect();
-              console.log(`[resource:ios] Direct VNC bridge created for allocation ${allocId}`);
+              console.log(
+                `[resource:ios] Direct VNC bridge created for allocation ${allocId} (simulator ${captureUdid}, local port ${localVncPort})`,
+              );
             }
 
             result = { connected: true };

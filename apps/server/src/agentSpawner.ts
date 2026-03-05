@@ -66,6 +66,173 @@ export interface AgentSpawnResult {
   error?: string;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function getPtyBaseUrl(vscode: unknown): string | null {
+  if (!isRecord(vscode)) {
+    return null;
+  }
+
+  const rawUrl =
+    typeof vscode.url === "string"
+      ? vscode.url
+      : typeof vscode.workspaceUrl === "string"
+        ? vscode.workspaceUrl
+        : null;
+  const rawPorts = isRecord(vscode.ports) ? vscode.ports : null;
+  const rawPtyPort = rawPorts?.pty;
+  const ptyPort =
+    typeof rawPtyPort === "number" || typeof rawPtyPort === "string"
+      ? String(rawPtyPort)
+      : null;
+
+  if (!rawUrl || !ptyPort) {
+    return null;
+  }
+
+  try {
+    const endpoint = new URL(rawUrl);
+    endpoint.port = ptyPort;
+    endpoint.pathname = "";
+    endpoint.search = "";
+    endpoint.hash = "";
+    return endpoint.toString().replace(/\/$/, "");
+  } catch (error) {
+    console.error("[AgentSpawner] Failed to build PTY base URL:", error);
+    return null;
+  }
+}
+
+function getPtyHealthUrl(vscode: unknown): string | null {
+  const ptyBaseUrl = getPtyBaseUrl(vscode);
+  return ptyBaseUrl ? `${ptyBaseUrl}/health` : null;
+}
+
+async function waitForPtyServerReady(
+  ptyHealthUrl: string,
+  timeoutMs = 30000,
+): Promise<boolean> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const response = await fetch(ptyHealthUrl, {
+        signal: AbortSignal.timeout(2000),
+      });
+      if (response.ok) {
+        return true;
+      }
+    } catch (error) {
+      console.error(
+        `[AgentSpawner] PTY health check failed for ${ptyHealthUrl}:`,
+        error,
+      );
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+
+  return false;
+}
+
+interface PtySessionResponse {
+  id: string;
+  name: string;
+}
+
+async function listPtySessions(ptyBaseUrl: string): Promise<PtySessionResponse[]> {
+  const response = await fetch(`${ptyBaseUrl}/sessions`, {
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to list PTY sessions (${response.status})`);
+  }
+  const payload = await response.json() as { sessions?: PtySessionResponse[] };
+  return payload.sessions ?? [];
+}
+
+async function createAttachedTmuxMirrorSession(
+  ptyBaseUrl: string,
+  sessionName: string,
+  cols: number,
+  rows: number,
+): Promise<void> {
+  const createResponse = await fetch(`${ptyBaseUrl}/sessions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      shell: "/bin/bash",
+      cwd: "/root/workspace",
+      cols,
+      rows,
+      name: sessionName,
+      metadata: {
+        location: "panel",
+        type: "agent",
+        managed: true,
+      },
+    }),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!createResponse.ok) {
+    throw new Error(`Failed to create PTY mirror (${createResponse.status})`);
+  }
+
+  const createdSession = await createResponse.json() as { id: string };
+  const inputResponse = await fetch(
+    `${ptyBaseUrl}/sessions/${createdSession.id}/input`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ data: `tmux attach-session -t ${sessionName}\n` }),
+      signal: AbortSignal.timeout(10000),
+    },
+  );
+  if (!inputResponse.ok) {
+    throw new Error(
+      `Failed to attach PTY mirror to tmux (${inputResponse.status})`,
+    );
+  }
+}
+
+async function ensurePtyMirrorForTmuxFallback(params: {
+  dbTaskRunVscode: unknown;
+  workerSocket: Parameters<typeof workerExec>[0]["workerSocket"];
+  sessionName: string;
+  cols: number;
+  rows: number;
+}): Promise<void> {
+  const ptyBaseUrl = getPtyBaseUrl(params.dbTaskRunVscode);
+  if (!ptyBaseUrl) {
+    return;
+  }
+
+  const existingSessions = await listPtySessions(ptyBaseUrl);
+  if (existingSessions.some((session) => session.name === params.sessionName)) {
+    return;
+  }
+
+  const tmuxCheck = await workerExec({
+    workerSocket: params.workerSocket,
+    command: "tmux",
+    args: ["has-session", "-t", params.sessionName],
+    cwd: "/root/workspace",
+    env: {},
+    timeout: 10000,
+  });
+  if (tmuxCheck.exitCode !== 0) {
+    return;
+  }
+
+  await createAttachedTmuxMirrorSession(
+    ptyBaseUrl,
+    params.sessionName,
+    params.cols,
+    params.rows,
+  );
+}
+
 export async function spawnAgent(
   agent: AgentConfig,
   taskId: string,
@@ -1261,6 +1428,20 @@ exit $EXIT_CODE
     );
     serverLogger.info(`[AgentSpawner] Socket id:`, workerSocket.id);
 
+    const currentTaskRun = getTaskRunById(db, runId);
+    const ptyHealthUrl = getPtyHealthUrl(currentTaskRun?.vscode);
+    if (ptyHealthUrl) {
+      serverLogger.info(
+        `[AgentSpawner] Waiting for PTY server before terminal creation: ${ptyHealthUrl}`,
+      );
+      const ptyReady = await waitForPtyServerReady(ptyHealthUrl);
+      if (!ptyReady) {
+        serverLogger.warn(
+          `[AgentSpawner] PTY server did not become ready within timeout, proceeding with terminal creation`,
+        );
+      }
+    }
+
     await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         serverLogger.error(
@@ -1290,6 +1471,22 @@ exit $EXIT_CODE
         `[AgentSpawner] Emitted worker:create-terminal at ${new Date().toISOString()}`
       );
     });
+
+    try {
+      const refreshedTaskRun = getTaskRunById(db, runId);
+      await ensurePtyMirrorForTmuxFallback({
+        dbTaskRunVscode: refreshedTaskRun?.vscode,
+        workerSocket,
+        sessionName: tmuxSessionName,
+        cols: terminalCreationCommand.cols,
+        rows: terminalCreationCommand.rows,
+      });
+    } catch (error) {
+      serverLogger.error(
+        `[AgentSpawner] Failed to mirror tmux fallback into cmux-pty`,
+        error,
+      );
+    }
 
     return {
       agentName: agent.name,

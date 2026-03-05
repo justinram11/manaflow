@@ -734,10 +734,11 @@ sandboxesRouter.openapi(
 
         console.log(`[sandboxes.start] Using Incus provider ${resolvedProviderId}`);
 
-        // Check if an iOS simulator provider is available to decide whether to allocate iOS ports
-        const hasIosProvider = body.taskRunId
-          ? getOnlineByCapability(db, body.teamSlugOrId, "resource:ios-simulator").length > 0
-          : false;
+        const selectedIosProviders = body.resourceProviderIds?.length
+          ? getOnlineByCapability(db, body.teamSlugOrId, "resource:ios-simulator").filter(
+              (provider: { id: string }) => body.resourceProviderIds?.includes(provider.id),
+            )
+          : [];
 
         const incusResult = await startIncusSandbox({
           providerId: resolvedProviderId,
@@ -745,7 +746,7 @@ sandboxesRouter.openapi(
           ttlSeconds: 24 * 60 * 60, // 24 hours for local Incus provider
           metadata: body.metadata,
           displays: body.displays,
-          wantsIos: hasIosProvider,
+          wantsIos: selectedIosProviders.length > 0,
         });
 
         // Register in container registry immediately for snapshot operations
@@ -764,12 +765,10 @@ sandboxesRouter.openapi(
         // Only allocate if the user explicitly selected resource providers
         let iosResourceAllocationId: string | undefined;
         let iosDirectToken: string | undefined;
-        if (body.taskRunId && body.resourceProviderIds && body.resourceProviderIds.length > 0) {
+        if (body.taskRunId && selectedIosProviders.length > 0) {
           try {
-            const allIosProviders = getOnlineByCapability(db, body.teamSlugOrId, "resource:ios-simulator");
-            const iosProviders = allIosProviders.filter((p: { id: string }) => body.resourceProviderIds!.includes(p.id));
-            if (iosProviders.length > 0) {
-              const iosProvider = iosProviders[0];
+            const iosProvider = selectedIosProviders[0];
+            if (iosProvider) {
               iosDirectToken = crypto.randomBytes(32).toString("hex");
               const { id: allocId } = createAllocation(db, {
                 providerId: iosProvider.id,
@@ -827,7 +826,7 @@ sandboxesRouter.openapi(
                           vncEndpoint: `tcp://${sandboxHost}:${iosVncInHostPort}`,
                         } : {}),
                         ...(iosRsyncdHostPort ? {
-                          rsyncEndpoint: `rsync://${sandboxHost}:${iosRsyncdHostPort}/workspace`,
+                          rsyncEndpoint: `rsync://cmux@${sandboxHost}:${iosRsyncdHostPort}/workspace`,
                           rsyncSecret: iosDirectToken,
                         } : {}),
                       };

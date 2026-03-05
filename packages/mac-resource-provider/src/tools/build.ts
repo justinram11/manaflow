@@ -12,17 +12,74 @@ export function setBuildConcurrency(max: number) {
   buildLimit = pLimit(max);
 }
 
-function findXcodeProject(buildDir: string): { path: string; type: "workspace" | "project" } | null {
-  const entries = readdirSync(buildDir);
-  // Prefer .xcworkspace over .xcodeproj
-  const workspace = entries.find((e) => e.endsWith(".xcworkspace"));
-  if (workspace) return { path: join(buildDir, workspace), type: "workspace" };
-  const project = entries.find((e) => e.endsWith(".xcodeproj"));
-  if (project) return { path: join(buildDir, project), type: "project" };
-  return null;
+type XcodeProject = {
+  path: string;
+  projectDir: string;
+  type: "workspace" | "project";
+};
+
+function findXcodeProject(buildDir: string): XcodeProject | null {
+  const queue: Array<{ dir: string; depth: number }> = [{ dir: buildDir, depth: 0 }];
+  const preferredDirs = ["", "ios"];
+  const matches: XcodeProject[] = [];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) continue;
+
+    const entries = readdirSync(current.dir, { withFileTypes: true });
+    const workspace = entries.find((entry) => entry.isDirectory() && entry.name.endsWith(".xcworkspace"));
+    if (workspace) {
+      matches.push({
+        path: join(current.dir, workspace.name),
+        projectDir: current.dir,
+        type: "workspace",
+      });
+    }
+
+    const project = entries.find((entry) => entry.isDirectory() && entry.name.endsWith(".xcodeproj"));
+    if (project) {
+      matches.push({
+        path: join(current.dir, project.name),
+        projectDir: current.dir,
+        type: "project",
+      });
+    }
+
+    if (current.depth >= 3) continue;
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name === ".git" || entry.name === "DerivedData") continue;
+      if (entry.name.endsWith(".xcworkspace") || entry.name.endsWith(".xcodeproj")) continue;
+      queue.push({ dir: join(current.dir, entry.name), depth: current.depth + 1 });
+    }
+  }
+
+  matches.sort((left, right) => {
+    const leftRelative = left.projectDir.slice(buildDir.length).replace(/^\//, "");
+    const rightRelative = right.projectDir.slice(buildDir.length).replace(/^\//, "");
+    const leftRank = preferredDirs.indexOf(leftRelative);
+    const rightRank = preferredDirs.indexOf(rightRelative);
+    const normalizedLeftRank = leftRank === -1 ? preferredDirs.length : leftRank;
+    const normalizedRightRank = rightRank === -1 ? preferredDirs.length : rightRank;
+    if (normalizedLeftRank !== normalizedRightRank) {
+      return normalizedLeftRank - normalizedRightRank;
+    }
+    return left.path.localeCompare(right.path);
+  });
+
+  return matches[0] ?? null;
 }
 
-function getXcodeBuildBase(buildDir: string, scheme?: string): string[] {
+function getDerivedDataPath(buildDir: string): string {
+  return join(buildDir, "DerivedData");
+}
+
+function getXcodeBuildBase(
+  buildDir: string,
+  scheme?: string,
+): { args: string[]; projectDir: string } {
   const project = findXcodeProject(buildDir);
   const args = ["xcodebuild"];
   if (project) {
@@ -31,9 +88,10 @@ function getXcodeBuildBase(buildDir: string, scheme?: string): string[] {
     } else {
       args.push("-project", project.path);
     }
+    args.push("-derivedDataPath", getDerivedDataPath(buildDir));
   }
   if (scheme) args.push("-scheme", scheme);
-  return args;
+  return { args, projectDir: project?.projectDir ?? buildDir };
 }
 
 const iosBuild: ToolHandler = async (params, allocationId) => {
@@ -41,7 +99,10 @@ const iosBuild: ToolHandler = async (params, allocationId) => {
   if (!alloc) throw new Error("Allocation not found");
 
   return buildLimit(async () => {
-    const args = getXcodeBuildBase(alloc.buildDir, params.scheme as string | undefined);
+    const { args, projectDir } = getXcodeBuildBase(
+      alloc.buildDir,
+      params.scheme as string | undefined,
+    );
     args.push("build");
 
     if (params.configuration) args.push("-configuration", params.configuration as string);
@@ -59,7 +120,7 @@ const iosBuild: ToolHandler = async (params, allocationId) => {
 
     try {
       const output = execSync(cmd, {
-        cwd: alloc.buildDir,
+        cwd: projectDir,
         encoding: "utf-8",
         timeout: 30 * 60 * 1000,
         maxBuffer: 50 * 1024 * 1024,
@@ -83,7 +144,10 @@ const iosBuildAndRun: ToolHandler = async (params, allocationId) => {
   if (!alloc.simulatorUdid) throw new Error("No simulator assigned to allocation");
 
   return buildLimit(async () => {
-    const args = getXcodeBuildBase(alloc.buildDir, params.scheme as string | undefined);
+    const { args, projectDir } = getXcodeBuildBase(
+      alloc.buildDir,
+      params.scheme as string | undefined,
+    );
     args.push("build");
     if (params.configuration) args.push("-configuration", params.configuration as string);
     args.push("-destination", `platform=iOS Simulator,id=${alloc.simulatorUdid}`);
@@ -93,14 +157,14 @@ const iosBuildAndRun: ToolHandler = async (params, allocationId) => {
 
     try {
       const output = execSync(cmd, {
-        cwd: alloc.buildDir,
+        cwd: projectDir,
         encoding: "utf-8",
         timeout: 30 * 60 * 1000,
         maxBuffer: 50 * 1024 * 1024,
       });
 
       // Find .app in DerivedData and install
-      const derivedDataBase = join(alloc.buildDir, "DerivedData");
+      const derivedDataBase = getDerivedDataPath(alloc.buildDir);
       let appPath = "";
       if (existsSync(derivedDataBase)) {
         try {
@@ -147,11 +211,14 @@ const iosClean: ToolHandler = async (params, allocationId) => {
   const alloc = getAllocation(allocationId);
   if (!alloc) throw new Error("Allocation not found");
 
-  const args = getXcodeBuildBase(alloc.buildDir, params.scheme as string | undefined);
+  const { args, projectDir } = getXcodeBuildBase(
+    alloc.buildDir,
+    params.scheme as string | undefined,
+  );
   args.push("clean");
 
   try {
-    const output = execSync(args.join(" "), { cwd: alloc.buildDir, encoding: "utf-8" });
+    const output = execSync(args.join(" "), { cwd: projectDir, encoding: "utf-8" });
     return { success: true, output };
   } catch (error) {
     const err = error as { stdout?: string; stderr?: string };
@@ -169,7 +236,7 @@ const iosListSchemes: ToolHandler = async (_params, allocationId) => {
   const flag = project.type === "workspace" ? "-workspace" : "-project";
   try {
     const output = execSync(`xcodebuild -list ${flag} "${project.path}"`, {
-      cwd: alloc.buildDir,
+      cwd: project.projectDir,
       encoding: "utf-8",
     });
     return { output };
@@ -190,8 +257,8 @@ const iosResolvePackages: ToolHandler = async (_params, allocationId) => {
     const flag = project.type === "workspace" ? "-workspace" : "-project";
     try {
       const output = execSync(
-        `xcodebuild -resolvePackageDependencies ${flag} "${project.path}"`,
-        { cwd: alloc.buildDir, encoding: "utf-8", timeout: 10 * 60 * 1000 },
+        `xcodebuild -resolvePackageDependencies ${flag} "${project.path}" -derivedDataPath "${getDerivedDataPath(alloc.buildDir)}"`,
+        { cwd: project.projectDir, encoding: "utf-8", timeout: 10 * 60 * 1000 },
       );
       return { success: true, output };
     } catch (error) {
