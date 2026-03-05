@@ -22,6 +22,15 @@ export async function reconcileOrphans(): Promise<void> {
     if (container.status !== "Running") continue;
     if (registry.has(container.name)) continue;
 
+    // Never garbage-collect containers that hold snapshots — they are
+    // snapshot sources referenced by environments and must be preserved.
+    if (container.snapshots && container.snapshots.length > 0) {
+      console.log(
+        `[gc] Skipping orphan ${container.name} — has ${container.snapshots.length} snapshot(s)`,
+      );
+      continue;
+    }
+
     const defaultTtlMs = env.CMUX_GC_DEFAULT_TTL_MS ?? DEFAULT_TTL_MS;
     const ttlMs = Math.min(ORPHAN_TTL_MS, defaultTtlMs);
 
