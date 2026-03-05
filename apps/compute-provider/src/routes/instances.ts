@@ -30,6 +30,7 @@ export function createInstanceRoutes(provider: ComputeProvider) {
                 image: z.string().optional(),
                 snapshotId: z.string().optional(),
                 displays: z.array(z.literal("android")).optional(),
+                wantsIos: z.boolean().optional(),
                 metadata: z.record(z.string(), z.string()).optional(),
                 region: z.string().optional(),
                 ttlSeconds: z.number().int().positive().optional(),

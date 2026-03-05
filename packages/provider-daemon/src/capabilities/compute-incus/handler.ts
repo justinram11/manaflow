@@ -63,6 +63,7 @@ export const handler: CapabilityHandler = {
           result = await callComputeProvider("POST", "/api/instances", {
             snapshotId: params.snapshotId as string | undefined,
             displays: params.displays as string[] | undefined,
+            wantsIos: params.wantsIos as boolean | undefined,
             metadata: params.metadata as Record<string, string> | undefined,
             ttlSeconds: params.ttlSeconds as number | undefined,
           });
