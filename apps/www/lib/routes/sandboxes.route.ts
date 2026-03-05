@@ -303,6 +303,8 @@ const StartSandboxBody = z
     newBranch: z.string().optional(),
     depth: z.number().optional().default(1),
     displays: z.array(z.enum(["android"])).optional(),
+    // Explicit resource provider IDs to allocate (e.g., iOS simulator providers)
+    resourceProviderIds: z.array(z.string()).optional(),
     // AWS-specific options
     awsRegion: z.string().optional(),
     awsInstanceType: z.string().optional(),
@@ -510,11 +512,21 @@ sandboxesRouter.openapi(
           console.warn("[sandboxes.start] Failed to look up environment provider:", lookupErr);
         }
       }
-      // If incus provider selected but no providerId yet, find one
-      if (resolvedProvider === "incus" && !resolvedProviderId) {
+      // If incus provider selected but no providerId yet, or the resolved provider is offline, find an online one
+      if (resolvedProvider === "incus") {
         const onlineProviders = getOnlineByCapability(db, body.teamSlugOrId, "compute:incus");
-        if (onlineProviders.length > 0) {
-          resolvedProviderId = onlineProviders[0].id;
+        if (!resolvedProviderId) {
+          if (onlineProviders.length > 0) {
+            resolvedProviderId = onlineProviders[0].id;
+          }
+        } else if (!onlineProviders.some((p: { id: string }) => p.id === resolvedProviderId)) {
+          // Environment's provider is offline — fall back to any online provider
+          console.warn(`[sandboxes.start] Environment provider ${resolvedProviderId} is offline, falling back`);
+          if (onlineProviders.length > 0) {
+            resolvedProviderId = onlineProviders[0].id;
+          } else {
+            resolvedProviderId = undefined;
+          }
         }
       }
 
@@ -730,7 +742,7 @@ sandboxesRouter.openapi(
         const incusResult = await startIncusSandbox({
           providerId: resolvedProviderId,
           snapshotId: body.snapshotId ?? environmentSnapshotId,
-          ttlSeconds: body.ttlSeconds ?? 3600,
+          ttlSeconds: 24 * 60 * 60, // 24 hours for local Incus provider
           metadata: body.metadata,
           displays: body.displays,
           wantsIos: hasIosProvider,
@@ -749,11 +761,13 @@ sandboxesRouter.openapi(
         let vscodePersisted = false;
 
         // Check for online iOS simulator provider and create allocation
+        // Only allocate if the user explicitly selected resource providers
         let iosResourceAllocationId: string | undefined;
         let iosDirectToken: string | undefined;
-        if (body.taskRunId) {
+        if (body.taskRunId && body.resourceProviderIds && body.resourceProviderIds.length > 0) {
           try {
-            const iosProviders = getOnlineByCapability(db, body.teamSlugOrId, "resource:ios-simulator");
+            const allIosProviders = getOnlineByCapability(db, body.teamSlugOrId, "resource:ios-simulator");
+            const iosProviders = allIosProviders.filter((p: { id: string }) => body.resourceProviderIds!.includes(p.id));
             if (iosProviders.length > 0) {
               const iosProvider = iosProviders[0];
               iosDirectToken = crypto.randomBytes(32).toString("hex");
@@ -769,47 +783,67 @@ sandboxesRouter.openapi(
               console.log(`[sandboxes.start] Created iOS allocation ${allocId} on provider ${iosProvider.id}`);
 
               // Setup the allocation on the Mac daemon and then establish direct connection
-              const serverUrl = process.env.CMUX_SERVER_INTERNAL_URL ?? "http://localhost:3001";
+              const serverUrl = process.env.CMUX_SERVER_INTERNAL_URL ?? "http://localhost:9776";
               const sandboxHost = env.SANDBOX_HOST ?? "localhost";
               const iosMcpHostPort = incusResult.hostPorts[39385];
               const iosVncInHostPort = incusResult.hostPorts[39386];
+              const iosRsyncdHostPort = incusResult.hostPorts[39376];
 
-              // Fire-and-forget: setup allocation, then connect_direct
+              // Fire-and-forget with retry: setup allocation, then connect_direct
               (async () => {
-                try {
-                  const setupRes = await fetch(
-                    `${serverUrl}/internal/provider/${iosProvider.id}/setup-allocation`,
-                    {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        allocationId: allocId,
-                        buildDir: `/tmp/cmux-builds/${allocId}`,
-                        simulatorDeviceType: "iPhone 16 Pro",
-                        simulatorRuntime: "iOS-18-6",
-                      }),
-                    },
-                  );
-                  if (!setupRes.ok) {
-                    console.error("[sandboxes.start] Failed to setup iOS allocation on daemon:", await setupRes.text());
-                    return;
-                  }
+                const MAX_RETRIES = 10;
+                const INITIAL_DELAY_MS = 2000;
+                const MAX_DELAY_MS = 30000;
 
-                  // After setup, tell the Mac daemon to connect directly to the workspace
-                  if (iosMcpHostPort) {
-                    const connectParams = {
-                      allocationId: allocId,
-                      mcpEndpoint: `ws://${sandboxHost}:${iosMcpHostPort}?token=${iosDirectToken}`,
-                      ...(iosVncInHostPort ? {
-                        vncEndpoint: `tcp://${sandboxHost}:${iosVncInHostPort}`,
-                      } : {}),
-                    };
-                    await sendProviderRequest(iosProvider.id, "connect_direct", connectParams);
-                    console.log(`[sandboxes.start] Sent connect_direct to Mac daemon for allocation ${allocId}`);
+                for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+                  try {
+                    const setupRes = await fetch(
+                      `${serverUrl}/internal/provider/${iosProvider.id}/setup-allocation`,
+                      {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          allocationId: allocId,
+                          buildDir: `/tmp/cmux-builds/${allocId}`,
+                          simulatorDeviceType: "iPhone 16 Pro",
+                          simulatorRuntime: "iOS-18-6",
+                        }),
+                      },
+                    );
+                    if (!setupRes.ok) {
+                      const errorText = await setupRes.text();
+                      console.error(`[sandboxes.start] setup-allocation attempt ${attempt + 1}/${MAX_RETRIES} failed: ${errorText}`);
+                      const delay = Math.min(INITIAL_DELAY_MS * 2 ** attempt, MAX_DELAY_MS);
+                      await new Promise((r) => setTimeout(r, delay));
+                      continue;
+                    }
+
+                    // After setup, tell the Mac daemon to connect directly to the workspace
+                    if (iosMcpHostPort) {
+                      const connectParams = {
+                        allocationId: allocId,
+                        mcpEndpoint: `ws://${sandboxHost}:${iosMcpHostPort}?token=${iosDirectToken}`,
+                        ...(iosVncInHostPort ? {
+                          vncEndpoint: `tcp://${sandboxHost}:${iosVncInHostPort}`,
+                        } : {}),
+                        ...(iosRsyncdHostPort ? {
+                          rsyncEndpoint: `rsync://${sandboxHost}:${iosRsyncdHostPort}/workspace`,
+                          rsyncSecret: iosDirectToken,
+                        } : {}),
+                      };
+                      await sendProviderRequest(iosProvider.id, "connect_direct", connectParams);
+                      console.log(`[sandboxes.start] Sent connect_direct to Mac daemon for allocation ${allocId}`);
+                    }
+                    return; // success
+                  } catch (error) {
+                    console.error(`[sandboxes.start] iOS setup/connect_direct attempt ${attempt + 1}/${MAX_RETRIES} failed:`, error);
+                    if (attempt < MAX_RETRIES - 1) {
+                      const delay = Math.min(INITIAL_DELAY_MS * 2 ** attempt, MAX_DELAY_MS);
+                      await new Promise((r) => setTimeout(r, delay));
+                    }
                   }
-                } catch (error) {
-                  console.error("[sandboxes.start] iOS allocation setup/connect_direct failed:", error);
                 }
+                console.error(`[sandboxes.start] iOS allocation ${allocId} setup failed after ${MAX_RETRIES} attempts`);
               })();
             }
           } catch (error) {
@@ -845,6 +879,9 @@ sandboxesRouter.openapi(
                 ...(incusResult.hostPorts[39387]
                   ? { iosVnc: incusResult.hostPorts[39387] }
                   : {}),
+                ...(incusResult.hostPorts[39376]
+                  ? { iosRsyncd: incusResult.hostPorts[39376] }
+                  : {}),
               },
               ...(iosResourceAllocationId
                 ? { iosResourceAllocationId, iosDirectToken }
@@ -862,6 +899,27 @@ sandboxesRouter.openapi(
         // Fire-and-forget: background provisioning (env vars, git config, repo clone, scripts)
         (async () => {
           try {
+            // Inject host DNS entry so the container can reach the cmux server by hostname.
+            // Incus containers aren't on Tailscale, so SANDBOX_HOST (e.g. "ubuntu") won't resolve.
+            // Map it to the default gateway which is the host machine.
+            const sandboxHostname = env.SANDBOX_HOST;
+            if (sandboxHostname && sandboxHostname !== "localhost") {
+              try {
+                const gatewayRes = await incusInstance.exec(
+                  `ip route show default | awk '/default/ {print $3}'`,
+                );
+                const gatewayIp = gatewayRes.stdout?.trim();
+                if (gatewayIp && gatewayRes.exit_code === 0) {
+                  await incusInstance.exec(
+                    `grep -q '${sandboxHostname}' /etc/hosts || echo '${gatewayIp} ${sandboxHostname}' >> /etc/hosts`,
+                  );
+                  console.log(`[sandboxes.start] Added hosts entry: ${gatewayIp} ${sandboxHostname}`);
+                }
+              } catch (error) {
+                console.error("[sandboxes.start] Failed to inject hosts entry:", error);
+              }
+            }
+
             // Wait for VSCode server to be ready
             const vscodeReady = await waitForVSCodeReady(incusVscodeUrl, {
               timeoutMs: 30_000,
@@ -3077,7 +3135,7 @@ sandboxesRouter.openapi(
           if (allocation && allocation.status === "active") {
             releaseAllocation(db, allocId);
             // Notify daemon to clean up simulator
-            const serverUrl = process.env.CMUX_SERVER_INTERNAL_URL ?? "http://localhost:3001";
+            const serverUrl = process.env.CMUX_SERVER_INTERNAL_URL ?? "http://localhost:9776";
             const allocData = allocation.data as Record<string, unknown> | undefined;
             fetch(
               `${serverUrl}/internal/provider/${allocation.providerId}/cleanup-allocation`,

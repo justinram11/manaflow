@@ -26,6 +26,7 @@ export interface IncusSandboxResult {
     iosMcp?: string;
     iosVncIn?: string;
     iosVnc?: string;
+    iosRsyncd?: string;
   };
 }
 
@@ -44,6 +45,7 @@ interface LaunchResult {
     iosMcp?: number;
     iosVncIn?: number;
     iosVnc?: number;
+    iosRsyncd?: number;
   };
   host: string;
 }
@@ -157,6 +159,9 @@ export async function startIncusSandbox(options: {
   if (data.ports.iosVnc !== undefined) {
     hostPorts[39387] = String(data.ports.iosVnc);
   }
+  if (data.ports.iosRsyncd !== undefined) {
+    hostPorts[39376] = String(data.ports.iosRsyncd);
+  }
 
   const instance = new RemoteIncusSandboxInstance({
     id: data.id,
@@ -187,6 +192,9 @@ export async function startIncusSandbox(options: {
         : {}),
       ...(data.ports.iosVnc !== undefined
         ? { iosVnc: makeUrl(data.ports.iosVnc) }
+        : {}),
+      ...(data.ports.iosRsyncd !== undefined
+        ? { iosRsyncd: makeUrl(data.ports.iosRsyncd) }
         : {}),
     },
   };
