@@ -55,7 +55,7 @@ describe("githubReposRouter via SDK", () => {
       const db = getDb();
       const conns = listProviderConnections(db, "manaflow");
       console.log("conns", conns);
-      installationId = conns.find((c) => c.isActive !== false)?.installationId;
+      installationId = conns.find((c: (typeof conns)[number]) => c.isActive !== false)?.installationId;
     } catch (error) {
       // If DB is unreachable in this test env, skip the test
       console.log("Skipping test - DB unreachable:", error);

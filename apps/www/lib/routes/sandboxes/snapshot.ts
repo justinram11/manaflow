@@ -69,7 +69,7 @@ export const resolveTeamAndSnapshot = async ({
 
     const environments = listEnvironments(db, teamSlugOrId);
     const matchedEnvironment = environments.find(
-      (environment) => environment.morphSnapshotId === snapshotId
+      (environment: (typeof environments)[number]) => environment.morphSnapshotId === snapshotId
     );
 
     if (matchedEnvironment) {

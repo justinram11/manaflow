@@ -1,4 +1,4 @@
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, type InferSelectModel } from "drizzle-orm";
 import type { DbClient } from "../connection";
 import {
   taskRuns,
@@ -7,6 +7,8 @@ import {
   containerSettings,
 } from "../schema/index";
 import { resolveTeamId } from "./teams";
+
+type TaskRun = InferSelectModel<typeof taskRuns>;
 
 export function getTaskRunById(db: DbClient, id: string) {
   return db.select().from(taskRuns).where(eq(taskRuns.id, id)).get();
@@ -40,7 +42,7 @@ export function getTaskRunByContainerName(
 ) {
   // vscode.containerName is stored in JSON, need to filter in JS
   const allRuns = db.select().from(taskRuns).all();
-  return allRuns.find((run) => {
+  return allRuns.find((run: TaskRun) => {
     const vscode = run.vscode as Record<string, unknown> | null;
     return vscode?.containerName === containerName;
   }) ?? null;
@@ -142,7 +144,7 @@ export function getContainersToStop(
     )
     .all();
 
-  const runningContainers = allRuns.filter((run) => {
+  const runningContainers = allRuns.filter((run: TaskRun) => {
     const vscode = run.vscode as VscodeField | null;
     return vscode && vscode.status === "running" && !vscode.keepAlive;
   });
@@ -158,7 +160,7 @@ export function getContainersToStop(
   );
 
   // Filter containers that have exceeded their scheduled stop time AND are not in the keep set
-  return runningContainers.filter((run) => {
+  return runningContainers.filter((run: TaskRun) => {
     const vscode = run.vscode as VscodeField;
     return (
       vscode.scheduledStopAt &&
@@ -199,7 +201,7 @@ export function getRunningContainersByCleanupPriority(
     )
     .all();
 
-  const runningContainers = allRuns.filter((run) => {
+  const runningContainers = allRuns.filter((run: TaskRun) => {
     const vscode = run.vscode as VscodeField | null;
     return vscode && vscode.status === "running" && !vscode.keepAlive;
   });
@@ -216,7 +218,7 @@ export function getRunningContainersByCleanupPriority(
 
   // Filter out containers that should be kept
   const eligibleForCleanup = runningContainers.filter(
-    (c) => !containersToKeepIds.has(c.id),
+    (c: TaskRun) => !containersToKeepIds.has(c.id),
   );
 
   // Categorize eligible containers

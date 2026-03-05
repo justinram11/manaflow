@@ -1,7 +1,10 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, type InferSelectModel } from "drizzle-orm";
 import type { DbClient } from "../connection";
 import { repos, branches, installStates } from "../schema/index";
 import { resolveTeamId } from "../queries/teams";
+
+type Repo = InferSelectModel<typeof repos>;
+type Branch = InferSelectModel<typeof branches>;
 
 export function upsertRepo(
   db: DbClient,
@@ -91,7 +94,7 @@ export function bulkInsertRepos(
     .from(repos)
     .where(and(eq(repos.teamId, teamId), eq(repos.userId, opts.userId)))
     .all();
-  const existingNames = new Set(existing.map((r) => r.fullName));
+  const existingNames = new Set(existing.map((r: Repo) => r.fullName));
   const newRepos = opts.repos.filter((r) => !existingNames.has(r.fullName));
   const now = Date.now();
   const ids: string[] = [];
@@ -142,7 +145,7 @@ export function bulkUpsertBranchesWithActivity(
       ),
     )
     .all();
-  const byName = new Map(existing.map((b) => [b.name, b] as const));
+  const byName = new Map<string, Branch>(existing.map((b: Branch) => [b.name, b]));
 
   const now = Date.now();
   const ids: string[] = [];

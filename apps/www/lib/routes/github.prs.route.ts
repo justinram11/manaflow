@@ -105,7 +105,7 @@ githubPrsRouter.openapi(
 
     // Determine which installation to query
     const target = connections.find(
-      (co) => (co.isActive ?? true) !== false && (!installationId || co.installationId === installationId)
+      (co: (typeof connections)[number]) => (co.isActive ?? true) !== false && (!installationId || co.installationId === installationId)
     );
 
     if (!target) {

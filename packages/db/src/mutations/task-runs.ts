@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, type InferSelectModel } from "drizzle-orm";
 import { aggregatePullRequestState, type StoredPullRequestInfo } from "@cmux/shared/pull-request-state";
 import type { DbClient } from "../connection";
 import {
@@ -7,6 +7,8 @@ import {
   taskRunPullRequests,
   tasks,
 } from "../schema/index";
+
+type TaskRunPullRequest = InferSelectModel<typeof taskRunPullRequests>;
 
 export function createTaskRun(
   db: DbClient,
@@ -298,7 +300,7 @@ function syncTaskRunPullRequestsTable(
   }
 
   const existingKeys = new Set(
-    existingEntries.map((e) => `${e.repoFullName}:${e.prNumber}`),
+    existingEntries.map((e: TaskRunPullRequest) => `${e.repoFullName}:${e.prNumber}`),
   );
   for (const [key, pr] of newPrs) {
     if (!existingKeys.has(key)) {

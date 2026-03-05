@@ -45,7 +45,7 @@ githubPrsPatchRouter.openapi(
     const db = getDb();
     const connections = listProviderConnections(db, team);
     const target = connections.find(
-      (co) => (co.isActive ?? true) && (co.accountLogin ?? "").toLowerCase() === owner.toLowerCase()
+      (co: (typeof connections)[number]) => (co.isActive ?? true) && (co.accountLogin ?? "").toLowerCase() === owner.toLowerCase()
     );
     if (!target) return c.text("Installation not found for owner", 404);
 

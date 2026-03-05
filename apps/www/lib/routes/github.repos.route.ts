@@ -80,7 +80,7 @@ githubReposRouter.openapi(
 
     // Determine which installations to query
     const target = connections.find(
-      (co) => co.isActive && co.installationId === installationId
+      (co: (typeof connections)[number]) => co.isActive && co.installationId === installationId
     );
 
     if (!target) {

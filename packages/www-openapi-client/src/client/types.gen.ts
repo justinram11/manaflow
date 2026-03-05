@@ -571,6 +571,7 @@ export type StartSandboxBody = {
     newBranch?: string;
     depth?: number;
     displays?: Array<'android'>;
+    resourceProviderIds?: Array<string>;
     awsRegion?: string;
     awsInstanceType?: string;
 };

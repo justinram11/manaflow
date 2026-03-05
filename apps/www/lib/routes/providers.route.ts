@@ -17,7 +17,7 @@ import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { createHash, randomBytes } from "node:crypto";
 
 // For proxying JSON-RPC requests to the WebSocket hub in apps/server
-const CMUX_SERVER_URL = process.env.CMUX_SERVER_INTERNAL_URL ?? "http://localhost:3001";
+const CMUX_SERVER_URL = process.env.CMUX_SERVER_INTERNAL_URL ?? "http://localhost:9776";
 
 export const providersRouter = new OpenAPIHono();
 

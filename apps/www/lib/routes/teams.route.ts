@@ -147,7 +147,7 @@ teamsRouter.openapi(
     const db = getDb();
 
     // Fetch slugs from DB for each team
-    const teams = stackTeams.map((team) => {
+    const teams = stackTeams.map((team: (typeof stackTeams)[number]) => {
       let slug: string | null = null;
       try {
         const dbTeam = getTeamByTeamId(db, team.id);
@@ -387,7 +387,7 @@ teamsRouter.openapi(
 
     const db = getDb();
     const rows = listTeamMemberships(db, user.id);
-    const memberships = rows.map((row) => ({
+    const memberships = rows.map((row: (typeof rows)[number]) => ({
       id: row.teamMemberships.id,
       teamId: row.teamMemberships.teamId,
       userId: row.teamMemberships.userId,

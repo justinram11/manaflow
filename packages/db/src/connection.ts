@@ -45,6 +45,7 @@ export function getDb(): DbClient {
   if (detectBun()) {
     // Bun runtime: use bun:sqlite (synchronous)
     // Dynamic require to avoid Node.js parse errors
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { Database } = require("bun:sqlite");
     const sqlite = new Database(dbPath, { create: true });
     sqlite.exec("PRAGMA journal_mode = WAL");
@@ -52,10 +53,12 @@ export function getDb(): DbClient {
     sqlite.exec("PRAGMA foreign_keys = ON");
     _underlying = sqlite;
 
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { drizzle } = require("drizzle-orm/bun-sqlite");
     _db = drizzle(sqlite, { schema });
   } else {
     // Node.js runtime: use better-sqlite3 (synchronous)
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const BetterSqlite3 = require("better-sqlite3");
     const sqlite = new BetterSqlite3(dbPath);
     sqlite.pragma("journal_mode = WAL");
@@ -63,6 +66,7 @@ export function getDb(): DbClient {
     sqlite.pragma("foreign_keys = ON");
     _underlying = sqlite;
 
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { drizzle } = require("drizzle-orm/better-sqlite3");
     _db = drizzle(sqlite, { schema });
   }

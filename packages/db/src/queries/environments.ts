@@ -1,7 +1,9 @@
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, type InferSelectModel } from "drizzle-orm";
 import type { DbClient } from "../connection";
 import { environments, environmentSnapshotVersions } from "../schema/index";
 import { resolveTeamId } from "./teams";
+
+type EnvironmentSnapshotVersion = InferSelectModel<typeof environmentSnapshotVersions>;
 
 export function getEnvironmentById(db: DbClient, id: string) {
   return db.select().from(environments).where(eq(environments.id, id)).get();
@@ -91,7 +93,7 @@ export function listSnapshotVersionsWithActive(
     .all();
 
   const isIncus = env.provider === "incus";
-  return versions.map((version) => ({
+  return versions.map((version: EnvironmentSnapshotVersion) => ({
     ...version,
     isActive: isIncus
       ? version.incusSnapshotId === env.incusSnapshotId

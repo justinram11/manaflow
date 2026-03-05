@@ -1,6 +1,8 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, type InferSelectModel } from "drizzle-orm";
 import type { DbClient } from "../connection";
 import { warmPool } from "../schema/index";
+
+type WarmPoolEntry = InferSelectModel<typeof warmPool>;
 
 /**
  * Create a prewarm entry when a user starts typing a task description.
@@ -93,7 +95,7 @@ export function claimInstance(
     .all();
 
   const match = readyInstances.find(
-    (entry) => entry.repoUrl === (opts.repoUrl ?? null),
+    (entry: WarmPoolEntry) => entry.repoUrl === (opts.repoUrl ?? null),
   );
 
   if (!match) {

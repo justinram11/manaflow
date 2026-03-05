@@ -426,7 +426,7 @@ iframePreflightRouter.openapi(
                 }
 
                 try {
-                  const belongsToTeam = memberships.some((membership) => {
+                  const belongsToTeam = memberships.some((membership: (typeof memberships)[number]) => {
                     const membershipTeam = membership.teams.teamId;
                     return membershipTeam === metadataTeamId;
                   });

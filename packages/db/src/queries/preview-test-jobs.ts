@@ -1,4 +1,4 @@
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, type InferSelectModel } from "drizzle-orm";
 import type { DbClient } from "../connection";
 import {
   previewConfigs,
@@ -8,6 +8,9 @@ import {
   taskRunScreenshotSets,
 } from "../schema/index";
 import { resolveTeamId } from "./teams";
+
+type ProviderConnection = InferSelectModel<typeof providerConnections>;
+type PreviewRun = InferSelectModel<typeof previewRuns>;
 
 /**
  * Parse a GitHub PR URL to extract owner, repo, and PR number
@@ -96,7 +99,7 @@ export function checkRepoAccess(
       .where(eq(providerConnections.teamId, teamId))
       .all();
 
-    const hasAnyInstallation = installations.some((i) => i.isActive !== false);
+    const hasAnyInstallation = installations.some((i: ProviderConnection) => i.isActive !== false);
 
     return {
       hasAccess: false,
@@ -204,12 +207,12 @@ export function listTestRuns(
   // Filter to only test runs
   const testRuns = runs
     .filter(
-      (run) =>
+      (run: PreviewRun) =>
         run.stateReason === "Test preview run" || !run.repoInstallationId,
     )
     .slice(0, take);
 
-  return testRuns.map((run) => {
+  return testRuns.map((run: PreviewRun) => {
     const config = run.previewConfigId
       ? db
           .select()

@@ -1,7 +1,9 @@
-import { eq, and, isNull, sql } from "drizzle-orm";
+import { eq, and, isNull, sql, type InferSelectModel } from "drizzle-orm";
 import type { DbClient } from "../connection";
 import { tasks, taskVersions, unreadTaskRuns, taskRuns } from "../schema/index";
 import { resolveTeamId } from "./teams";
+
+type UnreadTaskRun = InferSelectModel<typeof unreadTaskRuns>;
 
 export function getTaskById(db: DbClient, teamSlugOrId: string, id: string) {
   const teamId = resolveTeamId(db, teamSlugOrId);
@@ -54,7 +56,7 @@ export function getTasksByTeamUser(
     .all();
 
   const tasksWithUnread = new Set(
-    unreadRuns.map((ur) => ur.taskId).filter((id): id is string => id !== null && id !== undefined),
+    unreadRuns.map((ur: UnreadTaskRun) => ur.taskId).filter((id: string | null): id is string => id !== null && id !== undefined),
   );
 
   const sorted = [...results].sort(
@@ -110,7 +112,7 @@ export function getTasksWithNotificationOrder(
     .all();
 
   const tasksWithUnread = new Set(
-    unreadRuns.map((ur) => ur.taskId).filter((id): id is string => id !== null && id !== undefined),
+    unreadRuns.map((ur: UnreadTaskRun) => ur.taskId).filter((id: string | null): id is string => id !== null && id !== undefined),
   );
 
   const sorted = [...results].sort((a, b) => {
@@ -161,7 +163,7 @@ export function getPinnedTasks(
     .all();
 
   const tasksWithUnread = new Set(
-    unreadRuns.map((ur) => ur.taskId).filter((id): id is string => id !== null && id !== undefined),
+    unreadRuns.map((ur: UnreadTaskRun) => ur.taskId).filter((id: string | null): id is string => id !== null && id !== undefined),
   );
 
   const sorted = [...results].sort(

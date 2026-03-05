@@ -123,7 +123,7 @@ githubPrsCodeRouter.openapi(
     const db = getDb();
     const connections = listProviderConnections(db, team);
     const target = connections.find(
-      (co) =>
+      (co: (typeof connections)[number]) =>
         (co.isActive ?? true) &&
         (co.accountLogin ?? "").toLowerCase() === owner.toLowerCase()
     );

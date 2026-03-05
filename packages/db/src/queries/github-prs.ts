@@ -1,7 +1,9 @@
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, type InferSelectModel } from "drizzle-orm";
 import type { DbClient } from "../connection";
 import { pullRequests } from "../schema/index";
 import { resolveTeamId } from "./teams";
+
+type PullRequest = InferSelectModel<typeof pullRequests>;
 
 export function listPullRequests(
   db: DbClient,
@@ -38,7 +40,7 @@ export function listPullRequests(
   const filtered = !q
     ? rows
     : rows.filter(
-        (r) =>
+        (r: PullRequest) =>
           r.title.toLowerCase().includes(q) ||
           (r.authorLogin ?? "").toLowerCase().includes(q) ||
           r.repoFullName.toLowerCase().includes(q),

@@ -950,7 +950,7 @@ morphRouter.openapi(
 
       // Get user's team memberships to scope the results
       const memberships = listTeamMemberships(db, user.id);
-      const userTeamIds = new Set(memberships.map((m) => m.teams.teamId));
+      const userTeamIds = new Set(memberships.map((m: (typeof memberships)[number]) => m.teams.teamId));
 
       // If teamId filter is specified, verify user belongs to that team
       if (teamId && !userTeamIds.has(teamId)) {
