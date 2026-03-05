@@ -44,6 +44,7 @@ import {
   getApiEnvironmentsOptions,
   getApiIntegrationsGithubReposOptions,
   getApiAnalyticsDashboardOptions,
+  getApiProvidersOptions,
 } from "@cmux/www-openapi-client/react-query";
 import {
   useInfiniteQuery,
@@ -290,6 +291,7 @@ function DashboardComponent() {
   const [, setDockerReady] = useState<boolean | null>(null);
   const [providerStatus, setProviderStatus] =
     useState<ProviderStatusResponse | null>(null);
+  const [selectedResources, setSelectedResources] = useState<string[]>([]);
   const [isStartingTask, setIsStartingTask] = useState(false);
   const isStartingTaskRef = useRef(false);
 
@@ -901,6 +903,7 @@ function DashboardComponent() {
           ...(environmentId ? { environmentId } : {}),
           images: images.length > 0 ? images : undefined,
           theme,
+          resourceProviderIds: selectedResources.length > 0 ? selectedResources : undefined,
         },
         handleStartTaskAck
       );
@@ -925,6 +928,7 @@ function DashboardComponent() {
     isEnvSelected,
     theme,
     ensureDockerReadyForLocalTask,
+    selectedResources,
   ]);
 
   // Check provider status on mount and keep it fresh without page refresh
@@ -953,6 +957,30 @@ function DashboardComponent() {
     ...getApiEnvironmentsOptions({ query: { teamSlugOrId } }),
     enabled: Boolean(teamSlugOrId),
   });
+
+  // Fetch resource providers (e.g., Mac with iOS simulator)
+  const providersQuery = useRQ({
+    ...getApiProvidersOptions({ query: { teamSlugOrId } }),
+    enabled: Boolean(teamSlugOrId),
+  });
+
+  const resourceOptions = useMemo<SelectOption[]>(() => {
+    const providers = providersQuery.data?.providers ?? [];
+    // Only show providers that have resource capabilities (e.g., resource:ios-simulator)
+    return providers
+      .filter((p) => p.capabilities?.some((c) => c.startsWith("resource:")))
+      .filter((p) => p.status === "online")
+      .map((p) => {
+        const capabilities = (p.capabilities ?? [])
+          .filter((c) => c.startsWith("resource:"))
+          .map((c) => c.replace("resource:", ""));
+        const badge = capabilities.length > 0 ? ` (${capabilities.join(", ")})` : "";
+        return {
+          label: `${p.name}${badge}`,
+          value: p.id,
+        };
+      });
+  }, [providersQuery.data]);
 
   const projectOptions = useMemo(() => {
     // Repo options as objects with GitHub icon
@@ -1314,6 +1342,10 @@ function DashboardComponent() {
               cloudToggleDisabled={isEnvSelected}
               branchDisabled={isEnvSelected || !selectedProject[0]}
               providerStatus={providerStatus}
+              selectedResources={selectedResources}
+              onResourceChange={setSelectedResources}
+              resourceOptions={resourceOptions}
+              isLoadingResources={providersQuery.isLoading}
               canSubmit={canSubmit}
               onStartTask={handleStartTask}
               isStartingTask={isStartingTask}
@@ -1399,6 +1431,10 @@ type DashboardMainCardProps = {
   cloudToggleDisabled: boolean;
   branchDisabled: boolean;
   providerStatus: ProviderStatusResponse | null;
+  selectedResources: string[];
+  onResourceChange: (resources: string[]) => void;
+  resourceOptions: SelectOption[];
+  isLoadingResources: boolean;
   canSubmit: boolean;
   onStartTask: () => void;
   isStartingTask: boolean;
@@ -1433,6 +1469,10 @@ function DashboardMainCard({
   cloudToggleDisabled,
   branchDisabled,
   providerStatus,
+  selectedResources,
+  onResourceChange,
+  resourceOptions,
+  isLoadingResources,
   canSubmit,
   onStartTask,
   isStartingTask,
@@ -1477,6 +1517,10 @@ function DashboardMainCard({
           cloudToggleDisabled={cloudToggleDisabled}
           branchDisabled={branchDisabled}
           providerStatus={providerStatus}
+          selectedResources={selectedResources}
+          onResourceChange={onResourceChange}
+          resourceOptions={resourceOptions}
+          isLoadingResources={isLoadingResources}
         />
         <DashboardStartTaskButton
           canSubmit={canSubmit}

@@ -101,14 +101,14 @@ export interface TaskRunWithChildren {
     url: string;
     createdAt: number;
   }>;
-  children: TaskRunWithChildren[];
+  children?: TaskRunWithChildren[];
   environment: RunEnvironmentSummary | null;
 }
 
 export interface AnnotatedTaskRun extends TaskRunWithChildren {
   agentOrdinal?: number;
   hasDuplicateAgentName?: boolean;
-  children: AnnotatedTaskRun[];
+  children?: AnnotatedTaskRun[];
 }
 
 export interface Repo {

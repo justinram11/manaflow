@@ -292,7 +292,7 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
     try {
       const configs = listPreviewConfigsByTeam(db, teamSlugOrId);
       return configs.map(
-        (config): PreviewConfigListItem => ({
+        (config: (typeof configs)[number]): PreviewConfigListItem => ({
           id: config.id,
           repoFullName: config.repoFullName,
           environmentId: config.environmentId ?? null,

@@ -421,14 +421,14 @@ function RepositoryConnectionsSection({
   // TODO: Replace with dedicated HTTP endpoint when available
   // For now, connections are fetched via repos endpoint which handles connections internally
   const connections = undefined as Array<{ installationId: number; accountLogin: string; isActive: boolean }> | undefined;
-  const mintState = async (args: { teamSlugOrId: string; returnUrl?: string }) => {
+  const mintState = useCallback(async (args: { teamSlugOrId: string; returnUrl?: string }) => {
     const { postApiIntegrationsGithubInstallState } = await import("@cmux/www-openapi-client");
     const result = await postApiIntegrationsGithubInstallState({
       body: { teamSlugOrId: args.teamSlugOrId, returnUrl: args.returnUrl },
     });
     if (!result.data) throw new Error("Failed to mint install state");
     return result.data;
-  };
+  }, []);
 
   const activeConnections = useMemo(
     () => (connections ?? []).filter((c) => c.isActive !== false),

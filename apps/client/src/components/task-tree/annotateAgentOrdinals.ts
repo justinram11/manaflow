@@ -19,7 +19,7 @@ export function annotateAgentOrdinals(
       if (name) {
         totals.set(name, (totals.get(name) ?? 0) + 1);
       }
-      if (item.children.length > 0) {
+      if (item.children && item.children.length > 0) {
         collectTotals(item.children);
       }
     }
@@ -43,7 +43,7 @@ export function annotateAgentOrdinals(
         agentOrdinal: ordinal,
         hasDuplicateAgentName: hasDuplicate,
         children:
-          item.children.length > 0 ? annotate(item.children) : [],
+          item.children && item.children.length > 0 ? annotate(item.children) : [],
       };
     });
 

@@ -56,6 +56,10 @@ interface DashboardInputControlsProps {
   cloudToggleDisabled?: boolean;
   branchDisabled?: boolean;
   providerStatus?: ProviderStatusResponse | null;
+  selectedResources?: string[];
+  onResourceChange?: (resources: string[]) => void;
+  resourceOptions?: SelectOption[];
+  isLoadingResources?: boolean;
 }
 
 type AgentOption = SelectOptionObject & { displayLabel: string; isDisabled?: boolean };
@@ -150,6 +154,10 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   cloudToggleDisabled = false,
   branchDisabled = false,
   providerStatus = null,
+  selectedResources = [],
+  onResourceChange,
+  resourceOptions = [],
+  isLoadingResources = false,
 }: DashboardInputControlsProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -461,7 +469,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
     } finally {
       setIsAddingRepo(false);
     }
-  }, [customRepoUrl, teamSlugOrId, onProjectChange]);
+  }, [customRepoUrl, onProjectChange]);
 
   const handleCustomRepoInputChange = useCallback((value: string) => {
     setCustomRepoUrl(value);
@@ -804,6 +812,20 @@ export const DashboardInputControls = memo(function DashboardInputControls({
             maxCountPerValue={MAX_AGENT_COMMAND_COUNT}
           />
         </div>
+
+        {isCloudMode && resourceOptions.length > 0 && onResourceChange ? (
+          <SearchableSelect
+            options={resourceOptions}
+            value={selectedResources}
+            onChange={onResourceChange}
+            placeholder="Resources"
+            singleSelect={false}
+            className="rounded-2xl"
+            showSearch
+            countLabel="resources"
+            loading={isLoadingResources}
+          />
+        ) : null}
       </div>
 
       <div className="flex items-center justify-end gap-2.5 ml-auto mr-0 pr-1">

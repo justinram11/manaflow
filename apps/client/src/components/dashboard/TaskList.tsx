@@ -221,7 +221,7 @@ export const TaskList = memo(function TaskList({
   const pinnedData = pinnedQuery.data?.tasks;
 
   // Preview runs - for now use empty array since the paginated endpoint is not yet migrated
-  const previewRuns: PreviewRunWithConfig[] = [];
+  const previewRuns: PreviewRunWithConfig[] = useMemo(() => [], []);
 
   const [tab, setTab] = useState<"all" | "archived" | "previews">("all");
 

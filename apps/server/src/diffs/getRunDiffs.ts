@@ -6,6 +6,7 @@ import { ensureRunWorktreeAndBranch } from "../utils/ensureRunWorktree";
 import { serverLogger } from "../utils/fileLogger";
 import { getDb } from "../utils/dbClient";
 import { getBranchesByRepo } from "@cmux/db/queries/repos";
+import type { branches } from "@cmux/db/schema";
 // Stop using workspace diff; we rely on native ref diff.
 
 export interface GetRunDiffsOptions {
@@ -52,7 +53,7 @@ export async function getRunDiffs(
       const db = getDb();
       const rows = getBranchesByRepo(db, ensured.task.projectFullName);
       const found = rows?.find(
-        (branch) => branch.name === ensured.baseBranch
+        (branch: typeof branches.$inferSelect) => branch.name === ensured.baseBranch
       );
       if (found) {
         baseBranchMetadata = {

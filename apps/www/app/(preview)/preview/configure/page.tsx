@@ -137,7 +137,7 @@ export default async function PreviewConfigurePage({ searchParams }: PageProps) 
   const connections = listProviderConnections(db, selectedTeamSlugOrId);
 
   const hasGithubAppInstallation = connections.some(
-    (connection) => connection.isActive,
+    (connection: (typeof connections)[number]) => connection.isActive,
   );
 
   if (!hasGithubAppInstallation) {

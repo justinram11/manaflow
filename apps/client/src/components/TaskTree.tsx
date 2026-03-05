@@ -243,7 +243,7 @@ function flattenRuns(
   const traverse = (items: TaskRunWithChildren[]) => {
     for (const item of items) {
       acc.push(item);
-      if (item.children.length > 0) {
+      if (item.children && item.children.length > 0) {
         traverse(item.children);
       }
     }
@@ -260,7 +260,7 @@ function findRunInTree(
     if (run.id === targetId) {
       return run;
     }
-    if (run.children.length > 0) {
+    if (run.children && run.children.length > 0) {
       const childMatch = findRunInTree(run.children, targetId);
       if (childMatch) {
         return childMatch;
@@ -279,7 +279,7 @@ function collectRunIds(
   if (!includeChildren) {
     return;
   }
-  for (const child of node.children) {
+  for (const child of node.children ?? []) {
     collectRunIds(child, true, acc);
   }
 }
@@ -292,8 +292,9 @@ function applyArchiveStateToNode(
   let nextChildren: TaskRunWithChildren[] | null = null;
   let childrenChanged = false;
 
-  for (let i = 0; i < run.children.length; i += 1) {
-    const child = run.children[i];
+  const runChildren = run.children ?? [];
+  for (let i = 0; i < runChildren.length; i += 1) {
+    const child = runChildren[i];
     const [nextChild, childChanged] = applyArchiveStateToNode(
       child,
       ids,
@@ -301,7 +302,7 @@ function applyArchiveStateToNode(
     );
     if (childChanged) {
       if (!nextChildren) {
-        nextChildren = run.children.slice(0, i);
+        nextChildren = runChildren.slice(0, i);
       }
       nextChildren.push(nextChild);
       childrenChanged = true;
@@ -322,7 +323,7 @@ function applyArchiveStateToNode(
     {
       ...run,
       isArchived: nextIsArchived,
-      children: nextChildren ?? run.children,
+      children: nextChildren ?? runChildren,
     },
     true,
   ];
@@ -1293,7 +1294,7 @@ function TaskRunTreeInner({
     }
   }, [isExpanded, isRunSelected, run.id, setRunExpanded]);
 
-  const hasChildren = run.children.length > 0;
+  const hasChildren = (run.children?.length ?? 0) > 0;
 
   // Memoize the display text to avoid recalculating on every render
   const baseDisplayText = useMemo(() => {
@@ -2331,7 +2332,7 @@ function TaskRunDetails({
 
       {hasChildren ? (
         <div className="flex flex-col">
-          {run.children.map((childRun) => (
+          {(run.children ?? []).map((childRun) => (
             <TaskRunTree
               key={childRun.id}
               run={childRun}

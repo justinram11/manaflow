@@ -72,6 +72,7 @@ export function ThemeProvider({
       const shouldAnimate =
         withTransition &&
         !prefersReducedMotion &&
+        !document.hidden &&
         typeof startViewTransition === "function";
 
       if (shouldAnimate) {
