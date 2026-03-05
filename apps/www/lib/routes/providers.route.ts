@@ -419,7 +419,7 @@ providersRouter.openapi(
               allocationId,
               buildDir: body.data.buildDir ?? `/tmp/cmux-builds/${allocationId}`,
               simulatorDeviceType: body.data.simulatorDeviceType ?? "iPhone 16 Pro",
-              simulatorRuntime: body.data.simulatorRuntime ?? "iOS-18-6",
+              simulatorRuntime: body.data.simulatorRuntime ?? "com.apple.CoreSimulator.SimRuntime.iOS-18-6",
             }),
           },
         );

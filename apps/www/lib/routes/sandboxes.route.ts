@@ -806,7 +806,7 @@ sandboxesRouter.openapi(
                           allocationId: allocId,
                           buildDir: `/tmp/cmux-builds/${allocId}`,
                           simulatorDeviceType: "iPhone 16 Pro",
-                          simulatorRuntime: "iOS-18-6",
+                          simulatorRuntime: "com.apple.CoreSimulator.SimRuntime.iOS-18-6",
                         }),
                       },
                     );

@@ -63,7 +63,7 @@ export async function handleJsonRpcMessage(msg: JsonRpcRequest): Promise<JsonRpc
           allocationId: params?.allocationId as string,
           buildDir: params?.buildDir as string,
           simulatorDeviceType: (params?.simulatorDeviceType as string) || "iPhone 16 Pro",
-          simulatorRuntime: (params?.simulatorRuntime as string) || "iOS-18-6",
+          simulatorRuntime: (params?.simulatorRuntime as string) || "com.apple.CoreSimulator.SimRuntime.iOS-18-6",
         });
         return {
           jsonrpc: "2.0",

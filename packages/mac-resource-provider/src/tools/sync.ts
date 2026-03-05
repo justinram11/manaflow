@@ -59,11 +59,13 @@ const iosSyncCode: ToolHandler = async (_params, allocationId) => {
 
   try {
     const excludeArgs = RSYNC_EXCLUDES.map((e) => `--exclude=${e}`).join(" ");
-    const cmd = `rsync -az --delete ${excludeArgs} --password-file="${passwordFile}" "${alloc.rsyncEndpoint}" "${alloc.buildDir}/"`;
+    // Use rsync with || to handle partial transfer (exit code 23) from permission-denied files
+    const cmd = `rsync -az --delete ${excludeArgs} --password-file="${passwordFile}" "${alloc.rsyncEndpoint}" "${alloc.buildDir}/" 2>&1; EC=$?; if [ $EC -eq 0 ] || [ $EC -eq 23 ]; then exit 0; else exit $EC; fi`;
 
     execSync(cmd, {
       encoding: "utf-8",
       timeout: 120000,
+      shell: "/bin/bash",
     });
 
     // Count synced files

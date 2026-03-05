@@ -11,7 +11,7 @@ const iosSimulatorBoot: ToolHandler = async (params, allocationId) => {
   // If no simulator exists yet, create one
   if (!alloc.simulatorUdid) {
     const deviceType = (params.deviceType as string) || alloc.simulatorDeviceType || "iPhone 16 Pro";
-    const runtime = (params.runtime as string) || alloc.simulatorRuntime || "iOS-18-6";
+    const runtime = (params.runtime as string) || alloc.simulatorRuntime || "com.apple.CoreSimulator.SimRuntime.iOS-18-6";
     const simName = `cmux-${allocationId.slice(0, 8)}`;
 
     try {
