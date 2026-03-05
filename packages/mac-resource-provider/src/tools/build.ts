@@ -273,7 +273,7 @@ export const buildTools: Array<{ definition: ToolDefinition; handler: ToolHandle
     definition: {
       name: "ios_build",
       description:
-        "Build an Xcode project in the workspace. Auto-detects .xcworkspace or .xcodeproj. Queued (respects maxConcurrentBuilds).",
+        "Build an Xcode project in the workspace. Auto-detects .xcworkspace or .xcodeproj. Uses the workspace's assigned simulator destination by default when available. Prefer the repo's Debug configuration for local simulator work. Queued (respects maxConcurrentBuilds).",
       inputSchema: {
         type: "object",
         properties: {
@@ -290,7 +290,7 @@ export const buildTools: Array<{ definition: ToolDefinition; handler: ToolHandle
     definition: {
       name: "ios_build_and_run",
       description:
-        "Build, install, and launch the app on the workspace's simulator. Queued.",
+        "Build, install, and launch the app on the workspace's simulator using the repo's local simulator configuration. Prefer this over manually forcing code signing or SDK overrides. Queued.",
       inputSchema: {
         type: "object",
         properties: {
