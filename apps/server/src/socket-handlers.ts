@@ -1009,6 +1009,7 @@ export function setupSocketHandlers(
                 images: taskData.images,
                 theme: taskData.theme,
                 environmentId: taskData.environmentId,
+                resourceProviderIds: taskData.resourceProviderIds,
               },
               safeTeam
             );

@@ -155,6 +155,30 @@ export async function getClaudeEnvironment(
     if (ctx.iosDirectToken) {
       env.CMUX_DIRECT_MCP_TOKEN = ctx.iosDirectToken;
       env.CMUX_DIRECT_MCP_PORT = "39385";
+
+      // Start rsyncd so Mac daemon can pull workspace files via rsync
+      const rsyncdConf = [
+        "[workspace]",
+        "path = /root/workspace",
+        "read only = yes",
+        "list = no",
+        "auth users = cmux",
+        "secrets file = /etc/cmux/rsyncd.secrets",
+      ].join("\n");
+
+      files.push({
+        destinationPath: "/etc/cmux/rsyncd.conf",
+        contentBase64: Buffer.from(rsyncdConf).toString("base64"),
+        mode: "644",
+      });
+
+      startupCommands.push("mkdir -p /etc/cmux");
+      startupCommands.push(
+        `echo 'cmux:${ctx.iosDirectToken}' > /etc/cmux/rsyncd.secrets && chmod 600 /etc/cmux/rsyncd.secrets`,
+      );
+      startupCommands.push(
+        "rsync --daemon --config=/etc/cmux/rsyncd.conf --port=39376 && echo '[CMUX] rsyncd started on port 39376'",
+      );
     }
   }
 

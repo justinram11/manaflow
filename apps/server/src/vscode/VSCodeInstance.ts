@@ -21,6 +21,8 @@ export interface VSCodeInstanceConfig {
   taskRunJwt?: string;
   // Optional: environment variables to pass to the container
   envVars?: Record<string, string>;
+  // Optional: explicit resource provider IDs to allocate
+  resourceProviderIds?: string[];
 }
 
 export interface VSCodeInstanceInfo {

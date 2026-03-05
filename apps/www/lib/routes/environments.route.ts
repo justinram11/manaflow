@@ -288,9 +288,10 @@ environmentsRouter.openapi(
           return c.text("Incus container not found or not running", 404);
         }
 
-        // Generate a unique snapshot ID
-        const snapshotId = `incus_snap_${randomBytes(8).toString("hex")}`;
-        await incusInstance.snapshot(snapshotId);
+        // Generate a unique snapshot name and create the snapshot.
+        // snapshot() returns the full ID in "containerName/snapshotName" format.
+        const snapshotName = `incus_snap_${randomBytes(8).toString("hex")}`;
+        const snapshotId = await incusInstance.snapshot(snapshotName);
 
         // For Incus in local auth mode, store env vars locally with a generated key
         const dataVaultKey = `env_${randomBytes(16).toString("hex")}`;
@@ -424,7 +425,7 @@ environmentsRouter.openapi(
       const envs = listEnvironments(db, teamSlugOrId);
 
       // Map DB rows to API response shape
-      const result = envs.map((row) => ({
+      const result = envs.map((row: (typeof envs)[number]) => ({
         id: row.id,
         name: row.name,
         morphSnapshotId: row.morphSnapshotId,
@@ -870,7 +871,7 @@ environmentsRouter.openapi(
 
       const versions = listSnapshotVersionsWithActive(db, teamSlugOrId, id);
 
-      const mapped = versions.map((version) => ({
+      const mapped = versions.map((version: (typeof versions)[number]) => ({
         id: String(version.id),
         version: version.version,
         morphSnapshotId: version.morphSnapshotId,
@@ -958,8 +959,8 @@ environmentsRouter.openapi(
           return c.text("Incus container not found or not running", 404);
         }
 
-        const snapshotId = `incus_snap_${randomBytes(8).toString("hex")}`;
-        await incusInstance.snapshot(snapshotId);
+        const snapshotName = `incus_snap_${randomBytes(8).toString("hex")}`;
+        const snapshotId = await incusInstance.snapshot(snapshotName);
 
         const creation = createSnapshotVersionForEnvironment(db, {
           teamSlugOrId: body.teamSlugOrId,

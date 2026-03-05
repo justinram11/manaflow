@@ -84,6 +84,7 @@ export async function spawnAgent(
     newBranch?: string; // Optional pre-generated branch name
     taskRunId?: string; // Optional pre-created task run ID
     incusSnapshotId?: string; // Optional Incus snapshot for sub-second resume
+    resourceProviderIds?: string[];
   },
   teamSlugOrId: string
 ): Promise<AgentSpawnResult> {
@@ -495,6 +496,7 @@ export async function spawnAgent(
         newBranch,
         environmentId: options.environmentId,
         taskRunJwt,
+        resourceProviderIds: options.resourceProviderIds,
       });
 
       worktreePath = "/root/workspace";
@@ -514,6 +516,7 @@ export async function spawnAgent(
         newBranch,
         snapshotId: options.incusSnapshotId,
         taskRunJwt,
+        resourceProviderIds: options.resourceProviderIds,
       });
       worktreePath = "/root/workspace";
     } else {
@@ -576,6 +579,66 @@ export async function spawnAgent(
     serverLogger.info(
       `VSCode instance spawned for agent ${agent.name}: ${vscodeUrl}`
     );
+
+    // Re-check for iOS allocation created during sandbox start (race condition fix:
+    // agent.environment() runs before vscodeInstance.start(), but iOS allocation is
+    // created during sandbox start, so iosResourceAllocationId is undefined on first pass)
+    if (agent.environment && taskRunId) {
+      try {
+        const freshTaskRun = getTaskRunById(db, taskRunId);
+        const freshVscode = freshTaskRun?.vscode as
+          | Record<string, unknown>
+          | undefined;
+        const freshIosAllocId = freshVscode?.iosResourceAllocationId as
+          | string
+          | undefined;
+        const freshIosToken = freshVscode?.iosDirectToken as
+          | string
+          | undefined;
+
+        if (freshIosAllocId) {
+          serverLogger.info(
+            `[AgentSpawner] iOS allocation detected post-start, re-generating environment for ${agent.name}`
+          );
+          const iosEnvResult = await agent.environment({
+            taskRunId,
+            prompt: processedTaskDescription,
+            taskRunJwt,
+            apiKeys,
+            callbackUrl,
+            iosResourceAllocationId: freshIosAllocId,
+            iosDirectToken: freshIosToken,
+          });
+          // Merge iOS-enriched files into existing authFiles by destinationPath
+          // (preserves files added by applyApiKeys and editorSettings)
+          for (const newFile of iosEnvResult.files) {
+            const existingIdx = authFiles.findIndex(
+              (f) => f.destinationPath === newFile.destinationPath
+            );
+            if (existingIdx >= 0) {
+              authFiles[existingIdx] = newFile;
+            } else {
+              authFiles.push(newFile);
+            }
+          }
+          Object.assign(envVars, iosEnvResult.env);
+          if (iosEnvResult.startupCommands) {
+            startupCommands = iosEnvResult.startupCommands;
+          }
+          if (iosEnvResult.postStartCommands) {
+            postStartCommands = iosEnvResult.postStartCommands;
+          }
+          if (iosEnvResult.unsetEnv) {
+            unsetEnvVars = iosEnvResult.unsetEnv;
+          }
+        }
+      } catch (error) {
+        serverLogger.error(
+          "[AgentSpawner] Failed to re-generate environment with iOS allocation:",
+          error
+        );
+      }
+    }
 
     if (options.isCloudMode && vscodeInstance instanceof CmuxVSCodeInstance) {
       console.log("[AgentSpawner] [isCloudMode] Setting up devcontainer");
@@ -1287,6 +1350,7 @@ export async function spawnAllAgents(
       altText: string;
     }>;
     theme?: "dark" | "light" | "system";
+    resourceProviderIds?: string[];
   },
   teamSlugOrId: string
 ): Promise<AgentSpawnResult[]> {

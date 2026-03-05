@@ -25,6 +25,7 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
   private newBranch?: string;
   private environmentId?: string;
   private taskRunJwt?: string;
+  private resourceProviderIds?: string[];
 
   constructor(config: VSCodeInstanceConfig) {
     super(config);
@@ -40,6 +41,7 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
     this.newBranch = cfg.newBranch;
     this.environmentId = cfg.environmentId;
     this.taskRunJwt = cfg.taskRunJwt;
+    this.resourceProviderIds = config.resourceProviderIds;
   }
 
   async start(): Promise<VSCodeInstanceInfo> {
@@ -59,6 +61,7 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
         taskRunJwt: this.taskRunJwt || "",
         isCloudWorkspace: this.config.agentName === "cloud-workspace",
         ...(this.environmentId ? { environmentId: this.environmentId } : {}),
+        ...(this.resourceProviderIds?.length ? { resourceProviderIds: this.resourceProviderIds } : {}),
         ...(this.repoUrl
           ? {
             repoUrl: this.repoUrl,

@@ -29,6 +29,7 @@ export interface LaunchResult {
     iosMcp?: number;
     iosVncIn?: number;
     iosVnc?: number;
+    iosRsyncd?: number;
   };
   host: string;
 }

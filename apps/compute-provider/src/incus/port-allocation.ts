@@ -14,6 +14,7 @@ export const CONTAINER_PORTS = {
   iosMcp: 39385,
   iosVncIn: 39386,
   iosVnc: 39387,
+  iosRsyncd: 39376,
 } as const;
 
 /**
@@ -53,7 +54,7 @@ export async function setupProxyDevices(
   const hostPorts: Record<number, number> = {};
 
   // iOS ports (iosMcp, iosVncIn, iosVnc) only when requested
-  const iosPortNames = new Set(["iosMcp", "iosVncIn", "iosVnc"]);
+  const iosPortNames = new Set(["iosMcp", "iosVncIn", "iosVnc", "iosRsyncd"]);
   // Determine which ports to forward — androidVnc only when requested, iOS ports only when requested
   const portsToForward = Object.entries(CONTAINER_PORTS).filter(
     ([name]) =>

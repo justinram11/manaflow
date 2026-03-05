@@ -88,6 +88,8 @@ export function createResourceIosHandler(): CapabilityHandler {
             const allocId = params.allocationId as string;
             const mcpEndpoint = params.mcpEndpoint as string | undefined;
             const vncEndpoint = params.vncEndpoint as string | undefined;
+            const rsyncEndpoint = params.rsyncEndpoint as string | undefined;
+            const rsyncSecret = params.rsyncSecret as string | undefined;
 
             if (!allocId) {
               return {
@@ -95,6 +97,15 @@ export function createResourceIosHandler(): CapabilityHandler {
                 error: { code: -32602, message: "Missing allocationId" },
                 id: request.id,
               };
+            }
+
+            // Store rsync info for ios_sync_code tool
+            if (rsyncEndpoint && rsyncSecret) {
+              const { setRsyncInfo } = await import(
+                "@cmux/mac-resource-provider/workspace-manager"
+              );
+              setRsyncInfo(allocId, rsyncEndpoint, rsyncSecret);
+              console.log(`[resource:ios] rsync endpoint stored for allocation ${allocId}`);
             }
 
             // Set up direct MCP bridge

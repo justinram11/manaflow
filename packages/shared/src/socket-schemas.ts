@@ -50,6 +50,7 @@ export const StartTaskSchema = z.object({
     .optional(),
   theme: z.enum(["dark", "light", "system"]).optional(),
   environmentId: typedZid("environments").optional(),
+  resourceProviderIds: z.array(z.string()).optional(),
 });
 
 export const CreateLocalWorkspaceSchema = z.object({

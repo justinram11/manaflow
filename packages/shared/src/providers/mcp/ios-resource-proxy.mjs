@@ -48,10 +48,12 @@ function sendViaDirectWs(request) {
       return;
     }
 
+    // tools/call (e.g. ios_sync_code with rsync) can take much longer than tools/list
+    const timeoutMs = request.method === "tools/call" ? 120000 : 5000;
     const timer = setTimeout(() => {
       pendingDirectRequests.delete(request.id);
       reject(new Error("Direct WebSocket request timed out"));
-    }, 5000);
+    }, timeoutMs);
 
     pendingDirectRequests.set(request.id, { resolve, timer });
 

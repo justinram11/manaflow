@@ -22,6 +22,7 @@ export class IncusVSCodeInstance extends VSCodeInstance {
   private newBranch?: string;
   private snapshotId?: string;
   private taskRunJwt?: string;
+  private resourceProviderIds?: string[];
 
   constructor(
     config: VSCodeInstanceConfig & {
@@ -30,6 +31,7 @@ export class IncusVSCodeInstance extends VSCodeInstance {
       newBranch?: string;
       snapshotId?: string;
       taskRunJwt?: string;
+      resourceProviderIds?: string[];
     },
   ) {
     super(config);
@@ -38,6 +40,7 @@ export class IncusVSCodeInstance extends VSCodeInstance {
     this.newBranch = config.newBranch;
     this.snapshotId = config.snapshotId;
     this.taskRunJwt = config.taskRunJwt;
+    this.resourceProviderIds = config.resourceProviderIds;
   }
 
   async start(): Promise<VSCodeInstanceInfo> {
@@ -58,6 +61,7 @@ export class IncusVSCodeInstance extends VSCodeInstance {
         taskRunId: this.taskRunId,
         taskRunJwt: this.taskRunJwt || "",
         ...(this.snapshotId ? { snapshotId: this.snapshotId } : {}),
+        ...(this.resourceProviderIds?.length ? { resourceProviderIds: this.resourceProviderIds } : {}),
         ...(this.repoUrl
           ? {
               repoUrl: this.repoUrl,

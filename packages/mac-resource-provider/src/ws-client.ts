@@ -11,6 +11,11 @@ export class WsClient {
   private reconnectDelay = 1000;
   private maxReconnectDelay = 30000;
   private closed = false;
+  private healthCheckInterval: ReturnType<typeof setInterval> | null = null;
+  private lastPong = 0;
+
+  private static readonly HEALTH_CHECK_INTERVAL_MS = 15_000;
+  private static readonly PONG_TIMEOUT_MS = 45_000;
 
   constructor(config: Config, onMessage: MessageHandler) {
     this.config = config;
@@ -20,13 +25,15 @@ export class WsClient {
   connect(): void {
     if (this.closed) return;
 
+    this.clearHealthCheck();
+
     const wsUrl = this.config.serverUrl
       .replace(/^http/, "ws")
       .replace(/\/$/, "");
 
-    console.log(`Connecting to ${wsUrl}/resource-provider-ws ...`);
+    console.log(`Connecting to ${wsUrl}/provider-ws ...`);
 
-    this.ws = new WebSocket(`${wsUrl}/resource-provider-ws`, {
+    this.ws = new WebSocket(`${wsUrl}/provider-ws`, {
       headers: {
         Authorization: `Bearer ${this.config.token}`,
       },
@@ -35,6 +42,8 @@ export class WsClient {
     this.ws.on("open", () => {
       console.log("Connected to server");
       this.reconnectDelay = 1000;
+      this.lastPong = Date.now();
+      this.startHealthCheck();
 
       // Send auth message with system info
       this.send({
@@ -55,6 +64,7 @@ export class WsClient {
 
     this.ws.on("close", () => {
       console.log("Disconnected from server");
+      this.clearHealthCheck();
       this.scheduleReconnect();
     });
 
@@ -64,6 +74,11 @@ export class WsClient {
 
     this.ws.on("ping", () => {
       this.ws?.pong();
+      this.lastPong = Date.now();
+    });
+
+    this.ws.on("pong", () => {
+      this.lastPong = Date.now();
     });
   }
 
@@ -75,7 +90,33 @@ export class WsClient {
 
   close(): void {
     this.closed = true;
+    this.clearHealthCheck();
     this.ws?.close();
+  }
+
+  private startHealthCheck(): void {
+    this.healthCheckInterval = setInterval(() => {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+      // After sleep/wake, Date.now() jumps forward. If lastPong is stale,
+      // the connection is dead — terminate and reconnect immediately.
+      if (Date.now() - this.lastPong > WsClient.PONG_TIMEOUT_MS) {
+        console.log("Connection appears stale (no pong received), reconnecting...");
+        this.clearHealthCheck();
+        this.ws.terminate();
+        // terminate fires 'close', which calls scheduleReconnect
+        return;
+      }
+
+      this.ws.ping();
+    }, WsClient.HEALTH_CHECK_INTERVAL_MS);
+  }
+
+  private clearHealthCheck(): void {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+      this.healthCheckInterval = null;
+    }
   }
 
   private scheduleReconnect(): void {

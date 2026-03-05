@@ -502,7 +502,7 @@ if [ "${SANDBOX_PROVIDER:-}" = "incus" ]; then
     check_process $COMPUTE_PROVIDER_PID "Compute Provider"
 
     echo -e "${GREEN}Starting provider daemon...${NC}"
-    (cd "$APP_DIR/packages/provider-daemon" && exec bash -c 'trap "kill -9 0" EXIT; bun run start 2>&1 | tee "$LOG_DIR/provider-daemon.log" | prefix_output "PROVIDER" "$MAGENTA"') &
+    (cd "$APP_DIR/packages/provider-daemon" && exec bash -c 'trap "kill -9 0" EXIT; bun run --env-file ../../.env start 2>&1 | tee "$LOG_DIR/provider-daemon.log" | prefix_output "PROVIDER" "$MAGENTA"') &
     PROVIDER_DAEMON_PID=$!
     check_process $PROVIDER_DAEMON_PID "Provider Daemon"
 fi

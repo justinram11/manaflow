@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { mkdirSync, rmSync, existsSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, existsSync } from "node:fs";
 
 interface AllocationInfo {
   allocationId: string;
@@ -7,6 +7,8 @@ interface AllocationInfo {
   simulatorUdid?: string;
   simulatorDeviceType: string;
   simulatorRuntime: string;
+  rsyncEndpoint?: string;
+  rsyncSecret?: string;
 }
 
 const allocations = new Map<string, AllocationInfo>();
@@ -44,6 +46,14 @@ export function setupAllocation(params: {
     simulatorDeviceType,
     simulatorRuntime,
   };
+  // Apply any pending rsync info that arrived before allocation was set up
+  const pending = pendingRsyncInfo.get(allocationId);
+  if (pending) {
+    info.rsyncEndpoint = pending.rsyncEndpoint;
+    info.rsyncSecret = pending.rsyncSecret;
+    pendingRsyncInfo.delete(allocationId);
+  }
+
   allocations.set(allocationId, info);
   return info;
 }
@@ -107,21 +117,18 @@ export function bootSimulator(allocationId: string): string | undefined {
 }
 
 /**
- * Receive a tarball and extract it to the build directory
+ * Store rsync connection info for an allocation (called from connect_direct)
  */
-export function receiveSyncTarball(allocationId: string, tarData: Buffer): void {
+export function setRsyncInfo(allocationId: string, rsyncEndpoint: string, rsyncSecret: string): void {
   const info = allocations.get(allocationId);
-  if (!info) throw new Error(`No allocation found: ${allocationId}`);
-
-  // Ensure build dir exists
-  mkdirSync(info.buildDir, { recursive: true });
-
-  // Write tarball and extract
-  const tarPath = `${info.buildDir}/.cmux-sync.tar.gz`;
-  writeFileSync(tarPath, tarData);
-
-  execSync(`tar -xzf "${tarPath}" -C "${info.buildDir}"`, { encoding: "utf-8" });
-  rmSync(tarPath, { force: true });
-
-  console.log(`Synced code to ${info.buildDir}`);
+  if (!info) {
+    console.warn(`[workspace-manager] setRsyncInfo: no allocation found for ${allocationId}, will store when allocation is created`);
+    // Store for later — the allocation may not be set up yet
+    pendingRsyncInfo.set(allocationId, { rsyncEndpoint, rsyncSecret });
+    return;
+  }
+  info.rsyncEndpoint = rsyncEndpoint;
+  info.rsyncSecret = rsyncSecret;
 }
+
+const pendingRsyncInfo = new Map<string, { rsyncEndpoint: string; rsyncSecret: string }>();
