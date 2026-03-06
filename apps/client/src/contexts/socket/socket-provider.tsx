@@ -16,12 +16,21 @@ interface SocketProviderProps {
   url?: string;
 }
 
+function getDefaultSocketOrigin(): string {
+  if (typeof window === "undefined") {
+    return "http://localhost:9776";
+  }
+
+  if (window.location.protocol === "https:") {
+    return window.location.origin;
+  }
+
+  return `${window.location.protocol}//${window.location.hostname}:9776`;
+}
+
 export const SocketProvider: React.FC<SocketProviderProps> = ({
   children,
-  url = env.NEXT_PUBLIC_SERVER_ORIGIN ||
-    (typeof window !== "undefined"
-      ? `${window.location.protocol}//${window.location.hostname}:9776`
-      : "http://localhost:9776"),
+  url = env.NEXT_PUBLIC_SERVER_ORIGIN || getDefaultSocketOrigin(),
 }) => {
   const authJsonQuery = useQuery(authJsonQueryOptions());
   const authToken = authJsonQuery.data?.accessToken;

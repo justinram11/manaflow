@@ -71,5 +71,20 @@ export default defineConfig({
   // TODO: make this safe
   server: {
     allowedHosts: true,
+    proxy: {
+      "/api": {
+        target: "http://127.0.0.1:9779",
+        changeOrigin: true,
+      },
+      "/handler": {
+        target: "http://127.0.0.1:9779",
+        changeOrigin: true,
+      },
+      "/socket.io": {
+        target: "http://127.0.0.1:9776",
+        changeOrigin: true,
+        ws: true,
+      },
+    },
   },
 });
