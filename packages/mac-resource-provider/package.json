@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./mcp-handler": "./src/mcp-handler.ts",
-    "./workspace-manager": "./src/workspace-manager.ts"
+    "./workspace-manager": "./src/workspace-manager.ts",
+    "./ingress-server": "./src/ingress-server.ts"
   },
   "scripts": {
     "start": "bun run src/index.ts",

@@ -1,5 +1,6 @@
 import WebSocket from "ws";
 import { execSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { hostname, platform, arch } from "node:os";
 import type { CapabilityRegistry } from "./capability-registry";
 import type { DaemonConfig, JsonRpcRequest } from "./types";
@@ -9,6 +10,49 @@ const MAX_RECONNECT_DELAY = 30_000;
 const HEALTH_CHECK_INTERVAL_MS = 15_000;
 const PONG_TIMEOUT_MS = 45_000;
 
+function trimTrailingDot(value: string): string {
+  return value.endsWith(".") ? value.slice(0, -1) : value;
+}
+
+function getProviderBrowserBaseUrl(capabilities: string[]): string | null {
+  const configured = process.env.CMUX_PROVIDER_BROWSER_BASE_URL?.trim();
+  if (configured) {
+    return configured.endsWith("/") ? configured.slice(0, -1) : configured;
+  }
+
+  if (!capabilities.includes("resource:ios-simulator")) {
+    return null;
+  }
+
+  try {
+    const tailscaleBinary = [
+      process.env.CMUX_TAILSCALE_BINARY,
+      "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+      "/opt/homebrew/bin/tailscale",
+      "tailscale",
+    ].find((candidate) => candidate && (candidate === "tailscale" || existsSync(candidate)));
+    if (!tailscaleBinary) {
+      return null;
+    }
+
+    const output = execSync(`"${tailscaleBinary}" status --json`, {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const parsed = JSON.parse(output) as {
+      Self?: { DNSName?: string };
+    };
+    const dnsName = parsed.Self?.DNSName?.trim();
+    if (dnsName) {
+      return `https://${trimTrailingDot(dnsName)}`;
+    }
+  } catch {
+    // Ignore tailscale detection failures.
+  }
+
+  return null;
+}
+
 export class WsClient {
   private ws: WebSocket | null = null;
   private reconnectDelay = INITIAL_RECONNECT_DELAY;
@@ -16,6 +60,7 @@ export class WsClient {
   private healthCheckInterval: ReturnType<typeof setInterval> | null = null;
   private lastPong = 0;
   private closing = false;
+  private connectedAt = 0;
 
   constructor(
     private config: DaemonConfig,
@@ -24,22 +69,37 @@ export class WsClient {
 
   connect(): void {
     if (this.closing) return;
+    if (
+      this.ws &&
+      (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)
+    ) {
+      return;
+    }
 
     this.clearHealthCheck();
+    this.clearReconnectTimer();
 
     const wsUrl = this.config.serverUrl.replace(/^http/, "ws");
     console.log(`Connecting to ${wsUrl}/provider-ws ...`);
 
-    this.ws = new WebSocket(`${wsUrl}/provider-ws`, {
+    const ws = new WebSocket(`${wsUrl}/provider-ws`, {
       headers: {
         Authorization: `Bearer ${this.config.token}`,
       },
     });
+    this.ws = ws;
 
-    this.ws.on("open", () => {
+    ws.on("open", () => {
+      if (this.ws !== ws) {
+        ws.close();
+        return;
+      }
+
       console.log("Connected to server");
       this.reconnectDelay = INITIAL_RECONNECT_DELAY;
       this.lastPong = Date.now();
+      this.connectedAt = Date.now();
+      this.clearReconnectTimer();
       this.startHealthCheck();
 
       // Send auth + system info
@@ -51,7 +111,11 @@ export class WsClient {
       });
     });
 
-    this.ws.on("message", async (data) => {
+    ws.on("message", async (data) => {
+      if (this.ws !== ws) {
+        return;
+      }
+
       try {
         const msg = JSON.parse(data.toString());
         await this.handleMessage(msg);
@@ -60,22 +124,38 @@ export class WsClient {
       }
     });
 
-    this.ws.on("close", () => {
-      console.log("Disconnected from server");
+    ws.on("close", (code, reason) => {
+      if (this.ws !== ws) {
+        return;
+      }
+
+      this.ws = null;
+      const connectedForMs = this.connectedAt ? Date.now() - this.connectedAt : 0;
+      console.log(
+        `Disconnected from server (code=${code}, reason=${reason.toString() || "none"}, connectedForMs=${connectedForMs})`,
+      );
       this.clearHealthCheck();
       this.scheduleReconnect();
     });
 
-    this.ws.on("error", (error) => {
+    ws.on("error", (error) => {
+      if (this.ws !== ws) {
+        return;
+      }
       console.error("WebSocket error:", error);
     });
 
-    this.ws.on("ping", () => {
-      this.ws?.pong();
+    ws.on("ping", () => {
+      if (this.ws !== ws) {
+        return;
+      }
       this.lastPong = Date.now();
     });
 
-    this.ws.on("pong", () => {
+    ws.on("pong", () => {
+      if (this.ws !== ws) {
+        return;
+      }
       this.lastPong = Date.now();
     });
   }
@@ -109,8 +189,10 @@ export class WsClient {
   private scheduleReconnect(): void {
     if (this.closing) return;
 
+    this.clearReconnectTimer();
     console.log(`Reconnecting in ${this.reconnectDelay}ms...`);
     this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
       this.connect();
     }, this.reconnectDelay);
 
@@ -120,9 +202,7 @@ export class WsClient {
   close(): void {
     this.closing = true;
     this.clearHealthCheck();
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-    }
+    this.clearReconnectTimer();
     this.ws?.close();
   }
 
@@ -150,12 +230,20 @@ export class WsClient {
     }
   }
 
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
+
   private getSystemInfo(): Record<string, unknown> {
+    const capabilities = this.registry.getCapabilities();
     const info: Record<string, unknown> = {
       platform: platform(),
       arch: arch(),
       hostname: hostname(),
-      capabilities: this.registry.getCapabilities(),
+      capabilities,
       metadata: {} as Record<string, string>,
     };
 
@@ -187,6 +275,11 @@ export class WsClient {
       }).trim();
     } catch {
       // Ignore
+    }
+    const browserBaseUrl = getProviderBrowserBaseUrl(capabilities);
+    if (browserBaseUrl) {
+      metadata.browserBaseUrl = browserBaseUrl;
+      metadata.iosIngressPort = process.env.CMUX_IOS_INGRESS_PORT ?? "4848";
     }
     info.metadata = metadata;
 

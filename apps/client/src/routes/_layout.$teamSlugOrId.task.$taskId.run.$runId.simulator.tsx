@@ -88,18 +88,71 @@ function SimulatorComponent() {
     provider?: string;
     ports?: Record<string, unknown>;
     iosResourceAllocationId?: string;
+    iosDirectToken?: string;
+    iosProviderBrowserBaseUrl?: string;
+    iosProviderHostname?: string;
+    iosProviderVncPort?: number | string;
   } | null;
   const rawUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
   const provider = vscodeInfo?.provider;
   const ports = vscodeInfo?.ports;
   const allocationId = vscodeInfo?.iosResourceAllocationId;
+  const iosDirectToken =
+    typeof vscodeInfo?.iosDirectToken === "string" ? vscodeInfo.iosDirectToken : null;
+  const iosProviderBrowserBaseUrl =
+    typeof vscodeInfo?.iosProviderBrowserBaseUrl === "string"
+      ? vscodeInfo.iosProviderBrowserBaseUrl.replace(/\/$/, "")
+      : null;
+  const iosProviderHostname = vscodeInfo?.iosProviderHostname;
+  const iosProviderVncPort =
+    typeof vscodeInfo?.iosProviderVncPort === "number" ||
+    typeof vscodeInfo?.iosProviderVncPort === "string"
+      ? String(vscodeInfo.iosProviderVncPort)
+      : null;
+
+  const directIngressBaseUrl = useMemo(() => {
+    if (!iosProviderBrowserBaseUrl || !allocationId || !iosDirectToken) {
+      return null;
+    }
+
+    return `${iosProviderBrowserBaseUrl}/allocations/${allocationId}`;
+  }, [allocationId, iosDirectToken, iosProviderBrowserBaseUrl]);
+
+  const directScreenshotUrl = useMemo(() => {
+    if (!directIngressBaseUrl || !iosDirectToken) {
+      return null;
+    }
+
+    const url = new URL(`${directIngressBaseUrl}/screenshot`);
+    url.searchParams.set("token", iosDirectToken);
+    url.searchParams.set("format", "png");
+    return url.toString();
+  }, [directIngressBaseUrl, iosDirectToken]);
 
   const vncWebsocketUrl = useMemo(() => {
+    if (directIngressBaseUrl && iosDirectToken) {
+      const url = new URL(`${directIngressBaseUrl}/websockify`);
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+      url.searchParams.set("token", iosDirectToken);
+      return url.toString();
+    }
+    if (iosProviderHostname && iosProviderVncPort) {
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      return `${protocol}//${iosProviderHostname}:${iosProviderVncPort}/websockify`;
+    }
     if (!rawUrl || !provider) {
       return null;
     }
     return toIosVncWebsocketUrl(rawUrl, provider, ports ?? undefined);
-  }, [rawUrl, provider, ports]);
+  }, [
+    directIngressBaseUrl,
+    iosDirectToken,
+    iosProviderHostname,
+    iosProviderVncPort,
+    rawUrl,
+    provider,
+    ports,
+  ]);
 
   const hasSimulatorView = Boolean(vncWebsocketUrl);
   const hasCloudBackend = provider === "docker" || provider === "incus";
@@ -114,21 +167,75 @@ function SimulatorComponent() {
     src: string;
     mimeType: string;
   } | null>(null);
+  const [preferScreenshotMode, setPreferScreenshotMode] = useState(false);
+
+  useEffect(() => {
+    setPreferScreenshotMode(!window.isSecureContext);
+  }, []);
+
+  const shouldAttemptLiveVnc = Boolean(vncWebsocketUrl) && !preferScreenshotMode;
+  const hasInteractiveSurface =
+    (shouldAttemptLiveVnc && vncStatus === "connected") ||
+    Boolean(simulatorScreenshot);
+  const isUsingScreenshotFallback =
+    Boolean(simulatorScreenshot) && (!shouldAttemptLiveVnc || vncStatus !== "connected");
+  const fallbackScreenshot = isUsingScreenshotFallback ? simulatorScreenshot : null;
 
   const overlayMessage = useMemo(() => {
     if (!hasCloudBackend) {
       return "iOS Simulator is only available in cloud mode with a Mac provider.";
     }
+    if (!allocationId) {
+      return "Waiting for the iOS simulator to start...";
+    }
+    if (preferScreenshotMode) {
+      return "This page is using interactive screenshot mode on insecure HTTP.";
+    }
     if (!hasSimulatorView) {
       return "Waiting for the iOS simulator to start...";
     }
+    if (vncStatus === "error" && simulatorScreenshot) {
+      return "Live stream unavailable. Using interactive screenshot mode.";
+    }
     return "Connecting to iOS simulator...";
-  }, [hasSimulatorView, hasCloudBackend]);
+  }, [
+    allocationId,
+    hasCloudBackend,
+    hasSimulatorView,
+    preferScreenshotMode,
+    simulatorScreenshot,
+    vncStatus,
+  ]);
 
   const callSimulatorTool = useCallback(
     async (method: string, params: Record<string, unknown>) => {
       if (!allocationId) {
         throw new Error("Missing iOS resource allocation");
+      }
+
+      if (directIngressBaseUrl && iosDirectToken) {
+        const url = new URL(`${directIngressBaseUrl}/tools-call`);
+        url.searchParams.set("token", iosDirectToken);
+        const response = await fetch(url.toString(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: method,
+            arguments: params,
+          }),
+        });
+
+        const payload = await response.json() as {
+          result?: unknown;
+          error?: string;
+        };
+        if (!response.ok) {
+          throw new Error(payload.error ?? `Simulator request failed (${response.status})`);
+        }
+        if (payload.error) {
+          throw new Error(payload.error);
+        }
+        return payload.result;
       }
 
       const rpcId = `sim-${taskRunId}-${rpcCounterRef.current++}`;
@@ -184,7 +291,7 @@ function SimulatorComponent() {
 
       return result;
     },
-    [allocationId, taskRunId]
+    [allocationId, directIngressBaseUrl, iosDirectToken, taskRunId]
   );
 
   useEffect(() => {
@@ -199,6 +306,14 @@ function SimulatorComponent() {
 
   const refreshScreenshot = useCallback(async () => {
     if (!allocationId || screenshotRefreshInFlightRef.current) {
+      return;
+    }
+
+    if (directScreenshotUrl) {
+      setSimulatorScreenshot({
+        src: `${directScreenshotUrl}&ts=${Date.now()}`,
+        mimeType: "image/png",
+      });
       return;
     }
 
@@ -221,7 +336,7 @@ function SimulatorComponent() {
     } finally {
       screenshotRefreshInFlightRef.current = false;
     }
-  }, [allocationId, callSimulatorTool]);
+  }, [allocationId, callSimulatorTool, directScreenshotUrl]);
 
   useEffect(() => {
     if (!allocationId) {
@@ -402,9 +517,6 @@ function SimulatorComponent() {
     []
   );
 
-  const hasInteractiveSurface =
-    (hasSimulatorView && vncStatus === "connected") ||
-    Boolean(simulatorScreenshot);
   const canControlSimulator = Boolean(allocationId) && hasInteractiveSurface;
   const isSimulatorBusy = !hasInteractiveSurface;
 
@@ -415,7 +527,7 @@ function SimulatorComponent() {
           className="flex flex-row grow min-h-0 relative"
           aria-busy={isSimulatorBusy}
         >
-          {vncWebsocketUrl ? (
+          {shouldAttemptLiveVnc && vncWebsocketUrl ? (
             <VncViewer
               ref={viewerRef}
               url={vncWebsocketUrl}
@@ -440,18 +552,18 @@ function SimulatorComponent() {
             <div className="grow" />
           )}
 
-          {simulatorScreenshot && vncStatus !== "connected" ? (
+          {fallbackScreenshot ? (
             <div className="absolute inset-0 flex items-center justify-center bg-black">
               <img
                 ref={screenshotRef}
-                src={simulatorScreenshot.src}
+                src={fallbackScreenshot.src}
                 alt="iOS Simulator"
                 className="max-h-full max-w-full object-contain"
               />
             </div>
           ) : null}
 
-          {hasSimulatorView ? (
+          {hasSimulatorView || simulatorScreenshot ? (
             <div
               className={clsx("absolute inset-0 touch-none", {
                 "pointer-events-auto cursor-crosshair": canControlSimulator,
@@ -470,9 +582,11 @@ function SimulatorComponent() {
             <div className="pointer-events-auto rounded-md border border-neutral-200/70 bg-white/90 px-3 py-2 text-xs text-neutral-700 shadow-sm backdrop-blur dark:border-neutral-800/70 dark:bg-neutral-950/90 dark:text-neutral-200">
               <div className="font-medium">Simulator controls</div>
               <div className="mt-1 text-neutral-500 dark:text-neutral-400">
-                {vncStatus === "connected"
+                {isUsingScreenshotFallback
+                  ? "Tap to click. Drag to swipe. View is using live screenshots."
+                  : vncStatus === "connected"
                   ? "Tap to click. Drag to swipe."
-                  : "Tap to click. Drag to swipe. View is using live screenshots."}
+                  : "Connecting to live simulator stream..."}
               </div>
               {!allocationId ? (
                 <div className="mt-2 text-amber-600 dark:text-amber-400">
@@ -563,8 +677,8 @@ function SimulatorComponent() {
             className={clsx(
               "absolute inset-0 flex items-center justify-center transition pointer-events-none",
               {
-                "opacity-100": !hasSimulatorView,
-                "opacity-0": hasSimulatorView,
+                "opacity-100": !hasInteractiveSurface,
+                "opacity-0": hasInteractiveSurface,
               }
             )}
           >

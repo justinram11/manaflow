@@ -11,6 +11,7 @@ interface AllocationInfo {
   capturePort?: number;
   rsyncEndpoint?: string;
   rsyncSecret?: string;
+  accessToken?: string;
 }
 
 const allocations = new Map<string, AllocationInfo>();
@@ -173,6 +174,10 @@ export function ensureSimulatorCapture(
   const simulatorUdid = bootSimulator(allocationId);
   if (!simulatorUdid) return undefined;
 
+  if (info.capturePort === localPort && captureManager.isCapturing(allocationId)) {
+    return simulatorUdid;
+  }
+
   info.capturePort = localPort;
   captureManager.startCapture(allocationId, simulatorUdid, localPort, fps);
   return simulatorUdid;
@@ -194,3 +199,14 @@ export function setRsyncInfo(allocationId: string, rsyncEndpoint: string, rsyncS
 }
 
 const pendingRsyncInfo = new Map<string, { rsyncEndpoint: string; rsyncSecret: string }>();
+
+export function setAllocationAccessToken(allocationId: string, accessToken: string): void {
+  const info = allocations.get(allocationId);
+  if (!info) {
+    console.warn(
+      `[workspace-manager] setAllocationAccessToken: no allocation found for ${allocationId}`,
+    );
+    return;
+  }
+  info.accessToken = accessToken;
+}

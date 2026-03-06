@@ -156,6 +156,7 @@ async function ensureIosAllocationReady(
 
   const connectRequestParams: Record<string, unknown> = {
     allocationId: allocation.id,
+    accessToken: directToken,
     mcpEndpoint: `ws://${sandboxHost}:${iosMcpPort}?token=${directToken}`,
   };
 

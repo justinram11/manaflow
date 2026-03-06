@@ -24,6 +24,8 @@ async function main() {
   }
 
   if (hasXcode) {
+    const { startIngressServer } = await import("@cmux/mac-resource-provider/ingress-server");
+    startIngressServer();
     registry.register(createResourceIosHandler());
   }
 
@@ -44,6 +46,10 @@ async function main() {
     console.log("Shutting down...");
     client.close();
     await registry.shutdown();
+    if (hasXcode) {
+      const { stopIngressServer } = await import("@cmux/mac-resource-provider/ingress-server");
+      stopIngressServer();
+    }
     process.exit(0);
   }
 

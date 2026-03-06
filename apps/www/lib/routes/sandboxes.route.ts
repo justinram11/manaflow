@@ -76,6 +76,39 @@ import { injectAwsCredentials } from "./sandboxes/aws-credentials";
 // for quick lookups without round-trips during the same session.
 export const incusVmRegistry = new Map<string, RemoteIncusSandboxInstance>();
 
+function getDefaultIosProviderVncPort(allocationId: string): number {
+  let hash = 0;
+  for (const char of allocationId) {
+    hash = (hash * 31 + char.charCodeAt(0)) % 10000;
+  }
+  return 45000 + hash;
+}
+
+function getIosProviderBrowserHost(provider: {
+  name?: string | null;
+  hostname?: string | null;
+}): string | undefined {
+  const providerName = provider.name?.trim();
+  if (providerName && !providerName.includes(" ")) {
+    return providerName;
+  }
+
+  const hostname = provider.hostname?.trim();
+  return hostname || undefined;
+}
+
+function getIosProviderBrowserBaseUrl(provider: {
+  metadata?: Record<string, unknown> | null;
+}): string | undefined {
+  const browserBaseUrl = provider.metadata?.browserBaseUrl;
+  if (typeof browserBaseUrl !== "string") {
+    return undefined;
+  }
+
+  const trimmed = browserBaseUrl.trim();
+  return trimmed ? trimmed.replace(/\/$/, "") : undefined;
+}
+
 /**
  * Resolve the providerId for Incus operations. Falls back to the first online
  * provider with compute:incus capability.
@@ -765,6 +798,9 @@ sandboxesRouter.openapi(
         // Only allocate if the user explicitly selected resource providers
         let iosResourceAllocationId: string | undefined;
         let iosDirectToken: string | undefined;
+        let iosProviderBrowserBaseUrl: string | undefined;
+        let iosProviderHostname: string | undefined;
+        let iosProviderVncPort: number | undefined;
         if (body.taskRunId && selectedIosProviders.length > 0) {
           try {
             const iosProvider = selectedIosProviders[0];
@@ -779,6 +815,9 @@ sandboxesRouter.openapi(
                 data: { directToken: iosDirectToken },
               });
               iosResourceAllocationId = allocId;
+              iosProviderBrowserBaseUrl = getIosProviderBrowserBaseUrl(iosProvider);
+              iosProviderHostname = getIosProviderBrowserHost(iosProvider);
+              iosProviderVncPort = getDefaultIosProviderVncPort(allocId);
               console.log(`[sandboxes.start] Created iOS allocation ${allocId} on provider ${iosProvider.id}`);
 
               // Setup the allocation on the Mac daemon and then establish direct connection
@@ -821,7 +860,9 @@ sandboxesRouter.openapi(
                     if (iosMcpHostPort) {
                       const connectParams = {
                         allocationId: allocId,
+                        accessToken: iosDirectToken,
                         mcpEndpoint: `ws://${sandboxHost}:${iosMcpHostPort}?token=${iosDirectToken}`,
+                        localVncPort: iosProviderVncPort,
                         ...(iosVncInHostPort ? {
                           vncEndpoint: `tcp://${sandboxHost}:${iosVncInHostPort}`,
                         } : {}),
@@ -883,7 +924,13 @@ sandboxesRouter.openapi(
                   : {}),
               },
               ...(iosResourceAllocationId
-                ? { iosResourceAllocationId, iosDirectToken }
+                ? {
+                    iosResourceAllocationId,
+                    iosDirectToken,
+                    ...(iosProviderBrowserBaseUrl ? { iosProviderBrowserBaseUrl } : {}),
+                    ...(iosProviderHostname ? { iosProviderHostname } : {}),
+                    ...(iosProviderVncPort ? { iosProviderVncPort } : {}),
+                  }
                 : {}),
             });
             vscodePersisted = true;

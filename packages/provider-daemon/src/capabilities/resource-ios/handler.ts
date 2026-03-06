@@ -98,6 +98,7 @@ export function createResourceIosHandler(): CapabilityHandler {
             const vncEndpoint = params.vncEndpoint as string | undefined;
             const rsyncEndpoint = params.rsyncEndpoint as string | undefined;
             const rsyncSecret = params.rsyncSecret as string | undefined;
+            const accessToken = params.accessToken as string | undefined;
 
             if (!allocId) {
               return {
@@ -114,6 +115,12 @@ export function createResourceIosHandler(): CapabilityHandler {
               );
               setRsyncInfo(allocId, rsyncEndpoint, rsyncSecret);
               console.log(`[resource:ios] rsync endpoint stored for allocation ${allocId}`);
+            }
+            if (accessToken || rsyncSecret) {
+              const { setAllocationAccessToken } = await import(
+                "@cmux/mac-resource-provider/workspace-manager"
+              );
+              setAllocationAccessToken(allocId, accessToken ?? rsyncSecret ?? "");
             }
 
             // Set up direct MCP bridge
