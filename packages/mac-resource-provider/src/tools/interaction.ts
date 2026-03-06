@@ -1,9 +1,26 @@
-import { execSync, spawnSync } from "node:child_process";
+import { execFileSync, execSync, spawnSync } from "node:child_process";
 import { readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ToolDefinition, ToolHandler } from "./index";
 import { getAllocation } from "../workspace-manager";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const simulatorInputSwiftPath = resolve(__dirname, "../../capture/SimulatorInput.swift");
+
+function runSimulatorInput(
+  simulatorUdid: string,
+  args: string[],
+): Record<string, unknown> {
+  const output = execFileSync(
+    "swift",
+    [simulatorInputSwiftPath, "--udid", simulatorUdid, ...args],
+    { encoding: "utf-8" },
+  );
+
+  return JSON.parse(output) as Record<string, unknown>;
+}
 
 const iosScreenshot: ToolHandler = async (params, allocationId) => {
   const alloc = getAllocation(allocationId);
@@ -24,6 +41,7 @@ const iosScreenshot: ToolHandler = async (params, allocationId) => {
       mimeType: format === "jpeg" ? "image/jpeg" : "image/png",
     };
   } catch (error) {
+    console.error("ios_screenshot failed", error);
     return { error: String(error) };
   }
 };
@@ -36,7 +54,6 @@ const iosRecordVideo: ToolHandler = async (params, allocationId) => {
   const tmpPath = join(tmpdir(), `cmux-recording-${Date.now()}.mp4`);
 
   try {
-    // Start recording in background, kill after duration
     const proc = spawnSync("xcrun", [
       "simctl", "io", alloc.simulatorUdid, "recordVideo", "--codec=h264", tmpPath,
     ], {
@@ -56,6 +73,7 @@ const iosRecordVideo: ToolHandler = async (params, allocationId) => {
       durationSeconds: duration,
     };
   } catch (error) {
+    console.error("ios_record_video failed", error);
     return { error: String(error) };
   }
 };
@@ -68,13 +86,20 @@ const iosTap: ToolHandler = async (params, allocationId) => {
   const y = params.y as number;
 
   try {
-    // Use AppleScript to send tap via Simulator app
-    execSync(
-      `xcrun simctl io "${alloc.simulatorUdid}" tap ${x} ${y} 2>/dev/null || osascript -e 'tell application "Simulator" to tap at {${x}, ${y}}'`,
-      { encoding: "utf-8" },
-    );
-    return { success: true, x, y };
+    return {
+      ...runSimulatorInput(alloc.simulatorUdid, [
+        "--action",
+        "tap",
+        "--x",
+        String(x),
+        "--y",
+        String(y),
+      ]),
+      x,
+      y,
+    };
   } catch (error) {
+    console.error("ios_tap failed", error);
     return { error: String(error) };
   }
 };
@@ -84,17 +109,30 @@ const iosSwipe: ToolHandler = async (params, allocationId) => {
   if (!alloc?.simulatorUdid) return { error: "No simulator assigned" };
 
   const { fromX, fromY, toX, toY } = params as {
-    fromX: number; fromY: number; toX: number; toY: number;
+    fromX: number;
+    fromY: number;
+    toX: number;
+    toY: number;
   };
   const duration = (params.duration as number) || 0.3;
 
   try {
-    execSync(
-      `xcrun simctl io "${alloc.simulatorUdid}" swipe ${fromX} ${fromY} ${toX} ${toY} --duration ${duration}`,
-      { encoding: "utf-8" },
-    );
-    return { success: true };
+    return runSimulatorInput(alloc.simulatorUdid, [
+      "--action",
+      "swipe",
+      "--from-x",
+      String(fromX),
+      "--from-y",
+      String(fromY),
+      "--to-x",
+      String(toX),
+      "--to-y",
+      String(toY),
+      "--duration",
+      String(duration),
+    ]);
   } catch (error) {
+    console.error("ios_swipe failed", error);
     return { error: String(error) };
   }
 };
@@ -106,24 +144,18 @@ const iosTypeText: ToolHandler = async (params, allocationId) => {
   const text = params.text as string;
 
   try {
-    // Use simctl keyboardInput for typing
-    execSync(
-      `xcrun simctl io "${alloc.simulatorUdid}" type "${text.replace(/"/g, '\\"')}"`,
-      { encoding: "utf-8" },
-    );
-    return { success: true };
-  } catch {
-    // Fallback: use pbcopy + paste
-    try {
-      execSync(`echo -n "${text.replace(/"/g, '\\"')}" | pbcopy`, { encoding: "utf-8" });
-      execSync(
-        `xcrun simctl io "${alloc.simulatorUdid}" keydown 55 && xcrun simctl io "${alloc.simulatorUdid}" keydown 9`,
-        { encoding: "utf-8" },
-      );
-      return { success: true, method: "paste" };
-    } catch (error) {
-      return { error: String(error) };
-    }
+    return {
+      ...runSimulatorInput(alloc.simulatorUdid, [
+        "--action",
+        "type",
+        "--text",
+        text,
+      ]),
+      method: "paste",
+    };
+  } catch (error) {
+    console.error("ios_type_text failed", error);
+    return { error: String(error) };
   }
 };
 
@@ -132,23 +164,20 @@ const iosPressButton: ToolHandler = async (params, allocationId) => {
   if (!alloc?.simulatorUdid) return { error: "No simulator assigned" };
 
   const button = params.button as string;
-  const buttonMap: Record<string, string> = {
-    home: "home",
-    lock: "lock",
-    volumeUp: "volumeUp",
-    volumeDown: "volumeDown",
-  };
-
-  const simctlButton = buttonMap[button];
-  if (!simctlButton) return { error: `Unknown button: ${button}` };
+  const supportedButtons = new Set(["home", "lock"]);
+  if (!supportedButtons.has(button)) {
+    return { error: `Unsupported button: ${button}` };
+  }
 
   try {
-    execSync(
-      `xcrun simctl io "${alloc.simulatorUdid}" ${simctlButton} 2>/dev/null || true`,
-      { encoding: "utf-8" },
-    );
-    return { success: true };
+    return runSimulatorInput(alloc.simulatorUdid, [
+      "--action",
+      "button",
+      "--button",
+      button,
+    ]);
   } catch (error) {
+    console.error("ios_press_button failed", error);
     return { error: String(error) };
   }
 };
@@ -158,13 +187,13 @@ const iosAccessibilityTree: ToolHandler = async (params, allocationId) => {
   if (!alloc?.simulatorUdid) return { error: "No simulator assigned" };
 
   try {
-    // Use accessibility inspector or XCTest framework to dump hierarchy
     const output = execSync(
       `xcrun simctl spawn "${alloc.simulatorUdid}" accessibility_inspector 2>/dev/null || xcrun simctl ui "${alloc.simulatorUdid}" accessibility_tree 2>/dev/null || echo "Accessibility tree inspection not available via simctl. Use ios_screenshot instead."`,
       { encoding: "utf-8", timeout: 10000 },
     );
     return { tree: output.trim() };
   } catch (error) {
+    console.error("ios_accessibility_tree failed", error);
     return { error: String(error), hint: "Consider using ios_screenshot for visual inspection" };
   }
 };
@@ -183,6 +212,7 @@ const iosFindElement: ToolHandler = async (params, allocationId) => {
     );
     return { results: output.trim() };
   } catch (error) {
+    console.error("ios_find_element failed", error);
     return { error: String(error) };
   }
 };
@@ -198,6 +228,7 @@ const iosScreenInfo: ToolHandler = async (_params, allocationId) => {
     );
     return { info: output.trim() };
   } catch (error) {
+    console.error("ios_screen_info failed", error);
     return { error: String(error) };
   }
 };
@@ -283,7 +314,7 @@ export const interactionTools: Array<{ definition: ToolDefinition; handler: Tool
       inputSchema: {
         type: "object",
         properties: {
-          button: { type: "string", enum: ["home", "lock", "volumeUp", "volumeDown"] },
+          button: { type: "string", enum: ["home", "lock"] },
         },
         required: ["button"],
       },

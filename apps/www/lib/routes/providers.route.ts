@@ -6,6 +6,7 @@ import {
   listActiveAllocationsByProvider,
   getAllocationById,
 } from "@cmux/db/queries/providers";
+import { getTaskRunById } from "@cmux/db/queries/task-runs";
 import {
   createProvider,
   updateProvider,
@@ -96,6 +97,139 @@ const AllocateBody = z
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+
+function parseJsonField(value: unknown): Record<string, unknown> | null {
+  if (!value) return null;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return parsed && typeof parsed === "object"
+        ? (parsed as Record<string, unknown>)
+        : null;
+    } catch (error) {
+      console.error("Failed to parse JSON field:", error);
+      return null;
+    }
+  }
+  return typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+async function ensureIosAllocationReady(
+  db: ReturnType<typeof getDb>,
+  allocation: ReturnType<typeof getAllocationById>,
+): Promise<void> {
+  if (!allocation || allocation.type !== "resource" || !allocation.taskRunId) {
+    return;
+  }
+
+  const taskRun = getTaskRunById(db, allocation.taskRunId);
+  const vscode = parseJsonField(taskRun?.vscode);
+  const ports = parseJsonField(vscode?.ports);
+  const allocationData = parseJsonField(allocation.data);
+  const directToken =
+    (typeof vscode?.iosDirectToken === "string" ? vscode.iosDirectToken : null) ??
+    (typeof allocationData?.directToken === "string" ? allocationData.directToken : null);
+  const iosMcpPort = typeof ports?.iosMcp === "string" ? ports.iosMcp : null;
+
+  if (!directToken || !iosMcpPort) {
+    return;
+  }
+
+  const sandboxHost = process.env.SANDBOX_HOST ?? "localhost";
+  const setupRes = await fetch(
+    `${CMUX_SERVER_URL}/internal/provider/${allocation.providerId}/setup-allocation`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        allocationId: allocation.id,
+        buildDir: `/tmp/cmux-builds/${allocation.id}`,
+        simulatorDeviceType: "iPhone 16 Pro",
+        simulatorRuntime: "com.apple.CoreSimulator.SimRuntime.iOS-18-6",
+      }),
+    },
+  );
+  if (!setupRes.ok) {
+    throw new Error(await setupRes.text());
+  }
+
+  const connectRequestParams: Record<string, unknown> = {
+    allocationId: allocation.id,
+    mcpEndpoint: `ws://${sandboxHost}:${iosMcpPort}?token=${directToken}`,
+  };
+
+  if (typeof ports?.iosVncIn === "string") {
+    connectRequestParams.vncEndpoint = `tcp://${sandboxHost}:${ports.iosVncIn}`;
+  }
+  if (typeof ports?.iosRsyncd === "string") {
+    connectRequestParams.rsyncEndpoint = `rsync://cmux@${sandboxHost}:${ports.iosRsyncd}/workspace`;
+    connectRequestParams.rsyncSecret = directToken;
+  }
+
+  const connectRes = await fetch(
+    `${CMUX_SERVER_URL}/internal/provider/${allocation.providerId}/json-rpc`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        allocationId: allocation.id,
+        request: {
+          jsonrpc: "2.0",
+          method: "connect_direct",
+          params: connectRequestParams,
+          id: `ensure-${allocation.id}`,
+        },
+      }),
+    },
+  );
+  if (!connectRes.ok) {
+    throw new Error(await connectRes.text());
+  }
+}
+
+function responseNeedsIosRecovery(response: unknown): boolean {
+  if (!response || typeof response !== "object") {
+    return false;
+  }
+
+  const result = "result" in response ? response.result : undefined;
+  if (!result || typeof result !== "object" || !("content" in result)) {
+    return false;
+  }
+
+  const content = result.content;
+  if (!Array.isArray(content)) {
+    return false;
+  }
+
+  return content.some((item) => {
+    if (!item || typeof item !== "object") {
+      return false;
+    }
+    if (!("type" in item) || item.type !== "text") {
+      return false;
+    }
+    if (!("text" in item) || typeof item.text !== "string") {
+      return false;
+    }
+    return item.text.includes("\"error\": \"No simulator assigned\"");
+  });
+}
+
+async function forwardProviderJsonRpc(
+  providerId: string,
+  allocationId: string,
+  request: Record<string, unknown>,
+): Promise<Response> {
+  return fetch(`${CMUX_SERVER_URL}/internal/provider/${providerId}/json-rpc`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      allocationId,
+      request,
+    }),
+  });
 }
 
 // POST /providers/register - Register new provider
@@ -579,19 +713,8 @@ providersRouter.openapi(
       return c.json({ code: 502, message: "Provider is offline" }, 502);
     }
 
-    // Forward to the WebSocket hub in apps/server
     try {
-      const res = await fetch(
-        `${CMUX_SERVER_URL}/internal/provider/${provider.id}/json-rpc`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            allocationId,
-            request: jsonRpcRequest,
-          }),
-        },
-      );
+      let res = await forwardProviderJsonRpc(provider.id, allocationId, jsonRpcRequest);
 
       if (!res.ok) {
         const errorText = await res.text();
@@ -599,7 +722,18 @@ providersRouter.openapi(
         return c.json({ code: 502, message: "Failed to reach provider" }, 502);
       }
 
-      const response = await res.json();
+      let response = await res.json();
+      if (responseNeedsIosRecovery(response)) {
+        await ensureIosAllocationReady(db, allocation);
+        res = await forwardProviderJsonRpc(provider.id, allocationId, jsonRpcRequest);
+        if (!res.ok) {
+          const errorText = await res.text();
+          console.error("JSON-RPC proxy retry error:", errorText);
+          return c.json({ code: 502, message: "Failed to reach provider" }, 502);
+        }
+        response = await res.json();
+      }
+
       return c.json(response, 200);
     } catch (error) {
       console.error("JSON-RPC proxy error:", error);

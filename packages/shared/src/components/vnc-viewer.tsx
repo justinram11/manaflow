@@ -163,6 +163,15 @@ export interface VncViewerHandle {
   blur: () => void;
   /** Get the underlying RFB instance */
   getRfb: () => RFBInstance | null;
+  /** Get the current canvas metrics used for coordinate mapping */
+  getCanvasMetrics: () => {
+    left: number;
+    top: number;
+    cssWidth: number;
+    cssHeight: number;
+    pixelWidth: number;
+    pixelHeight: number;
+  } | null;
   /** Machine power actions */
   machineShutdown: () => void;
   machineReboot: () => void;
@@ -801,6 +810,25 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
     const blur = useCallback(() => {
       rfbRef.current?.blur();
     }, []);
+
+    const getCanvasMetrics = useCallback(() => {
+      const container = containerRef.current;
+      if (!container) return null;
+
+      const canvas = container.querySelector("canvas");
+      if (!(canvas instanceof HTMLCanvasElement)) return null;
+
+      const rect = canvas.getBoundingClientRect();
+      return {
+        left: rect.left,
+        top: rect.top,
+        cssWidth: rect.width,
+        cssHeight: rect.height,
+        pixelWidth: canvas.width,
+        pixelHeight: canvas.height,
+      };
+    }, []);
+
     useImperativeHandle(
       ref,
       () => ({
@@ -815,11 +843,12 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
         focus,
         blur,
         getRfb: () => rfbRef.current,
+        getCanvasMetrics,
         machineShutdown: () => rfbRef.current?.machineShutdown(),
         machineReboot: () => rfbRef.current?.machineReboot(),
         machineReset: () => rfbRef.current?.machineReset(),
       }),
-      [connect, disconnect, status, clipboardPaste, focus, blur]
+      [connect, disconnect, status, clipboardPaste, focus, blur, getCanvasMetrics]
     );
 
     useEffect(() => {

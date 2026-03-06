@@ -15,6 +15,32 @@ interface AllocationInfo {
 
 const allocations = new Map<string, AllocationInfo>();
 
+function findExistingSimulatorUdid(simName: string): string | undefined {
+  try {
+    const output = execSync("xcrun simctl list devices --json", {
+      encoding: "utf-8",
+    });
+    const parsed = JSON.parse(output) as {
+      devices?: Record<string, Array<{
+        name?: string;
+        udid?: string;
+        isAvailable?: boolean;
+        state?: string;
+      }>>;
+    };
+
+    const matches = Object.values(parsed.devices ?? {})
+      .flat()
+      .filter((device) => device.name === simName && device.udid && device.isAvailable !== false);
+
+    const preferred = matches.find((device) => device.state === "Booted") ?? matches[0];
+    return preferred?.udid;
+  } catch (error) {
+    console.error(`Failed to find existing simulator ${simName}:`, error);
+    return undefined;
+  }
+}
+
 export function setupAllocation(params: {
   allocationId: string;
   buildDir: string;
@@ -23,20 +49,33 @@ export function setupAllocation(params: {
 }): AllocationInfo {
   const { allocationId, buildDir, simulatorDeviceType, simulatorRuntime } = params;
 
+  const existing = allocations.get(allocationId);
+  if (existing) {
+    if (existing.buildDir !== buildDir) {
+      existing.buildDir = buildDir;
+    }
+    return existing;
+  }
+
   // Create build directory
   mkdirSync(buildDir, { recursive: true });
   console.log(`Created build directory: ${buildDir}`);
 
   // Create dedicated simulator
   let simulatorUdid: string | undefined;
+  const simName = `cmux-${allocationId.slice(0, 8)}`;
   try {
-    const simName = `cmux-${allocationId.slice(0, 8)}`;
-    const output = execSync(
-      `xcrun simctl create "${simName}" "${simulatorDeviceType}" "${simulatorRuntime}"`,
-      { encoding: "utf-8" },
-    ).trim();
-    simulatorUdid = output;
-    console.log(`Created simulator: ${simName} (${simulatorUdid})`);
+    simulatorUdid = findExistingSimulatorUdid(simName);
+    if (simulatorUdid) {
+      console.log(`Reusing simulator: ${simName} (${simulatorUdid})`);
+    } else {
+      const output = execSync(
+        `xcrun simctl create "${simName}" "${simulatorDeviceType}" "${simulatorRuntime}"`,
+        { encoding: "utf-8" },
+      ).trim();
+      simulatorUdid = output;
+      console.log(`Created simulator: ${simName} (${simulatorUdid})`);
+    }
   } catch (error) {
     console.error("Failed to create simulator:", error);
   }
