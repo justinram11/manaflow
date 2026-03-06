@@ -5,16 +5,12 @@
 // as a minimal RFB (VNC) server for noVNC consumption.
 //
 // Usage: swift SimulatorCapture.swift --udid <SIMULATOR_UDID> --port <PORT> [--fps <FPS>]
-//
-// Requirements: macOS 14+, ScreenCaptureKit framework
 
-import Foundation
 import AppKit
 import CoreGraphics
 import CoreVideo
+import Foundation
 import ScreenCaptureKit
-
-// MARK: - Argument Parsing
 
 struct Config {
     let simulatorUdid: String
@@ -27,22 +23,22 @@ struct Config {
         var port: UInt16 = 5900
         var fps = 30
 
-        var i = 1
-        while i < args.count {
-            switch args[i] {
+        var index = 1
+        while index < args.count {
+            switch args[index] {
             case "--udid":
-                i += 1
-                if i < args.count { udid = args[i] }
+                index += 1
+                if index < args.count { udid = args[index] }
             case "--port":
-                i += 1
-                if i < args.count { port = UInt16(args[i]) ?? 5900 }
+                index += 1
+                if index < args.count { port = UInt16(args[index]) ?? 5900 }
             case "--fps":
-                i += 1
-                if i < args.count { fps = Int(args[i]) ?? 30 }
+                index += 1
+                if index < args.count { fps = Int(args[index]) ?? 30 }
             default:
                 break
             }
-            i += 1
+            index += 1
         }
 
         guard !udid.isEmpty else {
@@ -54,91 +50,147 @@ struct Config {
     }
 }
 
-// MARK: - Simulator Window Finder
+struct SimulatorWindowMatch {
+    let windowID: CGWindowID
+    let title: String
+    let bounds: CGRect
+}
+
+func ensureScreenCapturePermission() {
+    if CGPreflightScreenCaptureAccess() {
+        fputs("Screen capture access already granted\n", stderr)
+        return
+    }
+
+    fputs("Screen capture access not granted; requesting access...\n", stderr)
+    let granted = CGRequestScreenCaptureAccess()
+    fputs("Screen capture access request result: \(granted)\n", stderr)
+}
+
+func getBootedSimulatorCount() -> Int {
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+    task.arguments = ["simctl", "list", "devices", "-j", "booted"]
+
+    let pipe = Pipe()
+    task.standardOutput = pipe
+    task.standardError = FileHandle.nullDevice
+
+    do {
+        try task.run()
+    } catch {
+        return 0
+    }
+
+    task.waitUntilExit()
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    guard
+        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let devices = json["devices"] as? [String: [[String: Any]]]
+    else {
+        return 0
+    }
+
+    return devices.values.reduce(0) { partial, list in
+        partial + list.count
+    }
+}
 
 func getSimulatorDeviceName(udid: String) -> String? {
     let task = Process()
     task.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-    task.arguments = ["simctl", "list", "devices", "-j", "booted"]
+    task.arguments = ["simctl", "list", "devices", "-j"]
+
     let pipe = Pipe()
     task.standardOutput = pipe
     task.standardError = FileHandle.nullDevice
-    try? task.run()
-    task.waitUntilExit()
 
+    do {
+        try task.run()
+    } catch {
+        return nil
+    }
+
+    task.waitUntilExit()
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
-    guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let devices = json["devices"] as? [String: [[String: Any]]] else {
+    guard
+        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let devices = json["devices"] as? [String: [[String: Any]]]
+    else {
         return nil
     }
 
     for (_, deviceList) in devices {
-        for device in deviceList {
-            if let deviceUdid = device["udid"] as? String, deviceUdid == udid {
-                return device["name"] as? String
-            }
+        for device in deviceList where device["udid"] as? String == udid {
+            return device["name"] as? String
         }
     }
 
     return nil
 }
 
-func getShareableContent() -> SCShareableContent? {
-    let semaphore = DispatchSemaphore(value: 0)
-    var content: SCShareableContent?
-
-    SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: true) { shareableContent, error in
-        if let error {
-            fputs("Failed to enumerate shareable content: \(error)\n", stderr)
-        }
-        content = shareableContent
-        semaphore.signal()
-    }
-
-    semaphore.wait()
-    return content
-}
-
-/// Finds the Simulator.app window for the given UDID by matching the window title.
-func findSimulatorWindow(udid: String) -> SCWindow? {
-    guard let name = getSimulatorDeviceName(udid: udid) else {
+func findSimulatorWindowMatch(udid: String) -> SimulatorWindowMatch? {
+    guard let deviceName = getSimulatorDeviceName(udid: udid) else {
         fputs("Warning: Could not find device name for UDID \(udid)\n", stderr)
         return nil
     }
 
-    guard let shareableContent = getShareableContent() else {
+    guard
+        let infoList = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]]
+    else {
         return nil
     }
 
-    for window in shareableContent.windows {
-        guard window.owningApplication?.applicationName == "Simulator",
-              let windowTitle = window.title,
-              windowTitle.contains(name) else {
-            continue
+    let matches = infoList.compactMap { info -> SimulatorWindowMatch? in
+        guard
+            let owner = info[kCGWindowOwnerName as String] as? String,
+            owner == "Simulator",
+            let number = info[kCGWindowNumber as String] as? NSNumber,
+            let boundsDictionary = info[kCGWindowBounds as String]
+        else {
+            return nil
         }
-        return window
+
+        let title = (info[kCGWindowName as String] as? String) ?? ""
+        let bounds = CGRect(dictionaryRepresentation: boundsDictionary as! CFDictionary) ?? .zero
+        return SimulatorWindowMatch(
+            windowID: CGWindowID(number.uint32Value),
+            title: title,
+            bounds: bounds
+        )
     }
 
-    return nil
+    if let exact = matches.first(where: { $0.title == deviceName }) {
+        return exact
+    }
+
+    if let contains = matches.first(where: { $0.title.contains(deviceName) }) {
+        return contains
+    }
+
+    if getBootedSimulatorCount() == 1, let fallback = matches.first {
+        fputs("Falling back to lone Simulator windowID \(fallback.windowID) for \(udid)\n", stderr)
+        return fallback
+    }
+
+    return matches.first
 }
 
-// MARK: - Minimal RFB Server
-
-/// A minimal RFB (VNC) server that captures the simulator window
-/// and sends raw pixel updates to connected clients.
 class RfbServer {
     let config: Config
     let serverSocket: Int32
     var clientSocket: Int32 = -1
     var running = true
-    var window: SCWindow?
-    var lastWidth: Int = 0
-    var lastHeight: Int = 0
+    var window: SimulatorWindowMatch?
+    var lastWidth = 0
+    var lastHeight = 0
 
     init(config: Config) {
         self.config = config
 
-        // Create server socket
         serverSocket = socket(AF_INET, SOCK_STREAM, 0)
         guard serverSocket >= 0 else {
             fputs("Failed to create socket\n", stderr)
@@ -170,19 +222,18 @@ class RfbServer {
 
     func run() {
         while running {
-            // Wait for the simulator window
             while window == nil && running {
-                window = findSimulatorWindow(udid: config.simulatorUdid)
-                if window == nil {
+                window = findSimulatorWindowMatch(udid: config.simulatorUdid)
+                if let window {
+                    fputs("Found simulator windowID \(window.windowID) for \(config.simulatorUdid)\n", stderr)
+                } else {
                     fputs("Waiting for simulator window...\n", stderr)
                     Thread.sleep(forTimeInterval: 1.0)
                 }
             }
 
             guard running else { break }
-            fputs("Found simulator window for \(config.simulatorUdid)\n", stderr)
 
-            // Accept client connection
             fputs("Waiting for VNC client connection...\n", stderr)
             var clientAddr = sockaddr_in()
             var clientAddrLen = socklen_t(MemoryLayout<sockaddr_in>.size)
@@ -197,20 +248,17 @@ class RfbServer {
                 continue
             }
 
-            // Disable Nagle for low latency
             var nodelay: Int32 = 1
             setsockopt(clientSocket, IPPROTO_TCP, TCP_NODELAY, &nodelay, socklen_t(MemoryLayout<Int32>.size))
 
             fputs("VNC client connected\n", stderr)
 
-            // RFB handshake
             if !performHandshake() {
                 close(clientSocket)
                 clientSocket = -1
                 continue
             }
 
-            // Send framebuffer updates
             streamFrames()
 
             close(clientSocket)
@@ -222,59 +270,45 @@ class RfbServer {
     }
 
     func performHandshake() -> Bool {
-        // Protocol version
         let version = "RFB 003.008\n"
         send(clientSocket, version, version.utf8.count, 0)
 
-        // Read client version
         var clientVersion = [UInt8](repeating: 0, count: 12)
-        let read = recv(clientSocket, &clientVersion, 12, 0)
-        guard read == 12 else { return false }
+        let versionRead = recv(clientSocket, &clientVersion, 12, 0)
+        guard versionRead == 12 else { return false }
 
-        // Security type: None (1)
-        var secTypes: [UInt8] = [1, 1] // count=1, type=1 (None)
+        var secTypes: [UInt8] = [1, 1]
         send(clientSocket, &secTypes, 2, 0)
 
-        // Read client security selection
         var selectedSec: UInt8 = 0
-        recv(clientSocket, &selectedSec, 1, 0)
+        let secRead = recv(clientSocket, &selectedSec, 1, 0)
+        guard secRead == 1 else { return false }
 
-        // Security result: OK (0)
         var secResult: UInt32 = 0
         send(clientSocket, &secResult, 4, 0)
 
-        // Read client init (shared flag)
         var shared: UInt8 = 0
-        recv(clientSocket, &shared, 1, 0)
+        let sharedRead = recv(clientSocket, &shared, 1, 0)
+        guard sharedRead == 1 else { return false }
 
-        // Capture initial frame to get dimensions
-        guard let image = captureFrame() else { return false }
+        guard let image = captureFrame() else {
+            fputs("Initial capture failed\n", stderr)
+            return false
+        }
         let width = image.width
         let height = image.height
         lastWidth = width
         lastHeight = height
 
-        // Server init
         var serverInit = Data()
         serverInit.append(UInt16(width).bigEndianData)
         serverInit.append(UInt16(height).bigEndianData)
+        serverInit.append(contentsOf: [32, 24, 0, 1])
+        serverInit.append(UInt16(255).bigEndianData)
+        serverInit.append(UInt16(255).bigEndianData)
+        serverInit.append(UInt16(255).bigEndianData)
+        serverInit.append(contentsOf: [16, 8, 0, 0, 0, 0])
 
-        // Pixel format: 32-bit BGRA
-        serverInit.append(contentsOf: [
-            32,  // bits-per-pixel
-            24,  // depth
-            0,   // big-endian-flag
-            1,   // true-colour-flag
-        ])
-        serverInit.append(UInt16(255).bigEndianData) // red-max
-        serverInit.append(UInt16(255).bigEndianData) // green-max
-        serverInit.append(UInt16(255).bigEndianData) // blue-max
-        serverInit.append(contentsOf: [
-            16, 8, 0,  // red/green/blue shift
-            0, 0, 0,   // padding
-        ])
-
-        // Name
         let name = "iOS Simulator"
         serverInit.append(UInt32(name.utf8.count).bigEndianData)
         serverInit.append(contentsOf: name.utf8)
@@ -283,32 +317,37 @@ class RfbServer {
             _ = send(clientSocket, ptr.baseAddress!, ptr.count, 0)
         }
 
+        fputs("Sent server init \(width)x\(height)\n", stderr)
         return true
     }
 
     func captureFrame() -> CGImage? {
-        guard let window else { return nil }
+        guard let freshWindow = findSimulatorWindowMatch(udid: config.simulatorUdid) else {
+            window = nil
+            return nil
+        }
+        window = freshWindow
 
-        let scale = window.owningApplication != nil ? (NSScreen.main?.backingScaleFactor ?? 2.0) : 2.0
-        let config = SCStreamConfiguration()
-        config.width = max(Int(window.frame.width * scale), 1)
-        config.height = max(Int(window.frame.height * scale), 1)
-        config.pixelFormat = kCVPixelFormatType_32BGRA
-        config.showsCursor = false
-
-        let filter = SCContentFilter(desktopIndependentWindow: window)
         let semaphore = DispatchSemaphore(value: 0)
         var image: CGImage?
 
-        SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) { capturedImage, error in
-            if let error {
-                fputs("ScreenCaptureKit capture failed: \(error)\n", stderr)
+        if #available(macOS 15.2, *) {
+            SCScreenshotManager.captureImage(in: freshWindow.bounds) { capturedImage, error in
+                if let error {
+                    fputs("ScreenCaptureKit rect capture failed: \(error)\n", stderr)
+                }
+                image = capturedImage
+                semaphore.signal()
             }
-            image = capturedImage
+        } else {
+            fputs("ScreenCaptureKit rect capture requires macOS 15.2+\n", stderr)
             semaphore.signal()
         }
 
-        semaphore.wait()
+        let waitResult = semaphore.wait(timeout: .now() + 10)
+        if waitResult == .timedOut {
+            fputs("Timed out waiting for simulator screenshot\n", stderr)
+        }
         return image
     }
 
@@ -316,11 +355,9 @@ class RfbServer {
         let interval = 1.0 / Double(config.fps)
 
         while running && clientSocket >= 0 {
-            // Read any client messages (non-blocking)
             var buf = [UInt8](repeating: 0, count: 256)
-            let flags: Int32 = 0x40 // MSG_DONTWAIT
+            let flags: Int32 = 0x40
             while recv(clientSocket, &buf, buf.count, flags) > 0 {
-                // Consume client messages (FramebufferUpdateRequest, KeyEvent, PointerEvent, etc.)
             }
 
             guard let image = captureFrame() else {
@@ -330,8 +367,6 @@ class RfbServer {
 
             let width = image.width
             let height = image.height
-
-            // Get raw pixel data
             guard let dataProvider = image.dataProvider,
                   let pixelData = dataProvider.data else {
                 Thread.sleep(forTimeInterval: interval)
@@ -340,26 +375,21 @@ class RfbServer {
 
             let data = pixelData as Data
 
-            // Send FramebufferUpdate (type 0)
             var update = Data()
-            update.append(0) // message-type
-            update.append(0) // padding
-            update.append(UInt16(1).bigEndianData) // number-of-rectangles
+            update.append(0)
+            update.append(0)
+            update.append(UInt16(1).bigEndianData)
+            update.append(UInt16(0).bigEndianData)
+            update.append(UInt16(0).bigEndianData)
+            update.append(UInt16(width).bigEndianData)
+            update.append(UInt16(height).bigEndianData)
+            update.append(Int32(0).bigEndianData)
 
-            // Rectangle header
-            update.append(UInt16(0).bigEndianData) // x-position
-            update.append(UInt16(0).bigEndianData) // y-position
-            update.append(UInt16(width).bigEndianData) // width
-            update.append(UInt16(height).bigEndianData) // height
-            update.append(Int32(0).bigEndianData) // encoding-type: Raw (0)
-
-            // Send header
             let headerSent = update.withUnsafeBytes { ptr -> Int in
                 send(clientSocket, ptr.baseAddress!, ptr.count, 0)
             }
             guard headerSent > 0 else { break }
 
-            // Send pixel data
             let pixelsSent = data.withUnsafeBytes { ptr -> Int in
                 send(clientSocket, ptr.baseAddress!, min(ptr.count, width * height * 4), 0)
             }
@@ -375,8 +405,6 @@ class RfbServer {
         close(serverSocket)
     }
 }
-
-// MARK: - Data Extensions
 
 extension UInt16 {
     var bigEndianData: Data {
@@ -399,12 +427,10 @@ extension Int32 {
     }
 }
 
-// MARK: - Main
-
 let config = Config.parse()
+ensureScreenCapturePermission()
 let server = RfbServer(config: config)
 
-// Handle SIGTERM/SIGINT
 signal(SIGTERM, SIG_IGN)
 signal(SIGINT, SIG_IGN)
 let termSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
