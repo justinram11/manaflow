@@ -1,13 +1,40 @@
+import { readFileSync } from "node:fs";
 import { incusContainerExec } from "./cli.ts";
 
+const loadRepoAsset = (relativePath: string): string =>
+  readFileSync(new URL(relativePath, import.meta.url), "utf-8");
+
+const CMUX_TARGET_UNIT = loadRepoAsset("../../../../configs/systemd/cmux.target");
+const CMUX_OPENBOX_UNIT = loadRepoAsset("../../../../configs/systemd/cmux-openbox.service");
+const CMUX_TIGERVNC_UNIT = loadRepoAsset("../../../../configs/systemd/cmux-tigervnc.service");
+const CMUX_DEVTOOLS_UNIT = loadRepoAsset("../../../../configs/systemd/cmux-devtools.service");
+const CMUX_START_CHROME = loadRepoAsset("../../../../configs/systemd/bin/cmux-start-chrome");
+
+const CMUX_VNC_PROXY_UNIT = `[Unit]
+Description=Cmux VNC websocket proxy
+After=cmux-tigervnc.service
+Requires=cmux-tigervnc.service
+
+[Service]
+Type=simple
+ExecStartPre=/bin/mkdir -p /var/log/cmux
+ExecStart=/usr/bin/websockify --web=/usr/share/novnc 39380 127.0.0.1:5901
+Restart=always
+RestartSec=3
+StandardOutput=append:/var/log/cmux/vnc-proxy.log
+StandardError=append:/var/log/cmux/vnc-proxy.log
+
+[Install]
+WantedBy=cmux.target
+`;
+
 /**
- * Enable graphical services (fluxbox WM, Chrome devtools, CDP proxy) in the container.
+ * Enable graphical services (Openbox WM, Chrome browser, TigerVNC, noVNC/websockify)
+ * in the container.
  *
- * The Docker image disables these via a drop-in override on cmux.target, and the
- * openbox service file is not included. For Incus containers we:
- * 1. Create a cmux-fluxbox.service (using the installed fluxbox binary)
- * 2. Override cmux-devtools.service to depend on fluxbox instead of openbox
- * 3. Remove the Docker drop-in, enable everything, and start the services
+ * Incus snapshots can lag behind the current systemd/unit layout, so this bootstrap
+ * writes the required units and helper script every launch instead of assuming they
+ * already exist in the image.
  */
 export async function enableGraphicalServices(
   containerName: string,
@@ -15,67 +42,49 @@ export async function enableGraphicalServices(
   const setupScript = `
 set -e
 
-# Create fluxbox window manager service (fluxbox is installed, openbox is not)
-cat > /usr/lib/systemd/system/cmux-fluxbox.service << 'UNIT'
-[Unit]
-Description=Cmux Fluxbox window manager
-After=cmux-tigervnc.service
-Requires=cmux-tigervnc.service
+mkdir -p /usr/local/lib/cmux /etc/systemd/system/cmux.target.wants /var/log/cmux
 
-[Service]
-Type=simple
-Environment=DISPLAY=:1
-Environment=HOME=/root
-ExecStartPre=/bin/mkdir -p /var/log/cmux
-ExecStartPre=/bin/sleep 1
-ExecStart=/usr/bin/fluxbox
-Restart=always
-RestartSec=3
-StandardOutput=append:/var/log/cmux/fluxbox.log
-StandardError=append:/var/log/cmux/fluxbox.log
-
-[Install]
-WantedBy=cmux.target
+cat > /usr/lib/systemd/system/cmux.target <<'UNIT'
+${CMUX_TARGET_UNIT}
 UNIT
 
-# Rewrite cmux-devtools.service to depend on fluxbox instead of openbox
-cat > /usr/lib/systemd/system/cmux-devtools.service << 'UNIT'
-[Unit]
-Description=Cmux Chrome DevTools browser
-After=cmux-fluxbox.service
-Requires=cmux-fluxbox.service
-
-[Service]
-Type=simple
-Environment=DISPLAY=:1
-Environment=CDP_TARGET_HOST=127.0.0.1
-Environment=CDP_TARGET_PORT=39382
-Environment=CHROME_USER_DATA_DIR=/root/.config/chrome
-ExecStartPre=/bin/mkdir -p /var/log/cmux
-ExecStart=/usr/local/lib/cmux/cmux-start-chrome
-Restart=always
-RestartSec=3
-TimeoutStopSec=30
-StandardOutput=append:/var/log/cmux/chrome.log
-StandardError=append:/var/log/cmux/chrome.log
-
-[Install]
-WantedBy=cmux.target
+cat > /usr/lib/systemd/system/cmux-openbox.service <<'UNIT'
+${CMUX_OPENBOX_UNIT}
 UNIT
 
-# Remove the Docker-specific drop-in that excludes devtools from cmux.target
+cat > /usr/lib/systemd/system/cmux-tigervnc.service <<'UNIT'
+${CMUX_TIGERVNC_UNIT}
+UNIT
+
+cat > /usr/lib/systemd/system/cmux-devtools.service <<'UNIT'
+${CMUX_DEVTOOLS_UNIT}
+UNIT
+
+cat > /usr/lib/systemd/system/cmux-vnc-proxy.service <<'UNIT'
+${CMUX_VNC_PROXY_UNIT}
+UNIT
+
+cat > /usr/local/lib/cmux/cmux-start-chrome <<'SCRIPT'
+${CMUX_START_CHROME}
+SCRIPT
+chmod +x /usr/local/lib/cmux/cmux-start-chrome
+
+# Remove the Docker-specific drop-in that disables graphical extras.
 rm -f /etc/systemd/system/cmux.target.d/10-docker.conf
 
-# Enable the services
-ln -sf /usr/lib/systemd/system/cmux-fluxbox.service /etc/systemd/system/cmux.target.wants/cmux-fluxbox.service
+# Ensure the graphical units are enabled from cmux.target.
+ln -sf /usr/lib/systemd/system/cmux.target /etc/systemd/system/multi-user.target.wants/cmux.target
+ln -sf /usr/lib/systemd/system/cmux-openbox.service /etc/systemd/system/cmux.target.wants/cmux-openbox.service
 ln -sf /usr/lib/systemd/system/cmux-devtools.service /etc/systemd/system/cmux.target.wants/cmux-devtools.service
-ln -sf /usr/lib/systemd/system/cmux-cdp-proxy.service /etc/systemd/system/cmux.target.wants/cmux-cdp-proxy.service
+ln -sf /usr/lib/systemd/system/cmux-tigervnc.service /etc/systemd/system/cmux.target.wants/cmux-tigervnc.service
+ln -sf /usr/lib/systemd/system/cmux-vnc-proxy.service /etc/systemd/system/cmux.target.wants/cmux-vnc-proxy.service
 
-# Reload and start
 systemctl daemon-reload
-systemctl start cmux-fluxbox.service
-systemctl start cmux-devtools.service
-systemctl start cmux-cdp-proxy.service
+systemctl enable cmux.target cmux-openbox.service cmux-devtools.service cmux-tigervnc.service cmux-vnc-proxy.service
+systemctl restart cmux-tigervnc.service
+systemctl restart cmux-openbox.service
+systemctl restart cmux-devtools.service
+systemctl restart cmux-vnc-proxy.service
 `.trim();
 
   const result = await incusContainerExec(containerName, [

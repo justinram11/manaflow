@@ -24,15 +24,14 @@ import {
   getTaskRunPersistKey,
 } from "@/lib/persistent-webview-keys";
 import {
-  toVncUrl,
+  toVncWebsocketUrl,
   toXtermBaseUrl,
-  toIosVncWebsocketUrl,
 } from "@/lib/toProxyWorkspaceUrl";
+import { checkWorkspaceProxyHealth } from "@/lib/workspace-proxy-health";
 import { getWorkspaceUrl } from "@/lib/workspace-url";
 import {
   TASK_RUN_IFRAME_ALLOW,
   TASK_RUN_IFRAME_SANDBOX,
-  preloadTaskRunBrowserIframe,
   preloadTaskRunIframes,
 } from "../lib/preloadTaskRunIframes";
 import {
@@ -134,12 +133,15 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
         : taskRunsList[0];
 
       const rawWorkspaceUrl = selectedRun?.vscode?.workspaceUrl ?? null;
-      const rawBrowserUrl =
-        selectedRun?.vscode?.url ?? rawWorkspaceUrl ?? null;
-
       const selectedRunId = selectedRun?.id;
+      const provider = selectedRun?.vscode?.provider;
+      const ports = selectedRun?.vscode?.ports;
+      const workspaceIsReachable =
+        rawWorkspaceUrl && provider
+          ? await checkWorkspaceProxyHealth(rawWorkspaceUrl, provider, ports ?? undefined)
+          : false;
       // Preload both VSCode and browser iframes in parallel
-      if (selectedRun && rawWorkspaceUrl && selectedRunId) {
+      if (selectedRun && rawWorkspaceUrl && selectedRunId && workspaceIsReachable) {
         const workspaceUrl = getWorkspaceUrl(
           rawWorkspaceUrl,
           selectedRun.vscode?.provider,
@@ -153,19 +155,7 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
           });
         }
       }
-      const provider = selectedRun?.vscode?.provider;
-      const ports = selectedRun?.vscode?.ports;
-      if (selectedRun && rawBrowserUrl && provider && selectedRunId) {
-        const vncViewUrl = toVncUrl(rawBrowserUrl, provider, ports ?? undefined);
-        if (vncViewUrl) {
-          void preloadTaskRunBrowserIframe(selectedRunId, vncViewUrl).catch(
-            (error) => {
-              console.error("Failed to preload browser iframe", error);
-            }
-          );
-        }
-      }
-      if (!rawWorkspaceUrl || !provider) {
+      if (!rawWorkspaceUrl || !provider || !workspaceIsReachable) {
         return;
       }
 
@@ -507,6 +497,37 @@ function TaskDetailPage() {
   }, [search.runId, taskRunIndex, taskRuns]);
 
   const selectedRunId = selectedRun?.id ?? null;
+  const rawWorkspaceUrl = selectedRun?.vscode?.workspaceUrl ?? null;
+  const selectedProvider = selectedRun?.vscode?.provider;
+  const selectedPorts = selectedRun?.vscode?.ports;
+  const workspaceHealthQuery = useRQ({
+    queryKey: [
+      "workspace-proxy-health",
+      rawWorkspaceUrl ?? null,
+      selectedProvider ?? null,
+      selectedPorts?.pty ?? null,
+    ],
+    enabled: Boolean(
+      selectedRun &&
+        rawWorkspaceUrl &&
+        selectedProvider &&
+        selectedProvider !== "other"
+    ),
+    queryFn: async () =>
+      checkWorkspaceProxyHealth(
+        rawWorkspaceUrl ?? "",
+        selectedProvider ?? "",
+        selectedPorts ?? undefined
+      ),
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
+  });
+
+  const isWorkspaceUnavailable =
+    Boolean(selectedRun) &&
+    selectedProvider !== "other" &&
+    workspaceHealthQuery.data === false;
+  const effectiveRawWorkspaceUrl = isWorkspaceUnavailable ? null : rawWorkspaceUrl;
 
   // Query for existing linked local workspace (to prevent creating duplicates)
   const linkedLocalWorkspaceQuery = useRQ({
@@ -573,9 +594,8 @@ function TaskDetailPage() {
   }, [selectedRunId]);
   const headerTaskRunId = selectedRunId ?? taskRuns?.[0]?.id ?? null;
 
-  const rawWorkspaceUrl = selectedRun?.vscode?.workspaceUrl ?? null;
   const workspaceUrl = getWorkspaceUrl(
-    rawWorkspaceUrl,
+    effectiveRawWorkspaceUrl,
     selectedRun?.vscode?.provider,
     localServeWeb.data?.baseUrl
   );
@@ -678,15 +698,18 @@ function TaskDetailPage() {
     []
   );
 
-  const rawBrowserUrl =
-    selectedRun?.vscode?.url ?? selectedRun?.vscode?.workspaceUrl ?? null;
-  const selectedProvider = selectedRun?.vscode?.provider;
-  const selectedPorts = selectedRun?.vscode?.ports;
+  const rawBrowserUrl = isWorkspaceUnavailable
+    ? null
+    : selectedRun?.vscode?.url ?? effectiveRawWorkspaceUrl ?? null;
   const browserUrl = useMemo(() => {
     if (!rawBrowserUrl || !selectedProvider) {
       return null;
     }
-    return toVncUrl(rawBrowserUrl, selectedProvider, selectedPorts ?? undefined);
+    return toVncWebsocketUrl(
+      rawBrowserUrl,
+      selectedProvider,
+      selectedPorts ?? undefined
+    );
   }, [rawBrowserUrl, selectedProvider, selectedPorts]);
   const browserPersistKey = selectedRunId
     ? getTaskRunBrowserPersistKey(selectedRunId)
@@ -694,32 +717,46 @@ function TaskDetailPage() {
   const hasBrowserView = Boolean(browserUrl);
   const hasCloudBackend = selectedProvider === "morph" || selectedProvider === "docker" || selectedProvider === "incus" || selectedProvider === "aws";
 
-  const simulatorUrl = useMemo(() => {
-    if (!rawBrowserUrl || !selectedProvider) {
+  const simulatorRunId = useMemo(() => {
+    if (!selectedRunId || !selectedRun?.vscode) {
       return null;
     }
-    return toIosVncWebsocketUrl(rawBrowserUrl, selectedProvider, selectedPorts ?? undefined);
-  }, [rawBrowserUrl, selectedProvider, selectedPorts]);
+    const hasSimulatorView =
+      Boolean(selectedRun.vscode.iosResourceAllocationId) ||
+      Boolean(selectedRun.vscode.iosProviderBrowserBaseUrl) ||
+      Boolean(selectedRun.vscode.ports?.iosVnc);
+    if (!hasSimulatorView) {
+      return null;
+    }
+    return selectedRunId;
+  }, [selectedRun, selectedRunId]);
 
   const handleBrowserStatusChange = useCallback(
-    (status: PersistentIframeStatus) => {
-      updateIframeStatus(browserPersistKey, browserUrl, status);
+    (_status: PersistentIframeStatus) => {
+      // Browser previews now use direct websocket VNC instead of a persistent iframe.
     },
-    [updateIframeStatus, browserPersistKey, browserUrl]
+    []
   );
 
   const editorStatus = workspacePersistKey
     ? (iframeStatusByKey[workspacePersistKey]?.status ?? "loading")
     : "loading";
-  const browserStatus = browserPersistKey
-    ? (iframeStatusByKey[browserPersistKey]?.status ?? "loading")
+  const browserStatus: PersistentIframeStatus = hasBrowserView
+    ? "loaded"
     : "loading";
   const isEditorBusy =
     Boolean(selectedRun) && (!workspaceUrl || editorStatus !== "loaded");
   const isBrowserBusy =
-    Boolean(selectedRun) && (!hasBrowserView || browserStatus !== "loaded");
+    Boolean(selectedRun) && !hasBrowserView;
 
   const workspacePlaceholder = useMemo(() => {
+    if (isWorkspaceUnavailable) {
+      return {
+        title: "Workspace is offline.",
+        description: "This run no longer has a live sandbox. Start a new workspace run.",
+      };
+    }
+
     if (!taskRuns?.length) {
       return {
         title: "Workspace becomes available once a run starts.",
@@ -728,9 +765,16 @@ function TaskDetailPage() {
     }
 
     return null;
-  }, [taskRuns?.length]);
+  }, [isWorkspaceUnavailable, taskRuns?.length]);
 
   const browserPlaceholder = useMemo(() => {
+    if (isWorkspaceUnavailable) {
+      return {
+        title: "Browser preview is offline.",
+        description: "This run no longer has a live sandbox. Start a new workspace run.",
+      };
+    }
+
     if (!selectedRun) {
       if (taskRuns?.length) {
         return {
@@ -746,7 +790,7 @@ function TaskDetailPage() {
       description:
         "Start a cloud workspace run to expose a live browser session.",
     };
-  }, [selectedRun, taskRuns?.length]);
+  }, [isWorkspaceUnavailable, selectedRun, taskRuns?.length]);
 
   // Get primary repo from task for local workspace creation
   const primaryRepo = task?.projectFullName;
@@ -920,7 +964,7 @@ function TaskDetailPage() {
       editorErrorFallback,
       isEditorBusy,
       workspacePlaceholder,
-      rawWorkspaceUrl,
+      rawWorkspaceUrl: effectiveRawWorkspaceUrl,
       sandboxProvider: selectedProvider,
       sandboxPorts: selectedPorts ?? undefined,
       browserUrl,
@@ -940,7 +984,7 @@ function TaskDetailPage() {
       onClose: handlePanelClose,
       teamSlugOrId,
       taskId,
-      simulatorUrl,
+      simulatorRunId,
     }),
     [
       task,
@@ -957,7 +1001,7 @@ function TaskDetailPage() {
       editorErrorFallback,
       isEditorBusy,
       workspacePlaceholder,
-      rawWorkspaceUrl,
+      effectiveRawWorkspaceUrl,
       selectedProvider,
       selectedPorts,
       browserUrl,
@@ -970,7 +1014,7 @@ function TaskDetailPage() {
       handlePanelClose,
       teamSlugOrId,
       taskId,
-      simulatorUrl,
+      simulatorRunId,
     ]
   );
 

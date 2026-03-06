@@ -524,6 +524,7 @@ sandboxesRouter.openapi(
       let resolvedProvider = body.provider ?? env.SANDBOX_PROVIDER ?? "morph";
       let environmentSnapshotId: string | undefined;
       let resolvedProviderId: string | undefined;
+      let environmentSelectedRepos: string[] = [];
       if (body.environmentId && !body.provider) {
         try {
           const envDoc = getEnvironmentByTeam(
@@ -531,6 +532,10 @@ sandboxesRouter.openapi(
             body.teamSlugOrId,
             body.environmentId,
           );
+          const selectedReposParse = z.array(z.string()).safeParse(envDoc?.selectedRepos);
+          environmentSelectedRepos = selectedReposParse.success
+            ? selectedReposParse.data.filter((repo) => repo.trim().length > 0)
+            : [];
           if (envDoc?.providerId) {
             // Environment is linked to a unified provider
             resolvedProvider = "incus";
@@ -707,6 +712,17 @@ sandboxesRouter.openapi(
                 baseBranch: body.branch || "main",
                 newBranch: body.newBranch ?? "",
               },
+            });
+          } catch (error) {
+            console.error(`[sandboxes.start] Docker hydration failed:`, error);
+            await dockerInstance.stop().catch(() => {});
+            return c.text("Failed to hydrate sandbox", 500);
+          }
+        } else if (environmentSelectedRepos.length > 0) {
+          try {
+            await hydrateWorkspace({
+              instance: dockerInstance,
+              selectedRepos: environmentSelectedRepos,
             });
           } catch (error) {
             console.error(`[sandboxes.start] Docker hydration failed:`, error);
@@ -1080,6 +1096,11 @@ sandboxesRouter.openapi(
                   },
                 });
               }
+            } else if (environmentSelectedRepos.length > 0) {
+              await hydrateWorkspace({
+                instance: incusInstance,
+                selectedRepos: environmentSelectedRepos,
+              });
             }
 
             // Update status to running

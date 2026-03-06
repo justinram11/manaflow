@@ -57,7 +57,11 @@ export const Route = createFileRoute(
       const taskRun = (taskRunData ?? undefined) as TaskRunWithChildren | undefined;
       const vscodeInfo = taskRun?.vscode;
       const rawUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
-      const hasCloudBackend = vscodeInfo?.provider === "morph" || vscodeInfo?.provider === "docker" || vscodeInfo?.provider === "aws";
+      const hasCloudBackend =
+        vscodeInfo?.provider === "morph" ||
+        vscodeInfo?.provider === "docker" ||
+        vscodeInfo?.provider === "incus" ||
+        vscodeInfo?.provider === "aws";
 
       if (!hasCloudBackend || !rawUrl) {
         return;
@@ -162,7 +166,11 @@ function TaskRunTerminals() {
 
   const vscodeInfo = taskRun?.vscode;
   const rawUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
-  const hasCloudBackend = vscodeInfo?.provider === "morph" || vscodeInfo?.provider === "docker" || vscodeInfo?.provider === "aws";
+  const hasCloudBackend =
+    vscodeInfo?.provider === "morph" ||
+    vscodeInfo?.provider === "docker" ||
+    vscodeInfo?.provider === "incus" ||
+    vscodeInfo?.provider === "aws";
 
   const xtermBaseUrl = useMemo(() => {
     if (!rawUrl || !vscodeInfo?.provider) {

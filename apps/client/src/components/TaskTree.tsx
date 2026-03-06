@@ -74,6 +74,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Smartphone,
   TerminalSquare,
   Loader2,
   Trash2,
@@ -2101,6 +2102,10 @@ function TaskRunDetails({
   ) : (
     vscodeTrailing
   );
+  const hasSimulatorView =
+    Boolean(run.vscode?.iosResourceAllocationId) ||
+    Boolean(run.vscode?.iosProviderBrowserBaseUrl) ||
+    Boolean(run.vscode?.ports?.iosVnc);
 
   return (
     <Fragment>
@@ -2166,6 +2171,17 @@ function TaskRunDetails({
           indentLevel={indentLevel}
           trailing={statusIndicator}
           onReload={handleReloadTerminals}
+        />
+      ) : null}
+
+      {!isLocalWorkspace && hasSimulatorView ? (
+        <TaskRunDetailLink
+          to="/$teamSlugOrId/task/$taskId/run/$runId/simulator"
+          params={{ teamSlugOrId, taskId, runId: run.id }}
+          icon={<Smartphone className="w-3 h-3 mr-2 text-neutral-400" />}
+          label="Simulator"
+          indentLevel={indentLevel}
+          trailing={statusIndicator}
         />
       ) : null}
 

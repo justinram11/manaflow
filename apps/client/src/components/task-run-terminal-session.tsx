@@ -11,6 +11,7 @@ import {
 } from "@cmux/shared/terminal-config";
 import clsx from "clsx";
 import { useXTerm } from "./xterm/use-xterm";
+import { buildTerminalWebSocketUrl } from "@/lib/terminal-url";
 
 const MIN_COLS = 20;
 const MAX_COLS = 320;
@@ -247,9 +248,7 @@ export function TaskRunTerminalSession({
     }
 
     let cancelled = false;
-    const base = new URL(baseUrl);
-    const wsUrl = new URL(`/sessions/${terminalId}/ws`, base);
-    wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = buildTerminalWebSocketUrl(baseUrl, terminalId);
 
     terminal.clear();
     pendingResizeRef.current = null;

@@ -25,6 +25,84 @@ export function normalizeWorkspaceOrigin(origin: string | null): string | null {
   }
 }
 
+function getSecureBrowserOrigin(browserOrigin?: string | null): string | null {
+  const normalizedPreferredOrigin = normalizeWorkspaceOrigin(browserOrigin ?? null);
+  if (normalizedPreferredOrigin) {
+    try {
+      const url = new URL(normalizedPreferredOrigin);
+      if (url.protocol === "https:") {
+        return normalizedPreferredOrigin;
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return window.location.protocol === "https:" ? window.location.origin : null;
+}
+
+function toWorkspaceProxyPath(hostname: string, port: string, pathname: string): string {
+  const encodedHost = encodeURIComponent(hostname);
+  const encodedPort = encodeURIComponent(port);
+  const normalizedPath = pathname.startsWith("/") ? pathname : `/${pathname}`;
+  return `/_cmux/workspaces/${encodedHost}/${encodedPort}${normalizedPath}`;
+}
+
+function createSecureWorkspaceProxyUrl(
+  hostname: string,
+  port: string,
+  pathname: string,
+  browserOrigin?: string | null
+): string | null {
+  const secureBrowserOrigin = getSecureBrowserOrigin(browserOrigin);
+  if (!secureBrowserOrigin) {
+    return null;
+  }
+
+  try {
+    const proxiedUrl = new URL(secureBrowserOrigin);
+    proxiedUrl.pathname = toWorkspaceProxyPath(hostname, port, pathname);
+    proxiedUrl.search = "";
+    proxiedUrl.hash = "";
+    return proxiedUrl.toString();
+  } catch {
+    return null;
+  }
+}
+
+function rewriteUrlForSecureWorkspaceProxy(
+  url: string,
+  browserOrigin?: string | null
+): string {
+  const secureBrowserOrigin = getSecureBrowserOrigin(browserOrigin);
+  if (!secureBrowserOrigin) {
+    return url;
+  }
+
+  try {
+    const target = new URL(url);
+    if (target.protocol !== "http:" || !target.port) {
+      return url;
+    }
+
+    const proxiedUrl = new URL(secureBrowserOrigin);
+    proxiedUrl.pathname = toWorkspaceProxyPath(
+      target.hostname,
+      target.port,
+      target.pathname
+    );
+    proxiedUrl.search = target.search;
+    proxiedUrl.hash = target.hash;
+    return proxiedUrl.toString();
+  } catch {
+    return url;
+  }
+}
+
 export function rewriteLocalWorkspaceUrlIfNeeded(
   url: string,
   preferredOrigin?: string | null
@@ -106,7 +184,8 @@ export function toProxyWorkspaceUrl(
   workspaceUrl: string,
   preferredOrigin?: string | null
 ): string {
-  return rewriteLocalWorkspaceUrlIfNeeded(workspaceUrl, preferredOrigin);
+  const rewrittenUrl = rewriteLocalWorkspaceUrlIfNeeded(workspaceUrl, preferredOrigin);
+  return rewriteUrlForSecureWorkspaceProxy(rewrittenUrl, preferredOrigin);
 }
 
 export function toMorphVncUrl(sourceUrl: string): string | null {
@@ -200,6 +279,21 @@ export function toVncWebsocketUrl(
   if (provider === "morph") return toMorphVncWebsocketUrl(vscodeUrl);
   if ((provider === "docker" || provider === "incus" || provider === "aws") && ports?.vnc) {
     try {
+      const vscodeTarget = new URL(vscodeUrl);
+      const proxiedUrl =
+        ports.vnc
+          ? createSecureWorkspaceProxyUrl(
+              vscodeTarget.hostname,
+              ports.vnc,
+              "/websockify"
+            )
+          : null;
+      if (proxiedUrl) {
+        const url = new URL(proxiedUrl);
+        url.protocol = "wss:";
+        return url.toString();
+      }
+
       const url = new URL(vscodeUrl);
       url.port = ports.vnc;
       url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -225,6 +319,26 @@ export function toVncUrl(
   if (provider === "morph") return toMorphVncUrl(vscodeUrl);
   if ((provider === "docker" || provider === "incus" || provider === "aws") && ports?.vnc) {
     try {
+      const vscodeTarget = new URL(vscodeUrl);
+      const proxiedUrl =
+        vscodeTarget.port
+          ? createSecureWorkspaceProxyUrl(
+              vscodeTarget.hostname,
+              vscodeTarget.port,
+              "/vnc/vnc.html"
+            )
+          : null;
+      if (proxiedUrl) {
+        const url = new URL(proxiedUrl);
+        const searchParams = new URLSearchParams();
+        searchParams.set("autoconnect", "1");
+        searchParams.set("resize", "scale");
+        searchParams.set("reconnect", "1");
+        searchParams.set("reconnect_delay", "1000");
+        url.search = `?${searchParams.toString()}`;
+        return url.toString();
+      }
+
       const url = new URL(vscodeUrl);
       url.protocol = url.protocol === "wss:" ? "https:" : "http:";
       url.port = ports.vnc;
@@ -255,6 +369,20 @@ export function toXtermBaseUrl(
   if (provider === "morph") return toMorphXtermBaseUrl(vscodeUrl);
   if ((provider === "docker" || provider === "incus" || provider === "aws") && ports?.pty) {
     try {
+      const secureBrowserOrigin = getSecureBrowserOrigin();
+      if (secureBrowserOrigin) {
+        const vscodeTarget = new URL(vscodeUrl);
+        const proxiedUrl = new URL(secureBrowserOrigin);
+        proxiedUrl.pathname = toWorkspaceProxyPath(
+          vscodeTarget.hostname,
+          ports.pty,
+          "/"
+        );
+        proxiedUrl.search = "";
+        proxiedUrl.hash = "";
+        return proxiedUrl.toString();
+      }
+
       const url = new URL(vscodeUrl);
       url.port = ports.pty;
       url.pathname = "/";
@@ -279,6 +407,18 @@ export function toIosVncWebsocketUrl(
 ): string | null {
   if ((provider === "docker" || provider === "incus" || provider === "aws") && ports?.iosVnc) {
     try {
+      const vscodeTarget = new URL(vscodeUrl);
+      const proxiedUrl = createSecureWorkspaceProxyUrl(
+        vscodeTarget.hostname,
+        ports.iosVnc,
+        "/websockify"
+      );
+      if (proxiedUrl) {
+        const url = new URL(proxiedUrl);
+        url.protocol = "wss:";
+        return url.toString();
+      }
+
       const url = new URL(vscodeUrl);
       url.port = ports.iosVnc;
       url.protocol = url.protocol === "https:" ? "wss:" : "ws:";

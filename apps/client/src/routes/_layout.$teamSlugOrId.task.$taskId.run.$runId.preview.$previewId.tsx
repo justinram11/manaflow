@@ -82,7 +82,11 @@ export const Route = createFileRoute(
 
       const vscodeInfo = taskRun?.vscode;
       const rawUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
-      const hasCloudBackend = vscodeInfo?.provider === "morph" || vscodeInfo?.provider === "docker" || vscodeInfo?.provider === "aws";
+      const hasCloudBackend =
+        vscodeInfo?.provider === "morph" ||
+        vscodeInfo?.provider === "docker" ||
+        vscodeInfo?.provider === "incus" ||
+        vscodeInfo?.provider === "aws";
 
       if (!hasCloudBackend || !rawUrl || !vscodeInfo?.provider) {
         return;
@@ -258,7 +262,11 @@ function PreviewPage() {
   // Terminal setup
   const vscodeInfo = selectedRun?.vscode;
   const rawUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
-  const hasCloudBackend = vscodeInfo?.provider === "morph" || vscodeInfo?.provider === "docker" || vscodeInfo?.provider === "aws";
+  const hasCloudBackend =
+    vscodeInfo?.provider === "morph" ||
+    vscodeInfo?.provider === "docker" ||
+    vscodeInfo?.provider === "incus" ||
+    vscodeInfo?.provider === "aws";
   const baseUrl = useMemo(() => {
     if (!hasCloudBackend || !rawUrl || !vscodeInfo?.provider) return null;
     return toXtermBaseUrl(rawUrl, vscodeInfo.provider, vscodeInfo.ports ?? undefined);

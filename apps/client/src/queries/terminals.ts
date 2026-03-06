@@ -1,4 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
+import { buildTerminalUrl } from "@/lib/terminal-url";
 
 export type TerminalTabId = string;
 
@@ -34,10 +35,6 @@ function ensureBaseUrl(baseUrl: string | null | undefined): string {
     throw new Error("Terminal backend is not ready yet.");
   }
   return baseUrl;
-}
-
-function buildTerminalUrl(baseUrl: string, pathname: string) {
-  return new URL(pathname, baseUrl);
 }
 
 interface SessionInfo {

@@ -26,9 +26,11 @@ const getHydrateScript = (): string => {
 export const hydrateWorkspace = async ({
   instance,
   repo,
+  selectedRepos,
 }: {
   instance: MorphInstance;
   repo?: HydrateRepoConfig;
+  selectedRepos?: string[];
 }): Promise<void> => {
   const hydrateScript = getHydrateScript();
 
@@ -49,6 +51,10 @@ export const hydrateWorkspace = async ({
     envVars.CMUX_MASKED_CLONE_URL = repo.maskedCloneUrl;
     envVars.CMUX_BASE_BRANCH = repo.baseBranch;
     envVars.CMUX_NEW_BRANCH = repo.newBranch;
+  }
+
+  if (selectedRepos && selectedRepos.length > 0) {
+    envVars.CMUX_SELECTED_REPOS_JSON = JSON.stringify(selectedRepos);
   }
 
   // Build the command to write and execute the script

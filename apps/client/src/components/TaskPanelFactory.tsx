@@ -12,9 +12,11 @@ import {
   Smartphone,
 } from "lucide-react";
 import clsx from "clsx";
+import { VncViewer } from "@cmux/shared/components/vnc-viewer";
 import type { PanelType } from "@/lib/panel-config";
 import { PANEL_LABELS } from "@/lib/panel-config";
 import type { PersistentIframeStatus } from "@/components/persistent-iframe";
+import { TaskRunSimulatorPane } from "@/components/TaskRunSimulatorPane";
 import type { DbTask } from "@cmux/www-openapi-client";
 import type { TaskRunWithChildren } from "@/types/task";
 import type { TaskRunChatPaneProps } from "./TaskRunChatPane";
@@ -190,8 +192,7 @@ interface PanelFactoryProps {
   TASK_RUN_IFRAME_ALLOW?: string;
   TASK_RUN_IFRAME_SANDBOX?: string;
   // Simulator panel props
-  simulatorUrl?: string | null;
-  simulatorPersistKey?: string | null;
+  simulatorRunId?: string | null;
   // Git diff panel props
   teamSlugOrId?: string;
   taskId?: string;
@@ -566,48 +567,38 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
     case "browser": {
       const {
         browserUrl,
-        browserPersistKey,
-        setBrowserStatus,
         browserPlaceholder,
         selectedRun,
         hasCloudBackend,
         isBrowserBusy,
-        PersistentWebView,
         WorkspaceLoadingIndicator,
-        TASK_RUN_IFRAME_ALLOW,
-        TASK_RUN_IFRAME_SANDBOX,
       } = props;
 
-      if (!PersistentWebView || !WorkspaceLoadingIndicator) return null;
-      const shouldShowBrowserLoader = Boolean(selectedRun) && hasCloudBackend && (!browserUrl || !browserPersistKey);
+      if (!WorkspaceLoadingIndicator) return null;
+      const shouldShowBrowserLoader = Boolean(selectedRun) && hasCloudBackend && !browserUrl;
 
       return panelWrapper(
         <Globe2 className="size-3" aria-hidden />,
         PANEL_LABELS.browser,
         <div className={clsx("relative flex-1", isExpanded && "h-full")} aria-busy={isBrowserBusy}>
-          {browserUrl && browserPersistKey ? (
-            <PersistentWebView
-              key={browserPersistKey}
-              persistKey={browserPersistKey}
-              src={browserUrl}
-              className="flex h-full"
-              iframeClassName={clsx("select-none")}
-              persistentWrapperClassName={isExpanded ? "z-[var(--z-maximized-iframe)]" : undefined}
-              allow={TASK_RUN_IFRAME_ALLOW}
-              sandbox={TASK_RUN_IFRAME_SANDBOX}
-              retainOnUnmount
-              onStatusChange={setBrowserStatus}
-              fallback={
+          {browserUrl ? (
+            <VncViewer
+              key={browserUrl}
+              url={browserUrl}
+              className="h-full w-full"
+              background="#000000"
+              scaleViewport
+              autoConnect
+              autoReconnect
+              reconnectDelay={1000}
+              maxReconnectDelay={30000}
+              focusOnClick
+              loadingFallback={
                 <WorkspaceLoadingIndicator variant="browser" status="loading" />
               }
-              fallbackClassName="bg-neutral-50 dark:bg-black"
               errorFallback={
                 <WorkspaceLoadingIndicator variant="browser" status="error" />
               }
-              errorFallbackClassName="bg-neutral-50/95 dark:bg-black/95"
-              loadTimeoutMs={45_000}
-              isExpanded={isExpanded}
-              isAnyPanelExpanded={isAnyPanelExpanded}
             />
           ) : shouldShowBrowserLoader ? (
             <div className="flex h-full items-center justify-center">
@@ -651,26 +642,20 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
 
     case "simulator": {
       const {
-        simulatorUrl,
+        simulatorRunId,
         selectedRun,
         WorkspaceLoadingIndicator,
       } = props;
 
-      const hasSimulatorView = Boolean(simulatorUrl);
+      const hasSimulatorView = Boolean(simulatorRunId);
       const showSimLoader = Boolean(selectedRun) && !hasSimulatorView;
 
-      // Dynamically import VncViewer (same as browser panel uses)
       return panelWrapper(
         <Smartphone className="size-3" aria-hidden />,
         PANEL_LABELS.simulator,
-        <div className={clsx("relative flex-1", isExpanded && "h-full")} style={{ aspectRatio: "9/19.5" }}>
-          {simulatorUrl ? (
-            <iframe
-              src={simulatorUrl}
-              className="size-full border-0"
-              title="iOS Simulator"
-              allow="autoplay"
-            />
+        <div className={clsx("relative flex-1 min-h-0 overflow-hidden", isExpanded && "h-full")}>
+          {simulatorRunId ? (
+            <TaskRunSimulatorPane taskRunId={simulatorRunId} />
           ) : showSimLoader && WorkspaceLoadingIndicator ? (
             <div className="flex h-full items-center justify-center">
               <WorkspaceLoadingIndicator variant="browser" status="loading" />
@@ -749,7 +734,7 @@ export const RenderPanel = React.memo(RenderPanelComponent, (prevProps, nextProp
 
   // For simulator panel, check URL changes
   if (prevProps.type === "simulator") {
-    if (prevProps.simulatorUrl !== nextProps.simulatorUrl ||
+    if (prevProps.simulatorRunId !== nextProps.simulatorRunId ||
       prevProps.selectedRun?.id !== nextProps.selectedRun?.id) {
       return false;
     }
