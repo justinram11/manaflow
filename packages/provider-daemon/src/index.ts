@@ -2,7 +2,7 @@ import { loadConfig } from "./config";
 import { CapabilityRegistry } from "./capability-registry";
 import { WsClient } from "./ws-client";
 import { detectIncus, createComputeIncusHandler } from "./capabilities/compute-incus/index";
-import { detectXcodeSimctl, createResourceIosHandler } from "./capabilities/resource-ios/index";
+import { detectTart, createResourceIosHandler } from "./capabilities/resource-ios/index";
 
 async function main() {
   console.log("cmux provider daemon starting...");
@@ -14,24 +14,28 @@ async function main() {
   // Detect capabilities
   const registry = new CapabilityRegistry();
 
-  const [hasIncus, hasXcode] = await Promise.all([
+  const [hasIncus, hasTart] = await Promise.all([
     detectIncus(),
-    detectXcodeSimctl(),
+    detectTart(),
   ]);
 
   if (hasIncus) {
     registry.register(createComputeIncusHandler());
   }
 
-  if (hasXcode) {
+  if (hasTart) {
     const { startIngressServer } = await import("@cmux/mac-resource-provider/ingress-server");
-    startIngressServer();
+    try {
+      startIngressServer();
+    } catch (error) {
+      console.error("[provider-daemon] Failed to start ingress server (non-fatal):", error);
+    }
     registry.register(createResourceIosHandler());
   }
 
   const capabilities = registry.getCapabilities();
   if (capabilities.length === 0) {
-    console.error("No capabilities detected. Install incus (Linux) or Xcode (macOS) to enable capabilities.");
+    console.error("No capabilities detected. Install incus (Linux) or tart (macOS) to enable capabilities.");
     process.exit(1);
   }
 
@@ -46,7 +50,7 @@ async function main() {
     console.log("Shutting down...");
     client.close();
     await registry.shutdown();
-    if (hasXcode) {
+    if (hasTart) {
       const { stopIngressServer } = await import("@cmux/mac-resource-provider/ingress-server");
       stopIngressServer();
     }

@@ -59,7 +59,7 @@ export async function handleJsonRpcMessage(msg: JsonRpcRequest): Promise<JsonRpc
       }
 
       case "setup_allocation": {
-        const result = setupAllocation({
+        const result = await setupAllocation({
           allocationId: params?.allocationId as string,
           buildDir: params?.buildDir as string,
           simulatorDeviceType: (params?.simulatorDeviceType as string) || "iPhone 16 Pro",
@@ -67,7 +67,10 @@ export async function handleJsonRpcMessage(msg: JsonRpcRequest): Promise<JsonRpc
         });
         return {
           jsonrpc: "2.0",
-          result: { success: true, ...result },
+          result: {
+            success: true,
+            ...result,
+          },
           id,
         };
       }

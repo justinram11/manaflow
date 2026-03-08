@@ -78,9 +78,11 @@ function BrowserComponent() {
 
   const onDisconnect = useCallback(
     (_rfb: unknown, detail: { clean: boolean }) => {
-      console.log(
-        `Browser VNC disconnected for task run ${taskRunId} (clean: ${detail.clean})`
-      );
+      if (!detail.clean) {
+        console.warn(
+          `Browser VNC disconnected for task run ${taskRunId} (clean: ${detail.clean})`
+        );
+      }
     },
     [taskRunId]
   );

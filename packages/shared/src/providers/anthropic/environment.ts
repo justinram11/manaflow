@@ -151,22 +151,6 @@ export async function getClaudeEnvironment(
       console.error("Failed to read iOS resource proxy script:", error);
     }
 
-    try {
-      const vncProxyScriptPath = resolve(
-        dirname(fileURLToPath(import.meta.url)),
-        "../mcp/ios-vnc-proxy.mjs",
-      );
-      const vncProxyScript = readFileSync(vncProxyScriptPath, "utf-8");
-
-      files.push({
-        destinationPath: "/root/lifecycle/mcp/ios-vnc-proxy.mjs",
-        contentBase64: Buffer.from(vncProxyScript).toString("base64"),
-        mode: "755",
-      });
-    } catch (error) {
-      console.error("Failed to read iOS VNC proxy script:", error);
-    }
-
     // Pass direct MCP connection token and port for low-latency Mac ↔ workspace path
     if (ctx.iosDirectToken) {
       env.CMUX_DIRECT_MCP_TOKEN = ctx.iosDirectToken;
@@ -194,9 +178,6 @@ export async function getClaudeEnvironment(
       );
       startupCommands.push(
         "rsync --daemon --config=/etc/cmux/rsyncd.conf --port=39376 && echo '[CMUX] rsyncd started on port 39376'",
-      );
-      startupCommands.push(
-        "bun /root/lifecycle/mcp/ios-vnc-proxy.mjs >/tmp/ios-vnc-proxy.log 2>&1 &",
       );
     }
   }

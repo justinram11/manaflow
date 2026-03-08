@@ -229,8 +229,10 @@ EOF
 </dict>
 </plist>
 EOF
-    launchctl unload "$PLIST_PATH" 2>/dev/null || true
-    launchctl load "$PLIST_PATH"
+    LAUNCHD_DOMAIN="gui/$(id -u)"
+    launchctl bootout "$LAUNCHD_DOMAIN" "$PLIST_PATH" 2>/dev/null || true
+    launchctl bootstrap "$LAUNCHD_DOMAIN" "$PLIST_PATH"
+    launchctl enable "$LAUNCHD_DOMAIN/com.cmux.provider"
     echo "==> Service installed and started: com.cmux.provider"
     echo "    Check logs: tail -f $HOME/.cmux/provider/daemon.log"
     ;;

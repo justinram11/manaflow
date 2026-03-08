@@ -4,6 +4,7 @@ import {
 } from "@cmux/www-openapi-client/react-query";
 import { toast } from "sonner";
 import { queryClient } from "@/query-client";
+import { fetchWithAuth } from "@/lib/stack";
 
 interface IncusWorkspaceQueryArgs {
   taskRunId: string;
@@ -53,14 +54,16 @@ export function useIncusPauseQuery({
     enabled: canQuery && enabled !== false,
     queryKey: incusPauseQueryKey(taskRunId, teamSlugOrId),
     queryFn: async ({ signal }) => {
-      const res = await fetch(
-        `/api/sandboxes/incus/task-runs/${encodeURIComponent(taskRunId)}/is-paused`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ teamSlugOrId }),
-          signal,
-        },
+      const res = await fetchWithAuth(
+        new Request(
+          `/api/sandboxes/incus/task-runs/${encodeURIComponent(taskRunId)}/is-paused`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ teamSlugOrId }),
+            signal,
+          },
+        ),
       );
       if (!res.ok) {
         return { paused: false };
@@ -90,9 +93,11 @@ export function useIncusPause({
       const containerName = vscode?.containerName;
       if (!containerName) throw new Error("No container found");
 
-      const res = await fetch(
-        `/api/sandboxes/incus/${encodeURIComponent(containerName)}/pause`,
-        { method: "POST" },
+      const res = await fetchWithAuth(
+        new Request(
+          `/api/sandboxes/incus/${encodeURIComponent(containerName)}/pause`,
+          { method: "POST" },
+        ),
       );
       if (!res.ok) {
         throw new Error(`Failed to pause container: ${res.status}`);
@@ -129,13 +134,15 @@ export function useResumeIncusWorkspace({
   return useMutation<{ resumed: true }, Error, void, { toastId: string | number }>({
     mutationKey: ["incus", "resume", taskRunId],
     mutationFn: async () => {
-      const res = await fetch(
-        `/api/sandboxes/incus/task-runs/${encodeURIComponent(taskRunId)}/resume`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ teamSlugOrId }),
-        },
+      const res = await fetchWithAuth(
+        new Request(
+          `/api/sandboxes/incus/task-runs/${encodeURIComponent(taskRunId)}/resume`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ teamSlugOrId }),
+          },
+        ),
       );
       if (!res.ok) {
         throw new Error(`Failed to resume container: ${res.status}`);

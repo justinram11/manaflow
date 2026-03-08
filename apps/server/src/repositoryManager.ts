@@ -40,6 +40,7 @@ interface GitConfig {
 const DEFAULT_GIT_TIMEOUT_MS = 120_000;
 // Longer timeout for clone/fetch operations (5 minutes)
 const CLONE_FETCH_TIMEOUT_MS = 300_000;
+const MAX_GIT_BUFFER_BYTES = 50 * 1024 * 1024;
 
 interface GitCommandOptions {
   cwd: string;
@@ -146,7 +147,37 @@ export class RepositoryManager {
     }
   }
 
-  // Note: Keep all git invocations using executeGitCommand with a shell, as some CI envs lack direct execFile PATH resolution.
+  // Keep git invocation centralized so repo operations use `git -C <path>`
+  // instead of relying on the child process cwd remaining valid.
+
+  private buildGitArgs(command: string, options?: GitCommandOptions): string[] {
+    const args = this.tokenizeGitArgs(command.slice(4));
+    if (!options?.cwd) {
+      return args;
+    }
+
+    return ["-C", options.cwd, ...args];
+  }
+
+  private async executeGitViaExecFile(
+    command: string,
+    options: GitCommandOptions | undefined,
+    timeout: number
+  ): Promise<{ stdout: string; stderr: string }> {
+    const gitPath = await this.getGitPath();
+    const args = this.buildGitArgs(command, options);
+    const execOptions: ExecFileOptions = {
+      encoding: options?.encoding ?? "utf8",
+      windowsHide: true,
+      timeout,
+      maxBuffer: MAX_GIT_BUFFER_BYTES,
+    };
+    const result = await execFileAsync(gitPath, args, execOptions);
+    return {
+      stdout: result.stdout.toString(),
+      stderr: result.stderr?.toString?.() || "",
+    };
+  }
 
   // Attempt to extract a stderr string from an unknown error shape
   private extractStderr(err: unknown): string | null {
@@ -188,10 +219,14 @@ export class RepositoryManager {
     if (needsQueue) {
       return this.queueOperation(async () => {
         try {
+          if (command.startsWith("git ")) {
+            return await this.executeGitViaExecFile(command, options, timeout);
+          }
+
           const result = await execAsync(command, {
             shell: process.platform === "win32" ? "cmd.exe" : "/bin/sh",
             timeout,
-            maxBuffer: 50 * 1024 * 1024, // 50MB buffer for large repos
+            maxBuffer: MAX_GIT_BUFFER_BYTES,
             ...options,
           });
           return {
@@ -201,7 +236,17 @@ export class RepositoryManager {
         } catch (error) {
           // Log only if not suppressed (some failures are expected)
           if (!options?.suppressErrorLogging) {
-            serverLogger.error(`Git command failed: ${sanitizeForLogging(command)}`);
+            if (command.startsWith("git ")) {
+              const gitPath = await this.getGitPath();
+              const args = this.buildGitArgs(command, options);
+              serverLogger.error(
+                `Git command failed: ${gitPath} ${sanitizeForLogging(args.join(" "))}`
+              );
+            } else {
+              serverLogger.error(
+                `Git command failed: ${sanitizeForLogging(command)}`
+              );
+            }
             if (error instanceof Error) {
               serverLogger.error(`Error: ${sanitizeForLogging(error.message)}`);
               const stderrMsg = this.extractStderr(error);
@@ -215,25 +260,13 @@ export class RepositoryManager {
 
     // Prefer execFile with an absolute git path when invoking non-queued git commands
     if (command.startsWith("git ")) {
-      const gitPath = await this.getGitPath();
-      const args = this.tokenizeGitArgs(command.slice(4));
       try {
-        const execOptions: ExecFileOptions = {
-          cwd: options?.cwd,
-          // Ensure string output for easier logging; fall back to utf8
-          encoding: options?.encoding ?? "utf8",
-          windowsHide: true,
-          timeout,
-          maxBuffer: 50 * 1024 * 1024, // 50MB buffer for large repos
-        };
-        const result = await execFileAsync(gitPath, args, execOptions);
-        return {
-          stdout: result.stdout.toString(),
-          stderr: result.stderr?.toString?.() || "",
-        };
+        return await this.executeGitViaExecFile(command, options, timeout);
       } catch (error) {
         // Log and fall through to shell execution unless suppressed
         if (!options?.suppressErrorLogging) {
+          const gitPath = await this.getGitPath();
+          const args = this.buildGitArgs(command, options);
           serverLogger.error(
             `Git command failed: ${gitPath} ${sanitizeForLogging(args.join(" "))}`
           );
@@ -251,7 +284,7 @@ export class RepositoryManager {
       const result = await execAsync(command, {
         shell: process.platform === "win32" ? "cmd.exe" : "/bin/sh",
         timeout,
-        maxBuffer: 50 * 1024 * 1024, // 50MB buffer for large repos
+        maxBuffer: MAX_GIT_BUFFER_BYTES,
         ...options,
       });
       return {

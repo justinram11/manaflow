@@ -5,6 +5,7 @@ import {
   getById,
   listActiveAllocationsByProvider,
   getAllocationById,
+  isProviderAtCapacity,
 } from "@cmux/db/queries/providers";
 import { getTaskRunById } from "@cmux/db/queries/task-runs";
 import {
@@ -13,6 +14,7 @@ import {
   deleteProvider,
   createAllocation,
   releaseAllocation,
+  updateAllocationData,
 } from "@cmux/db/mutations/providers";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { createHash, randomBytes } from "node:crypto";
@@ -95,6 +97,12 @@ const AllocateBody = z
   })
   .openapi("AllocateProviderBody");
 
+const EnsureDirectBody = z
+  .object({
+    token: z.string().optional(),
+  })
+  .openapi("EnsureDirectBody");
+
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
@@ -113,6 +121,26 @@ function parseJsonField(value: unknown): Record<string, unknown> | null {
     }
   }
   return typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function resolveSandboxHost(
+  vscode: Record<string, unknown> | null,
+): string {
+  const candidateUrls = [vscode?.url, vscode?.workspaceUrl];
+
+  for (const candidate of candidateUrls) {
+    if (typeof candidate !== "string" || candidate.trim().length === 0) {
+      continue;
+    }
+
+    try {
+      return new URL(candidate).hostname;
+    } catch (error) {
+      console.error("Failed to parse sandbox host from URL:", error);
+    }
+  }
+
+  return process.env.SANDBOX_HOST ?? "localhost";
 }
 
 async function ensureIosAllocationReady(
@@ -136,7 +164,7 @@ async function ensureIosAllocationReady(
     return;
   }
 
-  const sandboxHost = process.env.SANDBOX_HOST ?? "localhost";
+  const sandboxHost = resolveSandboxHost(vscode);
   const setupRes = await fetch(
     `${CMUX_SERVER_URL}/internal/provider/${allocation.providerId}/setup-allocation`,
     {
@@ -160,9 +188,6 @@ async function ensureIosAllocationReady(
     mcpEndpoint: `ws://${sandboxHost}:${iosMcpPort}?token=${directToken}`,
   };
 
-  if (typeof ports?.iosVncIn === "string") {
-    connectRequestParams.vncEndpoint = `tcp://${sandboxHost}:${ports.iosVncIn}`;
-  }
   if (typeof ports?.iosRsyncd === "string") {
     connectRequestParams.rsyncEndpoint = `rsync://cmux@${sandboxHost}:${ports.iosRsyncd}/workspace`;
     connectRequestParams.rsyncSecret = directToken;
@@ -529,7 +554,7 @@ providersRouter.openapi(
     }
 
     const activeAllocations = listActiveAllocationsByProvider(db, id);
-    if (activeAllocations.length >= (provider.maxConcurrentSlots ?? 4)) {
+    if (isProviderAtCapacity(provider, activeAllocations.length)) {
       return c.json({ code: 409, message: "Provider at maximum capacity" }, 409);
     }
 
@@ -545,6 +570,7 @@ providersRouter.openapi(
     // For resource allocations, notify the daemon to set up the workspace
     if (body.type === "resource" && body.data) {
       try {
+        const buildDir = body.data.buildDir ?? `/tmp/cmux-builds/${allocationId}`;
         const setupRes = await fetch(
           `${CMUX_SERVER_URL}/internal/provider/${id}/setup-allocation`,
           {
@@ -552,7 +578,7 @@ providersRouter.openapi(
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               allocationId,
-              buildDir: body.data.buildDir ?? `/tmp/cmux-builds/${allocationId}`,
+              buildDir,
               simulatorDeviceType: body.data.simulatorDeviceType ?? "iPhone 16 Pro",
               simulatorRuntime: body.data.simulatorRuntime ?? "com.apple.CoreSimulator.SimRuntime.iOS-18-6",
             }),
@@ -560,6 +586,17 @@ providersRouter.openapi(
         );
         if (!setupRes.ok) {
           console.error("Failed to setup allocation on daemon:", await setupRes.text());
+        } else {
+          const setupPayload = z.object({
+            buildDir: z.string().optional(),
+            simulatorUdid: z.string().optional(),
+          }).parse(await setupRes.json());
+          updateAllocationData(db, allocationId, {
+            buildDir: setupPayload.buildDir ?? buildDir,
+            ...(setupPayload.simulatorUdid
+              ? { simulatorUdid: setupPayload.simulatorUdid }
+              : {}),
+          });
         }
       } catch (error) {
         console.error("Failed to reach server for allocation setup:", error);
@@ -738,6 +775,87 @@ providersRouter.openapi(
       return c.json(response, 200);
     } catch (error) {
       console.error("JSON-RPC proxy error:", error);
+      return c.json({ code: 502, message: "Failed to reach provider" }, 502);
+    }
+  },
+);
+
+// POST /providers/allocations/:id/ensure-direct - Re-establish direct MCP/VNC bridges
+providersRouter.openapi(
+  createRoute({
+    method: "post",
+    path: "/providers/allocations/{allocationId}/ensure-direct",
+    tags: ["Providers"],
+    summary: "Re-establish direct iOS bridges for an allocation",
+    request: {
+      params: z.object({ allocationId: z.string() }),
+      body: {
+        content: {
+          "application/json": {
+            schema: EnsureDirectBody,
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        description: "Direct bridges ensured",
+        content: {
+          "application/json": {
+            schema: z.object({ success: z.boolean() }),
+          },
+        },
+      },
+      401: {
+        description: "Unauthorized",
+        content: { "application/json": { schema: ErrorResponse } },
+      },
+      404: {
+        description: "Allocation not found",
+        content: { "application/json": { schema: ErrorResponse } },
+      },
+      502: {
+        description: "Provider unavailable",
+        content: { "application/json": { schema: ErrorResponse } },
+      },
+    },
+  }),
+  async (c) => {
+    const { allocationId } = c.req.valid("param");
+    const body = c.req.valid("json");
+    const db = getDb();
+
+    const allocation = getAllocationById(db, allocationId);
+    if (!allocation) return c.json({ code: 404, message: "Allocation not found" }, 404);
+    if (allocation.status !== "active") {
+      return c.json({ code: 404, message: "Allocation is not active" }, 404);
+    }
+
+    const allocationData = parseJsonField(allocation.data);
+    const directToken =
+      typeof allocationData?.directToken === "string"
+        ? allocationData.directToken
+        : null;
+    const user = await getUserFromRequest(c.req.raw);
+    const isDirectTokenMatch =
+      typeof body.token === "string" &&
+      directToken !== null &&
+      body.token === directToken;
+    if (!user && !isDirectTokenMatch) {
+      return c.json({ code: 401, message: "Unauthorized" }, 401);
+    }
+
+    const provider = getById(db, allocation.providerId);
+    if (!provider || provider.status !== "online") {
+      return c.json({ code: 502, message: "Provider is offline" }, 502);
+    }
+
+    try {
+      await ensureIosAllocationReady(db, allocation);
+      return c.json({ success: true }, 200);
+    } catch (error) {
+      console.error("Failed to ensure direct iOS allocation bridge:", error);
       return c.json({ code: 502, message: "Failed to reach provider" }, 502);
     }
   },

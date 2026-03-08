@@ -1,8 +1,6 @@
-import { execSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import type { ToolDefinition, ToolHandler } from "./index";
 import { getAllocation, bootSimulator } from "../workspace-manager";
+import { execInVm } from "../tart-vm";
 
 const iosSimulatorBoot: ToolHandler = async (params, allocationId) => {
   const alloc = getAllocation(allocationId);
@@ -15,9 +13,9 @@ const iosSimulatorBoot: ToolHandler = async (params, allocationId) => {
     const simName = `cmux-${allocationId.slice(0, 8)}`;
 
     try {
-      const udid = execSync(
+      const udid = execInVm(
+        alloc.tartVmName,
         `xcrun simctl create "${simName}" "${deviceType}" "${runtime}"`,
-        { encoding: "utf-8" },
       ).trim();
       alloc.simulatorUdid = udid;
     } catch (error) {
@@ -34,16 +32,19 @@ const iosSimulatorShutdown: ToolHandler = async (_params, allocationId) => {
   if (!alloc?.simulatorUdid) return { error: "No simulator assigned" };
 
   try {
-    execSync(`xcrun simctl shutdown "${alloc.simulatorUdid}"`, { encoding: "utf-8" });
+    execInVm(alloc.tartVmName, `xcrun simctl shutdown "${alloc.simulatorUdid}"`);
     return { success: true };
   } catch (error) {
     return { error: String(error) };
   }
 };
 
-const iosSimulatorListDevices: ToolHandler = async () => {
+const iosSimulatorListDevices: ToolHandler = async (_params, allocationId) => {
+  const alloc = getAllocation(allocationId);
+  if (!alloc) throw new Error("Allocation not found");
+
   try {
-    const output = execSync("xcrun simctl list devices available --json", { encoding: "utf-8" });
+    const output = execInVm(alloc.tartVmName, "xcrun simctl list devices available --json");
     const data = JSON.parse(output);
     return { devices: data.devices };
   } catch (error) {
@@ -59,22 +60,20 @@ const iosSimulatorInstall: ToolHandler = async (params, allocationId) => {
 
   // Auto-detect from DerivedData if not provided
   if (!appPath) {
-    const derivedData = join(alloc.buildDir, "DerivedData");
-    if (existsSync(derivedData)) {
-      try {
-        appPath = execSync(
-          `find "${derivedData}" -name "*.app" -path "*/Build/Products/*" | head -1`,
-          { encoding: "utf-8" },
-        ).trim();
-      } catch {
-        // Ignore
-      }
+    const derivedData = `${alloc.buildDir}/DerivedData`;
+    try {
+      appPath = execInVm(
+        alloc.tartVmName,
+        `find "${derivedData}" -name "*.app" -path "*/Build/Products/*" 2>/dev/null | head -1`,
+      ).trim();
+    } catch {
+      // Ignore
     }
     if (!appPath) return { error: "No .app found. Build first or provide appPath." };
   }
 
   try {
-    execSync(`xcrun simctl install "${alloc.simulatorUdid}" "${appPath}"`, { encoding: "utf-8" });
+    execInVm(alloc.tartVmName, `xcrun simctl install "${alloc.simulatorUdid}" "${appPath}"`);
     return { success: true, appPath };
   } catch (error) {
     return { error: String(error) };
@@ -92,9 +91,9 @@ const iosSimulatorLaunch: ToolHandler = async (params, allocationId) => {
   const argsStr = args ? args.join(" ") : "";
 
   try {
-    const output = execSync(
+    const output = execInVm(
+      alloc.tartVmName,
       `xcrun simctl launch "${alloc.simulatorUdid}" "${bundleId}" ${argsStr}`,
-      { encoding: "utf-8" },
     );
     return { success: true, output: output.trim() };
   } catch (error) {
@@ -107,7 +106,7 @@ const iosSimulatorTerminate: ToolHandler = async (params, allocationId) => {
   if (!alloc?.simulatorUdid) return { error: "No simulator assigned" };
 
   try {
-    execSync(`xcrun simctl terminate "${alloc.simulatorUdid}" "${params.bundleId}"`, { encoding: "utf-8" });
+    execInVm(alloc.tartVmName, `xcrun simctl terminate "${alloc.simulatorUdid}" "${params.bundleId}"`);
     return { success: true };
   } catch (error) {
     return { error: String(error) };
@@ -119,7 +118,7 @@ const iosSimulatorErase: ToolHandler = async (_params, allocationId) => {
   if (!alloc?.simulatorUdid) return { error: "No simulator assigned" };
 
   try {
-    execSync(`xcrun simctl erase "${alloc.simulatorUdid}"`, { encoding: "utf-8" });
+    execInVm(alloc.tartVmName, `xcrun simctl erase "${alloc.simulatorUdid}"`);
     return { success: true };
   } catch (error) {
     return { error: String(error) };
@@ -132,7 +131,7 @@ const iosSimulatorSetAppearance: ToolHandler = async (params, allocationId) => {
 
   const appearance = params.appearance as "light" | "dark";
   try {
-    execSync(`xcrun simctl ui "${alloc.simulatorUdid}" appearance ${appearance}`, { encoding: "utf-8" });
+    execInVm(alloc.tartVmName, `xcrun simctl ui "${alloc.simulatorUdid}" appearance ${appearance}`);
     return { success: true };
   } catch (error) {
     return { error: String(error) };

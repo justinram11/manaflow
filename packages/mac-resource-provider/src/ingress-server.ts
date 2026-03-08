@@ -1,24 +1,9 @@
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import WebSocket from "ws";
 import { getTool } from "./tools";
-import { ensureSimulatorCapture, getAllocation } from "./workspace-manager";
+import { getAllocation } from "./workspace-manager";
 
 const DEFAULT_INGRESS_PORT = 4848;
-
-type IngressSocketData = {
-  allocationId: string;
-  token: string;
-  upstream?: WebSocket;
-};
-
-function getDefaultLocalVncPort(allocationId: string): number {
-  let hash = 0;
-  for (const char of allocationId) {
-    hash = (hash * 31 + char.charCodeAt(0)) % 10000;
-  }
-  return 45000 + hash;
-}
 
 function getIngressPort(): number {
   const raw = process.env.CMUX_IOS_INGRESS_PORT;
@@ -212,7 +197,7 @@ async function handleScreenshot(request: Request, allocationId: string): Promise
   }
 }
 
-let server: ReturnType<typeof Bun.serve<IngressSocketData>> | null = null;
+let server: ReturnType<typeof Bun.serve> | null = null;
 
 export function getIngressMetadata(): {
   localPort: number;
@@ -230,11 +215,11 @@ export function startIngressServer(): void {
   }
 
   const { localPort, browserBaseUrl } = getIngressMetadata();
-  server = Bun.serve<IngressSocketData>({
+  server = Bun.serve({
     hostname: "127.0.0.1",
     port: localPort,
     idleTimeout: 120,
-    fetch(request, bunServer) {
+    fetch(request) {
       const url = new URL(request.url);
       const origin = request.headers.get("origin");
 
@@ -258,27 +243,6 @@ export function startIngressServer(): void {
         return new Response("Not found", { status: 404, headers: buildCorsHeaders(origin) });
       }
 
-      if (path.action === "websockify") {
-        const auth = getAuthorizedAllocation(request, path.allocationId);
-        if (!auth) {
-          return unauthorized(origin);
-        }
-
-        const upgraded = bunServer.upgrade(request, {
-          data: {
-            allocationId: path.allocationId,
-            token: auth.token,
-          },
-        });
-        if (upgraded) {
-          return undefined;
-        }
-        return new Response("WebSocket upgrade failed", {
-          status: 400,
-          headers: buildCorsHeaders(origin),
-        });
-      }
-
       if (request.method === "GET" && path.action === "screenshot") {
         return handleScreenshot(request, path.allocationId);
       }
@@ -288,53 +252,6 @@ export function startIngressServer(): void {
       }
 
       return new Response("Not found", { status: 404, headers: buildCorsHeaders(origin) });
-    },
-    websocket: {
-      open(ws) {
-        const allocation = getAllocation(ws.data.allocationId);
-        if (!allocation?.accessToken || allocation.accessToken !== ws.data.token) {
-          ws.close(1008, "Unauthorized");
-          return;
-        }
-
-        const localPort = allocation.capturePort ?? getDefaultLocalVncPort(ws.data.allocationId);
-        const captureUdid = ensureSimulatorCapture(ws.data.allocationId, localPort);
-        if (!captureUdid) {
-          ws.close(1011, "Simulator unavailable");
-          return;
-        }
-
-        const capturePort = getAllocation(ws.data.allocationId)?.capturePort;
-        if (!capturePort) {
-          ws.close(1011, "Capture unavailable");
-          return;
-        }
-
-        const upstream = new WebSocket(`ws://127.0.0.1:${capturePort}/websockify`);
-        ws.data.upstream = upstream;
-
-        upstream.on("message", (message, isBinary) => {
-          ws.send(message, isBinary);
-        });
-
-        upstream.on("close", (code, reason) => {
-          ws.close(code, reason.toString() || undefined);
-        });
-
-        upstream.on("error", (error) => {
-          console.error(`[ios-ingress] upstream websocket failed for ${ws.data.allocationId}:`, error);
-          ws.close(1011, "Upstream VNC failed");
-        });
-      },
-      message(ws, message) {
-        const upstream = ws.data.upstream;
-        if (upstream && upstream.readyState === WebSocket.OPEN) {
-          upstream.send(message);
-        }
-      },
-      close(ws) {
-        ws.data.upstream?.close();
-      },
     },
   });
 

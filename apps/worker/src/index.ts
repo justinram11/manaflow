@@ -1418,10 +1418,26 @@ async function createTerminal(
   // cmux-pty backend: Use cmux-pty server instead of tmux
   // ==========================================================================
   if (backend === "cmux-pty") {
-    // Check if cmux-pty server is available, fall back to tmux if not
-    const ptyAvailable = await ptyClient.health();
+    // Check if cmux-pty server is available with retries.
+    // After snapshot restore, cmux-pty may still be starting up when the
+    // worker receives the create-terminal command.
+    let ptyAvailable = await ptyClient.health();
     if (!ptyAvailable) {
-      log("INFO", `[createTerminal] cmux-pty server not available, falling back to tmux for ${terminalId}`);
+      const maxRetries = 10;
+      const retryDelayMs = 1000;
+      log("INFO", `[createTerminal] cmux-pty not ready, retrying up to ${maxRetries} times for ${terminalId}`);
+      for (let i = 1; i <= maxRetries; i++) {
+        await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+        ptyAvailable = await ptyClient.health();
+        if (ptyAvailable) {
+          log("INFO", `[createTerminal] cmux-pty became available on retry ${i} for ${terminalId}`);
+          break;
+        }
+        log("INFO", `[createTerminal] cmux-pty retry ${i}/${maxRetries} failed for ${terminalId}`);
+      }
+    }
+    if (!ptyAvailable) {
+      log("INFO", `[createTerminal] cmux-pty server not available after retries, falling back to tmux for ${terminalId}`);
       // Fall through to tmux backend below
     } else {
       log("INFO", `[createTerminal] Using cmux-pty backend for ${terminalId}`);

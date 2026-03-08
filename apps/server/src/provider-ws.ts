@@ -31,7 +31,10 @@ const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 min
 const LONG_RUNNING_TIMEOUT_MS = 5 * 60 * 1000; // 5 min (compute.launch, compute.createSnapshot)
 const BUILD_TIMEOUT_MS = 30 * 60 * 1000; // 30 min
 const HEARTBEAT_INTERVAL_MS = 30 * 1000;
-const HEARTBEAT_TIMEOUT_MS = 60 * 1000;
+// Build-related provider handlers still use synchronous subprocesses, which can
+// block the event loop long enough to miss websocket pong frames. Keep the
+// connection alive well past the longest build/tool timeout in dev.
+const HEARTBEAT_TIMEOUT_MS = 45 * 60 * 1000;
 
 // Methods that trigger builds and need longer timeouts (30 min)
 const BUILD_METHODS = new Set([
@@ -47,9 +50,21 @@ const LONG_RUNNING_METHODS = new Set([
   "compute.createSnapshot",
 ]);
 
-function getTimeoutForMethod(method: string): number {
-  if (BUILD_METHODS.has(method)) return BUILD_TIMEOUT_MS;
-  if (LONG_RUNNING_METHODS.has(method)) return LONG_RUNNING_TIMEOUT_MS;
+function getTimeoutForRequest(request: JsonRpcRequest): number {
+  if (BUILD_METHODS.has(request.method)) return BUILD_TIMEOUT_MS;
+  if (request.method === "tools/call") {
+    const params = request.params;
+    if (
+      params &&
+      typeof params === "object" &&
+      "name" in params &&
+      typeof params.name === "string" &&
+      BUILD_METHODS.has(params.name)
+    ) {
+      return BUILD_TIMEOUT_MS;
+    }
+  }
+  if (LONG_RUNNING_METHODS.has(request.method)) return LONG_RUNNING_TIMEOUT_MS;
   return DEFAULT_TIMEOUT_MS;
 }
 
@@ -131,6 +146,9 @@ export function setupProviderWS(httpServer: HttpServer): void {
                 if (msg.info.capabilities) patch.capabilities = msg.info.capabilities;
                 if (msg.info.arch) patch.arch = msg.info.arch;
                 if (msg.info.metadata) patch.metadata = msg.info.metadata;
+                if (typeof msg.info.maxConcurrentSlots === "number") {
+                  patch.maxConcurrentSlots = msg.info.maxConcurrentSlots;
+                }
 
                 updateProvider(db, provider.id, patch);
               }
@@ -294,6 +312,9 @@ function handleProviderMessage(providerId: string, msg: Record<string, unknown>)
       if (info.capabilities) patch.capabilities = info.capabilities as string[];
       if (info.arch) patch.arch = info.arch as string;
       if (info.metadata) patch.metadata = info.metadata as Record<string, string>;
+      if (typeof info.maxConcurrentSlots === "number") {
+        patch.maxConcurrentSlots = info.maxConcurrentSlots;
+      }
       updateProvider(db, providerId, patch);
     } catch (error) {
       console.error("Failed to update provider info:", error);
@@ -339,7 +360,7 @@ export function sendJsonRpcRequest(
     return Promise.reject(new Error("Provider not connected"));
   }
 
-  const timeoutMs = getTimeoutForMethod(request.method);
+  const timeoutMs = getTimeoutForRequest(request);
   const requestId = String(request.id);
 
   return new Promise((resolve, reject) => {

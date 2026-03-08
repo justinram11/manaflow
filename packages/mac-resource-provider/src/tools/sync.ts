@@ -1,8 +1,6 @@
-import { execSync } from "node:child_process";
-import { mkdirSync, writeFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
 import type { ToolDefinition, ToolHandler } from "./index";
 import { getAllocation } from "../workspace-manager";
+import { execInVm } from "../tart-vm";
 
 /**
  * Default excludes ported from packages/cloudrouter/internal/cli/rsync.go
@@ -51,34 +49,36 @@ const iosSyncCode: ToolHandler = async (_params, allocationId) => {
     return { error: "rsync not configured for this allocation. The container may not have started rsyncd yet." };
   }
 
-  mkdirSync(alloc.buildDir, { recursive: true });
+  // Ensure build dir exists inside the VM
+  execInVm(alloc.tartVmName, `mkdir -p "${alloc.buildDir}"`);
 
-  // Write password file for rsync (must be mode 600)
-  const passwordFile = join(alloc.buildDir, ".rsync-password");
-  writeFileSync(passwordFile, alloc.rsyncSecret, { mode: 0o600 });
+  // Write password file inside the VM (must be mode 600)
+  const passwordFile = `${alloc.buildDir}/.rsync-password`;
+  const escapedSecret = alloc.rsyncSecret.replace(/'/g, "'\\''");
 
   try {
     const excludeArgs = RSYNC_EXCLUDES.map((e) => `--exclude=${e}`).join(" ");
-    // Use rsync with || to handle partial transfer (exit code 23) from permission-denied files
-    const cmd = `rsync -az --delete ${excludeArgs} --password-file="${passwordFile}" "${alloc.rsyncEndpoint}" "${alloc.buildDir}/" 2>&1; EC=$?; if [ $EC -eq 0 ] || [ $EC -eq 23 ]; then exit 0; else exit $EC; fi`;
+    // Write password, run rsync, clean up — all inside the VM
+    const cmd = [
+      `printf '%s' '${escapedSecret}' > "${passwordFile}"`,
+      `chmod 600 "${passwordFile}"`,
+      `rsync -az --delete ${excludeArgs} --password-file="${passwordFile}" "${alloc.rsyncEndpoint}" "${alloc.buildDir}/" 2>&1; EC=$?; if [ $EC -eq 0 ] || [ $EC -eq 23 ]; then exit 0; else exit $EC; fi`,
+    ].join(" && ");
 
-    execSync(cmd, {
-      encoding: "utf-8",
-      timeout: 120000,
-      shell: "/bin/bash",
-    });
+    execInVm(alloc.tartVmName, cmd, { timeout: 120000 });
 
     // Count synced files
-    const fileCount = execSync(`find "${alloc.buildDir}" -type f | wc -l`, {
-      encoding: "utf-8",
-    }).trim();
+    const fileCount = execInVm(
+      alloc.tartVmName,
+      `find "${alloc.buildDir}" -type f | wc -l`,
+    ).trim();
 
     return { success: true, buildDir: alloc.buildDir, fileCount: parseInt(fileCount, 10) };
   } catch (error) {
     console.error("[ios_sync_code] rsync failed:", error);
     return { error: String(error) };
   } finally {
-    try { unlinkSync(passwordFile); } catch { /* ignore */ }
+    try { execInVm(alloc.tartVmName, `rm -f "${passwordFile}"`); } catch { /* ignore */ }
   }
 };
 

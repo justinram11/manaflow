@@ -136,3 +136,28 @@ export function failAllocation(db: DbClient, id: string) {
     .where(eq(providerAllocations.id, id))
     .run();
 }
+
+export function updateAllocationData(
+  db: DbClient,
+  id: string,
+  patch: Record<string, unknown>,
+) {
+  const existing = db
+    .select({ data: providerAllocations.data })
+    .from(providerAllocations)
+    .where(eq(providerAllocations.id, id))
+    .get();
+
+  const currentData =
+    existing?.data && typeof existing.data === "object" ? existing.data : {};
+
+  db.update(providerAllocations)
+    .set({
+      data: {
+        ...currentData,
+        ...patch,
+      },
+    })
+    .where(eq(providerAllocations.id, id))
+    .run();
+}

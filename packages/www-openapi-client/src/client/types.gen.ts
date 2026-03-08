@@ -1215,6 +1215,10 @@ export type AllocateProviderBody = {
     };
 };
 
+export type EnsureDirectBody = {
+    token?: string;
+};
+
 export type GetApiHealthData = {
     body?: never;
     path?: never;
@@ -6189,6 +6193,43 @@ export type PostApiProvidersAllocationsByAllocationIdJsonRpcResponses = {
 };
 
 export type PostApiProvidersAllocationsByAllocationIdJsonRpcResponse = PostApiProvidersAllocationsByAllocationIdJsonRpcResponses[keyof PostApiProvidersAllocationsByAllocationIdJsonRpcResponses];
+
+export type PostApiProvidersAllocationsByAllocationIdEnsureDirectData = {
+    body: EnsureDirectBody;
+    path: {
+        allocationId: string;
+    };
+    query?: never;
+    url: '/api/providers/allocations/{allocationId}/ensure-direct';
+};
+
+export type PostApiProvidersAllocationsByAllocationIdEnsureDirectErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ProviderErrorResponse;
+    /**
+     * Allocation not found
+     */
+    404: ProviderErrorResponse;
+    /**
+     * Provider unavailable
+     */
+    502: ProviderErrorResponse;
+};
+
+export type PostApiProvidersAllocationsByAllocationIdEnsureDirectError = PostApiProvidersAllocationsByAllocationIdEnsureDirectErrors[keyof PostApiProvidersAllocationsByAllocationIdEnsureDirectErrors];
+
+export type PostApiProvidersAllocationsByAllocationIdEnsureDirectResponses = {
+    /**
+     * Direct bridges ensured
+     */
+    200: {
+        success: boolean;
+    };
+};
+
+export type PostApiProvidersAllocationsByAllocationIdEnsureDirectResponse = PostApiProvidersAllocationsByAllocationIdEnsureDirectResponses[keyof PostApiProvidersAllocationsByAllocationIdEnsureDirectResponses];
 
 export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});

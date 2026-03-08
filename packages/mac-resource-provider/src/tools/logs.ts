@@ -1,9 +1,6 @@
-import { execSync } from "node:child_process";
-import { readdirSync, readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
 import type { ToolDefinition, ToolHandler } from "./index";
 import { getAllocation } from "../workspace-manager";
+import { execInVm } from "../tart-vm";
 
 const iosLogs: ToolHandler = async (params, allocationId) => {
   const alloc = getAllocation(allocationId);
@@ -16,22 +13,22 @@ const iosLogs: ToolHandler = async (params, allocationId) => {
 
   const args = ["xcrun", "simctl", "spawn", alloc.simulatorUdid, "log", "show"];
 
-  if (since) args.push("--start", since);
+  if (since) args.push("--start", `"${since}"`);
   args.push("--style", "compact");
 
   const predicateParts: string[] = [];
-  if (bundleId) predicateParts.push(`subsystem == "${bundleId}"`);
+  if (bundleId) predicateParts.push(`subsystem == \\"${bundleId}\\"`);
   if (predicate) predicateParts.push(predicate);
   if (predicateParts.length > 0) {
-    args.push("--predicate", predicateParts.join(" AND "));
+    args.push("--predicate", `"${predicateParts.join(" AND ")}"`);
   }
 
   try {
-    const output = execSync(args.join(" ") + ` | tail -${limit}`, {
-      encoding: "utf-8",
-      timeout: 30000,
-      maxBuffer: 10 * 1024 * 1024,
-    });
+    const output = execInVm(
+      alloc.tartVmName,
+      `${args.join(" ")} | tail -${limit}`,
+      { timeout: 30000, maxBuffer: 10 * 1024 * 1024 },
+    );
     return { logs: output };
   } catch (error) {
     const err = error as { stdout?: string; stderr?: string };
@@ -45,43 +42,50 @@ const iosCrashReports: ToolHandler = async (params, allocationId) => {
 
   const bundleId = params.bundleId as string | undefined;
 
-  // Crash reports location
+  // Crash reports location inside the VM
   const crashDirs = [
-    join(homedir(), "Library/Logs/DiagnosticReports"),
-    join(homedir(), `Library/Developer/CoreSimulator/Devices/${alloc.simulatorUdid}/data/Library/Logs/CrashReporter`),
+    "$HOME/Library/Logs/DiagnosticReports",
+    `$HOME/Library/Developer/CoreSimulator/Devices/${alloc.simulatorUdid}/data/Library/Logs/CrashReporter`,
   ];
 
-  const reports: Array<{ name: string; path: string; date: string }> = [];
+  try {
+    const findCmd = crashDirs
+      .map((dir) => `find "${dir}" -maxdepth 1 \\( -name "*.ips" -o -name "*.crash" \\) 2>/dev/null`)
+      .join("; ");
 
-  for (const dir of crashDirs) {
-    if (!existsSync(dir)) continue;
-    try {
-      const files = readdirSync(dir).filter((f) => f.endsWith(".ips") || f.endsWith(".crash"));
-      for (const file of files) {
-        if (bundleId && !file.toLowerCase().includes(bundleId.toLowerCase())) continue;
-        const path = join(dir, file);
-        reports.push({ name: file, path, date: file });
-      }
-    } catch {
-      // Ignore permission errors
+    const output = execInVm(alloc.tartVmName, findCmd);
+    let files = output.trim().split("\n").filter(Boolean);
+
+    if (bundleId) {
+      files = files.filter((f) => f.toLowerCase().includes(bundleId.toLowerCase()));
     }
-  }
 
-  return { reports: reports.slice(-20) }; // Last 20 reports
+    const reports = files.slice(-20).map((path) => {
+      const name = path.split("/").pop() ?? path;
+      return { name, path, date: name };
+    });
+
+    return { reports };
+  } catch (error) {
+    console.error("ios_crash_reports failed:", error);
+    return { reports: [] };
+  }
 };
 
-const iosGetCrashReport: ToolHandler = async (params) => {
+const iosGetCrashReport: ToolHandler = async (params, allocationId) => {
+  const alloc = getAllocation(allocationId);
+  if (!alloc) throw new Error("Allocation not found");
+
   const path = params.path as string;
   if (!path) return { error: "path is required" };
 
   // Security: only allow reading from known crash report directories
-  const home = homedir();
-  if (!path.startsWith(join(home, "Library/Logs")) && !path.startsWith(join(home, "Library/Developer"))) {
+  if (!path.includes("Library/Logs") && !path.includes("Library/Developer")) {
     return { error: "Invalid path: must be in Library/Logs or Library/Developer" };
   }
 
   try {
-    const content = readFileSync(path, "utf-8");
+    const content = execInVm(alloc.tartVmName, `cat "${path}"`);
     return { content };
   } catch (error) {
     return { error: String(error) };

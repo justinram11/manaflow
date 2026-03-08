@@ -264,7 +264,6 @@ interface PortMap {
   proxy?: string;
   vscode?: string;
   worker?: string;
-  iosVnc?: string;
 }
 
 /**
@@ -396,39 +395,3 @@ export function toXtermBaseUrl(
   return null;
 }
 
-/**
- * Build an iOS simulator VNC websocket URL for noVNC connection.
- * Uses the iosVnc port from the port map.
- */
-export function toIosVncWebsocketUrl(
-  vscodeUrl: string,
-  provider: string,
-  ports?: PortMap,
-): string | null {
-  if ((provider === "docker" || provider === "incus" || provider === "aws") && ports?.iosVnc) {
-    try {
-      const vscodeTarget = new URL(vscodeUrl);
-      const proxiedUrl = createSecureWorkspaceProxyUrl(
-        vscodeTarget.hostname,
-        ports.iosVnc,
-        "/websockify"
-      );
-      if (proxiedUrl) {
-        const url = new URL(proxiedUrl);
-        url.protocol = "wss:";
-        return url.toString();
-      }
-
-      const url = new URL(vscodeUrl);
-      url.port = ports.iosVnc;
-      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-      url.pathname = "/websockify";
-      url.search = "";
-      url.hash = "";
-      return url.toString();
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}

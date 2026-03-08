@@ -1,9 +1,6 @@
-import { execSync } from "node:child_process";
-import { writeFileSync, unlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { ToolDefinition, ToolHandler } from "./index";
 import { getAllocation } from "../workspace-manager";
+import { execInVm } from "../tart-vm";
 
 const iosPushNotification: ToolHandler = async (params, allocationId) => {
   const alloc = getAllocation(allocationId);
@@ -12,17 +9,18 @@ const iosPushNotification: ToolHandler = async (params, allocationId) => {
   const bundleId = params.bundleId as string;
   const payload = params.payload as Record<string, unknown>;
 
-  const tmpPath = join(tmpdir(), `cmux-push-${Date.now()}.json`);
+  const tmpPath = `/tmp/cmux-push-${Date.now()}.json`;
+  const payloadJson = JSON.stringify(payload).replace(/'/g, "'\\''");
+
   try {
-    writeFileSync(tmpPath, JSON.stringify(payload));
-    execSync(
-      `xcrun simctl push "${alloc.simulatorUdid}" "${bundleId}" "${tmpPath}"`,
-      { encoding: "utf-8" },
+    execInVm(
+      alloc.tartVmName,
+      `printf '%s' '${payloadJson}' > "${tmpPath}" && xcrun simctl push "${alloc.simulatorUdid}" "${bundleId}" "${tmpPath}" && rm -f "${tmpPath}"`,
     );
-    unlinkSync(tmpPath);
     return { success: true };
   } catch (error) {
-    try { unlinkSync(tmpPath); } catch { /* ignore */ }
+    // Clean up temp file on failure
+    try { execInVm(alloc.tartVmName, `rm -f "${tmpPath}"`); } catch { /* ignore */ }
     return { error: String(error) };
   }
 };
@@ -35,9 +33,9 @@ const iosSetLocation: ToolHandler = async (params, allocationId) => {
   const lon = params.lon as number;
 
   try {
-    execSync(
+    execInVm(
+      alloc.tartVmName,
       `xcrun simctl location "${alloc.simulatorUdid}" set ${lat},${lon}`,
-      { encoding: "utf-8" },
     );
     return { success: true, lat, lon };
   } catch (error) {
@@ -52,7 +50,7 @@ const iosOpenUrl: ToolHandler = async (params, allocationId) => {
   const url = params.url as string;
 
   try {
-    execSync(`xcrun simctl openurl "${alloc.simulatorUdid}" "${url}"`, { encoding: "utf-8" });
+    execInVm(alloc.tartVmName, `xcrun simctl openurl "${alloc.simulatorUdid}" "${url}"`);
     return { success: true };
   } catch (error) {
     return { error: String(error) };
@@ -75,9 +73,9 @@ const iosSetPermission: ToolHandler = async (params, allocationId) => {
   const action = actionMap[value];
 
   try {
-    execSync(
+    execInVm(
+      alloc.tartVmName,
       `xcrun simctl privacy "${alloc.simulatorUdid}" ${action} "${permission}" "${bundleId}"`,
-      { encoding: "utf-8" },
     );
     return { success: true };
   } catch (error) {
@@ -93,9 +91,9 @@ const iosGetContainer: ToolHandler = async (params, allocationId) => {
   const containerType = (params.containerType as string) || "app";
 
   try {
-    const path = execSync(
+    const path = execInVm(
+      alloc.tartVmName,
       `xcrun simctl get_app_container "${alloc.simulatorUdid}" "${bundleId}" "${containerType}"`,
-      { encoding: "utf-8" },
     ).trim();
     return { path };
   } catch (error) {
@@ -114,7 +112,7 @@ const iosStatusBar: ToolHandler = async (params, allocationId) => {
   if (params.wifiBars !== undefined) args.push("--wifiBars", String(params.wifiBars));
 
   try {
-    execSync(args.join(" "), { encoding: "utf-8" });
+    execInVm(alloc.tartVmName, args.join(" "));
     return { success: true };
   } catch (error) {
     return { error: String(error) };

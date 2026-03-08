@@ -34,6 +34,26 @@ export function getOnlineByCapability(db: DbClient, teamSlugOrId: string, capabi
   return onlineProviders.filter((p: Provider) => p.capabilities?.includes(capability));
 }
 
+export function isProviderAtCapacity(
+  provider: { id: string; maxConcurrentSlots?: number | null },
+  activeAllocationCount: number,
+) {
+  return activeAllocationCount >= (provider.maxConcurrentSlots ?? 4);
+}
+
+export function getAvailableOnlineByCapability(
+  db: DbClient,
+  teamSlugOrId: string,
+  capability: string,
+) {
+  return getOnlineByCapability(db, teamSlugOrId, capability).filter(
+    (provider: Provider) => {
+      const activeAllocations = listActiveAllocationsByProvider(db, provider.id);
+      return !isProviderAtCapacity(provider, activeAllocations.length);
+    },
+  );
+}
+
 export function listAllocations(
   db: DbClient,
   opts: { providerId?: string; taskRunId?: string; status?: string },

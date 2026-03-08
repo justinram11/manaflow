@@ -747,6 +747,36 @@ export async function spawnAgent(
       `VSCode instance spawned for agent ${agent.name}: ${vscodeUrl}`
     );
 
+    const refreshedTask = getTaskById(db, teamSlugOrId, taskId);
+    if (refreshedTask?.isArchived) {
+      serverLogger.warn(
+        `[AgentSpawner] Task ${taskId} was archived during sandbox startup; stopping sandbox for run ${runId}`
+      );
+      try {
+        await vscodeInstance.stop();
+      } catch (error) {
+        serverLogger.error(
+          `[AgentSpawner] Failed stopping sandbox for archived task ${taskId}:`,
+          error
+        );
+      }
+
+      failTaskRun(
+        db,
+        runId,
+        "Task archived while sandbox was still starting",
+      );
+
+      return {
+        agentName: agent.name,
+        terminalId: "",
+        taskRunId,
+        worktreePath,
+        success: false,
+        error: "Task archived while sandbox was still starting",
+      };
+    }
+
     // Re-check for iOS allocation created during sandbox start (race condition fix:
     // agent.environment() runs before vscodeInstance.start(), but iOS allocation is
     // created during sandbox start, so iosResourceAllocationId is undefined on first pass)

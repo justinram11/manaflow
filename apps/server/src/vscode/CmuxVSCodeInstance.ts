@@ -12,6 +12,7 @@ const {
   getApiSandboxesByIdStatus,
   postApiSandboxesByIdPublishDevcontainer,
   postApiSandboxesByIdStop,
+  postApiSandboxesIncusByIdDestroy,
   postApiSandboxesStart,
 } = await getWwwOpenApiModule();
 
@@ -121,10 +122,17 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
     this.stopFileWatch();
     if (this.sandboxId) {
       try {
-        await postApiSandboxesByIdStop({
-          client: getWwwClient(),
-          path: { id: this.sandboxId },
-        });
+        if (this.provider === "incus") {
+          await postApiSandboxesIncusByIdDestroy({
+            client: getWwwClient(),
+            path: { id: this.sandboxId },
+          });
+        } else {
+          await postApiSandboxesByIdStop({
+            client: getWwwClient(),
+            path: { id: this.sandboxId },
+          });
+        }
       } catch (e) {
         dockerLogger.warn(`[CmuxVSCodeInstance] stop failed`, e);
       }

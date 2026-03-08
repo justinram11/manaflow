@@ -8,7 +8,9 @@ import type { DaemonConfig, JsonRpcRequest } from "./types";
 const INITIAL_RECONNECT_DELAY = 1000;
 const MAX_RECONNECT_DELAY = 30_000;
 const HEALTH_CHECK_INTERVAL_MS = 15_000;
-const PONG_TIMEOUT_MS = 45_000;
+// Resource handlers can block on synchronous build/sync commands. Allow the
+// websocket to stay up across those operations instead of self-reconnecting.
+const PONG_TIMEOUT_MS = 45 * 60 * 1000;
 
 function trimTrailingDot(value: string): string {
   return value.endsWith(".") ? value.slice(0, -1) : value;
@@ -52,6 +54,26 @@ function getProviderBrowserBaseUrl(capabilities: string[]): string | null {
 
   return null;
 }
+
+function getAdvertisedMaxConcurrentSlots(
+  capabilities: string[],
+  configuredMaxConcurrentSlots?: number,
+): number | undefined {
+  if (configuredMaxConcurrentSlots !== undefined) {
+    return configuredMaxConcurrentSlots;
+  }
+
+  const isIosOnlyProvider =
+    capabilities.includes("resource:ios-simulator") &&
+    !capabilities.includes("compute:incus");
+
+  if (isIosOnlyProvider) {
+    return 1;
+  }
+
+  return undefined;
+}
+
 
 export class WsClient {
   private ws: WebSocket | null = null;
@@ -175,8 +197,20 @@ export class WsClient {
 
     // JSON-RPC requests
     if (msg.jsonrpc === "2.0" && msg.method && msg.id !== undefined) {
-      const response = await this.registry.handleRequest(msg as JsonRpcRequest);
-      this.send(response);
+      try {
+        const response = await this.registry.handleRequest(msg as JsonRpcRequest);
+        this.send(response);
+      } catch (error) {
+        console.error(`[ws-client] Unhandled error in handler for ${msg.method}:`, error);
+        this.send({
+          jsonrpc: "2.0",
+          error: {
+            code: -32603,
+            message: error instanceof Error ? error.message : "Internal handler error",
+          },
+          id: msg.id,
+        });
+      }
     }
   }
 
@@ -239,6 +273,10 @@ export class WsClient {
 
   private getSystemInfo(): Record<string, unknown> {
     const capabilities = this.registry.getCapabilities();
+    const advertisedMaxConcurrentSlots = getAdvertisedMaxConcurrentSlots(
+      capabilities,
+      this.config.maxConcurrentSlots,
+    );
     const info: Record<string, unknown> = {
       platform: platform(),
       arch: arch(),
@@ -256,6 +294,10 @@ export class WsClient {
       }
     } catch {
       // Ignore
+    }
+
+    if (advertisedMaxConcurrentSlots !== undefined) {
+      info.maxConcurrentSlots = advertisedMaxConcurrentSlots;
     }
 
     // Get metadata (xcode version, incus version, etc.)

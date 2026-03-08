@@ -23,6 +23,12 @@ interface RFBOptions {
   wsProtocols?: string[];
 }
 
+interface RFBCredentials {
+  username?: string;
+  password?: string;
+  target?: string;
+}
+
 interface RFBInstance {
   scaleViewport: boolean;
   clipViewport: boolean;
@@ -53,6 +59,10 @@ interface RFBInstance {
     type: string,
     listener: (event: CustomEvent) => void
   ): void;
+}
+
+interface RFBInstanceInternal extends RFBInstance {
+  _isSupportedSecurityType?: (type: number) => boolean;
 }
 
 interface RFBConstructor {
@@ -118,6 +128,10 @@ export interface VncViewerProps {
   loadingFallback?: ReactNode;
   /** Error fallback element */
   errorFallback?: ReactNode;
+  /** Credentials to pre-seed into the VNC handshake */
+  credentials?: RFBCredentials;
+  /** Restrict the noVNC security scheme selection */
+  preferredSecurityType?: "vnc-auth";
   /** Called when connection is established */
   onConnect?: (rfb: RFBInstance) => void;
   /** Called when connection is closed */
@@ -145,6 +159,8 @@ export interface VncViewerProps {
 export interface VncViewerHandle {
   /** Connect to the VNC server */
   connect: () => void;
+  /** Force a fresh connection to the current VNC server */
+  reconnect: () => void;
   /** Disconnect from the VNC server */
   disconnect: () => void;
   /** Get current connection status */
@@ -210,6 +226,8 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
       focusOnClick = true,
       loadingFallback,
       errorFallback,
+      credentials,
+      preferredSecurityType,
       onConnect,
       onDisconnect,
       onCredentialsRequired,
@@ -221,6 +239,7 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
     },
     ref
   ) {
+    const rootRef = useRef<HTMLDivElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const rfbRef = useRef<RFBInstance | null>(null);
     const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -232,6 +251,8 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
     const urlRef = useRef(url);
     const shouldReconnectRef = useRef(autoReconnect);
     const connectInternalRef = useRef<(() => Promise<void>) | null>(null);
+    const statusRef = useRef<VncConnectionStatus>("disconnected");
+    const connectionUrlRef = useRef<string | null>(null);
 
     const [status, setStatus] = useState<VncConnectionStatus>("disconnected");
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -249,6 +270,7 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
 
     const updateStatus = useCallback(
       (newStatus: VncConnectionStatus, error?: string) => {
+        statusRef.current = newStatus;
         setStatus(newStatus);
         if (newStatus === "error") {
           setErrorMessage(error ?? "Connection failed");
@@ -266,6 +288,46 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
       }
+    }, []);
+
+    const resetPointerInteractivity = useCallback(() => {
+      const elements = [
+        rootRef.current,
+        containerRef.current,
+        ...Array.from(containerRef.current?.querySelectorAll("canvas") ?? []),
+      ];
+
+      for (const element of elements) {
+        if (!(element instanceof HTMLElement)) {
+          continue;
+        }
+
+        element.style.removeProperty("pointer-events");
+        delete element.dataset.prevPointerEvents;
+      }
+    }, []);
+
+    const isRootActuallyVisible = useCallback(() => {
+      const root = rootRef.current;
+      if (!root || !root.isConnected) {
+        return false;
+      }
+
+      const rect = root.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) {
+        return false;
+      }
+
+      let element: HTMLElement | null = root;
+      while (element) {
+        const style = window.getComputedStyle(element);
+        if (style.display === "none" || style.visibility === "hidden") {
+          return false;
+        }
+        element = element.parentElement;
+      }
+
+      return true;
     }, []);
 
     const scheduleReconnect = useCallback(
@@ -309,6 +371,21 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
         return;
       }
 
+      const wsUrl = urlRef.current;
+      if (!wsUrl) {
+        updateStatus("error", "Missing VNC URL");
+        return;
+      }
+
+      if (
+        connectionUrlRef.current === wsUrl &&
+        (rfbRef.current !== null || statusRef.current === "connecting")
+      ) {
+        return;
+      }
+
+      clearReconnectTimer();
+
       if (rfbRef.current) {
         try {
           rfbRef.current.disconnect();
@@ -318,17 +395,27 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
         rfbRef.current = null;
       }
 
+      connectionUrlRef.current = wsUrl;
       updateStatus("connecting");
 
       try {
         const RFB = await loadRFB();
         if (isUnmountedRef.current) return;
 
-        const wsUrl = urlRef.current;
         const rfb = new RFB(containerRef.current, wsUrl, {
-          credentials: undefined,
+          credentials,
           wsProtocols: ["binary"],
         });
+        const internalRfb = rfb as RFBInstanceInternal;
+
+        if (preferredSecurityType === "vnc-auth") {
+          const originalIsSupportedSecurityType =
+            internalRfb._isSupportedSecurityType?.bind(rfb);
+          if (originalIsSupportedSecurityType) {
+            internalRfb._isSupportedSecurityType = (type: number) =>
+              type === 2 && originalIsSupportedSecurityType(type);
+          }
+        }
 
         rfb.scaleViewport = scaleViewport;
         rfb.clipViewport = clipViewport;
@@ -341,6 +428,7 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
 
         rfb.addEventListener("connect", () => {
           if (isUnmountedRef.current) return;
+          resetPointerInteractivity();
           reconnectAttemptsRef.current = 0;
           currentReconnectDelayRef.current = reconnectDelay;
           updateStatus("connected");
@@ -351,7 +439,12 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
           if (isUnmountedRef.current) return;
           const detail = (e as CustomEvent<{ clean: boolean }>).detail;
           const isClean = detail?.clean ?? false;
-          rfbRef.current = null;
+          if (rfbRef.current === rfb) {
+            rfbRef.current = null;
+          }
+          if (connectionUrlRef.current === wsUrl) {
+            connectionUrlRef.current = null;
+          }
           updateStatus("disconnected");
           onDisconnect?.(rfb, detail ?? { clean: false });
 
@@ -396,6 +489,7 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
 
         rfbRef.current = rfb;
       } catch (error) {
+        connectionUrlRef.current = null;
         console.error("[VncViewer] Failed to create RFB connection:", error);
         const errorMsg =
           error instanceof Error ? error.message : "Failed to connect";
@@ -413,7 +507,9 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
       showDotCursor,
       qualityLevel,
       compressionLevel,
-      reconnectDelay,
+      credentials,
+      preferredSecurityType,
+      clearReconnectTimer,
       updateStatus,
       scheduleReconnect,
       onConnect,
@@ -423,6 +519,7 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
       onClipboard,
       onDesktopName,
       onCapabilities,
+      resetPointerInteractivity,
     ]);
 
     useEffect(() => {
@@ -431,10 +528,30 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
 
     const connect = useCallback(() => {
       clearReconnectTimer();
+      shouldReconnectRef.current = autoReconnect;
       reconnectAttemptsRef.current = 0;
       currentReconnectDelayRef.current = reconnectDelay;
       connectInternal();
-    }, [clearReconnectTimer, reconnectDelay, connectInternal]);
+    }, [autoReconnect, clearReconnectTimer, reconnectDelay, connectInternal]);
+
+    const reconnect = useCallback(() => {
+      clearReconnectTimer();
+      shouldReconnectRef.current = autoReconnect;
+      reconnectAttemptsRef.current = 0;
+      currentReconnectDelayRef.current = reconnectDelay;
+      connectionUrlRef.current = null;
+
+      if (rfbRef.current) {
+        try {
+          rfbRef.current.disconnect();
+        } catch (e) {
+          console.error("[VncViewer] Error during reconnect cleanup:", e);
+        }
+        rfbRef.current = null;
+      }
+
+      connectInternal();
+    }, [autoReconnect, clearReconnectTimer, reconnectDelay, connectInternal]);
 
     const prevOnlineRef = useRef(network.online);
     useEffect(() => {
@@ -449,6 +566,7 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
     const disconnect = useCallback(() => {
       clearReconnectTimer();
       shouldReconnectRef.current = false;
+      connectionUrlRef.current = null;
       if (rfbRef.current) {
         try {
           rfbRef.current.disconnect();
@@ -833,6 +951,7 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
       ref,
       () => ({
         connect,
+        reconnect,
         disconnect,
         getStatus: () => status,
         isConnected: () => status === "connected",
@@ -848,7 +967,16 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
         machineReboot: () => rfbRef.current?.machineReboot(),
         machineReset: () => rfbRef.current?.machineReset(),
       }),
-      [connect, disconnect, status, clipboardPaste, focus, blur, getCanvasMetrics]
+      [
+        connect,
+        reconnect,
+        disconnect,
+        status,
+        clipboardPaste,
+        focus,
+        blur,
+        getCanvasMetrics,
+      ]
     );
 
     useEffect(() => {
@@ -857,18 +985,78 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
       if (autoConnect) {
         const timer = setTimeout(() => {
           if (!isUnmountedRef.current) {
-            connect();
+            connectInternalRef.current?.();
           }
         }, 100);
         return () => clearTimeout(timer);
       }
       return undefined;
-    }, [autoConnect, connect]);
+    }, [autoConnect]);
+
+    useEffect(() => {
+      resetPointerInteractivity();
+    }, [resetPointerInteractivity]);
+
+    useEffect(() => {
+      let wasHidden = document.visibilityState === "hidden";
+
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === "hidden") {
+          wasHidden = true;
+          return;
+        }
+
+        if (wasHidden) {
+          wasHidden = false;
+          reconnect();
+        }
+      };
+
+      const handlePageShow = (event: PageTransitionEvent) => {
+        if (event.persisted) {
+          reconnect();
+        }
+      };
+
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+      window.addEventListener("pageshow", handlePageShow);
+
+      return () => {
+        document.removeEventListener(
+          "visibilitychange",
+          handleVisibilityChange
+        );
+        window.removeEventListener("pageshow", handlePageShow);
+      };
+    }, [reconnect]);
+
+    useEffect(() => {
+      let wasVisible = isRootActuallyVisible();
+
+      const checkVisibility = () => {
+        const isVisible = isRootActuallyVisible();
+        if (!wasVisible && isVisible) {
+          reconnect();
+        }
+        wasVisible = isVisible;
+      };
+
+      const interval = window.setInterval(checkVisibility, 750);
+      window.addEventListener("focus", checkVisibility);
+      window.addEventListener("resize", checkVisibility);
+
+      return () => {
+        window.clearInterval(interval);
+        window.removeEventListener("focus", checkVisibility);
+        window.removeEventListener("resize", checkVisibility);
+      };
+    }, [isRootActuallyVisible, reconnect]);
 
     useEffect(() => {
       return () => {
         isUnmountedRef.current = true;
         clearReconnectTimer();
+        connectionUrlRef.current = null;
         if (rfbRef.current) {
           try {
             rfbRef.current.disconnect();
@@ -881,10 +1069,13 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
     }, [clearReconnectTimer]);
 
     useEffect(() => {
-      if (status === "connected" || status === "connecting") {
-        connect();
+      if (
+        url &&
+        connectionUrlRef.current &&
+        connectionUrlRef.current !== url
+      ) {
+        connectInternalRef.current?.();
       }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [url]);
 
     const handleContainerClick = useCallback(() => {
@@ -999,7 +1190,8 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
 
     return (
       <div
-        className={clsx("overflow-hidden", className)}
+        ref={rootRef}
+        className={clsx("relative overflow-hidden", className)}
         style={{ background, ...style }}
         onClick={handleContainerClick}
         onContextMenu={handleContextMenu}

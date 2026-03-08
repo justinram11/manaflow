@@ -198,6 +198,31 @@ describe.sequential("RepositoryManager branch behavior (no fallbacks)", () => {
     }
   }, 120_000);
 
+  it("can run git commands when the process cwd was deleted", async () => {
+    const mgr = RepositoryManager.getInstance({ fetchDepth: 1 });
+    const repo = REPOS[0];
+    const projectDir = path.join(TEST_BASE, "deleted-cwd");
+    const originPath = path.join(projectDir, "origin");
+    const deletedCwd = path.join(projectDir, "deleted-parent");
+    const originalCwd = process.cwd();
+
+    await fs.mkdir(projectDir, { recursive: true });
+    await mgr.ensureRepository(repo.url, originPath);
+
+    await fs.mkdir(deletedCwd, { recursive: true });
+    process.chdir(deletedCwd);
+    await fs.rm(deletedCwd, { recursive: true, force: true });
+
+    try {
+      const detected = await mgr.getDefaultBranch(originPath);
+      expect(detected).toBe(repo.defaultBranch);
+      await mgr.updateRemoteBranchIfStale(originPath, repo.defaultBranch, 0);
+      expect(await getHeadBranch(originPath)).toBe(repo.defaultBranch);
+    } finally {
+      process.chdir(originalCwd);
+    }
+  }, 120_000);
+
   it("worktreeExists correctly identifies exact path matches", async () => {
     const mgr = RepositoryManager.getInstance({ fetchDepth: 1 });
     const repo = REPOS[0]; // sindresorhus/is

@@ -653,7 +653,7 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
       return panelWrapper(
         <Smartphone className="size-3" aria-hidden />,
         PANEL_LABELS.simulator,
-        <div className={clsx("relative flex-1 min-h-0 overflow-hidden", isExpanded && "h-full")}>
+        <div className={clsx("relative flex flex-col flex-1 min-h-0 overflow-hidden", isExpanded && "h-full")}>
           {simulatorRunId ? (
             <TaskRunSimulatorPane taskRunId={simulatorRunId} />
           ) : showSimLoader && WorkspaceLoadingIndicator ? (

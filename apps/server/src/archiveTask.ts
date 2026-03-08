@@ -1,4 +1,6 @@
 import { getTaskRunsByTask } from "@cmux/db/queries/task-runs";
+import { releaseAllocation } from "@cmux/db/mutations/providers";
+import { getAllocationById } from "@cmux/db/queries/providers";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { getDb } from "./utils/dbClient";
@@ -15,6 +17,66 @@ export interface StopResult {
   containerName: string;
   provider: VSCodeProvider;
   error?: unknown;
+}
+
+async function releaseIosAllocationForRun(run: unknown): Promise<void> {
+  if (typeof run !== "object" || run === null) {
+    return;
+  }
+
+  const vscode = Reflect.get(Object(run), "vscode");
+  if (typeof vscode !== "object" || vscode === null) {
+    return;
+  }
+
+  const allocationId = Reflect.get(Object(vscode), "iosResourceAllocationId");
+  if (typeof allocationId !== "string" || allocationId.length === 0) {
+    return;
+  }
+
+  const db = getDb();
+  const allocation = getAllocationById(db, allocationId);
+  if (!allocation || allocation.status !== "active") {
+    return;
+  }
+
+  releaseAllocation(db, allocationId);
+
+  const allocationData =
+    allocation.data && typeof allocation.data === "object" ? allocation.data : {};
+  const serverUrl = process.env.CMUX_SERVER_INTERNAL_URL ?? "http://localhost:9776";
+
+  try {
+    const cleanupRes = await fetch(
+      `${serverUrl}/internal/provider/${allocation.providerId}/cleanup-allocation`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          allocationId,
+          buildDir:
+            typeof allocationData.buildDir === "string"
+              ? allocationData.buildDir
+              : undefined,
+          simulatorUdid:
+            typeof allocationData.simulatorUdid === "string"
+              ? allocationData.simulatorUdid
+              : undefined,
+        }),
+      },
+    );
+    if (!cleanupRes.ok) {
+      const errorText = await cleanupRes.text();
+      throw new Error(
+        `cleanup-allocation failed for ${allocationId}: HTTP ${cleanupRes.status} ${errorText}`,
+      );
+    }
+    serverLogger.info(
+      `Released iOS allocation ${allocationId} during archive cleanup`,
+    );
+  } catch (error) {
+    console.error("[archiveTask] Failed to notify iOS allocation cleanup:", error);
+  }
 }
 
 async function stopDockerContainer(containerName: string): Promise<void> {
@@ -82,7 +144,7 @@ export async function stopContainersForRuns(
   return stopContainersForRunsFromTree(runs, taskId);
 }
 
-export function stopContainersForRunsFromTree(
+export async function stopContainersForRunsFromTree(
   tree: unknown[],
   taskIdLabel?: string
 ): Promise<StopResult[]> {
@@ -103,6 +165,16 @@ export function stopContainersForRunsFromTree(
   if (typeof taskIdLabel === "string") {
     serverLogger.info(`Archiving task ${taskIdLabel} with ${flat.length} runs`);
   }
+
+  await Promise.all(
+    flat.map(async (run) => {
+      try {
+        await releaseIosAllocationForRun(run);
+      } catch (error) {
+        console.error("[archiveTask] Failed to release iOS allocation:", error);
+      }
+    }),
+  );
 
   // Collect valid docker/morph targets
   const targets: {

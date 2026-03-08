@@ -10,6 +10,7 @@
     "typecheck": "bunx tsgo --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@cmux/mac-resource-provider": "workspace:*",
     "ws": "^8.18.2",
     "zod": "^3.25.67",
     "p-limit": "^6.2.0"

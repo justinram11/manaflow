@@ -1,26 +1,121 @@
-import { execSync } from "node:child_process";
-import { mkdirSync, rmSync, existsSync } from "node:fs";
-import { captureManager } from "./capture-manager";
+import {
+  execInVm,
+  cloneVm,
+  startVm,
+  stopVm,
+  deleteVm,
+  waitForGuest,
+  getVmIp,
+  startVncProxy,
+  stopVncProxy,
+  copyFileToVm,
+} from "./tart-vm";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-interface AllocationInfo {
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const SIMULATOR_INPUT_SWIFT_PATH = resolve(__dirname, "../capture/SimulatorInput.swift");
+const VM_SIMULATOR_INPUT_PATH = "/tmp/cmux-SimulatorInput.swift";
+
+export interface AllocationInfo {
   allocationId: string;
   buildDir: string;
   simulatorUdid?: string;
   simulatorDeviceType: string;
   simulatorRuntime: string;
-  capturePort?: number;
   rsyncEndpoint?: string;
   rsyncSecret?: string;
   accessToken?: string;
+  tartVmName: string;
+  tartVmIp?: string;
+  vncPort?: number;
 }
 
 const allocations = new Map<string, AllocationInfo>();
 
-function findExistingSimulatorUdid(simName: string): string | undefined {
+function listAvailableIosRuntimeIdentifiers(vmName: string): string[] {
   try {
-    const output = execSync("xcrun simctl list devices --json", {
-      encoding: "utf-8",
-    });
+    const output = execInVm(vmName, "xcrun simctl list runtimes --json");
+    const parsed = JSON.parse(output) as {
+      runtimes?: Array<{
+        identifier?: string;
+        isAvailable?: boolean;
+      }>;
+    };
+
+    return (parsed.runtimes ?? [])
+      .filter(
+        (runtime) =>
+          runtime.identifier?.startsWith("com.apple.CoreSimulator.SimRuntime.iOS-") &&
+          runtime.isAvailable !== false,
+      )
+      .map((runtime) => runtime.identifier)
+      .filter((identifier): identifier is string => Boolean(identifier));
+  } catch (error) {
+    console.error("Failed to list iOS runtimes:", error);
+    return [];
+  }
+}
+
+function listAvailableIphoneDeviceTypes(vmName: string): string[] {
+  try {
+    const output = execInVm(vmName, "xcrun simctl list devicetypes --json");
+    const parsed = JSON.parse(output) as {
+      devicetypes?: Array<{
+        name?: string;
+        productFamily?: string;
+      }>;
+    };
+
+    return (parsed.devicetypes ?? [])
+      .filter(
+        (deviceType) =>
+          deviceType.productFamily === "iPhone" || deviceType.name?.startsWith("iPhone "),
+      )
+      .map((deviceType) => deviceType.name)
+      .filter((name): name is string => Boolean(name));
+  } catch (error) {
+    console.error("Failed to list iPhone device types:", error);
+    return [];
+  }
+}
+
+function resolveSimulatorTarget(
+  vmName: string,
+  simulatorDeviceType: string,
+  simulatorRuntime: string,
+): {
+  simulatorDeviceType: string;
+  simulatorRuntime: string;
+} {
+  const availableRuntimes = listAvailableIosRuntimeIdentifiers(vmName);
+  const availableDeviceTypes = listAvailableIphoneDeviceTypes(vmName);
+
+  const resolvedRuntime = availableRuntimes.includes(simulatorRuntime)
+    ? simulatorRuntime
+    : availableRuntimes[0] ?? simulatorRuntime;
+  const resolvedDeviceType = availableDeviceTypes.includes(simulatorDeviceType)
+    ? simulatorDeviceType
+    : availableDeviceTypes[0] ?? simulatorDeviceType;
+
+  if (
+    resolvedRuntime !== simulatorRuntime ||
+    resolvedDeviceType !== simulatorDeviceType
+  ) {
+    console.log(
+      `[workspace-manager] Requested simulator ${simulatorDeviceType} / ${simulatorRuntime} not fully available, using ${resolvedDeviceType} / ${resolvedRuntime}`,
+    );
+  }
+
+  return {
+    simulatorDeviceType: resolvedDeviceType,
+    simulatorRuntime: resolvedRuntime,
+  };
+}
+
+function findExistingSimulatorUdid(vmName: string, simName: string): string | undefined {
+  try {
+    const output = execInVm(vmName, "xcrun simctl list devices --json");
     const parsed = JSON.parse(output) as {
       devices?: Record<string, Array<{
         name?: string;
@@ -42,13 +137,13 @@ function findExistingSimulatorUdid(simName: string): string | undefined {
   }
 }
 
-export function setupAllocation(params: {
+export async function setupAllocation(params: {
   allocationId: string;
   buildDir: string;
   simulatorDeviceType: string;
   simulatorRuntime: string;
-}): AllocationInfo {
-  const { allocationId, buildDir, simulatorDeviceType, simulatorRuntime } = params;
+}): Promise<AllocationInfo> {
+  const { allocationId, buildDir } = params;
 
   const existing = allocations.get(allocationId);
   if (existing) {
@@ -58,21 +153,46 @@ export function setupAllocation(params: {
     return existing;
   }
 
-  // Create build directory
-  mkdirSync(buildDir, { recursive: true });
-  console.log(`Created build directory: ${buildDir}`);
+  // 1. Clone and start a fresh Tart VM for this allocation
+  const vmName = `cmux-${allocationId.slice(0, 12)}`;
+  cloneVm(vmName);
+  startVm(vmName);
+  waitForGuest(vmName);
 
-  // Create dedicated simulator
+  // 2. Get VM IP and start VNC proxy on the host
+  const vmIp = getVmIp(vmName);
+  let vncPort: number | undefined;
+  if (vmIp) {
+    vncPort = startVncProxy(vmName, vmIp);
+  }
+
+  // 3. Copy SimulatorInput.swift into the VM
+  try {
+    copyFileToVm(vmName, SIMULATOR_INPUT_SWIFT_PATH, VM_SIMULATOR_INPUT_PATH);
+  } catch (error) {
+    console.error("[workspace-manager] Failed to copy SimulatorInput.swift:", error);
+  }
+
+  // 4. Resolve simulator target against what's available in this VM
+  const {
+    simulatorDeviceType,
+    simulatorRuntime,
+  } = resolveSimulatorTarget(vmName, params.simulatorDeviceType, params.simulatorRuntime);
+
+  // 5. Create build directory inside the VM
+  execInVm(vmName, `mkdir -p "${buildDir}"`);
+
+  // 6. Create dedicated simulator inside the VM
   let simulatorUdid: string | undefined;
   const simName = `cmux-${allocationId.slice(0, 8)}`;
   try {
-    simulatorUdid = findExistingSimulatorUdid(simName);
+    simulatorUdid = findExistingSimulatorUdid(vmName, simName);
     if (simulatorUdid) {
       console.log(`Reusing simulator: ${simName} (${simulatorUdid})`);
     } else {
-      const output = execSync(
+      const output = execInVm(
+        vmName,
         `xcrun simctl create "${simName}" "${simulatorDeviceType}" "${simulatorRuntime}"`,
-        { encoding: "utf-8" },
       ).trim();
       simulatorUdid = output;
       console.log(`Created simulator: ${simName} (${simulatorUdid})`);
@@ -87,7 +207,11 @@ export function setupAllocation(params: {
     simulatorUdid,
     simulatorDeviceType,
     simulatorRuntime,
+    tartVmName: vmName,
+    tartVmIp: vmIp ?? undefined,
+    vncPort,
   };
+
   // Apply any pending rsync info that arrived before allocation was set up
   const pending = pendingRsyncInfo.get(allocationId);
   if (pending) {
@@ -105,32 +229,14 @@ export function cleanupAllocation(params: {
   buildDir?: string | null;
   simulatorUdid?: string | null;
 }): void {
-  const { allocationId, buildDir, simulatorUdid } = params;
+  const { allocationId } = params;
   const info = allocations.get(allocationId);
 
-  captureManager.stopCapture(allocationId);
-
-  // Clean up build directory
-  const dir = buildDir ?? info?.buildDir;
-  if (dir && existsSync(dir)) {
-    try {
-      rmSync(dir, { recursive: true, force: true });
-      console.log(`Removed build directory: ${dir}`);
-    } catch (error) {
-      console.error(`Failed to remove build directory ${dir}:`, error);
-    }
-  }
-
-  // Delete simulator
-  const udid = simulatorUdid ?? info?.simulatorUdid;
-  if (udid) {
-    try {
-      execSync(`xcrun simctl shutdown "${udid}" 2>/dev/null || true`, { encoding: "utf-8" });
-      execSync(`xcrun simctl delete "${udid}"`, { encoding: "utf-8" });
-      console.log(`Deleted simulator: ${udid}`);
-    } catch (error) {
-      console.error(`Failed to delete simulator ${udid}:`, error);
-    }
+  if (info?.tartVmName) {
+    // Stop VNC proxy, then stop and delete the VM
+    stopVncProxy(info.tartVmName);
+    stopVm(info.tartVmName);
+    deleteVm(info.tartVmName);
   }
 
   allocations.delete(allocationId);
@@ -145,42 +251,22 @@ export function getAllAllocations(): AllocationInfo[] {
 }
 
 /**
- * Boot the simulator for an allocation (if not already booted)
+ * Boot the simulator for an allocation (if not already booted).
+ * Runs Simulator.app inside the Tart VM's GUI.
  */
 export function bootSimulator(allocationId: string): string | undefined {
   const info = allocations.get(allocationId);
   if (!info?.simulatorUdid) return undefined;
 
   try {
-    execSync(`xcrun simctl boot "${info.simulatorUdid}" 2>/dev/null || true`, { encoding: "utf-8" });
-    execSync(`open -a Simulator --args -CurrentDeviceUDID "${info.simulatorUdid}"`, {
-      encoding: "utf-8",
-    });
+    execInVm(info.tartVmName, `xcrun simctl boot "${info.simulatorUdid}" 2>/dev/null || true`);
+    // Open Simulator.app inside the VM's GUI so it's visible via VNC
+    execInVm(info.tartVmName, `open -a Simulator --args -CurrentDeviceUDID "${info.simulatorUdid}"`);
     return info.simulatorUdid;
   } catch (error) {
     console.error("Failed to boot simulator:", error);
     return info.simulatorUdid;
   }
-}
-
-export function ensureSimulatorCapture(
-  allocationId: string,
-  localPort: number,
-  fps = 30,
-): string | undefined {
-  const info = allocations.get(allocationId);
-  if (!info?.simulatorUdid) return undefined;
-
-  const simulatorUdid = bootSimulator(allocationId);
-  if (!simulatorUdid) return undefined;
-
-  if (info.capturePort === localPort && captureManager.isCapturing(allocationId)) {
-    return simulatorUdid;
-  }
-
-  info.capturePort = localPort;
-  captureManager.startCapture(allocationId, simulatorUdid, localPort, fps);
-  return simulatorUdid;
 }
 
 /**
@@ -190,7 +276,6 @@ export function setRsyncInfo(allocationId: string, rsyncEndpoint: string, rsyncS
   const info = allocations.get(allocationId);
   if (!info) {
     console.warn(`[workspace-manager] setRsyncInfo: no allocation found for ${allocationId}, will store when allocation is created`);
-    // Store for later — the allocation may not be set up yet
     pendingRsyncInfo.set(allocationId, { rsyncEndpoint, rsyncSecret });
     return;
   }

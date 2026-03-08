@@ -84,8 +84,6 @@ export interface TaskRunWithChildren {
       vnc?: string;
       pty?: string;
       iosMcp?: string;
-      iosVnc?: string;
-      iosVncIn?: string;
       iosRsyncd?: string;
     };
     url?: string;
@@ -93,8 +91,7 @@ export interface TaskRunWithChildren {
     iosResourceAllocationId?: string;
     iosDirectToken?: string;
     iosProviderBrowserBaseUrl?: string;
-    iosProviderHostname?: string;
-    iosProviderVncPort?: number | string;
+    iosProviderTailscaleHost?: string;
     startedAt?: number;
     stoppedAt?: number;
     lastAccessedAt?: number;

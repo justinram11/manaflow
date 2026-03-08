@@ -1,22 +1,19 @@
-import { execFileSync, execSync, spawnSync } from "node:child_process";
-import { readFileSync, unlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { ToolDefinition, ToolHandler } from "./index";
 import { getAllocation } from "../workspace-manager";
+import { execInVm } from "../tart-vm";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const simulatorInputSwiftPath = resolve(__dirname, "../../capture/SimulatorInput.swift");
+const VM_SIMULATOR_INPUT_PATH = "/tmp/cmux-SimulatorInput.swift";
 
 function runSimulatorInput(
+  vmName: string,
   simulatorUdid: string,
   args: string[],
 ): Record<string, unknown> {
-  const output = execFileSync(
-    "swift",
-    [simulatorInputSwiftPath, "--udid", simulatorUdid, ...args],
-    { encoding: "utf-8" },
+  const argsStr = args.map((a) => `"${a}"`).join(" ");
+  const output = execInVm(
+    vmName,
+    `swift "${VM_SIMULATOR_INPUT_PATH}" --udid "${simulatorUdid}" ${argsStr}`,
+    { timeout: 30_000 },
   );
 
   return JSON.parse(output) as Record<string, unknown>;
@@ -27,17 +24,21 @@ const iosScreenshot: ToolHandler = async (params, allocationId) => {
   if (!alloc?.simulatorUdid) return { error: "No simulator assigned" };
 
   const format = (params.format as string) || "png";
-  const tmpPath = join(tmpdir(), `cmux-screenshot-${Date.now()}.${format}`);
+  const tmpPath = `/tmp/cmux-screenshot-${Date.now()}.${format}`;
 
   try {
-    execSync(
+    execInVm(
+      alloc.tartVmName,
       `xcrun simctl io "${alloc.simulatorUdid}" screenshot --type=${format} "${tmpPath}"`,
-      { encoding: "utf-8" },
     );
-    const data = readFileSync(tmpPath);
-    unlinkSync(tmpPath);
+    // Read file from VM as base64
+    const base64 = execInVm(
+      alloc.tartVmName,
+      `base64 -i "${tmpPath}" && rm -f "${tmpPath}"`,
+    ).trim().replace(/\s/g, "");
+
     return {
-      image: data.toString("base64"),
+      image: base64,
       mimeType: format === "jpeg" ? "image/jpeg" : "image/png",
     };
   } catch (error) {
@@ -51,24 +52,24 @@ const iosRecordVideo: ToolHandler = async (params, allocationId) => {
   if (!alloc?.simulatorUdid) return { error: "No simulator assigned" };
 
   const duration = (params.duration as number) || 5;
-  const tmpPath = join(tmpdir(), `cmux-recording-${Date.now()}.mp4`);
+  const tmpPath = `/tmp/cmux-recording-${Date.now()}.mp4`;
 
   try {
-    const proc = spawnSync("xcrun", [
-      "simctl", "io", alloc.simulatorUdid, "recordVideo", "--codec=h264", tmpPath,
-    ], {
-      timeout: (duration + 5) * 1000,
-      killSignal: "SIGINT",
-    });
+    // Record video in VM: start recording, wait for duration, then kill it
+    execInVm(
+      alloc.tartVmName,
+      `xcrun simctl io "${alloc.simulatorUdid}" recordVideo --codec=h264 "${tmpPath}" &` +
+      ` RECORD_PID=$!; sleep ${duration}; kill -INT $RECORD_PID; wait $RECORD_PID 2>/dev/null || true`,
+      { timeout: (duration + 10) * 1000 },
+    );
 
-    if (proc.error && (proc.error as NodeJS.ErrnoException).code !== "ETIMEDOUT") {
-      return { error: String(proc.error) };
-    }
+    const base64 = execInVm(
+      alloc.tartVmName,
+      `base64 -i "${tmpPath}" && rm -f "${tmpPath}"`,
+    ).trim().replace(/\s/g, "");
 
-    const data = readFileSync(tmpPath);
-    unlinkSync(tmpPath);
     return {
-      video: data.toString("base64"),
+      video: base64,
       mimeType: "video/mp4",
       durationSeconds: duration,
     };
@@ -87,13 +88,10 @@ const iosTap: ToolHandler = async (params, allocationId) => {
 
   try {
     return {
-      ...runSimulatorInput(alloc.simulatorUdid, [
-        "--action",
-        "tap",
-        "--x",
-        String(x),
-        "--y",
-        String(y),
+      ...runSimulatorInput(alloc.tartVmName, alloc.simulatorUdid, [
+        "--action", "tap",
+        "--x", String(x),
+        "--y", String(y),
       ]),
       x,
       y,
@@ -117,19 +115,13 @@ const iosSwipe: ToolHandler = async (params, allocationId) => {
   const duration = (params.duration as number) || 0.3;
 
   try {
-    return runSimulatorInput(alloc.simulatorUdid, [
-      "--action",
-      "swipe",
-      "--from-x",
-      String(fromX),
-      "--from-y",
-      String(fromY),
-      "--to-x",
-      String(toX),
-      "--to-y",
-      String(toY),
-      "--duration",
-      String(duration),
+    return runSimulatorInput(alloc.tartVmName, alloc.simulatorUdid, [
+      "--action", "swipe",
+      "--from-x", String(fromX),
+      "--from-y", String(fromY),
+      "--to-x", String(toX),
+      "--to-y", String(toY),
+      "--duration", String(duration),
     ]);
   } catch (error) {
     console.error("ios_swipe failed", error);
@@ -145,11 +137,9 @@ const iosTypeText: ToolHandler = async (params, allocationId) => {
 
   try {
     return {
-      ...runSimulatorInput(alloc.simulatorUdid, [
-        "--action",
-        "type",
-        "--text",
-        text,
+      ...runSimulatorInput(alloc.tartVmName, alloc.simulatorUdid, [
+        "--action", "type",
+        "--text", text,
       ]),
       method: "paste",
     };
@@ -170,11 +160,9 @@ const iosPressButton: ToolHandler = async (params, allocationId) => {
   }
 
   try {
-    return runSimulatorInput(alloc.simulatorUdid, [
-      "--action",
-      "button",
-      "--button",
-      button,
+    return runSimulatorInput(alloc.tartVmName, alloc.simulatorUdid, [
+      "--action", "button",
+      "--button", button,
     ]);
   } catch (error) {
     console.error("ios_press_button failed", error);
@@ -187,9 +175,10 @@ const iosAccessibilityTree: ToolHandler = async (params, allocationId) => {
   if (!alloc?.simulatorUdid) return { error: "No simulator assigned" };
 
   try {
-    const output = execSync(
+    const output = execInVm(
+      alloc.tartVmName,
       `xcrun simctl spawn "${alloc.simulatorUdid}" accessibility_inspector 2>/dev/null || xcrun simctl ui "${alloc.simulatorUdid}" accessibility_tree 2>/dev/null || echo "Accessibility tree inspection not available via simctl. Use ios_screenshot instead."`,
-      { encoding: "utf-8", timeout: 10000 },
+      { timeout: 10000 },
     );
     return { tree: output.trim() };
   } catch (error) {
@@ -206,9 +195,10 @@ const iosFindElement: ToolHandler = async (params, allocationId) => {
   const by = (params.by as string) || "label";
 
   try {
-    const output = execSync(
+    const output = execInVm(
+      alloc.tartVmName,
       `xcrun simctl ui "${alloc.simulatorUdid}" find "${by}" "${query}" 2>/dev/null || echo "Element search not available"`,
-      { encoding: "utf-8", timeout: 10000 },
+      { timeout: 10000 },
     );
     return { results: output.trim() };
   } catch (error) {
@@ -222,9 +212,9 @@ const iosScreenInfo: ToolHandler = async (_params, allocationId) => {
   if (!alloc?.simulatorUdid) return { error: "No simulator assigned" };
 
   try {
-    const output = execSync(
+    const output = execInVm(
+      alloc.tartVmName,
       `xcrun simctl list devices --json | python3 -c "import sys,json; d=json.load(sys.stdin); [print(json.dumps(dev)) for devs in d['devices'].values() for dev in devs if dev['udid']=='${alloc.simulatorUdid}']"`,
-      { encoding: "utf-8" },
     );
     return { info: output.trim() };
   } catch (error) {
