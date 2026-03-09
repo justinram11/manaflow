@@ -1071,17 +1071,34 @@ sandboxesRouter.openapi(
                       for (const [containerPort, hostPort] of Object.entries(incusResult.hostPorts)) {
                         workspacePorts[Number(containerPort)] = Number(hostPort);
                       }
+                      // If the team has Tailscale configured, use the container's
+                      // Tailscale hostname for direct connectivity (no Incus proxy).
+                      // The container joins the tailnet during provisioning as
+                      // incusContainerId, so the VM can reach it directly.
+                      const teamSettingsForIos = getTeamSettings(db, body.teamSlugOrId);
+                      const useTailscale = !!teamSettingsForIos?.tailscaleAuthKey;
+                      const tsHostname = incusContainerId.replace(/[^a-zA-Z0-9-]/g, "-");
+
                       const connectParams = {
                         allocationId: allocId,
                         accessToken: iosDirectToken,
-                        mcpEndpoint: `ws://${sandboxHost}:${iosMcpHostPort}?token=${iosDirectToken}`,
-                        ...(iosRsyncdHostPort ? {
+                        mcpEndpoint: useTailscale
+                          ? `ws://${tsHostname}:39385?token=${iosDirectToken}`
+                          : `ws://${sandboxHost}:${iosMcpHostPort}?token=${iosDirectToken}`,
+                        ...(useTailscale ? {
+                          rsyncEndpoint: `rsync://cmux@${tsHostname}:39376/workspace`,
+                          rsyncSecret: iosDirectToken,
+                        } : iosRsyncdHostPort ? {
                           rsyncEndpoint: `rsync://cmux@${sandboxHost}:${iosRsyncdHostPort}/workspace`,
                           rsyncSecret: iosDirectToken,
                         } : {}),
                         // Workspace proxy info for ingress reverse proxy
-                        workspaceHost: sandboxHost,
-                        workspacePorts,
+                        workspaceHost: useTailscale ? tsHostname : sandboxHost,
+                        workspacePorts: useTailscale
+                          ? Object.fromEntries(
+                              Object.keys(incusResult.hostPorts).map((p) => [Number(p), Number(p)])
+                            )
+                          : workspacePorts,
                       };
                       await sendProviderRequest(iosProvider.id, "connect_direct", connectParams);
                       console.log(`[sandboxes.start] Sent connect_direct to Mac daemon for allocation ${allocId}`);
