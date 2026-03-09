@@ -4,11 +4,13 @@ import {
   getWorkspaceSettings,
   getContainerSettings,
   getUserEditorSettings,
+  getTeamSettings,
 } from "@cmux/db/queries/settings";
 import {
   upsertWorkspaceSettings,
   upsertContainerSettings,
   upsertUserEditorSettings,
+  upsertTeamSettings,
 } from "@cmux/db/mutations/settings";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 
@@ -362,6 +364,111 @@ dbSettingsRouter.openapi(
     const id = upsertUserEditorSettings(db, {
       teamSlugOrId,
       userId: user.id,
+      patch,
+    });
+
+    return c.json({ id }, 200);
+  },
+);
+
+// ── Team Settings (team-scoped, not user-scoped) ─────────────────────
+
+const TeamSettingsSchema = z
+  .object({
+    id: z.string(),
+    teamId: z.string(),
+    tailscaleAuthKey: z.string().nullable().optional(),
+    createdAt: z.number(),
+    updatedAt: z.number(),
+  })
+  .openapi("DbTeamSettings");
+
+const UpdateTeamSettingsBody = z
+  .object({
+    teamSlugOrId: z.string(),
+    tailscaleAuthKey: z.string().optional(),
+  })
+  .openapi("DbUpdateTeamSettingsBody");
+
+// GET /team-settings - Get team settings
+dbSettingsRouter.openapi(
+  createRoute({
+    method: "get",
+    path: "/team-settings",
+    tags: ["DbSettings"],
+    summary: "Get team settings",
+    request: {
+      query: TeamQuery,
+    },
+    responses: {
+      200: {
+        description: "Team settings",
+        content: {
+          "application/json": {
+            schema: TeamSettingsSchema.nullable(),
+          },
+        },
+      },
+      401: {
+        description: "Unauthorized",
+        content: { "application/json": { schema: ErrorResponse } },
+      },
+    },
+  }),
+  async (c) => {
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) return c.json({ code: 401, message: "Unauthorized" }, 401);
+
+    const query = c.req.valid("query");
+    const db = getDb();
+    const settings = getTeamSettings(db, query.teamSlugOrId);
+
+    return c.json(settings ?? null, 200);
+  },
+);
+
+// PATCH /team-settings - Update team settings
+dbSettingsRouter.openapi(
+  createRoute({
+    method: "patch",
+    path: "/team-settings",
+    tags: ["DbSettings"],
+    summary: "Update team settings",
+    request: {
+      body: {
+        content: {
+          "application/json": {
+            schema: UpdateTeamSettingsBody,
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        description: "Team settings updated",
+        content: {
+          "application/json": {
+            schema: z.object({ id: z.string() }),
+          },
+        },
+      },
+      401: {
+        description: "Unauthorized",
+        content: { "application/json": { schema: ErrorResponse } },
+      },
+    },
+  }),
+  async (c) => {
+    const user = await getUserFromRequest(c.req.raw);
+    if (!user) return c.json({ code: 401, message: "Unauthorized" }, 401);
+
+    const body = c.req.valid("json");
+    const { teamSlugOrId, ...patch } = body;
+    const db = getDb();
+
+    const id = upsertTeamSettings(db, {
+      teamSlugOrId,
       patch,
     });
 

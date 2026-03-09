@@ -56,6 +56,53 @@ const SWITCH_BRANCH_BUN_SCRIPT = rawSwitchBranchScript;
 
 const { getApiEnvironmentsByIdVars } = await getWwwOpenApiModule();
 
+/**
+ * Wait for sandbox hydration (git clone) to complete before starting the agent.
+ * The www sandbox start route sets vscode.status to "starting" initially and
+ * updates it to "running" after hydration finishes. For providers that do
+ * hydration in the background (e.g. AWS), the start API returns before the
+ * clone is done, so the agent spawner must wait here.
+ */
+async function waitForHydrationComplete(
+  db: ReturnType<typeof getDb>,
+  taskRunId: string,
+  { timeoutMs = 180_000, pollIntervalMs = 1_000 } = {},
+): Promise<void> {
+  const taskRun = getTaskRunById(db, taskRunId);
+  const vscode = taskRun?.vscode as Record<string, unknown> | undefined;
+  const status = vscode?.status as string | undefined;
+
+  // If status is not "starting", hydration is already done (or was never tracked)
+  if (status !== "starting") {
+    return;
+  }
+
+  serverLogger.info(
+    `[AgentSpawner] Waiting for sandbox hydration to complete (taskRun=${taskRunId})`,
+  );
+
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+
+    const refreshed = getTaskRunById(db, taskRunId);
+    const refreshedVscode = refreshed?.vscode as Record<string, unknown> | undefined;
+    const refreshedStatus = refreshedVscode?.status as string | undefined;
+
+    if (refreshedStatus !== "starting") {
+      serverLogger.info(
+        `[AgentSpawner] Sandbox hydration complete (status=${refreshedStatus}, taskRun=${taskRunId})`,
+      );
+      return;
+    }
+  }
+
+  serverLogger.warn(
+    `[AgentSpawner] Timed out waiting for sandbox hydration after ${timeoutMs}ms (taskRun=${taskRunId}), proceeding anyway`,
+  );
+}
+
 export interface AgentSpawnResult {
   agentName: string;
   terminalId: string;
@@ -1237,6 +1284,11 @@ chmod +x ${maintenanceScriptPath}`;
       postStartCommands,
       cwd: "/root/workspace",
     };
+
+    // Wait for sandbox hydration (git clone) to finish before switching branches.
+    // For providers that hydrate in the background (e.g. AWS), the start API returns
+    // before the clone is done, so we must wait here to avoid an empty workspace.
+    await waitForHydrationComplete(db, runId);
 
     const switchBranch = async () => {
       const scriptPath = `/tmp/cmux-switch-branch-${Date.now()}.ts`;

@@ -101,6 +101,17 @@ export function createResourceIosHandler(): CapabilityHandler {
               setRsyncInfo(allocId, rsyncEndpoint, rsyncSecret);
               console.log(`[resource:ios] rsync endpoint stored for allocation ${allocId}`);
             }
+
+            // Store workspace proxy info for ingress proxy
+            const workspaceHost = params.workspaceHost as string | undefined;
+            const workspacePorts = params.workspacePorts as Record<number, number> | undefined;
+            if (workspaceHost && workspacePorts) {
+              const { setWorkspaceInfo } = await import(
+                "@cmux/mac-resource-provider/workspace-manager"
+              );
+              setWorkspaceInfo(allocId, workspaceHost, workspacePorts);
+              console.log(`[resource:ios] workspace proxy info stored for allocation ${allocId}: ${workspaceHost} ports=${JSON.stringify(workspacePorts)}`);
+            }
             if (accessToken || rsyncSecret) {
               const { setAllocationAccessToken } = await import(
                 "@cmux/mac-resource-provider/workspace-manager"

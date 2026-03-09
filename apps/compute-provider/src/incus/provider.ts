@@ -73,6 +73,16 @@ export class IncusProvider implements ComputeProvider {
       // Configure IPv4 networking
       await configureContainerNetwork(containerName);
 
+      // Add TUN device for Tailscale networking (harmless if unused)
+      try {
+        await incusAddDevice(containerName, "tun", "unix-char", {
+          source: "/dev/net/tun",
+          path: "/dev/net/tun",
+        });
+      } catch (tunError) {
+        console.error(`[incus-provider] Failed to add TUN device to ${containerName}:`, tunError);
+      }
+
       // Ensure localhost resolves (Docker build can't write /etc/hosts)
       await incusContainerExec(containerName, [
         "sh", "-c", "printf '127.0.0.1 localhost\\n::1 localhost\\n' > /etc/hosts",

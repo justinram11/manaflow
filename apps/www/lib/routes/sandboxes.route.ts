@@ -7,7 +7,7 @@ import { stackServerAppJs } from "@/lib/utils/stack";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
 import { getDb } from "@cmux/db";
-import { getApiKeysForAgents } from "@cmux/db/queries/settings";
+import { getApiKeysForAgents, getTeamSettings } from "@cmux/db/queries/settings";
 import { getEnvironmentByTeam } from "@cmux/db/queries/environments";
 import { getWorkspaceConfig } from "@cmux/db/queries/settings";
 import { getTaskRunById, getTaskRunByContainerName } from "@cmux/db/queries/task-runs";
@@ -1064,6 +1064,13 @@ sandboxesRouter.openapi(
 
                     // After setup, tell the Mac daemon to connect directly to the workspace
                     if (iosMcpHostPort) {
+                      // Build workspace port mapping for the ingress proxy.
+                      // The Mac needs to reach the Linux host — use the
+                      // externally-reachable sandboxHost (not localhost).
+                      const workspacePorts: Record<number, number> = {};
+                      for (const [containerPort, hostPort] of Object.entries(incusResult.hostPorts)) {
+                        workspacePorts[Number(containerPort)] = Number(hostPort);
+                      }
                       const connectParams = {
                         allocationId: allocId,
                         accessToken: iosDirectToken,
@@ -1072,6 +1079,9 @@ sandboxesRouter.openapi(
                           rsyncEndpoint: `rsync://cmux@${sandboxHost}:${iosRsyncdHostPort}/workspace`,
                           rsyncSecret: iosDirectToken,
                         } : {}),
+                        // Workspace proxy info for ingress reverse proxy
+                        workspaceHost: sandboxHost,
+                        workspacePorts,
                       };
                       await sendProviderRequest(iosProvider.id, "connect_direct", connectParams);
                       console.log(`[sandboxes.start] Sent connect_direct to Mac daemon for allocation ${allocId}`);
@@ -1140,24 +1150,50 @@ sandboxesRouter.openapi(
         // Fire-and-forget: background provisioning (env vars, git config, repo clone, scripts)
         (async () => {
           try {
-            // Inject host DNS entry so the container can reach the cmux server by hostname.
-            // Incus containers aren't on Tailscale, so SANDBOX_HOST (e.g. "ubuntu") won't resolve.
-            // Map it to the default gateway which is the host machine.
-            const sandboxHostname = env.SANDBOX_HOST;
-            if (sandboxHostname && sandboxHostname !== "localhost") {
+            // Join the container to the Tailscale network so it can resolve
+            // Tailscale hostnames (e.g. the cmux host, Tart VMs) via MagicDNS.
+            // Falls back to /etc/hosts gateway mapping when no auth key is configured.
+            const teamSettings = getTeamSettings(db, body.teamSlugOrId);
+            const tailscaleAuthKey = teamSettings?.tailscaleAuthKey;
+            if (tailscaleAuthKey) {
               try {
-                const gatewayRes = await incusInstance.exec(
-                  `ip route show default | awk '/default/ {print $3}'`,
+                // Generate a short hostname from the container name
+                const tsHostname = incusContainerId.replace(/[^a-zA-Z0-9-]/g, "-");
+                const startRes = await incusInstance.exec(
+                  "systemctl start tailscaled && sleep 2",
                 );
-                const gatewayIp = gatewayRes.stdout?.trim();
-                if (gatewayIp && gatewayRes.exit_code === 0) {
-                  await incusInstance.exec(
-                    `grep -q '${sandboxHostname}' /etc/hosts || echo '${gatewayIp} ${sandboxHostname}' >> /etc/hosts`,
-                  );
-                  console.log(`[sandboxes.start] Added hosts entry: ${gatewayIp} ${sandboxHostname}`);
+                if (startRes.exit_code !== 0) {
+                  console.error(`[sandboxes.start] tailscaled start failed: ${startRes.stderr}`);
+                }
+                const upRes = await incusInstance.exec(
+                  `tailscale up --authkey=${tailscaleAuthKey} --hostname=${tsHostname} --accept-routes --accept-dns`,
+                );
+                if (upRes.exit_code === 0) {
+                  console.log(`[sandboxes.start] Container ${incusContainerId} joined tailnet as ${tsHostname}`);
+                } else {
+                  console.error(`[sandboxes.start] tailscale up failed: ${upRes.stderr}`);
                 }
               } catch (error) {
-                console.error("[sandboxes.start] Failed to inject hosts entry:", error);
+                console.error("[sandboxes.start] Failed to join Tailscale:", error);
+              }
+            } else {
+              // Fallback: inject /etc/hosts entry mapping SANDBOX_HOST to the gateway IP
+              const sandboxHostname = env.SANDBOX_HOST;
+              if (sandboxHostname && sandboxHostname !== "localhost") {
+                try {
+                  const gatewayRes = await incusInstance.exec(
+                    `ip route show default | awk '/default/ {print $3}'`,
+                  );
+                  const gatewayIp = gatewayRes.stdout?.trim();
+                  if (gatewayIp && gatewayRes.exit_code === 0) {
+                    await incusInstance.exec(
+                      `grep -q '${sandboxHostname}' /etc/hosts || echo '${gatewayIp} ${sandboxHostname}' >> /etc/hosts`,
+                    );
+                    console.log(`[sandboxes.start] Added hosts entry: ${gatewayIp} ${sandboxHostname}`);
+                  }
+                } catch (error) {
+                  console.error("[sandboxes.start] Failed to inject hosts entry:", error);
+                }
               }
             }
 
@@ -1180,6 +1216,10 @@ sandboxesRouter.openapi(
             }
             if (body.taskRunJwt) {
               envVarsToApply += `\nCMUX_TASK_RUN_JWT="${body.taskRunJwt}"`;
+            }
+            // Inject iOS proxy base URL so workspace agents can reference it in iOS code
+            if (iosResourceAllocationId && iosProviderBrowserBaseUrl) {
+              envVarsToApply += `\nCMUX_IOS_PROXY_BASE_URL="${iosProviderBrowserBaseUrl}/allocations/${iosResourceAllocationId}/proxy"`;
             }
 
             const [{ githubAccessToken: incusGithubToken }, incusApiKeys] =

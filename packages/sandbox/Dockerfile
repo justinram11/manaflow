@@ -404,6 +404,12 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --de
 RUN update-alternatives --set iptables /usr/sbin/iptables-legacy || true && \
     mkdir -p /var/lib/cmux/sandboxes
 
+# Install Tailscale for tailnet connectivity (DNS + networking)
+# The service is NOT enabled by default; it's started on-demand during provisioning
+# when the team has a Tailscale auth key configured.
+RUN curl -fsSL https://tailscale.com/install.sh | sh && \
+    systemctl disable tailscaled.service 2>/dev/null || true
+
 # Install libssl1.1 for compatibility (required by some agent binaries)
 RUN arch="$(uname -m)"; \
     if [ "$arch" = "x86_64" ]; then \

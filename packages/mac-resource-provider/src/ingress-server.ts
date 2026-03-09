@@ -58,8 +58,16 @@ function getBrowserBaseUrl(): string | null {
 
 function buildCorsHeaders(origin: string | null): Headers {
   const headers = new Headers();
-  headers.set("Access-Control-Allow-Origin", origin || "*");
-  headers.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  const browserBaseUrl = getBrowserBaseUrl();
+  // Only allow the configured browser origin, not arbitrary origins
+  if (browserBaseUrl && origin) {
+    const allowedOrigin = new URL(browserBaseUrl).origin;
+    headers.set("Access-Control-Allow-Origin", origin === allowedOrigin ? origin : allowedOrigin);
+  } else if (origin) {
+    // No browser base URL configured — restrict to same-origin only
+    headers.set("Access-Control-Allow-Origin", origin);
+  }
+  headers.set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
   headers.set("Access-Control-Allow-Headers", "Authorization,Content-Type");
   headers.set("Access-Control-Max-Age", "86400");
   headers.set("Cache-Control", "no-store");
@@ -85,9 +93,12 @@ function getToken(request: Request): string | null {
   if (authHeader?.startsWith("Bearer ")) {
     return authHeader.slice(7);
   }
-
-  return new URL(request.url).searchParams.get("token");
+  // Query param tokens are insecure (logged in URLs, browser history, server logs)
+  return null;
 }
+
+/** Access tokens expire after 24 hours */
+const ACCESS_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 
 function getAuthorizedAllocation(request: Request, allocationId: string) {
   const token = getToken(request);
@@ -96,22 +107,50 @@ function getAuthorizedAllocation(request: Request, allocationId: string) {
     return null;
   }
 
-  return { allocation, token };
-}
-
-function parseIngressPath(pathname: string): {
-  allocationId: string;
-  action: string;
-} | null {
-  const parts = pathname.split("/").filter(Boolean);
-  if (parts.length !== 3 || parts[0] !== "allocations") {
+  // Reject expired tokens
+  if (
+    allocation.accessTokenCreatedAt &&
+    Date.now() - allocation.accessTokenCreatedAt > ACCESS_TOKEN_TTL_MS
+  ) {
     return null;
   }
 
-  return {
-    allocationId: parts[1],
-    action: parts[2],
-  };
+  return { allocation, token };
+}
+
+interface ParsedPath {
+  allocationId: string;
+  action: string;
+  /** Only present when action === "proxy" */
+  proxyPort?: number;
+  /** The remaining path after /proxy/<port>, including leading slash */
+  proxyPath?: string;
+}
+
+function parseIngressPath(pathname: string): ParsedPath | null {
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts.length < 3 || parts[0] !== "allocations") {
+    return null;
+  }
+
+  const allocationId = parts[1];
+  const action = parts[2];
+
+  if (action === "proxy") {
+    const port = Number.parseInt(parts[3], 10);
+    if (Number.isNaN(port) || port <= 0) {
+      return null;
+    }
+    // Everything after /allocations/<id>/proxy/<port> is the proxied path
+    const proxyPath = "/" + parts.slice(4).join("/");
+    return { allocationId, action, proxyPort: port, proxyPath };
+  }
+
+  if (parts.length !== 3) {
+    return null;
+  }
+
+  return { allocationId, action };
 }
 
 function jsonResponse(
@@ -197,7 +236,86 @@ async function handleScreenshot(request: Request, allocationId: string): Promise
   }
 }
 
-let server: ReturnType<typeof Bun.serve> | null = null;
+/**
+ * Reverse-proxy an HTTP request directly to the workspace container.
+ *
+ * Route: /allocations/<id>/proxy/<containerPort>/<path>
+ * Proxies to: http://<workspaceHost>:<containerPort>/<path>
+ *
+ * No auth required — the proxy is only reachable via Tailscale and the
+ * allocation ID is unguessable.
+ */
+async function handleProxy(
+  request: Request,
+  allocationId: string,
+  containerPort: number,
+  subPath: string,
+): Promise<Response> {
+  const origin = request.headers.get("origin");
+  const allocation = getAllocation(allocationId);
+  if (!allocation) {
+    return jsonResponse(origin, { error: "Unknown allocation" }, 404);
+  }
+
+  if (!allocation.workspaceHost || !allocation.workspacePorts) {
+    return jsonResponse(origin, { error: "Workspace proxy not configured for this allocation" }, 502);
+  }
+
+  const hostPort = allocation.workspacePorts[containerPort];
+  if (!hostPort) {
+    return jsonResponse(origin, { error: `Port ${containerPort} is not exposed for this workspace` }, 404);
+  }
+
+  const url = new URL(request.url);
+  const targetUrl = `http://${allocation.workspaceHost}:${hostPort}${subPath}${url.search}`;
+
+  // Build outbound headers — forward most headers but strip ingress auth
+  const outboundHeaders = new Headers(request.headers);
+  outboundHeaders.delete("authorization");
+  outboundHeaders.set("host", `${allocation.workspaceHost}:${hostPort}`);
+
+  try {
+    const upstreamResponse = await fetch(targetUrl, {
+      method: request.method,
+      headers: outboundHeaders,
+      body: request.body,
+      redirect: "manual",
+    });
+
+    // Build response headers — pass through upstream headers
+    const responseHeaders = new Headers(upstreamResponse.headers);
+    // Add CORS headers for browser access
+    const corsHeaders = buildCorsHeaders(origin);
+    for (const [key, value] of corsHeaders.entries()) {
+      responseHeaders.set(key, value);
+    }
+
+    return new Response(upstreamResponse.body, {
+      status: upstreamResponse.status,
+      statusText: upstreamResponse.statusText,
+      headers: responseHeaders,
+    });
+  } catch (error) {
+    console.error(`[ios-ingress] proxy to ${targetUrl} failed:`, error);
+    return jsonResponse(
+      origin,
+      { error: error instanceof Error ? error.message : "Proxy request failed" },
+      502,
+    );
+  }
+}
+
+/** Data attached to each proxied WebSocket connection */
+interface ProxyWebSocketData {
+  allocationId: string;
+  workspaceHost: string;
+  hostPort: number;
+  subPath: string;
+  search: string;
+  upstream: WebSocket | null;
+}
+
+let server: ReturnType<typeof Bun.serve<ProxyWebSocketData>> | null = null;
 
 export function getIngressMetadata(): {
   localPort: number;
@@ -215,11 +333,11 @@ export function startIngressServer(): void {
   }
 
   const { localPort, browserBaseUrl } = getIngressMetadata();
-  server = Bun.serve({
+  server = Bun.serve<ProxyWebSocketData>({
     hostname: "127.0.0.1",
     port: localPort,
     idleTimeout: 120,
-    fetch(request) {
+    fetch(request, bunServer) {
       const url = new URL(request.url);
       const origin = request.headers.get("origin");
 
@@ -243,6 +361,44 @@ export function startIngressServer(): void {
         return new Response("Not found", { status: 404, headers: buildCorsHeaders(origin) });
       }
 
+      // Proxy routes
+      if (path.action === "proxy" && path.proxyPort && path.proxyPath !== undefined) {
+        // WebSocket upgrade — no auth required (same as HTTP proxy)
+        if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+          const allocation = getAllocation(path.allocationId);
+          if (!allocation) {
+            return jsonResponse(origin, { error: "Unknown allocation" }, 404);
+          }
+
+          if (!allocation.workspaceHost || !allocation.workspacePorts) {
+            return jsonResponse(origin, { error: "Workspace proxy not configured" }, 502);
+          }
+
+          const wsHostPort = allocation.workspacePorts[path.proxyPort];
+          if (!wsHostPort) {
+            return jsonResponse(origin, { error: `Port ${path.proxyPort} is not exposed` }, 404);
+          }
+
+          const upgraded = bunServer.upgrade<ProxyWebSocketData>(request, {
+            data: {
+              allocationId: path.allocationId,
+              workspaceHost: allocation.workspaceHost,
+              hostPort: wsHostPort,
+              subPath: path.proxyPath,
+              search: url.search,
+              upstream: null,
+            },
+          });
+          if (!upgraded) {
+            return new Response("WebSocket upgrade failed", { status: 500 });
+          }
+          return undefined as unknown as Response;
+        }
+
+        // Regular HTTP proxy
+        return handleProxy(request, path.allocationId, path.proxyPort, path.proxyPath);
+      }
+
       if (request.method === "GET" && path.action === "screenshot") {
         return handleScreenshot(request, path.allocationId);
       }
@@ -252,6 +408,57 @@ export function startIngressServer(): void {
       }
 
       return new Response("Not found", { status: 404, headers: buildCorsHeaders(origin) });
+    },
+    websocket: {
+      open(ws) {
+        const { workspaceHost, hostPort, subPath, search } = ws.data;
+        const targetUrl = `ws://${workspaceHost}:${hostPort}${subPath}${search}`;
+
+        const upstream = new WebSocket(targetUrl);
+
+        ws.data.upstream = upstream;
+
+        upstream.addEventListener("open", () => {
+          console.log(`[ios-ingress] WebSocket proxy connected to ${targetUrl}`);
+        });
+
+        upstream.addEventListener("message", (event) => {
+          if (typeof event.data === "string") {
+            ws.sendText(event.data);
+          } else if (event.data instanceof ArrayBuffer) {
+            ws.sendBinary(new Uint8Array(event.data));
+          } else if (event.data instanceof Blob) {
+            event.data.arrayBuffer().then((buf) => {
+              ws.sendBinary(new Uint8Array(buf));
+            }).catch((err) => {
+              console.error("[ios-ingress] ws blob read error:", err);
+            });
+          }
+        });
+
+        upstream.addEventListener("close", (event) => {
+          ws.close(event.code, event.reason);
+        });
+
+        upstream.addEventListener("error", (event) => {
+          console.error("[ios-ingress] upstream WebSocket error:", event);
+          ws.close(1011, "Upstream connection error");
+        });
+      },
+
+      message(ws, message) {
+        const { upstream } = ws.data;
+        if (upstream && upstream.readyState === WebSocket.OPEN) {
+          upstream.send(message);
+        }
+      },
+
+      close(ws, code, reason) {
+        const { upstream } = ws.data;
+        if (upstream && upstream.readyState === WebSocket.OPEN) {
+          upstream.close(code, reason);
+        }
+      },
     },
   });
 

@@ -14,6 +14,7 @@ import {
   getApiApiKeysOptions,
   getApiTeamsByTeamSlugOrIdOptions,
   getApiWorkspaceSettingsOptions,
+  getApiTeamSettingsOptions,
 } from "@cmux/www-openapi-client/react-query";
 import { Switch } from "@heroui/react";
 import { isLocalAuth, stackClientApp } from "@/lib/stack";
@@ -406,6 +407,15 @@ function SettingsComponent() {
     enabled: Boolean(teamSlugOrId),
   });
 
+  // Query team settings (team-scoped, not user-scoped)
+  const { data: teamSettingsData } = useQuery({
+    ...getApiTeamSettingsOptions({ query: { teamSlugOrId } }),
+    enabled: Boolean(teamSlugOrId),
+  });
+  const [tailscaleAuthKey, setTailscaleAuthKey] = useState("");
+  const [originalTailscaleAuthKey, setOriginalTailscaleAuthKey] = useState("");
+  const [showTailscaleKey, setShowTailscaleKey] = useState(false);
+
   // Initialize form values when data loads
   useEffect(() => {
     if (existingKeys) {
@@ -433,6 +443,15 @@ function SettingsComponent() {
       setTeamNameError("");
     }
   }, [teamInfo]);
+
+  // Initialize team settings when data loads
+  useEffect(() => {
+    if (teamSettingsData !== undefined) {
+      const key = teamSettingsData?.tailscaleAuthKey ?? "";
+      setTailscaleAuthKey(key);
+      setOriginalTailscaleAuthKey(key);
+    }
+  }, [teamSettingsData]);
 
   // Client-side validators
   const validateName = (val: string): string => {
@@ -787,6 +806,26 @@ function SettingsComponent() {
     }
   };
 
+  const saveTailscaleAuthKey = async () => {
+    setIsSaving(true);
+    try {
+      const { patchApiTeamSettings } = await import("@cmux/www-openapi-client");
+      await patchApiTeamSettings({
+        body: {
+          teamSlugOrId,
+          tailscaleAuthKey: tailscaleAuthKey,
+        },
+      });
+      setOriginalTailscaleAuthKey(tailscaleAuthKey);
+      toast.success("Tailscale auth key saved");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(msg || "Failed to save Tailscale auth key");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <FloatingPane header={<TitleBar title="Settings" />}>
       <div
@@ -969,6 +1008,70 @@ function SettingsComponent() {
                     validateSlug(teamSlug) !== ""
                   }
                   onClick={() => void saveTeamSlug()}
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+
+            {/* Network / Tailscale */}
+            <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  Network
+                </h2>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                  Configure Tailscale networking for workspaces and resource providers
+                </p>
+              </div>
+              <div className="p-4">
+                <div>
+                  <label
+                    htmlFor="tailscaleAuthKey"
+                    className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1"
+                  >
+                    Tailscale Auth Key
+                  </label>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+                    A reusable, pre-authorized auth key for workspaces and VMs to join your tailnet.
+                    Generate one in{" "}
+                    <a
+                      href="https://login.tailscale.com/admin/settings/keys"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300"
+                    >
+                      Tailscale admin &rarr; Settings &rarr; Keys
+                    </a>
+                    . Enable &ldquo;Reusable&rdquo; and &ldquo;Pre-authorized&rdquo;. Ephemeral is recommended.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type={showTailscaleKey ? "text" : "password"}
+                      id="tailscaleAuthKey"
+                      value={tailscaleAuthKey}
+                      onChange={(e) => setTailscaleAuthKey(e.target.value)}
+                      placeholder="tskey-auth-..."
+                      className="flex-1 px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-sm font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowTailscaleKey(!showTailscaleKey)}
+                      className="px-2 py-2 text-xs text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
+                    >
+                      {showTailscaleKey ? "Hide" : "Show"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div className="px-4 py-3 border-t border-neutral-200 dark:border-neutral-800 flex items-center justify-end">
+                <button
+                  className="px-3 py-1.5 text-sm rounded-md bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 disabled:opacity-50"
+                  disabled={
+                    isSaving ||
+                    tailscaleAuthKey === originalTailscaleAuthKey
+                  }
+                  onClick={() => void saveTailscaleAuthKey()}
                 >
                   Save
                 </button>

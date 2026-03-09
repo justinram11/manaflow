@@ -6,6 +6,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 SERVER_URL=""
 PROVIDER_TOKEN=""
+TAILSCALE_AUTH_KEY=""
 DAEMON_DIR="${REPO_ROOT}/packages/provider-daemon"
 INSTALL_PROVIDER=0
 INSTALL_HOST_PROVIDER=0
@@ -31,6 +32,7 @@ Usage: setup-tart-provider-mac.sh [options]
 Options:
   --server-url <url>         cmux server URL
   --provider-token <token>   cmux provider registration token
+  --tailscale-auth-key <key> Tailscale auth key for VM to join the tailnet
   --daemon-dir <path>        Provider daemon directory (legacy host provider only)
   --install-host-provider    Install the old host-side provider daemon instead of the Tart guest provider
   --no-brew                  Skip Homebrew installation
@@ -63,6 +65,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --provider-token)
       PROVIDER_TOKEN="${2:-}"
+      shift 2
+      ;;
+    --tailscale-auth-key)
+      TAILSCALE_AUTH_KEY="${2:-}"
       shift 2
       ;;
     --daemon-dir)
@@ -436,6 +442,71 @@ install_guest_provider() {
     "launchctl list | grep -i com.cmux.provider || true"
 }
 
+install_tailscale_in_vm() {
+  local vm_name="$1"
+  local ts_auth_key="$2"
+  local vm_ip
+  vm_ip="$(tart ip "${vm_name}" 2>/dev/null)"
+
+  if [[ -z "${vm_ip}" ]]; then
+    echo "Cannot determine VM IP for ${vm_name}" >&2
+    return 1
+  fi
+
+  echo "==> Installing Tailscale inside Tart VM ${vm_name} (${vm_ip})"
+
+  # Install tailscale via brew
+  ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "admin@${vm_ip}" '/bin/sh -lc "
+    if ! brew list tailscale >/dev/null 2>&1; then
+      brew install tailscale
+    else
+      echo \"Tailscale already installed\"
+    fi
+  "'
+
+  # Create a system-level LaunchDaemon (tailscaled needs root)
+  # Uses --socket=/var/run/tailscaled.socket (the CLI default) so `tailscale` works without --socket
+  ssh -o StrictHostKeyChecking=no "admin@${vm_ip}" '/bin/sh -lc "
+    sudo tee /Library/LaunchDaemons/com.tailscale.tailscaled.plist > /dev/null <<PLIST
+<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
+<plist version=\"1.0\">
+<dict>
+  <key>Label</key>
+  <string>com.tailscale.tailscaled</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/opt/tailscale/bin/tailscaled</string>
+    <string>--state=/var/lib/tailscale/tailscaled.state</string>
+    <string>--socket=/var/run/tailscaled.socket</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/var/log/tailscaled.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/tailscaled.log</string>
+</dict>
+</plist>
+PLIST
+    brew services stop tailscale 2>/dev/null || true
+    sudo launchctl bootout system/com.tailscale.tailscaled 2>/dev/null || true
+    sudo launchctl bootstrap system /Library/LaunchDaemons/com.tailscale.tailscaled.plist 2>/dev/null || true
+  "'
+
+  # Wait for tailscaled to be ready
+  sleep 3
+
+  # Join the tailnet
+  local ts_hostname="cmux-tart-${vm_name}"
+  ssh -o StrictHostKeyChecking=no "admin@${vm_ip}" "/bin/sh -lc \"tailscale up --authkey='${ts_auth_key}' --hostname='${ts_hostname}' --accept-routes\""
+
+  echo "==> Tailscale joined as ${ts_hostname}"
+  ssh -o StrictHostKeyChecking=no "admin@${vm_ip}" '/bin/sh -lc "tailscale status --peers=false"'
+}
+
 echo "==> Host: $(scutil --get ComputerName 2>/dev/null || hostname)"
 echo "==> Ensuring Homebrew"
 ensure_brew
@@ -492,6 +563,11 @@ fi
 
 if [[ "${INSTALL_PROVIDER}" -eq 1 && "${INSTALL_HOST_PROVIDER}" -ne 1 ]]; then
   install_guest_provider "${VM_NAME}" "${SERVER_URL}" "${PROVIDER_TOKEN}"
+fi
+
+# Install Tailscale inside the VM if an auth key was provided
+if [[ -n "${TAILSCALE_AUTH_KEY}" ]] && vm_exists "${VM_NAME}" && vm_is_running "${VM_NAME}"; then
+  install_tailscale_in_vm "${VM_NAME}" "${TAILSCALE_AUTH_KEY}"
 fi
 
 echo "==> Complete"

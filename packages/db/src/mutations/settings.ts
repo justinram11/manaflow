@@ -6,6 +6,7 @@ import {
   containerSettings,
   userEditorSettings,
   apiKeys,
+  teamSettings,
 } from "../schema/index";
 import { resolveTeamId } from "../queries/teams";
 
@@ -264,6 +265,42 @@ export function upsertWorkspaceConfig(
         dataVaultKey: opts.dataVaultKey,
         createdAt: now,
         updatedAt: now,
+      })
+      .run();
+    return id;
+  }
+}
+
+export function upsertTeamSettings(
+  db: DbClient,
+  opts: {
+    teamSlugOrId: string;
+    patch: Record<string, unknown>;
+  },
+) {
+  const teamId = resolveTeamId(db, opts.teamSlugOrId);
+  const existing = db
+    .select()
+    .from(teamSettings)
+    .where(eq(teamSettings.teamId, teamId))
+    .get();
+
+  const now = Date.now();
+  if (existing) {
+    db.update(teamSettings)
+      .set({ ...opts.patch, updatedAt: now })
+      .where(eq(teamSettings.id, existing.id))
+      .run();
+    return existing.id;
+  } else {
+    const id = crypto.randomUUID();
+    db.insert(teamSettings)
+      .values({
+        id,
+        teamId,
+        createdAt: now,
+        updatedAt: now,
+        ...opts.patch,
       })
       .run();
     return id;

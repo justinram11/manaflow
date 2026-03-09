@@ -4,6 +4,7 @@ import { interactionTools } from "./interaction";
 import { logTools } from "./logs";
 import { syncTools } from "./sync";
 import { appStateTools } from "./app-state";
+import { fileTransferTools } from "./file-transfer";
 
 export interface ToolDefinition {
   name: string;
@@ -36,6 +37,7 @@ registerTools(interactionTools);
 registerTools(logTools);
 registerTools(syncTools);
 registerTools(appStateTools);
+registerTools(fileTransferTools);
 
 export function getToolDefinitions(): ToolDefinition[] {
   return Array.from(registry.values()).map((t) => t.definition);

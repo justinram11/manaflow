@@ -1,13 +1,9 @@
 import {
   execInVm,
-  cloneVm,
   startVm,
-  stopVm,
-  deleteVm,
   waitForGuest,
   getVmIp,
   startVncProxy,
-  stopVncProxy,
   copyFileToVm,
 } from "./tart-vm";
 import { dirname, resolve } from "node:path";
@@ -16,6 +12,14 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SIMULATOR_INPUT_SWIFT_PATH = resolve(__dirname, "../capture/SimulatorInput.swift");
 const VM_SIMULATOR_INPUT_PATH = "/tmp/cmux-SimulatorInput.swift";
+
+/**
+ * The shared persistent VM name. All allocations share this VM rather than
+ * cloning per-allocation, because macOS VMs take too long to boot and the
+ * Tart guest agent is unreliable on fresh clones.
+ */
+const SHARED_VM_NAME = process.env.CMUX_TART_BASE_IMAGE ?? "cmux-ios-dev";
+let sharedVmReady = false;
 
 export interface AllocationInfo {
   allocationId: string;
@@ -26,9 +30,14 @@ export interface AllocationInfo {
   rsyncEndpoint?: string;
   rsyncSecret?: string;
   accessToken?: string;
+  accessTokenCreatedAt?: number;
   tartVmName: string;
   tartVmIp?: string;
   vncPort?: number;
+  /** Host reachable from the Mac (e.g. Linux host's Tailscale IP) */
+  workspaceHost?: string;
+  /** Map of container port → host port for proxying (e.g. { 3000: 43000 }) */
+  workspacePorts?: Record<number, number>;
 }
 
 const allocations = new Map<string, AllocationInfo>();
@@ -137,6 +146,38 @@ function findExistingSimulatorUdid(vmName: string, simName: string): string | un
   }
 }
 
+/**
+ * Ensure the shared persistent VM is running and the guest agent is ready.
+ * Only waits on the first call; subsequent calls return immediately.
+ */
+function ensureSharedVm(): void {
+  if (sharedVmReady) return;
+
+  console.log(`[workspace-manager] Ensuring shared VM ${SHARED_VM_NAME} is ready...`);
+
+  // Check if already running by trying a quick exec
+  try {
+    execInVm(SHARED_VM_NAME, "/usr/bin/true", { timeout: 10_000 });
+    console.log(`[workspace-manager] Shared VM ${SHARED_VM_NAME} is already running`);
+    sharedVmReady = true;
+    return;
+  } catch {
+    // Not ready yet — try starting it
+  }
+
+  // Start the VM (may already be running but tart handles that)
+  try {
+    startVm(SHARED_VM_NAME);
+  } catch (error) {
+    console.error(`[workspace-manager] Failed to start shared VM:`, error);
+  }
+
+  // Wait for guest agent with a generous timeout (macOS VMs boot slowly)
+  waitForGuest(SHARED_VM_NAME, 300_000);
+  sharedVmReady = true;
+  console.log(`[workspace-manager] Shared VM ${SHARED_VM_NAME} is ready`);
+}
+
 export async function setupAllocation(params: {
   allocationId: string;
   buildDir: string;
@@ -153,11 +194,10 @@ export async function setupAllocation(params: {
     return existing;
   }
 
-  // 1. Clone and start a fresh Tart VM for this allocation
-  const vmName = `cmux-${allocationId.slice(0, 12)}`;
-  cloneVm(vmName);
-  startVm(vmName);
-  waitForGuest(vmName);
+  const vmName = SHARED_VM_NAME;
+
+  // 1. Ensure the shared VM is running
+  ensureSharedVm();
 
   // 2. Get VM IP and start VNC proxy on the host
   const vmIp = getVmIp(vmName);
@@ -166,7 +206,7 @@ export async function setupAllocation(params: {
     vncPort = startVncProxy(vmName, vmIp);
   }
 
-  // 3. Copy SimulatorInput.swift into the VM
+  // 3. Copy SimulatorInput.swift into the VM (idempotent)
   try {
     copyFileToVm(vmName, SIMULATOR_INPUT_SWIFT_PATH, VM_SIMULATOR_INPUT_PATH);
   } catch (error) {
@@ -182,7 +222,7 @@ export async function setupAllocation(params: {
   // 5. Create build directory inside the VM
   execInVm(vmName, `mkdir -p "${buildDir}"`);
 
-  // 6. Create dedicated simulator inside the VM
+  // 6. Create dedicated simulator inside the VM (isolated per allocation)
   let simulatorUdid: string | undefined;
   const simName = `cmux-${allocationId.slice(0, 8)}`;
   try {
@@ -220,6 +260,14 @@ export async function setupAllocation(params: {
     pendingRsyncInfo.delete(allocationId);
   }
 
+  // Apply any pending workspace info
+  const pendingWs = pendingWorkspaceInfo.get(allocationId);
+  if (pendingWs) {
+    info.workspaceHost = pendingWs.workspaceHost;
+    info.workspacePorts = pendingWs.workspacePorts;
+    pendingWorkspaceInfo.delete(allocationId);
+  }
+
   allocations.set(allocationId, info);
   return info;
 }
@@ -232,11 +280,24 @@ export function cleanupAllocation(params: {
   const { allocationId } = params;
   const info = allocations.get(allocationId);
 
-  if (info?.tartVmName) {
-    // Stop VNC proxy, then stop and delete the VM
-    stopVncProxy(info.tartVmName);
-    stopVm(info.tartVmName);
-    deleteVm(info.tartVmName);
+  if (info) {
+    // Clean up the allocation's simulator and build dir inside the shared VM,
+    // but do NOT stop the VM itself — it's shared across allocations.
+    if (info.simulatorUdid) {
+      try {
+        execInVm(info.tartVmName, `xcrun simctl shutdown "${info.simulatorUdid}" 2>/dev/null; xcrun simctl delete "${info.simulatorUdid}" 2>/dev/null || true`);
+        console.log(`[workspace-manager] Cleaned up simulator ${info.simulatorUdid} for allocation ${allocationId}`);
+      } catch (error) {
+        console.error(`[workspace-manager] Failed to clean up simulator:`, error);
+      }
+    }
+    if (info.buildDir) {
+      try {
+        execInVm(info.tartVmName, `rm -rf "${info.buildDir}"`);
+      } catch (error) {
+        console.error(`[workspace-manager] Failed to clean up build dir:`, error);
+      }
+    }
   }
 
   allocations.delete(allocationId);
@@ -285,6 +346,19 @@ export function setRsyncInfo(allocationId: string, rsyncEndpoint: string, rsyncS
 
 const pendingRsyncInfo = new Map<string, { rsyncEndpoint: string; rsyncSecret: string }>();
 
+const pendingWorkspaceInfo = new Map<string, { workspaceHost: string; workspacePorts: Record<number, number> }>();
+
+export function setWorkspaceInfo(allocationId: string, workspaceHost: string, workspacePorts: Record<number, number>): void {
+  const info = allocations.get(allocationId);
+  if (!info) {
+    console.warn(`[workspace-manager] setWorkspaceInfo: no allocation found for ${allocationId}, will store when allocation is created`);
+    pendingWorkspaceInfo.set(allocationId, { workspaceHost, workspacePorts });
+    return;
+  }
+  info.workspaceHost = workspaceHost;
+  info.workspacePorts = workspacePorts;
+}
+
 export function setAllocationAccessToken(allocationId: string, accessToken: string): void {
   const info = allocations.get(allocationId);
   if (!info) {
@@ -294,4 +368,5 @@ export function setAllocationAccessToken(allocationId: string, accessToken: stri
     return;
   }
   info.accessToken = accessToken;
+  info.accessTokenCreatedAt = Date.now();
 }

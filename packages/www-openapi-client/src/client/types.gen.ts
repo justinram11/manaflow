@@ -1030,6 +1030,19 @@ export type DbUpdateEditorSettingsBody = {
     extensions?: string;
 };
 
+export type DbTeamSettings = {
+    id: string;
+    teamId: string;
+    tailscaleAuthKey?: string | null;
+    createdAt: number;
+    updatedAt: number;
+} | null;
+
+export type DbUpdateTeamSettingsBody = {
+    teamSlugOrId: string;
+    tailscaleAuthKey?: string;
+};
+
 export type DbDashboardStats = {
     totalTasks: number;
     completedTasks: number;
@@ -5506,6 +5519,60 @@ export type PutApiUserEditorSettingsResponses = {
 };
 
 export type PutApiUserEditorSettingsResponse = PutApiUserEditorSettingsResponses[keyof PutApiUserEditorSettingsResponses];
+
+export type GetApiTeamSettingsData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/team-settings';
+};
+
+export type GetApiTeamSettingsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbSettingsErrorResponse;
+};
+
+export type GetApiTeamSettingsError = GetApiTeamSettingsErrors[keyof GetApiTeamSettingsErrors];
+
+export type GetApiTeamSettingsResponses = {
+    /**
+     * Team settings
+     */
+    200: DbTeamSettings;
+};
+
+export type GetApiTeamSettingsResponse = GetApiTeamSettingsResponses[keyof GetApiTeamSettingsResponses];
+
+export type PatchApiTeamSettingsData = {
+    body: DbUpdateTeamSettingsBody;
+    path?: never;
+    query?: never;
+    url: '/api/team-settings';
+};
+
+export type PatchApiTeamSettingsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: DbSettingsErrorResponse;
+};
+
+export type PatchApiTeamSettingsError = PatchApiTeamSettingsErrors[keyof PatchApiTeamSettingsErrors];
+
+export type PatchApiTeamSettingsResponses = {
+    /**
+     * Team settings updated
+     */
+    200: {
+        id: string;
+    };
+};
+
+export type PatchApiTeamSettingsResponse = PatchApiTeamSettingsResponses[keyof PatchApiTeamSettingsResponses];
 
 export type GetApiAnalyticsDashboardData = {
     body?: never;

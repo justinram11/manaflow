@@ -6,6 +6,7 @@ import {
   containerSettings,
   userEditorSettings,
   apiKeys,
+  teamSettings,
 } from "../schema/index";
 import { resolveTeamId } from "./teams";
 
@@ -152,6 +153,18 @@ export function getEffectiveContainerSettings(
     minContainersToKeep:
       settings?.minContainersToKeep ?? DEFAULT_CONTAINER_SETTINGS.minContainersToKeep,
   };
+}
+
+export function getTeamSettings(
+  db: DbClient,
+  teamSlugOrId: string,
+) {
+  const teamId = resolveTeamId(db, teamSlugOrId);
+  return db
+    .select()
+    .from(teamSettings)
+    .where(eq(teamSettings.teamId, teamId))
+    .get();
 }
 
 export function getWorkspaceConfig(

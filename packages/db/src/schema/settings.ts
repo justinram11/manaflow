@@ -75,6 +75,20 @@ export const userEditorSettings = sqliteTable(
   ],
 );
 
+export const teamSettings = sqliteTable(
+  "teamSettings",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    teamId: text("teamId").notNull(),
+    tailscaleAuthKey: text("tailscaleAuthKey"),
+    createdAt: integer("createdAt").notNull(),
+    updatedAt: integer("updatedAt").notNull(),
+  },
+  (table) => [
+    uniqueIndex("teamSettings_by_team").on(table.teamId),
+  ],
+);
+
 export const apiKeys = sqliteTable(
   "apiKeys",
   {

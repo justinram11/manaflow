@@ -44,6 +44,25 @@ export async function handleJsonRpcMessage(msg: JsonRpcRequest): Promise<JsonRpc
         }
 
         const result = await tool.handler(toolArgs, allocationId);
+
+        // Return native MCP image content block for screenshot results
+        const typedResult = result as Record<string, unknown>;
+        if (typedResult.image && typedResult.mimeType) {
+          return {
+            jsonrpc: "2.0",
+            result: {
+              content: [
+                {
+                  type: "image" as const,
+                  data: typedResult.image as string,
+                  mimeType: typedResult.mimeType as string,
+                },
+              ],
+            },
+            id,
+          };
+        }
+
         return {
           jsonrpc: "2.0",
           result: {

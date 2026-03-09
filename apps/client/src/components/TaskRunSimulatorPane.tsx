@@ -68,15 +68,20 @@ export function TaskRunSimulatorPane({ taskRunId }: TaskRunSimulatorPaneProps) {
     return `${iosProviderBrowserBaseUrl}/allocations/${allocationId}`;
   }, [allocationId, iosDirectToken, iosProviderBrowserBaseUrl]);
 
-  const directScreenshotUrl = useMemo(() => {
+  // Fetch screenshot via Authorization header (not query param) and convert to data URL
+  const fetchDirectScreenshot = useCallback(async (): Promise<string | null> => {
     if (!directIngressBaseUrl || !iosDirectToken) {
       return null;
     }
 
     const url = new URL(`${directIngressBaseUrl}/screenshot`);
-    url.searchParams.set("token", iosDirectToken);
     url.searchParams.set("format", "png");
-    return url.toString();
+    const response = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${iosDirectToken}` },
+    });
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    return URL.createObjectURL(blob);
   }, [directIngressBaseUrl, iosDirectToken]);
 
   const [controlError, setControlError] = useState<string | null>(null);
@@ -96,10 +101,12 @@ export function TaskRunSimulatorPane({ taskRunId }: TaskRunSimulatorPaneProps) {
 
       if (directIngressBaseUrl && iosDirectToken) {
         const url = new URL(`${directIngressBaseUrl}/tools-call`);
-        url.searchParams.set("token", iosDirectToken);
         const response = await fetch(url.toString(), {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${iosDirectToken}`,
+          },
           body: JSON.stringify({
             name: method,
             arguments: params,
@@ -203,16 +210,22 @@ export function TaskRunSimulatorPane({ taskRunId }: TaskRunSimulatorPaneProps) {
       return;
     }
 
-    if (directScreenshotUrl) {
-      setSimulatorScreenshot({
-        src: `${directScreenshotUrl}&ts=${Date.now()}`,
-        mimeType: "image/png",
-      });
-      return;
-    }
-
     screenshotRefreshInFlightRef.current = true;
     try {
+      // Try direct ingress fetch first (returns binary image via Authorization header)
+      const objectUrl = await fetchDirectScreenshot();
+      if (objectUrl) {
+        // Revoke previous object URL to avoid memory leaks
+        setSimulatorScreenshot((prev) => {
+          if (prev?.src.startsWith("blob:")) {
+            URL.revokeObjectURL(prev.src);
+          }
+          return { src: objectUrl, mimeType: "image/png" };
+        });
+        return;
+      }
+
+      // Fallback: call via MCP JSON-RPC
       const result = (await callSimulatorTool("ios_screenshot", {
         format: "png",
       })) as {
@@ -230,7 +243,7 @@ export function TaskRunSimulatorPane({ taskRunId }: TaskRunSimulatorPaneProps) {
     } finally {
       screenshotRefreshInFlightRef.current = false;
     }
-  }, [allocationId, callSimulatorTool, directScreenshotUrl]);
+  }, [allocationId, callSimulatorTool, fetchDirectScreenshot]);
 
   useEffect(() => {
     if (!allocationId) {
