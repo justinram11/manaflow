@@ -1,0 +1,18 @@
+{
+  "name": "@cmux/vm-ios-mcp-server",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "main": "./src/server.ts",
+  "scripts": {
+    "start": "bun run src/server.ts",
+    "typecheck": "bunx tsgo --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "p-limit": "^6.2.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.11",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1228,10 +1228,6 @@ export type AllocateProviderBody = {
     };
 };
 
-export type EnsureDirectBody = {
-    token?: string;
-};
-
 export type GetApiHealthData = {
     body?: never;
     path?: never;
@@ -6211,92 +6207,6 @@ export type PostApiProvidersAllocationsByAllocationIdReleaseResponses = {
 };
 
 export type PostApiProvidersAllocationsByAllocationIdReleaseResponse = PostApiProvidersAllocationsByAllocationIdReleaseResponses[keyof PostApiProvidersAllocationsByAllocationIdReleaseResponses];
-
-export type PostApiProvidersAllocationsByAllocationIdJsonRpcData = {
-    body: {
-        jsonrpc: string;
-        method: string;
-        params?: unknown;
-        id: string | number;
-    };
-    path: {
-        allocationId: string;
-    };
-    query?: never;
-    url: '/api/providers/allocations/{allocationId}/json-rpc';
-};
-
-export type PostApiProvidersAllocationsByAllocationIdJsonRpcErrors = {
-    /**
-     * Unauthorized
-     */
-    401: ProviderErrorResponse;
-    /**
-     * Allocation not found
-     */
-    404: ProviderErrorResponse;
-    /**
-     * Provider unavailable
-     */
-    502: ProviderErrorResponse;
-};
-
-export type PostApiProvidersAllocationsByAllocationIdJsonRpcError = PostApiProvidersAllocationsByAllocationIdJsonRpcErrors[keyof PostApiProvidersAllocationsByAllocationIdJsonRpcErrors];
-
-export type PostApiProvidersAllocationsByAllocationIdJsonRpcResponses = {
-    /**
-     * JSON-RPC response
-     */
-    200: {
-        jsonrpc: string;
-        result?: unknown;
-        error?: {
-            code: number;
-            message: string;
-            data?: unknown;
-        };
-        id: string | number;
-    };
-};
-
-export type PostApiProvidersAllocationsByAllocationIdJsonRpcResponse = PostApiProvidersAllocationsByAllocationIdJsonRpcResponses[keyof PostApiProvidersAllocationsByAllocationIdJsonRpcResponses];
-
-export type PostApiProvidersAllocationsByAllocationIdEnsureDirectData = {
-    body: EnsureDirectBody;
-    path: {
-        allocationId: string;
-    };
-    query?: never;
-    url: '/api/providers/allocations/{allocationId}/ensure-direct';
-};
-
-export type PostApiProvidersAllocationsByAllocationIdEnsureDirectErrors = {
-    /**
-     * Unauthorized
-     */
-    401: ProviderErrorResponse;
-    /**
-     * Allocation not found
-     */
-    404: ProviderErrorResponse;
-    /**
-     * Provider unavailable
-     */
-    502: ProviderErrorResponse;
-};
-
-export type PostApiProvidersAllocationsByAllocationIdEnsureDirectError = PostApiProvidersAllocationsByAllocationIdEnsureDirectErrors[keyof PostApiProvidersAllocationsByAllocationIdEnsureDirectErrors];
-
-export type PostApiProvidersAllocationsByAllocationIdEnsureDirectResponses = {
-    /**
-     * Direct bridges ensured
-     */
-    200: {
-        success: boolean;
-    };
-};
-
-export type PostApiProvidersAllocationsByAllocationIdEnsureDirectResponse = PostApiProvidersAllocationsByAllocationIdEnsureDirectResponses[keyof PostApiProvidersAllocationsByAllocationIdEnsureDirectResponses];
 
 export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});

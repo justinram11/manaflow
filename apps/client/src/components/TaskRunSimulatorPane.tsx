@@ -1,8 +1,4 @@
 import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indicator";
-import {
-  postApiProvidersAllocationsByAllocationIdJsonRpc,
-  postApiProvidersAllocationsByAllocationIdEnsureDirect,
-} from "@cmux/www-openapi-client";
 import { getApiTaskRunsByIdOptions } from "@cmux/www-openapi-client/react-query";
 import { useQuery as useRQ } from "@tanstack/react-query";
 import {
@@ -18,7 +14,6 @@ export interface TaskRunSimulatorPaneProps {
 }
 
 export function TaskRunSimulatorPane({ taskRunId }: TaskRunSimulatorPaneProps) {
-  const rpcCounterRef = useRef(0);
   const screenshotRefreshInFlightRef = useRef(false);
 
   const taskRunQuery = useRQ({
@@ -95,115 +90,47 @@ export function TaskRunSimulatorPane({ taskRunId }: TaskRunSimulatorPaneProps) {
 
   const callSimulatorTool = useCallback(
     async (method: string, params: Record<string, unknown>) => {
-      if (!allocationId) {
-        throw new Error("Missing iOS resource allocation");
+      if (!allocationId || !directIngressBaseUrl || !iosDirectToken) {
+        throw new Error("Missing iOS resource allocation or direct connection info");
       }
 
-      if (directIngressBaseUrl && iosDirectToken) {
-        const url = new URL(`${directIngressBaseUrl}/tools-call`);
-        const response = await fetch(url.toString(), {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${iosDirectToken}`,
-          },
-          body: JSON.stringify({
-            name: method,
-            arguments: params,
-          }),
-        });
-
-        const payload = (await response.json()) as {
-          result?: unknown;
-          error?: string;
-        };
-        if (!response.ok) {
-          throw new Error(payload.error ?? `Simulator request failed (${response.status})`);
-        }
-        if (payload.error) {
-          throw new Error(payload.error);
-        }
-        return payload.result;
-      }
-
-      const rpcId = `sim-${taskRunId}-${rpcCounterRef.current++}`;
-      const response = await postApiProvidersAllocationsByAllocationIdJsonRpc({
-        path: { allocationId },
-        body: {
-          jsonrpc: "2.0",
-          method: "tools/call",
-          params: {
-            name: method,
-            arguments: params,
-          },
-          id: rpcId,
+      const url = new URL(`${directIngressBaseUrl}/tools-call`);
+      const response = await fetch(url.toString(), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${iosDirectToken}`,
         },
+        body: JSON.stringify({
+          name: method,
+          arguments: params,
+        }),
       });
 
-      const payload = response.data;
-      if (!payload) {
-        throw new Error("Empty JSON-RPC response from simulator provider");
+      const payload = (await response.json()) as {
+        result?: unknown;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error ?? `Simulator request failed (${response.status})`);
       }
       if (payload.error) {
-        throw new Error(payload.error.message);
+        throw new Error(payload.error);
       }
-
-      const result = payload.result;
-      if (
-        result &&
-        typeof result === "object" &&
-        "content" in result &&
-        Array.isArray(result.content)
-      ) {
-        const textItem = result.content.find(
-          (item): item is { text: string } =>
-            Boolean(item) &&
-            typeof item === "object" &&
-            "type" in item &&
-            item.type === "text" &&
-            "text" in item &&
-            typeof item.text === "string"
-        );
-
-        if (textItem) {
-          const parsed = JSON.parse(textItem.text) as {
-            success?: boolean;
-            error?: string;
-          };
-          if (parsed.error) {
-            throw new Error(parsed.error);
-          }
-          return parsed;
-        }
-      }
-
-      return result;
+      return payload.result;
     },
-    [allocationId, directIngressBaseUrl, iosDirectToken, taskRunId]
+    [allocationId, directIngressBaseUrl, iosDirectToken]
   );
-
-  const ensureDirectBridge = useCallback(async () => {
-    if (!allocationId || !iosDirectToken) return;
-    try {
-      await postApiProvidersAllocationsByAllocationIdEnsureDirect({
-        path: { allocationId },
-        body: { token: iosDirectToken },
-      });
-    } catch (error) {
-      console.error("[simulator-controls] ensure-direct failed:", error);
-    }
-  }, [allocationId, iosDirectToken]);
 
   useEffect(() => {
     if (!allocationId) {
       return;
     }
 
-    void ensureDirectBridge();
     void callSimulatorTool("ios_screen_info", {}).catch((error) => {
       console.error("[simulator-controls] failed to warm iOS allocation", error);
     });
-  }, [allocationId, callSimulatorTool, ensureDirectBridge]);
+  }, [allocationId, callSimulatorTool]);
 
   const refreshScreenshot = useCallback(async () => {
     if (!allocationId || screenshotRefreshInFlightRef.current) {

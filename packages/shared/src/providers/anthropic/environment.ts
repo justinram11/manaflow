@@ -51,10 +51,11 @@ export async function getClaudeEnvironment(
             ? {
                 ios: {
                   command: "node",
-                  args: ["/root/lifecycle/mcp/ios-resource-proxy.mjs"],
+                  args: ["/root/lifecycle/mcp/ios-vm-proxy.mjs"],
                   env: {
-                    CMUX_MCP_PROXY_URL: `${ctx.callbackUrl}/api/providers/allocations/${ctx.iosResourceAllocationId}/json-rpc`,
-                    CMUX_TASK_RUN_JWT: ctx.taskRunJwt,
+                    CMUX_VM_MCP_URL: ctx.iosVmMcpUrl ?? "",
+                    CMUX_IOS_ALLOCATION_ID: ctx.iosResourceAllocationId,
+                    CMUX_IOS_DIRECT_TOKEN: ctx.iosDirectToken ?? "",
                   },
                 },
               }
@@ -134,29 +135,25 @@ export async function getClaudeEnvironment(
     const { resolve, dirname } = await import("node:path");
     const { fileURLToPath } = await import("node:url");
 
+    // Deploy the lightweight VM proxy that talks directly to the in-VM MCP server
     try {
-      // Read the proxy script from the shared package
       const proxyScriptPath = resolve(
         dirname(fileURLToPath(import.meta.url)),
-        "../mcp/ios-resource-proxy.mjs",
+        "../mcp/ios-vm-proxy.mjs",
       );
       const proxyScript = readFileSync(proxyScriptPath, "utf-8");
 
       files.push({
-        destinationPath: "/root/lifecycle/mcp/ios-resource-proxy.mjs",
+        destinationPath: "/root/lifecycle/mcp/ios-vm-proxy.mjs",
         contentBase64: Buffer.from(proxyScript).toString("base64"),
         mode: "755",
       });
     } catch (error) {
-      console.error("Failed to read iOS resource proxy script:", error);
+      console.error("Failed to read iOS VM proxy script:", error);
     }
 
-    // Pass direct MCP connection token and port for low-latency Mac ↔ workspace path
+    // Start rsyncd so the VM can pull workspace files via rsync
     if (ctx.iosDirectToken) {
-      env.CMUX_DIRECT_MCP_TOKEN = ctx.iosDirectToken;
-      env.CMUX_DIRECT_MCP_PORT = "39385";
-
-      // Start rsyncd so Mac daemon can pull workspace files via rsync
       const rsyncdConf = [
         "[workspace]",
         "path = /root/workspace",

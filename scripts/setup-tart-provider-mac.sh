@@ -364,16 +364,22 @@ build_guest_provider_bundle() {
   rm -rf "${bundle_dir}"
   mkdir -p \
     "${bundle_dir}/provider-daemon" \
-    "${bundle_dir}/mac-resource-provider"
+    "${bundle_dir}/mac-resource-provider" \
+    "${bundle_dir}/vm-ios-mcp-server"
 
   cp -R "${REPO_ROOT}/packages/provider-daemon/src" "${bundle_dir}/provider-daemon/"
   cp -R "${REPO_ROOT}/packages/mac-resource-provider/src" "${bundle_dir}/mac-resource-provider/"
+  cp -R "${REPO_ROOT}/packages/vm-ios-mcp-server/src" "${bundle_dir}/vm-ios-mcp-server/"
   cp "${REPO_ROOT}/packages/provider-daemon/package.json" "${bundle_dir}/provider-daemon/package.json"
   cp "${REPO_ROOT}/packages/provider-daemon/tsconfig.json" "${bundle_dir}/provider-daemon/tsconfig.json"
   cp "${REPO_ROOT}/packages/mac-resource-provider/package.json" \
     "${bundle_dir}/mac-resource-provider/package.json"
   cp "${REPO_ROOT}/packages/mac-resource-provider/tsconfig.json" \
     "${bundle_dir}/mac-resource-provider/tsconfig.json"
+  cp "${REPO_ROOT}/packages/vm-ios-mcp-server/package.json" \
+    "${bundle_dir}/vm-ios-mcp-server/package.json"
+  cp "${REPO_ROOT}/packages/vm-ios-mcp-server/tsconfig.json" \
+    "${bundle_dir}/vm-ios-mcp-server/tsconfig.json"
   cp "${REPO_ROOT}/tsconfig.base.json" "${bundle_dir}/tsconfig.base.json"
 
   python3 - "${bundle_dir}/provider-daemon/package.json" <<'PY'
@@ -437,9 +443,72 @@ install_guest_provider() {
        -restart -agent && \
      sysadminctl -screenLock off -password admin 2>/dev/null || true"
 
-  echo "==> Verifying guest provider launch agent"
+  echo "==> Installing vm-ios-mcp-server inside Tart VM ${vm_name}"
+  run_with_timeout 60 tart exec "${vm_name}" /bin/sh -lc \
+    "cd \"\$HOME/.cmux/runtime/vm-ios-mcp-server\" && bun install --frozen-lockfile 2>/dev/null || bun install"
+
+  install_vm_mcp_server_agent "${vm_name}"
+
+  echo "==> Verifying guest launch agents"
   run_with_timeout 20 tart exec "${vm_name}" /bin/sh -lc \
-    "launchctl list | grep -i com.cmux.provider || true"
+    "launchctl list | grep -i com.cmux || true"
+}
+
+install_vm_mcp_server_agent() {
+  local vm_name="$1"
+
+  echo "==> Installing vm-ios-mcp-server LaunchAgent in ${vm_name}"
+  run_with_timeout 30 tart exec "${vm_name}" /bin/sh -lc '
+    PLIST_PATH="$HOME/Library/LaunchAgents/com.cmux.vm-ios-mcp-server.plist"
+    RUNTIME_DIR="$HOME/.cmux/runtime/vm-ios-mcp-server"
+    LOG_DIR="$HOME/.cmux/logs"
+    BUN_PATH="$HOME/.bun/bin/bun"
+
+    # Fallback bun path
+    if [ ! -x "$BUN_PATH" ]; then
+      BUN_PATH="$(which bun 2>/dev/null || echo /opt/homebrew/bin/bun)"
+    fi
+
+    mkdir -p "$HOME/Library/LaunchAgents" "$LOG_DIR"
+
+    cat > "$PLIST_PATH" <<AGENT_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.cmux.vm-ios-mcp-server</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$BUN_PATH</string>
+    <string>run</string>
+    <string>$RUNTIME_DIR/src/server.ts</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>$RUNTIME_DIR</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>$LOG_DIR/vm-ios-mcp-server.log</string>
+  <key>StandardErrorPath</key>
+  <string>$LOG_DIR/vm-ios-mcp-server.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+</dict>
+</plist>
+AGENT_PLIST
+
+    DOMAIN="gui/$(id -u)"
+    launchctl bootout "$DOMAIN/com.cmux.vm-ios-mcp-server" 2>/dev/null || true
+    launchctl bootstrap "$DOMAIN" "$PLIST_PATH"
+    launchctl enable "$DOMAIN/com.cmux.vm-ios-mcp-server"
+    echo "vm-ios-mcp-server LaunchAgent installed"
+  '
 }
 
 install_tailscale_in_vm() {

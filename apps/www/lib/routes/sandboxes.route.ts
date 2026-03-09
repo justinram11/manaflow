@@ -77,9 +77,7 @@ import {
 import { getAllocationById } from "@cmux/db/queries/providers";
 import type { AuthFile } from "@cmux/shared/worker-schemas";
 import * as crypto from "node:crypto";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname } from "node:path";
 import { injectClaudeCredentials, injectClaudeAuth } from "./sandboxes/claude-credentials";
 import { injectHostSshKeys } from "./sandboxes/ssh-keys";
 import { injectAwsCredentials } from "./sandboxes/aws-credentials";
@@ -88,8 +86,6 @@ import { injectAwsCredentials } from "./sandboxes/aws-credentials";
 // State now also lives in the provider daemon, but we keep a local map
 // for quick lookups without round-trips during the same session.
 export const incusVmRegistry = new Map<string, RemoteIncusSandboxInstance>();
-const routeDirname = dirname(fileURLToPath(import.meta.url));
-
 function getIosProviderBrowserBaseUrl(provider: {
   metadata?: Record<string, unknown> | null;
 }): string | undefined {
@@ -138,23 +134,12 @@ async function writeAuthFilesToSandbox(
   }
 }
 
-async function installIosWorkspaceSidecars(
+async function installIosWorkspaceRsyncd(
   instance: RemoteIncusSandboxInstance,
   opts: {
-    callbackUrl: string;
-    taskRunJwt: string;
-    iosResourceAllocationId: string;
     iosDirectToken: string;
   },
 ): Promise<void> {
-  const sharedMcpDir = resolve(
-    routeDirname,
-    "../../../../packages/shared/src/providers/mcp",
-  );
-  const resourceProxyScript = readFileSync(
-    resolve(sharedMcpDir, "ios-resource-proxy.mjs"),
-    "utf-8",
-  );
   const rsyncdConf = [
     "[workspace]",
     "path = /root/workspace",
@@ -163,64 +148,21 @@ async function installIosWorkspaceSidecars(
     "auth users = cmux",
     "secrets file = /etc/cmux/rsyncd.secrets",
   ].join("\n");
-  const claudeConfig = {
-    projects: {
-      "/root/workspace": {
-        allowedTools: [],
-        history: [],
-        mcpContextUris: [],
-        mcpServers: {
-          ios: {
-            command: "node",
-            args: ["/root/lifecycle/mcp/ios-resource-proxy.mjs"],
-            env: {
-              CMUX_MCP_PROXY_URL: `${opts.callbackUrl}/api/providers/allocations/${opts.iosResourceAllocationId}/json-rpc`,
-              CMUX_TASK_RUN_JWT: opts.taskRunJwt,
-            },
-          },
-        },
-        enabledMcpjsonServers: [],
-        disabledMcpjsonServers: [],
-        hasTrustDialogAccepted: true,
-        projectOnboardingSeenCount: 0,
-        hasClaudeMdExternalIncludesApproved: false,
-        hasClaudeMdExternalIncludesWarningShown: false,
-      },
-    },
-    isQualifiedForDataSharing: false,
-    hasCompletedOnboarding: true,
-    bypassPermissionsModeAccepted: true,
-    hasAcknowledgedCostThreshold: true,
-  };
 
   await writeAuthFilesToSandbox(instance, [
-    {
-      destinationPath: "/root/lifecycle/mcp/ios-resource-proxy.mjs",
-      contentBase64: Buffer.from(resourceProxyScript).toString("base64"),
-      mode: "755",
-    },
     {
       destinationPath: "/etc/cmux/rsyncd.conf",
       contentBase64: Buffer.from(rsyncdConf).toString("base64"),
       mode: "644",
     },
-    {
-      destinationPath: "/root/.claude/.claude.json",
-      contentBase64: Buffer.from(JSON.stringify(claudeConfig, null, 2)).toString("base64"),
-      mode: "644",
-    },
   ]);
 
-  const mcpProxyUrl = `${opts.callbackUrl}/api/providers/allocations/${opts.iosResourceAllocationId}/json-rpc`;
   const commands = [
-    "mkdir -p /root/lifecycle/mcp /etc/cmux",
+    "mkdir -p /etc/cmux",
     `echo ${shellQuote(`cmux:${opts.iosDirectToken}`)} > /etc/cmux/rsyncd.secrets && chmod 600 /etc/cmux/rsyncd.secrets`,
-    "pkill -f 'bun /root/lifecycle/mcp/ios-resource-proxy.mjs' || true",
     "pkill -f 'rsync --daemon.*--config=/etc/cmux/rsyncd.conf' || true",
     "pkill -f 'cmux-rsyncd-supervisor' || true",
     `nohup bash -c 'exec -a cmux-rsyncd-supervisor bash -c '"'"'while true; do rsync --daemon --no-detach --config=/etc/cmux/rsyncd.conf --port=39376 2>>/tmp/rsyncd.log; echo "[$(date)] rsyncd exited, restarting..." >>/tmp/rsyncd.log; sleep 1; done'"'"'' >/dev/null 2>&1 < /dev/null &`,
-    `nohup bash -lc "tail -f /dev/null | env CMUX_MCP_PROXY_URL=${shellQuote(mcpProxyUrl)} CMUX_TASK_RUN_JWT=${shellQuote(opts.taskRunJwt)} CMUX_DIRECT_MCP_TOKEN=${shellQuote(opts.iosDirectToken)} CMUX_DIRECT_MCP_PORT=39385 bun /root/lifecycle/mcp/ios-resource-proxy.mjs" >/tmp/ios-resource-proxy.log 2>&1 < /dev/null &`,
-    "ln -sf /root/.claude/.claude.json /root/.claude.json",
   ];
 
   for (const command of commands) {
@@ -978,6 +920,7 @@ sandboxesRouter.openapi(
         let iosDirectToken: string | undefined;
         let iosProviderBrowserBaseUrl: string | undefined;
         let iosProviderTailscaleHost: string | undefined;
+        let iosVmMcpUrl: string | undefined;
         if (body.taskRunId && selectedIosProviders.length > 0) {
           try {
             const iosProvider = selectedIosProviders[0];
@@ -994,12 +937,18 @@ sandboxesRouter.openapi(
               iosResourceAllocationId = allocId;
               iosProviderBrowserBaseUrl = getIosProviderBrowserBaseUrl(iosProvider);
               iosProviderTailscaleHost = getIosProviderTailscaleHost(iosProvider);
-              console.log(`[sandboxes.start] Created iOS allocation ${allocId} on provider ${iosProvider.id}`);
+
+              // Derive VM MCP URL from provider metadata (set by provider daemon)
+              const vmTsHostname = iosProvider.metadata?.vmTailscaleHostname;
+              const vmMcpPort = iosProvider.metadata?.vmMcpPort ?? "4850";
+              if (typeof vmTsHostname === "string" && vmTsHostname) {
+                iosVmMcpUrl = `http://${vmTsHostname}:${vmMcpPort}`;
+              }
+              console.log(`[sandboxes.start] Created iOS allocation ${allocId} on provider ${iosProvider.id}${iosVmMcpUrl ? ` (VM MCP: ${iosVmMcpUrl})` : ""}`);
 
               // Setup the allocation on the Mac daemon and then establish direct connection
               const serverUrl = process.env.CMUX_SERVER_INTERNAL_URL ?? "http://localhost:9776";
               const sandboxHost = incusResult.host;
-              const iosMcpHostPort = incusResult.hostPorts[39385];
               const iosRsyncdHostPort = incusResult.hostPorts[39376];
 
               // Fire-and-forget with retry: setup allocation, then connect_direct
@@ -1062,29 +1011,21 @@ sandboxesRouter.openapi(
                       }
                     }
 
-                    // After setup, tell the Mac daemon to connect directly to the workspace
-                    if (iosMcpHostPort) {
-                      // Build workspace port mapping for the ingress proxy.
-                      // The Mac needs to reach the Linux host — use the
-                      // externally-reachable sandboxHost (not localhost).
-                      const workspacePorts: Record<number, number> = {};
-                      for (const [containerPort, hostPort] of Object.entries(incusResult.hostPorts)) {
-                        workspacePorts[Number(containerPort)] = Number(hostPort);
-                      }
-                      // If the team has Tailscale configured, use the container's
-                      // Tailscale hostname for direct connectivity (no Incus proxy).
-                      // The container joins the tailnet during provisioning as
-                      // incusContainerId, so the VM can reach it directly.
+                    // Tell the Mac daemon about workspace connectivity (rsync, ingress proxy)
+                    {
                       const teamSettingsForIos = getTeamSettings(db, body.teamSlugOrId);
                       const useTailscale = !!teamSettingsForIos?.tailscaleAuthKey;
                       const tsHostname = incusContainerId.replace(/[^a-zA-Z0-9-]/g, "-");
 
+                      // Build workspace port mapping for the ingress proxy
+                      const workspacePorts: Record<number, number> = {};
+                      for (const [containerPort, hostPort] of Object.entries(incusResult.hostPorts)) {
+                        workspacePorts[Number(containerPort)] = Number(hostPort);
+                      }
+
                       const connectParams = {
                         allocationId: allocId,
                         accessToken: iosDirectToken,
-                        mcpEndpoint: useTailscale
-                          ? `ws://${tsHostname}:39385?token=${iosDirectToken}`
-                          : `ws://${sandboxHost}:${iosMcpHostPort}?token=${iosDirectToken}`,
                         ...(useTailscale ? {
                           rsyncEndpoint: `rsync://cmux@${tsHostname}:39376/workspace`,
                           rsyncSecret: iosDirectToken,
@@ -1092,7 +1033,6 @@ sandboxesRouter.openapi(
                           rsyncEndpoint: `rsync://cmux@${sandboxHost}:${iosRsyncdHostPort}/workspace`,
                           rsyncSecret: iosDirectToken,
                         } : {}),
-                        // Workspace proxy info for ingress reverse proxy
                         workspaceHost: useTailscale ? tsHostname : sandboxHost,
                         workspacePorts: useTailscale
                           ? Object.fromEntries(
@@ -1103,6 +1043,50 @@ sandboxesRouter.openapi(
                       await sendProviderRequest(iosProvider.id, "connect_direct", connectParams);
                       console.log(`[sandboxes.start] Sent connect_direct to Mac daemon for allocation ${allocId}`);
                     }
+
+                    // Set up the allocation on the in-VM MCP server (primary tool path)
+                    if (iosVmMcpUrl) {
+                      try {
+                        const teamSettingsForVm = getTeamSettings(db, body.teamSlugOrId);
+                        const useTailscaleForVm = !!teamSettingsForVm?.tailscaleAuthKey;
+                        const tsHostnameForVm = incusContainerId.replace(/[^a-zA-Z0-9-]/g, "-");
+
+                        const vmSetupBody = {
+                          jsonrpc: "2.0",
+                          method: "setup_allocation",
+                          params: {
+                            allocationId: allocId,
+                            buildDir: buildDir,
+                            accessToken: iosDirectToken,
+                            ...(useTailscaleForVm ? {
+                              rsyncEndpoint: `rsync://cmux@${tsHostnameForVm}:39376/workspace`,
+                              rsyncSecret: iosDirectToken,
+                            } : iosRsyncdHostPort ? {
+                              rsyncEndpoint: `rsync://cmux@${sandboxHost}:${iosRsyncdHostPort}/workspace`,
+                              rsyncSecret: iosDirectToken,
+                            } : {}),
+                          },
+                          id: `vm-setup-${allocId}`,
+                        };
+
+                        const vmRes = await fetch(`${iosVmMcpUrl}/jsonrpc`, {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify(vmSetupBody),
+                          signal: AbortSignal.timeout(30000),
+                        });
+
+                        if (vmRes.ok) {
+                          console.log(`[sandboxes.start] VM MCP server setup_allocation succeeded for ${allocId}`);
+                        } else {
+                          const errText = await vmRes.text();
+                          console.error(`[sandboxes.start] VM MCP server setup_allocation failed: ${errText}`);
+                        }
+                      } catch (vmError) {
+                        console.error(`[sandboxes.start] Failed to reach VM MCP server:`, vmError);
+                      }
+                    }
+
                     return; // success
                   } catch (error) {
                     console.error(`[sandboxes.start] iOS setup/connect_direct attempt ${attempt + 1}/${MAX_RETRIES} failed:`, error);
@@ -1139,9 +1123,6 @@ sandboxesRouter.openapi(
                 ...(incusResult.hostPorts[39384]
                   ? { androidVnc: incusResult.hostPorts[39384] }
                   : {}),
-                ...(incusResult.hostPorts[39385]
-                  ? { iosMcp: incusResult.hostPorts[39385] }
-                  : {}),
                 ...(incusResult.hostPorts[39376]
                   ? { iosRsyncd: incusResult.hostPorts[39376] }
                   : {}),
@@ -1152,6 +1133,7 @@ sandboxesRouter.openapi(
                     iosDirectToken,
                     ...(iosProviderBrowserBaseUrl ? { iosProviderBrowserBaseUrl } : {}),
                     ...(iosProviderTailscaleHost ? { iosProviderTailscaleHost } : {}),
+                    ...(iosVmMcpUrl ? { iosVmMcpUrl } : {}),
                   }
                 : {}),
             });
@@ -1316,13 +1298,9 @@ sandboxesRouter.openapi(
 
             if (
               iosResourceAllocationId &&
-              iosDirectToken &&
-              body.taskRunJwt
+              iosDirectToken
             ) {
-              await installIosWorkspaceSidecars(incusInstance, {
-                callbackUrl: process.env.NEXT_PUBLIC_WWW_ORIGIN ?? "http://localhost:5173",
-                taskRunJwt: body.taskRunJwt,
-                iosResourceAllocationId,
+              await installIosWorkspaceRsyncd(incusInstance, {
                 iosDirectToken,
               });
             }

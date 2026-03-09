@@ -24,7 +24,6 @@ export interface IncusSandboxResult {
     vnc: string;
     pty: string;
     androidVnc?: string;
-    iosMcp?: string;
     iosRsyncd?: string;
   };
 }
@@ -41,7 +40,6 @@ interface LaunchResult {
     devtools: number;
     pty: number;
     androidVnc?: number;
-    iosMcp?: number;
     iosRsyncd?: number;
   };
   host: string;
@@ -147,9 +145,6 @@ export async function startIncusSandbox(options: {
   if (data.ports.androidVnc !== undefined) {
     hostPorts[39384] = String(data.ports.androidVnc);
   }
-  if (data.ports.iosMcp !== undefined) {
-    hostPorts[39385] = String(data.ports.iosMcp);
-  }
   if (data.ports.iosRsyncd !== undefined) {
     hostPorts[39376] = String(data.ports.iosRsyncd);
   }
@@ -175,9 +170,6 @@ export async function startIncusSandbox(options: {
       pty: makeUrl(data.ports.pty),
       ...(data.ports.androidVnc !== undefined
         ? { androidVnc: makeUrl(data.ports.androidVnc) }
-        : {}),
-      ...(data.ports.iosMcp !== undefined
-        ? { iosMcp: makeUrl(data.ports.iosMcp) }
         : {}),
       ...(data.ports.iosRsyncd !== undefined
         ? { iosRsyncd: makeUrl(data.ports.iosRsyncd) }

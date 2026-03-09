@@ -116,9 +116,6 @@ export class IncusProvider implements ComputeProvider {
         ...(wantsAndroid && hostPortMap[CONTAINER_PORTS.androidVnc] !== undefined
           ? { androidVnc: hostPortMap[CONTAINER_PORTS.androidVnc] }
           : {}),
-        ...(wantsIos && hostPortMap[CONTAINER_PORTS.iosMcp] !== undefined
-          ? { iosMcp: hostPortMap[CONTAINER_PORTS.iosMcp] }
-          : {}),
         ...(wantsIos && hostPortMap[CONTAINER_PORTS.iosVncIn] !== undefined
           ? { iosVncIn: hostPortMap[CONTAINER_PORTS.iosVncIn] }
           : {}),

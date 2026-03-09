@@ -83,7 +83,6 @@ export interface TaskRunWithChildren {
       proxy?: string;
       vnc?: string;
       pty?: string;
-      iosMcp?: string;
       iosRsyncd?: string;
     };
     url?: string;

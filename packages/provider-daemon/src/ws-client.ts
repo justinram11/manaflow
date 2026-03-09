@@ -322,6 +322,10 @@ export class WsClient {
     if (browserBaseUrl) {
       metadata.browserBaseUrl = browserBaseUrl;
       metadata.iosIngressPort = process.env.CMUX_IOS_INGRESS_PORT ?? "4848";
+      // Report the Tart VM's Tailscale hostname for direct MCP access
+      const vmName = process.env.CMUX_TART_BASE_IMAGE ?? "cmux-ios-dev";
+      metadata.vmTailscaleHostname = `cmux-tart-${vmName}`;
+      metadata.vmMcpPort = process.env.CMUX_VM_MCP_PORT ?? "4850";
     }
     info.metadata = metadata;
 

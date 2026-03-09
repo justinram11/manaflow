@@ -1,5 +1,4 @@
 import type { CapabilityHandler, JsonRpcRequest, JsonRpcResponse } from "../../types";
-import { DirectMcpBridge } from "./direct-connection";
 
 /**
  * Resource:ios-simulator capability handler.
@@ -18,9 +17,6 @@ export function createResourceIosHandler(): CapabilityHandler {
     handleSetupAllocation: (params: Record<string, unknown>) => Promise<unknown>;
     handleCleanupAllocation: (params: Record<string, unknown>) => Promise<unknown>;
   } | null = null;
-
-  // Active direct connections keyed by allocation ID
-  const directBridges = new Map<string, DirectMcpBridge>();
 
   async function getMcpHandler() {
     if (!mcpHandler) {
@@ -48,7 +44,6 @@ export function createResourceIosHandler(): CapabilityHandler {
       "cleanup_allocation",
       "initialize",
       "connect_direct",
-      "disconnect_direct",
     ],
 
     async handle(request: JsonRpcRequest): Promise<JsonRpcResponse> {
@@ -65,22 +60,10 @@ export function createResourceIosHandler(): CapabilityHandler {
 
           case "cleanup_allocation":
             result = await handler.handleCleanupAllocation(params);
-            // Also clean up any direct connections for this allocation
-            {
-              const allocId = params.allocationId as string | undefined;
-              if (allocId) {
-                const bridge = directBridges.get(allocId);
-                if (bridge) {
-                  bridge.disconnect();
-                  directBridges.delete(allocId);
-                }
-              }
-            }
             break;
 
           case "connect_direct": {
             const allocId = params.allocationId as string;
-            const mcpEndpoint = params.mcpEndpoint as string | undefined;
             const rsyncEndpoint = params.rsyncEndpoint as string | undefined;
             const rsyncSecret = params.rsyncSecret as string | undefined;
             const accessToken = params.accessToken as string | undefined;
@@ -119,35 +102,7 @@ export function createResourceIosHandler(): CapabilityHandler {
               setAllocationAccessToken(allocId, accessToken ?? rsyncSecret ?? "");
             }
 
-            // Set up direct MCP bridge
-            if (mcpEndpoint) {
-              const existing = directBridges.get(allocId);
-              if (existing) existing.disconnect();
-
-              const bridge = new DirectMcpBridge({
-                endpoint: mcpEndpoint,
-                allocationId: allocId,
-                mcpHandler: handler,
-              });
-              directBridges.set(allocId, bridge);
-              bridge.connect();
-              console.log(`[resource:ios] Direct MCP bridge created for allocation ${allocId}`);
-            }
-
             result = { connected: true };
-            break;
-          }
-
-          case "disconnect_direct": {
-            const allocId = params.allocationId as string;
-            if (allocId) {
-              const bridge = directBridges.get(allocId);
-              if (bridge) {
-                bridge.disconnect();
-                directBridges.delete(allocId);
-              }
-            }
-            result = { disconnected: true };
             break;
           }
 
@@ -187,10 +142,6 @@ export function createResourceIosHandler(): CapabilityHandler {
 
     async shutdown() {
       console.log("[resource:ios] Shutting down...");
-      for (const [, bridge] of directBridges) {
-        bridge.disconnect();
-      }
-      directBridges.clear();
     },
   };
 }

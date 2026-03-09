@@ -26,7 +26,6 @@ export interface LaunchResult {
     devtools: number;
     pty: number;
     androidVnc?: number;
-    iosMcp?: number;
     iosVncIn?: number;
     iosVnc?: number;
     iosRsyncd?: number;

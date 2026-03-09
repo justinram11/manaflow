@@ -32,4 +32,6 @@ export type EnvironmentContext = {
   callbackUrl: string;
   iosResourceAllocationId?: string;
   iosDirectToken?: string;
+  /** Direct HTTP URL to the in-VM MCP server (e.g. http://cmux-tart-cmux-ios-dev:4850) */
+  iosVmMcpUrl?: string;
 };

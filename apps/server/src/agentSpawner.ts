@@ -554,9 +554,10 @@ export async function spawnAgent(
 
     // Use environment property if available
     if (agent.environment) {
-      // Read iosResourceAllocationId and iosDirectToken from task run vscode data (set during sandbox start)
+      // Read iosResourceAllocationId, iosDirectToken, and iosVmMcpUrl from task run vscode data (set during sandbox start)
       let iosResourceAllocationId: string | undefined;
       let iosDirectToken: string | undefined;
+      let iosVmMcpUrl: string | undefined;
       if (taskRunId) {
         try {
           const taskRunData = getTaskRunById(db, taskRunId);
@@ -566,6 +567,9 @@ export async function spawnAgent(
           }
           if (vscodeData?.iosDirectToken) {
             iosDirectToken = vscodeData.iosDirectToken as string;
+          }
+          if (vscodeData?.iosVmMcpUrl) {
+            iosVmMcpUrl = vscodeData.iosVmMcpUrl as string;
           }
         } catch (error) {
           serverLogger.error("[AgentSpawner] Failed to read task run vscode data:", error);
@@ -580,6 +584,7 @@ export async function spawnAgent(
         callbackUrl,
         iosResourceAllocationId,
         iosDirectToken,
+        iosVmMcpUrl,
       });
       envVars = {
         ...envVars,
@@ -839,6 +844,9 @@ export async function spawnAgent(
         const freshIosToken = freshVscode?.iosDirectToken as
           | string
           | undefined;
+        const freshIosVmMcpUrl = freshVscode?.iosVmMcpUrl as
+          | string
+          | undefined;
 
         if (freshIosAllocId) {
           serverLogger.info(
@@ -852,6 +860,7 @@ export async function spawnAgent(
             callbackUrl,
             iosResourceAllocationId: freshIosAllocId,
             iosDirectToken: freshIosToken,
+            iosVmMcpUrl: freshIosVmMcpUrl,
           });
           // Merge iOS-enriched files into existing authFiles by destinationPath
           // (preserves files added by applyApiKeys and editorSettings)
