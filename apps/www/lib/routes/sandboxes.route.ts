@@ -34,6 +34,7 @@ import { type Instance, MorphCloudClient } from "morphcloud";
 import { loadEnvironmentEnvVars } from "./sandboxes/environment";
 import {
   configureGithubAccess,
+  configureGitlabAccess,
   configureGitIdentity,
   fetchGitIdentityInputs,
 } from "./sandboxes/git";
@@ -86,30 +87,48 @@ import { injectAwsCredentials } from "./sandboxes/aws-credentials";
 // State now also lives in the provider daemon, but we keep a local map
 // for quick lookups without round-trips during the same session.
 export const incusVmRegistry = new Map<string, RemoteIncusSandboxInstance>();
-function getIosProviderBrowserBaseUrl(provider: {
+function getIosProviderVmMcpUrl(provider: {
   metadata?: Record<string, unknown> | null;
 }): string | undefined {
-  const browserBaseUrl = provider.metadata?.browserBaseUrl;
-  if (typeof browserBaseUrl !== "string") {
+  const vmTailscaleHostname = provider.metadata?.vmTailscaleHostname;
+  const vmMcpPort = provider.metadata?.vmMcpPort;
+  if (typeof vmTailscaleHostname !== "string") {
     return undefined;
   }
-
-  const trimmed = browserBaseUrl.trim();
-  return trimmed ? trimmed.replace(/\/$/, "") : undefined;
+  const hostname = vmTailscaleHostname.trim();
+  if (!hostname) {
+    return undefined;
+  }
+  const port =
+    typeof vmMcpPort === "string" && vmMcpPort.trim().length > 0
+      ? vmMcpPort.trim()
+      : "4850";
+  return `http://${hostname}:${port}`;
 }
 
-function getIosProviderTailscaleHost(provider: {
-  metadata?: Record<string, unknown> | null;
-}): string | undefined {
-  const browserBaseUrl = provider.metadata?.browserBaseUrl;
-  if (typeof browserBaseUrl !== "string") {
-    return undefined;
-  }
-  try {
-    const url = new URL(browserBaseUrl.trim());
-    return url.hostname || undefined;
-  } catch {
-    return undefined;
+async function cleanupIosVmAllocation(params: {
+  iosVmMcpUrl: string;
+  allocationId: string;
+  buildDir?: string;
+  simulatorUdid?: string;
+}): Promise<void> {
+  const response = await fetch(`${params.iosVmMcpUrl}/jsonrpc`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      method: "cleanup_allocation",
+      params: {
+        allocationId: params.allocationId,
+        buildDir: params.buildDir,
+        simulatorUdid: params.simulatorUdid,
+      },
+      id: `vm-cleanup-${params.allocationId}`,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await response.text());
   }
 }
 
@@ -699,6 +718,7 @@ sandboxesRouter.openapi(
           await Promise.all([githubAccessTokenPromise, apiKeysPromise]);
 
         const effectiveGithubToken = githubAccessToken || userApiKeys.GITHUB_PAT || null;
+        const gitlabPat = userApiKeys.GITLAB_PAT || null;
         const dockerClaudeCredentials = userApiKeys.CLAUDE_CREDENTIALS_JSON;
 
         const dockerInstance = dockerResult.instance;
@@ -725,6 +745,15 @@ sandboxesRouter.openapi(
           // Configure GitHub access (OAuth token or PAT fallback)
           effectiveGithubToken
             ? configureGithubAccess(dockerInstance, effectiveGithubToken)
+            : Promise.resolve(),
+          // Configure GitLab access
+          gitlabPat
+            ? configureGitlabAccess(dockerInstance, gitlabPat).catch((error) => {
+                console.error(
+                  `[sandboxes.start] Failed to configure GitLab access (docker); continuing...`,
+                  error,
+                );
+              })
             : Promise.resolve(),
           // Inject Claude credentials (.credentials.json for MCP OAuth tokens)
           dockerClaudeCredentials
@@ -918,8 +947,6 @@ sandboxesRouter.openapi(
         // Only allocate if the user explicitly selected resource providers
         let iosResourceAllocationId: string | undefined;
         let iosDirectToken: string | undefined;
-        let iosProviderBrowserBaseUrl: string | undefined;
-        let iosProviderTailscaleHost: string | undefined;
         let iosVmMcpUrl: string | undefined;
         if (body.taskRunId && selectedIosProviders.length > 0) {
           try {
@@ -935,23 +962,13 @@ sandboxesRouter.openapi(
                 data: { directToken: iosDirectToken },
               });
               iosResourceAllocationId = allocId;
-              iosProviderBrowserBaseUrl = getIosProviderBrowserBaseUrl(iosProvider);
-              iosProviderTailscaleHost = getIosProviderTailscaleHost(iosProvider);
-
-              // Derive VM MCP URL from provider metadata (set by provider daemon)
-              const vmTsHostname = iosProvider.metadata?.vmTailscaleHostname;
-              const vmMcpPort = iosProvider.metadata?.vmMcpPort ?? "4850";
-              if (typeof vmTsHostname === "string" && vmTsHostname) {
-                iosVmMcpUrl = `http://${vmTsHostname}:${vmMcpPort}`;
-              }
+              iosVmMcpUrl = getIosProviderVmMcpUrl(iosProvider);
               console.log(`[sandboxes.start] Created iOS allocation ${allocId} on provider ${iosProvider.id}${iosVmMcpUrl ? ` (VM MCP: ${iosVmMcpUrl})` : ""}`);
 
-              // Setup the allocation on the Mac daemon and then establish direct connection
-              const serverUrl = process.env.CMUX_SERVER_INTERNAL_URL ?? "http://localhost:9776";
               const sandboxHost = incusResult.host;
               const iosRsyncdHostPort = incusResult.hostPorts[39376];
 
-              // Fire-and-forget with retry: setup allocation, then connect_direct
+              // Fire-and-forget with retry: set up the allocation directly in the VM MCP server
               (async () => {
                 const MAX_RETRIES = 10;
                 const INITIAL_DELAY_MS = 2000;
@@ -960,148 +977,124 @@ sandboxesRouter.openapi(
                 const SetupAllocationResponse = z.object({
                   buildDir: z.string().optional(),
                   simulatorUdid: z.string().optional(),
-                  vncPort: z.number().optional(),
-                  tartVmIp: z.string().optional(),
                 });
+
+                if (!iosVmMcpUrl) {
+                  console.error(`[sandboxes.start] No VM MCP URL available for iOS provider ${iosProvider.id}`);
+                  return;
+                }
 
                 for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
                   try {
-                    const setupRes = await fetch(
-                      `${serverUrl}/internal/provider/${iosProvider.id}/setup-allocation`,
-                      {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          allocationId: allocId,
-                          buildDir,
-                          simulatorDeviceType: "iPhone 16 Pro",
-                          simulatorRuntime: "com.apple.CoreSimulator.SimRuntime.iOS-18-6",
-                        }),
+                    const teamSettingsForVm = getTeamSettings(db, body.teamSlugOrId);
+                    const useTailscaleForVm = !!teamSettingsForVm?.tailscaleAuthKey;
+                    const tsHostnameForVm = incusContainerId.replace(/[^a-zA-Z0-9-]/g, "-");
+
+                    const vmSetupBody = {
+                      jsonrpc: "2.0",
+                      method: "setup_allocation",
+                      params: {
+                        allocationId: allocId,
+                        buildDir,
+                        simulatorDeviceType: "iPhone 16 Pro",
+                        simulatorRuntime: "com.apple.CoreSimulator.SimRuntime.iOS-18-6",
+                        accessToken: iosDirectToken,
+                        ...(useTailscaleForVm
+                          ? {
+                              rsyncEndpoint: `rsync://cmux@${tsHostnameForVm}:39376/workspace`,
+                              rsyncSecret: iosDirectToken,
+                            }
+                          : iosRsyncdHostPort
+                            ? {
+                                rsyncEndpoint: `rsync://cmux@${sandboxHost}:${iosRsyncdHostPort}/workspace`,
+                                rsyncSecret: iosDirectToken,
+                              }
+                            : {}),
                       },
-                    );
+                      id: `vm-setup-${allocId}`,
+                    };
+
+                    const setupRes = await fetch(`${iosVmMcpUrl}/jsonrpc`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify(vmSetupBody),
+                      signal: AbortSignal.timeout(30000),
+                    });
                     if (!setupRes.ok) {
                       const errorText = await setupRes.text();
-                      console.error(`[sandboxes.start] setup-allocation attempt ${attempt + 1}/${MAX_RETRIES} failed: ${errorText}`);
+                      console.error(`[sandboxes.start] VM setup_allocation attempt ${attempt + 1}/${MAX_RETRIES} failed: ${errorText}`);
                       const delay = Math.min(INITIAL_DELAY_MS * 2 ** attempt, MAX_DELAY_MS);
                       await new Promise((r) => setTimeout(r, delay));
                       continue;
                     }
 
                     const setupPayload = SetupAllocationResponse.parse(
-                      await setupRes.json(),
+                      (await setupRes.json() as {
+                        result?: {
+                          buildDir?: string;
+                          simulatorUdid?: string;
+                        };
+                      }).result ?? {},
                     );
                     updateAllocationData(db, allocId, {
                       buildDir: setupPayload.buildDir ?? buildDir,
                       ...(setupPayload.simulatorUdid
                         ? { simulatorUdid: setupPayload.simulatorUdid }
                         : {}),
-                      ...(setupPayload.vncPort
-                        ? { vncPort: setupPayload.vncPort }
-                        : {}),
                     });
-
-                    // Update task run vscode metadata with VNC port for frontend
-                    if (setupPayload.vncPort && body.taskRunId) {
-                      try {
-                        updateTaskRunVSCode(db, body.taskRunId, {
-                          iosVncPort: setupPayload.vncPort,
-                        });
-                      } catch (error) {
-                        console.error("[sandboxes.start] Failed to update VNC port in task run:", error);
-                      }
-                    }
-
-                    // Tell the Mac daemon about workspace connectivity (rsync, ingress proxy)
-                    {
-                      const teamSettingsForIos = getTeamSettings(db, body.teamSlugOrId);
-                      const useTailscale = !!teamSettingsForIos?.tailscaleAuthKey;
-                      const tsHostname = incusContainerId.replace(/[^a-zA-Z0-9-]/g, "-");
-
-                      // Build workspace port mapping for the ingress proxy
-                      const workspacePorts: Record<number, number> = {};
-                      for (const [containerPort, hostPort] of Object.entries(incusResult.hostPorts)) {
-                        workspacePorts[Number(containerPort)] = Number(hostPort);
-                      }
-
-                      const connectParams = {
-                        allocationId: allocId,
-                        accessToken: iosDirectToken,
-                        ...(useTailscale ? {
-                          rsyncEndpoint: `rsync://cmux@${tsHostname}:39376/workspace`,
-                          rsyncSecret: iosDirectToken,
-                        } : iosRsyncdHostPort ? {
-                          rsyncEndpoint: `rsync://cmux@${sandboxHost}:${iosRsyncdHostPort}/workspace`,
-                          rsyncSecret: iosDirectToken,
-                        } : {}),
-                        workspaceHost: useTailscale ? tsHostname : sandboxHost,
-                        workspacePorts: useTailscale
-                          ? Object.fromEntries(
-                              Object.keys(incusResult.hostPorts).map((p) => [Number(p), Number(p)])
-                            )
-                          : workspacePorts,
-                      };
-                      await sendProviderRequest(iosProvider.id, "connect_direct", connectParams);
-                      console.log(`[sandboxes.start] Sent connect_direct to Mac daemon for allocation ${allocId}`);
-                    }
-
-                    // Set up the allocation on the in-VM MCP server (primary tool path)
-                    if (iosVmMcpUrl) {
-                      try {
-                        const teamSettingsForVm = getTeamSettings(db, body.teamSlugOrId);
-                        const useTailscaleForVm = !!teamSettingsForVm?.tailscaleAuthKey;
-                        const tsHostnameForVm = incusContainerId.replace(/[^a-zA-Z0-9-]/g, "-");
-
-                        const vmSetupBody = {
-                          jsonrpc: "2.0",
-                          method: "setup_allocation",
-                          params: {
-                            allocationId: allocId,
-                            buildDir: buildDir,
-                            accessToken: iosDirectToken,
-                            ...(useTailscaleForVm ? {
-                              rsyncEndpoint: `rsync://cmux@${tsHostnameForVm}:39376/workspace`,
-                              rsyncSecret: iosDirectToken,
-                            } : iosRsyncdHostPort ? {
-                              rsyncEndpoint: `rsync://cmux@${sandboxHost}:${iosRsyncdHostPort}/workspace`,
-                              rsyncSecret: iosDirectToken,
-                            } : {}),
-                          },
-                          id: `vm-setup-${allocId}`,
-                        };
-
-                        const vmRes = await fetch(`${iosVmMcpUrl}/jsonrpc`, {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify(vmSetupBody),
-                          signal: AbortSignal.timeout(30000),
-                        });
-
-                        if (vmRes.ok) {
-                          console.log(`[sandboxes.start] VM MCP server setup_allocation succeeded for ${allocId}`);
-                        } else {
-                          const errText = await vmRes.text();
-                          console.error(`[sandboxes.start] VM MCP server setup_allocation failed: ${errText}`);
-                        }
-                      } catch (vmError) {
-                        console.error(`[sandboxes.start] Failed to reach VM MCP server:`, vmError);
-                      }
-                    }
+                    console.log(`[sandboxes.start] VM MCP server setup_allocation succeeded for ${allocId}`);
 
                     return; // success
                   } catch (error) {
-                    console.error(`[sandboxes.start] iOS setup/connect_direct attempt ${attempt + 1}/${MAX_RETRIES} failed:`, error);
+                    console.error(`[sandboxes.start] iOS VM setup attempt ${attempt + 1}/${MAX_RETRIES} failed:`, error);
                     if (attempt < MAX_RETRIES - 1) {
                       const delay = Math.min(INITIAL_DELAY_MS * 2 ** attempt, MAX_DELAY_MS);
                       await new Promise((r) => setTimeout(r, delay));
                     }
                   }
                 }
-                console.error(`[sandboxes.start] iOS allocation ${allocId} setup failed after ${MAX_RETRIES} attempts`);
+                console.error(`[sandboxes.start] iOS allocation ${allocId} VM setup failed after ${MAX_RETRIES} attempts`);
               })();
             }
           } catch (error) {
             console.error("[sandboxes.start] Failed to create iOS allocation:", error);
           }
+        }
+
+        // When Tailscale is configured, use the container's MagicDNS hostname
+        // with standard internal ports instead of host-mapped ports. The container
+        // will join the tailnet in the background, and these URLs will be directly
+        // reachable via MagicDNS.
+        const teamSettingsForUrls = getTeamSettings(db, body.teamSlugOrId);
+        const useTailscaleUrls = !!teamSettingsForUrls?.tailscaleAuthKey;
+        let effectiveVscodeUrl = incusVscodeUrl;
+        let effectivePorts: Record<string, string> = {
+          vscode: incusResult.hostPorts[39378],
+          worker: incusResult.hostPorts[39377],
+          proxy: incusResult.hostPorts[39379],
+          vnc: incusResult.hostPorts[39380],
+          pty: incusResult.hostPorts[39383],
+          ...(incusResult.hostPorts[39384]
+            ? { androidVnc: incusResult.hostPorts[39384] }
+            : {}),
+          ...(incusResult.hostPorts[39376]
+            ? { iosRsyncd: incusResult.hostPorts[39376] }
+            : {}),
+        };
+
+        if (useTailscaleUrls) {
+          const tsHostname = incusContainerId.replace(/[^a-zA-Z0-9-]/g, "-");
+          effectiveVscodeUrl = `http://${tsHostname}:39378`;
+          effectivePorts = {
+            vscode: "39378",
+            worker: "39377",
+            proxy: "39379",
+            vnc: "39380",
+            pty: "39383",
+            ...(incusResult.hostPorts[39384] ? { androidVnc: "39384" } : {}),
+            ...(incusResult.hostPorts[39376] ? { iosRsyncd: "39376" } : {}),
+          };
+          console.log(`[sandboxes.start] Using Tailscale MagicDNS URLs for ${incusContainerId} (hostname: ${tsHostname})`);
         }
 
         if (body.taskRunId) {
@@ -1111,28 +1104,14 @@ sandboxesRouter.openapi(
               containerName: incusContainerId,
               providerId: resolvedProviderId,
               status: "starting",
-              url: incusVscodeUrl,
-              workspaceUrl: `${incusVscodeUrl}/?folder=/root/workspace`,
+              url: effectiveVscodeUrl,
+              workspaceUrl: `${effectiveVscodeUrl}/?folder=/root/workspace`,
               startedAt: Date.now(),
-              ports: {
-                vscode: incusResult.hostPorts[39378],
-                worker: incusResult.hostPorts[39377],
-                proxy: incusResult.hostPorts[39379],
-                vnc: incusResult.hostPorts[39380],
-                pty: incusResult.hostPorts[39383],
-                ...(incusResult.hostPorts[39384]
-                  ? { androidVnc: incusResult.hostPorts[39384] }
-                  : {}),
-                ...(incusResult.hostPorts[39376]
-                  ? { iosRsyncd: incusResult.hostPorts[39376] }
-                  : {}),
-              },
+              ports: effectivePorts,
               ...(iosResourceAllocationId
                 ? {
                     iosResourceAllocationId,
                     iosDirectToken,
-                    ...(iosProviderBrowserBaseUrl ? { iosProviderBrowserBaseUrl } : {}),
-                    ...(iosProviderTailscaleHost ? { iosProviderTailscaleHost } : {}),
                     ...(iosVmMcpUrl ? { iosVmMcpUrl } : {}),
                   }
                 : {}),
@@ -1158,8 +1137,13 @@ sandboxesRouter.openapi(
               try {
                 // Generate a short hostname from the container name
                 const tsHostname = incusContainerId.replace(/[^a-zA-Z0-9-]/g, "-");
+                // Reset stale Tailscale state from snapshot-restored containers
+                // so the auth key re-registration gets a fresh identity.
+                await incusInstance.exec(
+                  "tailscale logout 2>/dev/null; rm -f /var/lib/tailscale/tailscaled.state 2>/dev/null; true",
+                );
                 const startRes = await incusInstance.exec(
-                  "systemctl start tailscaled && sleep 2",
+                  "systemctl restart tailscaled && sleep 2",
                 );
                 if (startRes.exit_code !== 0) {
                   console.error(`[sandboxes.start] tailscaled start failed: ${startRes.stderr}`);
@@ -1216,15 +1200,12 @@ sandboxesRouter.openapi(
             if (body.taskRunJwt) {
               envVarsToApply += `\nCMUX_TASK_RUN_JWT="${body.taskRunJwt}"`;
             }
-            // Inject iOS proxy base URL so workspace agents can reference it in iOS code
-            if (iosResourceAllocationId && iosProviderBrowserBaseUrl) {
-              envVarsToApply += `\nCMUX_IOS_PROXY_BASE_URL="${iosProviderBrowserBaseUrl}/allocations/${iosResourceAllocationId}/proxy"`;
-            }
 
             const [{ githubAccessToken: incusGithubToken }, incusApiKeys] =
               await Promise.all([githubAccessTokenPromise, apiKeysPromise]);
 
             const effectiveIncusGithubToken = incusGithubToken || incusApiKeys.GITHUB_PAT || null;
+            const incusGitlabPat = incusApiKeys.GITLAB_PAT || null;
             const claudeCredentialsValue = incusApiKeys.CLAUDE_CREDENTIALS_JSON;
 
             await Promise.all([
@@ -1255,6 +1236,14 @@ sandboxesRouter.openapi(
                     return incusInstance.exec(
                       `git config --global credential.helper '!f() { echo "password=${effectiveIncusGithubToken}"; }; f' && git config --global credential.https://github.com.username x-access-token`
                     ).catch((e) => console.error("[sandboxes.start] credential helper fallback failed:", e));
+                  })
+                : Promise.resolve(),
+              incusGitlabPat
+                ? configureGitlabAccess(incusInstance, incusGitlabPat).catch((error) => {
+                    console.error(
+                      `[sandboxes.start] Failed to configure GitLab access (incus); continuing...`,
+                      error,
+                    );
                   })
                 : Promise.resolve(),
               gitIdentityPromise
@@ -1368,7 +1357,10 @@ sandboxesRouter.openapi(
 
         return c.json({
           instanceId: incusContainerId,
-          vscodeUrl: incusVscodeUrl,
+          vscodeUrl: effectiveVscodeUrl,
+          // Always return the host-mapped worker URL for the server to connect
+          // immediately. MagicDNS hostnames only resolve after the container
+          // joins the tailnet (which happens in background provisioning).
           workerUrl: incusResult.workerUrl,
           provider: "incus" as const,
           vscodePersisted,
@@ -1441,6 +1433,7 @@ sandboxesRouter.openapi(
               await Promise.all([githubAccessTokenPromise, apiKeysPromise]);
 
             const effectiveAwsGithubToken = awsGithubToken || awsApiKeys.GITHUB_PAT || null;
+            const awsGitlabPat = awsApiKeys.GITLAB_PAT || null;
             const awsClaudeCredentials = awsApiKeys.CLAUDE_CREDENTIALS_JSON;
             const awsInstance = awsResult.instance;
 
@@ -1464,6 +1457,14 @@ sandboxesRouter.openapi(
                 : Promise.resolve(),
               effectiveAwsGithubToken
                 ? configureGithubAccess(awsInstance, effectiveAwsGithubToken)
+                : Promise.resolve(),
+              awsGitlabPat
+                ? configureGitlabAccess(awsInstance, awsGitlabPat).catch((error) => {
+                    console.error(
+                      `[sandboxes.start] Failed to configure GitLab access (aws); continuing...`,
+                      error,
+                    );
+                  })
                 : Promise.resolve(),
               gitIdentityPromise
                 .then(([who, gh]) => {
@@ -1707,15 +1708,16 @@ sandboxesRouter.openapi(
           envVarsToApply += `\nCMUX_TASK_RUN_JWT="${body.taskRunJwt}"`;
         }
 
-        // Run all instance config in parallel: env vars, GitHub access, git identity, persist
-        const { githubAccessToken, githubAccessTokenError } =
-          await githubAccessTokenPromise;
+        // Run all instance config in parallel: env vars, GitHub access, GitLab access, git identity, persist
+        const [{ githubAccessToken, githubAccessTokenError }, morphApiKeys] =
+          await Promise.all([githubAccessTokenPromise, apiKeysPromise]);
         if (githubAccessTokenError) {
           console.error(
             `[sandboxes.start] GitHub access token error: ${githubAccessTokenError}`,
           );
           return c.text("Failed to resolve GitHub credentials", 401);
         }
+        const morphGitlabPat = morphApiKeys.GITLAB_PAT || null;
 
         await Promise.all([
           // Apply env vars
@@ -1738,6 +1740,15 @@ sandboxesRouter.openapi(
             : Promise.resolve(),
           // Configure GitHub access (fresh token for the user's session)
           configureGithubAccess(instance, githubAccessToken),
+          // Configure GitLab access
+          morphGitlabPat
+            ? configureGitlabAccess(instance, morphGitlabPat).catch((error) => {
+                console.error(
+                  `[sandboxes.start] Failed to configure GitLab access (morph); continuing...`,
+                  error,
+                );
+              })
+            : Promise.resolve(),
           // Configure git identity
           gitIdentityPromise
             .then(([who, gh]) => {
@@ -1933,6 +1944,18 @@ sandboxesRouter.openapi(
       // Sandboxes run as the requesting user, so prefer their OAuth scope over GitHub App installation tokens.
       await configureGithubAccess(instance, githubAccessToken);
 
+      // Configure GitLab access if PAT is available
+      const morphDirectApiKeys = await apiKeysPromise;
+      const morphDirectGitlabPat = morphDirectApiKeys.GITLAB_PAT || null;
+      if (morphDirectGitlabPat) {
+        await configureGitlabAccess(instance, morphDirectGitlabPat).catch((error) => {
+          console.error(
+            `[sandboxes.start] Failed to configure GitLab access (morph-direct); continuing...`,
+            error,
+          );
+        });
+      }
+
       {
         let repoConfig: HydrateRepoConfig | undefined;
         if (body.repoUrl) {
@@ -2103,6 +2126,16 @@ sandboxesRouter.openapi(
       // Get GitHub access token for repo cloning (needed in background)
       const githubAccountPromise = user.getConnectedAccount("github");
 
+      // Get API keys for GitLab PAT (needed in background)
+      const prewarmApiKeysPromise = (async () => {
+        try {
+          return getApiKeysForAgents(db, body.teamSlugOrId, user.id);
+        } catch (error) {
+          console.error(`[sandboxes.prewarm] Failed to fetch API keys:`, error);
+          return {} as Record<string, string>;
+        }
+      })();
+
       // Fire-and-forget background provisioning
       const prewarmEntryId = result.id;
       (async () => {
@@ -2153,6 +2186,18 @@ sandboxesRouter.openapi(
             if (ghToken) {
               await configureGithubAccess(instance, ghToken);
             }
+          }
+
+          // Configure GitLab access for repo cloning
+          const prewarmApiKeys = await prewarmApiKeysPromise;
+          const prewarmGitlabPat = prewarmApiKeys.GITLAB_PAT || null;
+          if (prewarmGitlabPat) {
+            await configureGitlabAccess(instance, prewarmGitlabPat).catch((error) => {
+              console.error(
+                `[sandboxes.prewarm] Failed to configure GitLab access; continuing...`,
+                error,
+              );
+            });
           }
 
           // Clone the repo if provided
@@ -3437,23 +3482,25 @@ sandboxesRouter.openapi(
           const allocation = getAllocationById(db, allocId);
           if (allocation && allocation.status === "active") {
             releaseAllocation(db, allocId);
-            // Notify daemon to clean up simulator
-            const serverUrl = process.env.CMUX_SERVER_INTERNAL_URL ?? "http://localhost:9776";
             const allocData = allocation.data as Record<string, unknown> | undefined;
-            fetch(
-              `${serverUrl}/internal/provider/${allocation.providerId}/cleanup-allocation`,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  allocationId: allocId,
-                  buildDir: allocData?.buildDir,
-                  simulatorUdid: allocData?.simulatorUdid,
-                }),
-              },
-            ).catch((error) => {
-              console.error("[sandboxes.incus] Failed to notify iOS allocation cleanup:", error);
-            });
+            const provider = getById(db, allocation.providerId);
+            const iosVmMcpUrl =
+              (typeof vscodeData.iosVmMcpUrl === "string" && vscodeData.iosVmMcpUrl) ||
+              (provider ? getIosProviderVmMcpUrl(provider) : undefined);
+            if (iosVmMcpUrl) {
+              cleanupIosVmAllocation({
+                iosVmMcpUrl,
+                allocationId: allocId,
+                buildDir:
+                  typeof allocData?.buildDir === "string" ? allocData.buildDir : undefined,
+                simulatorUdid:
+                  typeof allocData?.simulatorUdid === "string"
+                    ? allocData.simulatorUdid
+                    : undefined,
+              }).catch((error) => {
+                console.error("[sandboxes.incus] Failed to clean up iOS allocation in VM:", error);
+              });
+            }
             console.log(`[sandboxes.incus] Released iOS allocation ${allocId} for container ${id}`);
           }
         }

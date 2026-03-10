@@ -30,6 +30,23 @@ export const configureGitIdentity = async (
   }
 };
 
+export const configureGitlabAccess = async (
+  instance: MorphInstance,
+  token: string,
+) => {
+  const res = await instance.exec(
+    `bash -lc "git config --global credential.https://gitlab.com.helper ${singleQuote(`!f() { echo "password=${token}"; }; f`)} && git config --global credential.https://gitlab.com.username oauth2"`
+  );
+
+  if (res.exit_code !== 0) {
+    const maskedError = (res.stderr || res.stdout || "Unknown error").replace(/:[^@]*@/g, ":***@");
+    console.error(
+      `[sandboxes.start] GIT AUTH: GitLab credential helper setup failed: exit=${res.exit_code} stderr=${maskedError.slice(0, 200)}`
+    );
+    throw new Error(`GitLab auth setup failed: ${maskedError.slice(0, 500)}`);
+  }
+};
+
 export const configureGithubAccess = async (
   instance: MorphInstance,
   token: string,

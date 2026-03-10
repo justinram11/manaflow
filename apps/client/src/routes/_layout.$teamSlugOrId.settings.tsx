@@ -62,6 +62,11 @@ const PROVIDER_INFO: Record<string, ProviderInfo> = {
     helpText:
       "Used for cloning private repos and GitHub API access inside sandboxes. Falls back to OAuth if not set.",
   },
+  GITLAB_PAT: {
+    url: "https://gitlab.com/-/user_settings/personal_access_tokens",
+    helpText:
+      "Used for cloning private GitLab repos inside sandboxes. Requires read_repository scope.",
+  },
   CLAUDE_CODE_OAUTH_TOKEN: {
     helpText:
       "Run `claude setup-token` in your terminal and paste the output here. Preferred over API key.",
@@ -102,6 +107,12 @@ const GITHUB_PAT_KEY = {
   description: "Token for private repo access and GitHub API inside sandboxes",
 } as const;
 
+const GITLAB_PAT_KEY = {
+  envVar: "GITLAB_PAT",
+  displayName: "GitLab Personal Access Token",
+  description: "Token for cloning private GitLab repos inside sandboxes",
+} as const;
+
 const CLAUDE_CREDENTIALS_KEY = {
   envVar: "CLAUDE_CREDENTIALS_JSON",
   displayName: "Claude Credentials JSON",
@@ -120,7 +131,7 @@ const AWS_CONFIG_KEY = {
   description: "Contents of ~/.aws/config",
 } as const;
 
-const EXTRA_KEYS = [GITHUB_PAT_KEY, CLAUDE_CREDENTIALS_KEY, AWS_CREDENTIALS_KEY, AWS_CONFIG_KEY];
+const EXTRA_KEYS = [GITHUB_PAT_KEY, GITLAB_PAT_KEY, CLAUDE_CREDENTIALS_KEY, AWS_CREDENTIALS_KEY, AWS_CONFIG_KEY];
 
 function GitHubIcon({ className }: { className?: string }) {
   return (
