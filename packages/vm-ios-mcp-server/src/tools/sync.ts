@@ -57,14 +57,16 @@ const iosSyncCode: ToolHandler = async (_params, allocationId) => {
   const escapedSecret = alloc.rsyncSecret.replace(/'/g, "'\\''");
 
   try {
-    const excludeArgs = RSYNC_EXCLUDES.map((e) => `--exclude=${e}`).join(" ");
+    const excludeArgs = RSYNC_EXCLUDES
+      .map((pattern) => `--exclude='${pattern.replace(/'/g, "'\\''")}'`)
+      .join(" ");
     const cmd = [
       `printf '%s' '${escapedSecret}' > "${passwordFile}"`,
       `chmod 600 "${passwordFile}"`,
       `rsync -az --delete ${excludeArgs} --password-file="${passwordFile}" "${alloc.rsyncEndpoint}" "${alloc.buildDir}/" 2>&1; EC=$?; if [ $EC -eq 0 ] || [ $EC -eq 23 ]; then exit 0; else exit $EC; fi`,
     ].join(" && ");
 
-    exec(cmd, { timeout: 120000 });
+    exec(cmd, { timeout: 10 * 60 * 1000 });
 
     // Count synced files
     const fileCount = exec(
