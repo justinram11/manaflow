@@ -49,6 +49,48 @@ export async function injectClaudeCredentials(
 }
 
 /**
+ * Strip the `claudeAiOauth` block from an existing
+ * `/root/.claude/.credentials.json` inside a sandbox.
+ *
+ * Claude Code reads `~/.claude/.credentials.json` and its `claudeAiOauth`
+ * token takes priority over the `CLAUDE_CODE_OAUTH_TOKEN` env var. When a
+ * stale token gets baked into an environment snapshot (e.g. from running
+ * `claude` during env setup), it shadows the per-run token cmux injects and
+ * Claude Code falls back to a login prompt. Removing the block makes the
+ * injected env var authoritative. Other keys (MCP OAuth tokens) are kept;
+ * the file is deleted if `claudeAiOauth` was its only content.
+ */
+export async function stripClaudeAiOauthFromCredentialsFile(
+  instance: SandboxInstance,
+): Promise<void> {
+  const script = `python3 -c "
+import json, os
+p = '/root/.claude/.credentials.json'
+try:
+    d = json.load(open(p))
+except Exception:
+    raise SystemExit(0)
+if isinstance(d, dict) and 'claudeAiOauth' in d:
+    del d['claudeAiOauth']
+    if d:
+        json.dump(d, open(p, 'w'))
+    else:
+        os.remove(p)
+    print('stripped')
+" 2>/dev/null`;
+  const res = await instance.exec(script);
+  if (res.exit_code !== 0) {
+    console.error(
+      `[claude-credentials] Failed to strip claudeAiOauth from .credentials.json: ${res.stderr}`,
+    );
+  } else if (res.stdout.includes("stripped")) {
+    console.log(
+      `[claude-credentials] Stripped stale claudeAiOauth from sandbox .credentials.json`,
+    );
+  }
+}
+
+/**
  * Inject Claude auth (OAuth token or API key) into the sandbox so that
  * `claude` works from any terminal, not just agent-spawned sessions.
  *
@@ -128,6 +170,9 @@ json.dump(d, open(p, 'w'))
       `grep -q '${marker}' /root/.zshrc 2>/dev/null || echo '${rcB64}' | base64 -d >> /root/.zshrc`,
     ),
     instance.exec(onboardingScript),
+    // Remove any stale claudeAiOauth (e.g. baked into an environment
+    // snapshot) so the token we just injected via env var is authoritative.
+    stripClaudeAiOauthFromCredentialsFile(instance),
   ]);
 
   console.log(

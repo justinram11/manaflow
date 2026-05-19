@@ -47,6 +47,11 @@ export const CREDENTIAL_CLEANUP_COMMANDS = [
   "git config --global --unset credential.helper 2>/dev/null || true",
   "git credential-cache exit 2>/dev/null || true",
   "gh auth logout 2>/dev/null || true",
+  // Remove Claude Code session credentials. Its claudeAiOauth token would
+  // otherwise be baked into the snapshot and shadow the per-run
+  // CLAUDE_CODE_OAUTH_TOKEN env var, causing a spurious login prompt.
+  // Per-run injection re-adds credentials from the team's stored API keys.
+  "rm -f /root/.claude/.credentials.json 2>/dev/null || true",
 ].join(" && ");
 
 /**

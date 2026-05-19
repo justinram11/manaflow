@@ -22,7 +22,10 @@ import { HTTPException } from "hono/http-exception";
 import { MorphCloudClient } from "morphcloud";
 import { randomBytes } from "node:crypto";
 import { determineHttpServiceUpdates } from "./determine-http-service-updates";
-import { SNAPSHOT_CLEANUP_COMMANDS } from "./sandboxes/cleanup";
+import {
+  CREDENTIAL_CLEANUP_COMMANDS,
+  SNAPSHOT_CLEANUP_COMMANDS,
+} from "./sandboxes/cleanup";
 import { incusVmRegistry } from "./sandboxes.route";
 
 /**
@@ -287,6 +290,12 @@ environmentsRouter.openapi(
         if (!incusInstance) {
           return c.text("Incus container not found or not running", 404);
         }
+
+        // Strip per-user credentials (git/gh/Claude) so they aren't baked
+        // into the snapshot. Incus snapshots are filesystem-only, so we skip
+        // the process-killing portion of SNAPSHOT_CLEANUP_COMMANDS and only
+        // run credential cleanup to avoid disrupting the live container.
+        await incusInstance.exec(CREDENTIAL_CLEANUP_COMMANDS);
 
         // Generate a unique snapshot name and create the snapshot.
         // snapshot() returns the full ID in "containerName/snapshotName" format.
@@ -958,6 +967,10 @@ environmentsRouter.openapi(
         if (!incusInstance) {
           return c.text("Incus container not found or not running", 404);
         }
+
+        // Strip per-user credentials (git/gh/Claude) so they aren't baked
+        // into the snapshot. See the create-environment path above.
+        await incusInstance.exec(CREDENTIAL_CLEANUP_COMMANDS);
 
         const snapshotName = `incus_snap_${randomBytes(8).toString("hex")}`;
         const snapshotId = await incusInstance.snapshot(snapshotName);
