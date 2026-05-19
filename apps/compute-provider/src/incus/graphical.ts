@@ -1,14 +1,11 @@
 import { readFileSync } from "node:fs";
 import { incusContainerExec } from "./cli.ts";
 
+// Resolved on every call (not at module load) so edits to the .sh /
+// .service source files land in new containers without restarting the
+// daemon — bun --watch doesn't track these non-TS assets.
 const loadRepoAsset = (relativePath: string): string =>
   readFileSync(new URL(relativePath, import.meta.url), "utf-8");
-
-const CMUX_TARGET_UNIT = loadRepoAsset("../../../../configs/systemd/cmux.target");
-const CMUX_OPENBOX_UNIT = loadRepoAsset("../../../../configs/systemd/cmux-openbox.service");
-const CMUX_TIGERVNC_UNIT = loadRepoAsset("../../../../configs/systemd/cmux-tigervnc.service");
-const CMUX_DEVTOOLS_UNIT = loadRepoAsset("../../../../configs/systemd/cmux-devtools.service");
-const CMUX_START_CHROME = loadRepoAsset("../../../../configs/systemd/bin/cmux-start-chrome");
 
 const CMUX_VNC_PROXY_UNIT = `[Unit]
 Description=Cmux VNC websocket proxy
@@ -39,6 +36,22 @@ WantedBy=cmux.target
 export async function enableGraphicalServices(
   containerName: string,
 ): Promise<void> {
+  const CMUX_TARGET_UNIT = loadRepoAsset(
+    "../../../../configs/systemd/cmux.target",
+  );
+  const CMUX_OPENBOX_UNIT = loadRepoAsset(
+    "../../../../configs/systemd/cmux-openbox.service",
+  );
+  const CMUX_TIGERVNC_UNIT = loadRepoAsset(
+    "../../../../configs/systemd/cmux-tigervnc.service",
+  );
+  const CMUX_DEVTOOLS_UNIT = loadRepoAsset(
+    "../../../../configs/systemd/cmux-devtools.service",
+  );
+  const CMUX_START_CHROME = loadRepoAsset(
+    "../../../../configs/systemd/bin/cmux-start-chrome",
+  );
+
   const setupScript = `
 set -e
 
