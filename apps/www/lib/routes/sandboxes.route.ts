@@ -31,7 +31,11 @@ import { parseGitUrl } from "@cmux/shared/utils/parse-git-url";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { type Instance, MorphCloudClient } from "morphcloud";
-import { loadEnvironmentEnvVars } from "./sandboxes/environment";
+import {
+  loadEnvironmentEnvFile,
+  loadEnvironmentEnvVars,
+  writeWorkspaceEnvFile,
+} from "./sandboxes/environment";
 import {
   configureGithubAccess,
   configureGitlabAccess,
@@ -487,6 +491,7 @@ const UpdateSandboxEnvBody = z
   .object({
     teamSlugOrId: z.string(),
     envVarsContent: z.string(),
+    envFileContent: z.string().optional(),
   })
   .openapi("UpdateSandboxEnvBody");
 
@@ -593,11 +598,19 @@ sandboxesRouter.openapi(
         ? loadEnvironmentEnvVars(environmentDataVaultKey)
         : Promise.resolve<string | null>(null);
 
+      const environmentEnvFilePromise = environmentDataVaultKey
+        ? loadEnvironmentEnvFile(environmentDataVaultKey)
+        : Promise.resolve<string | null>(null);
+
       // Parse repo URL once if provided
       const parsedRepoUrl = body.repoUrl ? parseGithubRepoUrl(body.repoUrl) : null;
 
       // Load workspace config if we're in cloud mode with a repository (not an environment)
-      let workspaceConfig: { maintenanceScript?: string; envVarsContent?: string } | null = null;
+      let workspaceConfig: {
+        maintenanceScript?: string;
+        envVarsContent?: string;
+        envFileContent?: string;
+      } | null = null;
       if (parsedRepoUrl && !body.environmentId) {
         try {
           const config = getWorkspaceConfig(
@@ -607,16 +620,21 @@ sandboxesRouter.openapi(
             parsedRepoUrl.fullName,
           );
           if (config) {
-            const envVarsContent = config.dataVaultKey
-              ? await loadEnvironmentEnvVars(config.dataVaultKey)
-              : null;
+            const [envVarsContent, envFileContent] = config.dataVaultKey
+              ? await Promise.all([
+                  loadEnvironmentEnvVars(config.dataVaultKey),
+                  loadEnvironmentEnvFile(config.dataVaultKey),
+                ])
+              : [null, null];
             workspaceConfig = {
               maintenanceScript: config.maintenanceScript ?? undefined,
               envVarsContent: envVarsContent ?? undefined,
+              envFileContent: envFileContent ?? undefined,
             };
             console.log(`[sandboxes.start] Loaded workspace config for ${parsedRepoUrl.fullName}`, {
               hasMaintenanceScript: Boolean(workspaceConfig.maintenanceScript),
               hasEnvVars: Boolean(workspaceConfig.envVarsContent),
+              hasEnvFile: Boolean(workspaceConfig.envFileContent),
             });
           }
         } catch (error) {
@@ -878,6 +896,24 @@ sandboxesRouter.openapi(
             await dockerInstance.stop().catch(() => {});
             return c.text("Failed to hydrate sandbox", 500);
           }
+        }
+
+        // Write the user-provided workspace .env file (if any). After
+        // hydration, before maintenance scripts.
+        const dockerEnvFileToWrite =
+          (await environmentEnvFilePromise) ??
+          workspaceConfig?.envFileContent ??
+          "";
+        if (dockerEnvFileToWrite.length > 0) {
+          await writeWorkspaceEnvFile(
+            dockerInstance,
+            dockerEnvFileToWrite,
+          ).catch((error) => {
+            console.error(
+              "[sandboxes.start] Failed to write workspace .env (docker); continuing...",
+              error,
+            );
+          });
         }
 
         // Update status to running
@@ -1494,6 +1530,25 @@ sandboxesRouter.openapi(
               });
             }
 
+            // Write the user-provided workspace .env file (if any) AFTER
+            // hydration so the freshly cloned repo doesn't clobber it and
+            // BEFORE the maintenance script so it can read it.
+            const incusEnvFileToWrite =
+              (await environmentEnvFilePromise) ??
+              workspaceConfig?.envFileContent ??
+              "";
+            if (incusEnvFileToWrite.length > 0) {
+              await writeWorkspaceEnvFile(
+                incusInstance,
+                incusEnvFileToWrite,
+              ).catch((error) => {
+                console.error(
+                  "[sandboxes.start] Failed to write workspace .env (incus); continuing...",
+                  error,
+                );
+              });
+            }
+
             // Update status to running
             if (body.taskRunId && vscodePersisted) {
               try {
@@ -1701,6 +1756,24 @@ sandboxesRouter.openapi(
                   },
                 });
               }
+            }
+
+            // Write the user-provided workspace .env file (if any). After
+            // hydration, before maintenance scripts.
+            const awsEnvFileToWrite =
+              (await environmentEnvFilePromise) ??
+              workspaceConfig?.envFileContent ??
+              "";
+            if (awsEnvFileToWrite.length > 0) {
+              await writeWorkspaceEnvFile(
+                awsInstance,
+                awsEnvFileToWrite,
+              ).catch((error) => {
+                console.error(
+                  "[sandboxes.start] Failed to write workspace .env (aws); continuing...",
+                  error,
+                );
+              });
             }
 
             // Update status to running
@@ -1972,6 +2045,23 @@ sandboxesRouter.openapi(
           }
         }
 
+        // Write the user-provided workspace .env file (if any). After
+        // hydration, before maintenance scripts.
+        const morphFastEnvFileToWrite =
+          (await environmentEnvFilePromise) ??
+          workspaceConfig?.envFileContent ??
+          "";
+        if (morphFastEnvFileToWrite.length > 0) {
+          await writeWorkspaceEnvFile(instance, morphFastEnvFileToWrite).catch(
+            (error) => {
+              console.error(
+                "[sandboxes.start] Failed to write workspace .env (morph fast); continuing...",
+                error,
+              );
+            },
+          );
+        }
+
         // Update status + maintenance scripts (fire-and-forget)
         if (body.taskRunId && vscodePersisted) {
           try {
@@ -2165,6 +2255,23 @@ sandboxesRouter.openapi(
           await instance.stop().catch(() => { });
           return c.text("Failed to hydrate sandbox", 500);
         }
+      }
+
+      // Write the user-provided workspace .env file (if any). After
+      // hydration, before maintenance scripts.
+      const morphEnvFileToWrite =
+        (await environmentEnvFilePromise) ??
+        workspaceConfig?.envFileContent ??
+        "";
+      if (morphEnvFileToWrite.length > 0) {
+        await writeWorkspaceEnvFile(instance, morphEnvFileToWrite).catch(
+          (error) => {
+            console.error(
+              "[sandboxes.start] Failed to write workspace .env (morph); continuing...",
+              error,
+            );
+          },
+        );
       }
 
       // Update status to "running" after hydration completes
@@ -2471,7 +2578,8 @@ sandboxesRouter.openapi(
     if (!accessToken) return c.text("Unauthorized", 401);
 
     const { id } = c.req.valid("param");
-    const { teamSlugOrId, envVarsContent } = c.req.valid("json");
+    const { teamSlugOrId, envVarsContent, envFileContent } =
+      c.req.valid("json");
 
     try {
       const team = await verifyTeamAccess({
@@ -2509,6 +2617,10 @@ sandboxesRouter.openapi(
           `[sandboxes.env] envctl load failed exit=${execResult.exit_code} stderr=${(execResult.stderr || "").slice(0, 200)}`,
         );
         return c.text("Failed to apply environment variables", 500);
+      }
+
+      if (envFileContent !== undefined) {
+        await writeWorkspaceEnvFile(instance, envFileContent);
       }
 
       return c.json({ applied: true as const });

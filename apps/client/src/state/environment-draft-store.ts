@@ -84,13 +84,15 @@ class EnvironmentDraftStore {
         "selectedRepos" in parsed &&
         "config" in parsed
       ) {
-        // SECURITY: envVars are not persisted to localStorage, so initialize them fresh
-        // This ensures users need to re-enter secrets after page reload
+        // SECURITY: envVars / envFileContent are not persisted to
+        // localStorage, so initialize them fresh — users must re-enter
+        // secrets after page reload.
         const draft: EnvironmentDraft = {
           ...parsed,
           config: {
             ...parsed.config,
             envVars: ensureInitialEnvVars(parsed.config.envVars),
+            envFileContent: parsed.config.envFileContent ?? "",
           },
         };
         this.drafts.set(teamSlugOrId, draft);
@@ -107,13 +109,15 @@ class EnvironmentDraftStore {
     if (draft === null) {
       safeLocalStorage.removeItem(STORAGE_KEY_PREFIX + teamSlugOrId);
     } else {
-      // SECURITY: Don't persist envVars to localStorage - they may contain secrets
-      // Only persist non-sensitive draft data (name, scripts, ports, metadata)
+      // SECURITY: Don't persist envVars or envFileContent to localStorage —
+      // they may contain secrets. Only persist non-sensitive draft data
+      // (name, scripts, ports, metadata).
       const safeToStore: EnvironmentDraft = {
         ...draft,
         config: {
           ...draft.config,
           envVars: [], // Clear envVars before storing
+          envFileContent: "", // Clear .env file content before storing
         },
       };
       safeLocalStorage.setItem(STORAGE_KEY_PREFIX + teamSlugOrId, JSON.stringify(safeToStore));

@@ -21,6 +21,7 @@ export const ensureInitialEnvVars = (initial?: EnvVar[]): EnvVar[] => {
 export interface EnvironmentConfigDraft {
   envName: string;
   envVars: EnvVar[];
+  envFileContent: string;
   maintenanceScript: string;
   devScript: string;
   exposedPorts: string;
@@ -37,6 +38,7 @@ export interface EnvironmentDraftMetadata {
 export const createEmptyEnvironmentConfig = (): EnvironmentConfigDraft => ({
   envName: "",
   envVars: ensureInitialEnvVars(),
+  envFileContent: "",
   maintenanceScript: "",
   devScript: "",
   exposedPorts: "",

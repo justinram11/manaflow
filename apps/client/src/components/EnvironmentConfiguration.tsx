@@ -77,6 +77,7 @@ export function EnvironmentConfiguration({
   initialDevScript = "",
   initialExposedPorts = "",
   initialEnvVars,
+  initialEnvFileContent = "",
   onHeaderControlsChange,
   persistedState = null,
   onPersistStateChange,
@@ -96,6 +97,7 @@ export function EnvironmentConfiguration({
   initialDevScript?: string;
   initialExposedPorts?: string;
   initialEnvVars?: EnvVar[];
+  initialEnvFileContent?: string;
   onHeaderControlsChange?: (controls: ReactNode | null) => void;
   persistedState?: EnvironmentConfigDraft | null;
   onPersistStateChange?: (partial: Partial<EnvironmentConfigDraft>) => void;
@@ -122,6 +124,9 @@ export function EnvironmentConfiguration({
   );
   const [envVars, setEnvVars] = useState<EnvVar[]>(() =>
     ensureInitialEnvVars(persistedState?.envVars ?? initialEnvVars)
+  );
+  const [envFileContent, setEnvFileContent] = useState<string>(
+    () => persistedState?.envFileContent ?? initialEnvFileContent
   );
   const [maintenanceScript, setMaintenanceScript] = useState(
     () => persistedState?.maintenanceScript ?? initialMaintenanceScript
@@ -152,6 +157,13 @@ export function EnvironmentConfiguration({
         persistConfig({ envVars: next });
         return next;
       });
+    },
+    [persistConfig]
+  );
+  const updateEnvFileContent = useCallback(
+    (value: string) => {
+      setEnvFileContent(value);
+      persistConfig({ envFileContent: value });
     },
     [persistConfig]
   );
@@ -452,7 +464,7 @@ export function EnvironmentConfiguration({
       applySandboxEnv(
         {
           path: { id: instanceId },
-          body: { teamSlugOrId, envVarsContent },
+          body: { teamSlugOrId, envVarsContent, envFileContent },
         },
         {
           onSuccess: () => {
@@ -468,7 +480,7 @@ export function EnvironmentConfiguration({
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [applySandboxEnv, envVars, instanceId, teamSlugOrId]);
+  }, [applySandboxEnv, envVars, envFileContent, instanceId, teamSlugOrId]);
 
   const onSnapshot = async (): Promise<void> => {
     if (!instanceId) {
@@ -565,6 +577,7 @@ export function EnvironmentConfiguration({
             name: envName.trim(),
             morphInstanceId: instanceId,
             envVarsContent,
+            envFileContent: envFileContent.length > 0 ? envFileContent : undefined,
             selectedRepos,
             maintenanceScript: requestMaintenanceScript,
             devScript: requestDevScript,
@@ -998,6 +1011,7 @@ export function EnvironmentConfiguration({
           className="px-0"
           defaultExpandedKeys={[
             "env-vars",
+            "env-file",
             "install-dependencies",
             "maintenance-script",
             "dev-script",
@@ -1193,6 +1207,35 @@ export function EnvironmentConfiguration({
 
               <p className="text-xs text-neutral-500 dark:text-neutral-500 pt-2">
                 Tip: Paste an .env above to populate the form. Values are
+                encrypted at rest.
+              </p>
+            </div>
+          </AccordionItem>
+
+          <AccordionItem
+            key="env-file"
+            aria-label="Workspace .env file"
+            title="Workspace .env file"
+          >
+            <div className="space-y-2 pb-4">
+              <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-2">
+                Written verbatim to{" "}
+                <code className="text-xs">&lt;workspace&gt;/.env</code> on every
+                task start (after repo hydration, before the maintenance
+                script). Use this when tools need to read the file directly —
+                Next.js, Vite, dotenv-cli, scripts that{" "}
+                <code className="text-xs">source .env</code>, etc.
+              </p>
+              <textarea
+                value={envFileContent}
+                onChange={(e) => updateEnvFileContent(e.target.value)}
+                placeholder={"# Paste .env contents here\nDATABASE_URL=postgres://...\nNEXT_PUBLIC_API_URL=https://api.example.com\n"}
+                spellCheck={false}
+                className="w-full min-h-[140px] rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 font-mono text-xs leading-relaxed text-neutral-900 dark:text-neutral-100 outline-none focus:ring-2 focus:ring-blue-500/40"
+              />
+              <p className="text-xs text-neutral-500 dark:text-neutral-500">
+                Distinct from Environment variables above — that section sets
+                process env via envctl. This writes a file. Values are
                 encrypted at rest.
               </p>
             </div>

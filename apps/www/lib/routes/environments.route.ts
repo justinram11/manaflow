@@ -26,6 +26,10 @@ import {
   CREDENTIAL_CLEANUP_COMMANDS,
   SNAPSHOT_CLEANUP_COMMANDS,
 } from "./sandboxes/cleanup";
+import {
+  loadEnvironmentEnvFile,
+  saveEnvironmentEnvFile,
+} from "./sandboxes/environment";
 import { incusVmRegistry } from "./sandboxes.route";
 
 /**
@@ -91,7 +95,8 @@ const CreateEnvironmentBody = z
     teamSlugOrId: z.string(),
     name: z.string(),
     morphInstanceId: z.string().optional(),
-    envVarsContent: z.string(), // The entire .env file content
+    envVarsContent: z.string(), // The entire .env file content — applied as process env via envctl
+    envFileContent: z.string().optional().default(""), // Written verbatim to <workspace>/.env on every task start
     selectedRepos: z.array(z.string()).optional(),
     description: z.string().optional(),
     maintenanceScript: z.string().optional(),
@@ -134,6 +139,7 @@ const ListEnvironmentsResponse = z
 const GetEnvironmentVarsResponse = z
   .object({
     envVarsContent: z.string(),
+    envFileContent: z.string().default(""),
   })
   .openapi("GetEnvironmentVarsResponse");
 
@@ -309,6 +315,9 @@ environmentsRouter.openapi(
           await store.setValue(dataVaultKey, body.envVarsContent, {
             secret: env.STACK_DATA_VAULT_SECRET ?? "",
           });
+          if (body.envFileContent) {
+            await saveEnvironmentEnvFile(dataVaultKey, body.envFileContent);
+          }
         } catch (dvError) {
           // In local auth mode DataVault may not be available; log and continue
           console.warn("[environments] DataVault store failed (local auth?), env vars may not persist:", dvError);
@@ -361,6 +370,9 @@ environmentsRouter.openapi(
         await store.setValue(dataVaultKey, body.envVarsContent, {
           secret: env.STACK_DATA_VAULT_SECRET ?? "",
         });
+        if (body.envFileContent) {
+          await saveEnvironmentEnvFile(dataVaultKey, body.envFileContent);
+        }
         return { dataVaultKey };
       })();
 
@@ -579,12 +591,13 @@ environmentsRouter.openapi(
       const envVarsContent = await store.getValue(environment.dataVaultKey, {
         secret: env.STACK_DATA_VAULT_SECRET ?? "",
       });
+      const envFileContent =
+        (await loadEnvironmentEnvFile(environment.dataVaultKey)) ?? "";
 
-      if (!envVarsContent) {
-        return c.json({ envVarsContent: "" });
-      }
-
-      return c.json({ envVarsContent });
+      return c.json({
+        envVarsContent: envVarsContent ?? "",
+        envFileContent,
+      });
     } catch (error) {
       console.error("Failed to get environment variables:", error);
       return c.text("Failed to get environment variables", 500);

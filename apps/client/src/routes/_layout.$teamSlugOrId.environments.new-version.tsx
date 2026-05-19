@@ -180,6 +180,9 @@ function NewSnapshotVersionPage() {
                 : ""
             }
             initialEnvVars={initialEnvVars}
+            initialEnvFileContent={
+              environmentVarsQuery.data?.envFileContent ?? ""
+            }
             onHeaderControlsChange={setHeaderActions}
             onEnvironmentSaved={handleEnvironmentSaved}
           />

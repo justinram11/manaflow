@@ -451,6 +451,7 @@ export type CreateEnvironmentBody = {
     name: string;
     morphInstanceId?: string;
     envVarsContent: string;
+    envFileContent?: string;
     selectedRepos?: Array<string>;
     description?: string;
     maintenanceScript?: string;
@@ -480,6 +481,7 @@ export type ListEnvironmentsResponse = Array<GetEnvironmentResponse>;
 
 export type GetEnvironmentVarsResponse = {
     envVarsContent: string;
+    envFileContent?: string;
 };
 
 export type UpdateEnvironmentBody = {
@@ -595,6 +597,7 @@ export type UpdateSandboxEnvResponse = {
 export type UpdateSandboxEnvBody = {
     teamSlugOrId: string;
     envVarsContent: string;
+    envFileContent?: string;
 };
 
 export type RunScriptsResponse = {
