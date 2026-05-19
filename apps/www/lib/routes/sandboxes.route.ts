@@ -976,13 +976,19 @@ sandboxesRouter.openapi(
             ).filter((provider: { id: string }) => body.resourceProviderIds?.includes(provider.id))
           : [];
 
-        if (body.resourceProviderIds?.length && selectedIosProviders.length === 0) {
-          const requestedIosProviders = getOnlineByCapability(
-            db,
-            body.teamSlugOrId,
-            "resource:ios-simulator",
-          ).filter((provider: { id: string }) => body.resourceProviderIds?.includes(provider.id));
+        // Only fire the iOS availability error when the user actually
+        // requested an iOS provider. Without this guard, requesting any
+        // non-iOS resource (e.g. an android-emulator provider) would 409
+        // here because no requested provider matches the iOS capability.
+        const requestedIosProviders = body.resourceProviderIds?.length
+          ? getOnlineByCapability(
+              db,
+              body.teamSlugOrId,
+              "resource:ios-simulator",
+            ).filter((provider: { id: string }) => body.resourceProviderIds?.includes(provider.id))
+          : [];
 
+        if (requestedIosProviders.length > 0 && selectedIosProviders.length === 0) {
           const busyProvider = requestedIosProviders.find(
             (provider: { id: string; name?: string | null; maxConcurrentSlots?: number | null }) => {
               const activeAllocations = listActiveAllocationsByProvider(db, provider.id);
