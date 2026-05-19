@@ -150,6 +150,10 @@ export async function injectClaudeAuth(
 
   // Ensure ~/.claude.json has hasCompletedOnboarding so Claude Code
   // skips the interactive login/setup flow and uses the token directly.
+  // A `theme` must also be set: the theme ("default color") picker is its
+  // own onboarding step, and while it's unanswered Claude Code rewrites
+  // ~/.claude.json and drops hasCompletedOnboarding, re-triggering the
+  // whole flow. Setting both makes onboarding fully non-interactive.
   const onboardingScript = `python3 -c "
 import json, os
 p = os.path.expanduser('~/.claude.json')
@@ -159,6 +163,7 @@ except Exception:
     d = {}
 d['hasCompletedOnboarding'] = True
 d['hasAcknowledgedCostThreshold'] = True
+d.setdefault('theme', 'dark')
 json.dump(d, open(p, 'w'))
 " 2>/dev/null`;
 
