@@ -88,12 +88,22 @@ export async function getClaudeEnvironment(
       numStartups: 5,
     };
 
-    // Write to ~/.claude.json (the canonical location Claude Code checks)
+    // Write the config to BOTH ~/.claude.json and ~/.claude/.claude.json.
+    // A startup command symlinks ~/.claude.json -> ~/.claude/.claude.json,
+    // but startup commands run in the background and race the agent. Writing
+    // both locations means Claude Code reads the seeded config whether or not
+    // the symlink has been (re)created yet.
+    const claudeConfigBase64 = Buffer.from(
+      JSON.stringify(config, null, 2),
+    ).toString("base64");
     files.push({
       destinationPath: "$HOME/.claude.json",
-      contentBase64: Buffer.from(JSON.stringify(config, null, 2)).toString(
-        "base64",
-      ),
+      contentBase64: claudeConfigBase64,
+      mode: "644",
+    });
+    files.push({
+      destinationPath: "$HOME/.claude/.claude.json",
+      contentBase64: claudeConfigBase64,
       mode: "644",
     });
   } catch (error) {
