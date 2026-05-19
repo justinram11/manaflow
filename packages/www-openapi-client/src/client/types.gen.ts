@@ -570,6 +570,7 @@ export type StartSandboxBody = {
     branch?: string;
     newBranch?: string;
     depth?: number;
+    selectedRepos?: Array<string>;
     displays?: Array<'android'>;
     resourceProviderIds?: Array<string>;
     awsRegion?: string;

@@ -1,4 +1,11 @@
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { exec } from "./exec";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const SIMULATOR_INPUT_SOURCE_PATH = resolve(__dirname, "./SimulatorInput.swift");
+const SIMULATOR_INPUT_TARGET_PATH = "/tmp/cmux-SimulatorInput.swift";
 
 export interface AllocationInfo {
   allocationId: string;
@@ -13,6 +20,21 @@ export interface AllocationInfo {
 }
 
 const allocations = new Map<string, AllocationInfo>();
+
+function ensureSimulatorInputHelper(): void {
+  try {
+    const source = readFileSync(SIMULATOR_INPUT_SOURCE_PATH, "utf8");
+    const target = existsSync(SIMULATOR_INPUT_TARGET_PATH)
+      ? readFileSync(SIMULATOR_INPUT_TARGET_PATH, "utf8")
+      : null;
+
+    if (target !== source) {
+      writeFileSync(SIMULATOR_INPUT_TARGET_PATH, source, { encoding: "utf8", mode: 0o755 });
+    }
+  } catch (error) {
+    console.error("Failed to provision SimulatorInput.swift:", error);
+  }
+}
 
 function listAvailableIosRuntimeIdentifiers(): string[] {
   try {
@@ -134,6 +156,7 @@ export function setupAllocation(params: {
   }
 
   // Resolve simulator target against what's available
+  ensureSimulatorInputHelper();
   const {
     simulatorDeviceType,
     simulatorRuntime,

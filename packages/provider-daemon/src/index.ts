@@ -24,12 +24,6 @@ async function main() {
   }
 
   if (hasTart) {
-    const { startIngressServer } = await import("@cmux/mac-resource-provider/ingress-server");
-    try {
-      startIngressServer();
-    } catch (error) {
-      console.error("[provider-daemon] Failed to start ingress server (non-fatal):", error);
-    }
     registry.register(createResourceIosHandler());
   }
 
@@ -50,10 +44,6 @@ async function main() {
     console.log("Shutting down...");
     client.close();
     await registry.shutdown();
-    if (hasTart) {
-      const { stopIngressServer } = await import("@cmux/mac-resource-provider/ingress-server");
-      stopIngressServer();
-    }
     process.exit(0);
   }
 

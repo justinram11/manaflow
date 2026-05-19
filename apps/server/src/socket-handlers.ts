@@ -55,6 +55,7 @@ import { getDb, getUserId } from "./utils/dbClient";
 import { getTaskById } from "@cmux/db/queries/tasks";
 import { getTaskRunById, getTaskRunsByTask } from "@cmux/db/queries/task-runs";
 import { getEnvironmentById } from "@cmux/db/queries/environments";
+import { parseGitUrl } from "@cmux/shared/utils/parse-git-url";
 import { getWorkspaceSettings } from "@cmux/db/queries/settings";
 import { hasReposForTeam, getReposByOrg } from "@cmux/db/queries/repos";
 import {
@@ -2641,10 +2642,16 @@ export function setupSocketHandlers(
 
           const aggregatedFiles: FileInfo[] = [];
 
-          for (const repoFullName of repoFullNames) {
+          for (const repoEntry of repoFullNames) {
+            // Entries may be `owner/repo` shorthand or any git URL (optionally
+            // with a `#branch` fragment). Derive a real clone URL per host.
+            const parsed = parseGitUrl(repoEntry);
+            const targetRepoUrl =
+              parsed?.cloneUrl ?? `https://github.com/${repoEntry}.git`;
+            const repoFullName = parsed?.fullName ?? repoEntry;
             try {
               const files = await listFilesForRepo({
-                targetRepoUrl: `https://github.com/${repoFullName}.git`,
+                targetRepoUrl,
                 repoFullName,
               });
               aggregatedFiles.push(...files);
@@ -2840,10 +2847,10 @@ Please address the issue mentioned in the comment above.`;
             taskDescription: formattedPrompt,
             isCloudMode: true,
             theme: "dark",
-            // Use provided selectedAgents or default to claude/opus-4.6 and codex/gpt-5.3-codex-xhigh
+            // Use provided selectedAgents or default to claude/opus-4.7 and codex/gpt-5.5-xhigh
             selectedAgents: selectedAgents || [
-              "claude/opus-4.6",
-              "codex/gpt-5.3-codex-xhigh",
+              "claude/opus-4.7",
+              "codex/gpt-5.5-xhigh",
             ],
           },
           safeTeam

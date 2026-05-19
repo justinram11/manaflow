@@ -1,12 +1,9 @@
 import { execSync, spawn, type ChildProcess } from "node:child_process";
-import { createServer, createConnection, type Server } from "node:net";
 
 const BASE_IMAGE = process.env.CMUX_TART_BASE_IMAGE ?? "cmux-ios-dev";
 const VM_USER = process.env.CMUX_TART_VM_USER ?? "admin";
 
 const runningVms = new Map<string, { process: ChildProcess }>();
-const vncProxies = new Map<string, { server: Server; port: number }>();
-let nextVncPort = 5901;
 
 /** Cache resolved VM IPs so we don't call `tart ip` on every exec. */
 const vmIpCache = new Map<string, string>();
@@ -181,58 +178,6 @@ export function fileExistsInVm(vmName: string, remotePath: string): boolean {
     return true;
   } catch {
     return false;
-  }
-}
-
-/**
- * Start a TCP proxy on the host forwarding to the VM's VNC port (5900).
- * Returns the host port the proxy listens on. Tries successive ports if one
- * is already in use (e.g. from a previous daemon instance).
- */
-export function startVncProxy(vmName: string, vmIp: string): number {
-  const existing = vncProxies.get(vmName);
-  if (existing) return existing.port;
-
-  const MAX_PORT_ATTEMPTS = 20;
-  for (let attempt = 0; attempt < MAX_PORT_ATTEMPTS; attempt++) {
-    const port = nextVncPort++;
-    const server = createServer((client) => {
-      const target = createConnection({ host: vmIp, port: 5900 }, () => {
-        client.pipe(target);
-        target.pipe(client);
-      });
-      target.on("error", () => client.destroy());
-      client.on("error", () => target.destroy());
-    });
-
-    try {
-      // listenSync via Bun — falls back to catching the error event
-      server.listen(port, "127.0.0.1");
-      server.on("error", (error) => {
-        console.error(`[tart-vm] VNC proxy runtime error for ${vmName}:`, error);
-      });
-      vncProxies.set(vmName, { server, port });
-      console.log(`[tart-vm] VNC proxy for ${vmName}: 127.0.0.1:${port} → ${vmIp}:5900`);
-      return port;
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === "EADDRINUSE") {
-        console.log(`[tart-vm] Port ${port} in use, trying next...`);
-        try { server.close(); } catch { /* ignore */ }
-        continue;
-      }
-      throw error;
-    }
-  }
-
-  throw new Error(`[tart-vm] Could not find available VNC proxy port after ${MAX_PORT_ATTEMPTS} attempts`);
-}
-
-export function stopVncProxy(vmName: string): void {
-  const entry = vncProxies.get(vmName);
-  if (entry) {
-    entry.server.close();
-    vncProxies.delete(vmName);
   }
 }
 

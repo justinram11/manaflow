@@ -74,9 +74,9 @@ export async function getClaudeEnvironment(
       hasAcknowledgedCostThreshold: true,
     };
 
-    // Write to ~/.claude/.claude.json (the canonical location Claude Code checks)
+    // Write to ~/.claude.json (the canonical location Claude Code checks)
     files.push({
-      destinationPath: "$HOME/.claude/.claude.json",
+      destinationPath: "$HOME/.claude.json",
       contentBase64: Buffer.from(JSON.stringify(config, null, 2)).toString(
         "base64",
       ),
@@ -278,6 +278,12 @@ exit 0`;
   // When only API key is present, we route through cmux proxy for tracking/rate limiting
   const settingsConfig: Record<string, unknown> = {
     alwaysThinkingEnabled: true,
+    // Pre-accept the --dangerously-skip-permissions warning prompt so the
+    // agent boots non-interactively. Claude Code >=2.1 reads this from
+    // userSettings (~/.claude/settings.json); the older
+    // bypassPermissionsModeAccepted field on .claude.json is only used as
+    // a one-time migration source and isn't honored on its own.
+    skipDangerousModePermissionPrompt: true,
     // Always use apiKeyHelper when not using OAuth (helper outputs correct key based on user config)
     ...(hasOAuthToken ? {} : { apiKeyHelper: claudeApiKeyHelperPath }),
     hooks: {

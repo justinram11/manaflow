@@ -89,8 +89,7 @@ export interface TaskRunWithChildren {
     workspaceUrl?: string;
     iosResourceAllocationId?: string;
     iosDirectToken?: string;
-    iosProviderBrowserBaseUrl?: string;
-    iosProviderTailscaleHost?: string;
+    iosVmMcpUrl?: string;
     startedAt?: number;
     stoppedAt?: number;
     lastAccessedAt?: number;

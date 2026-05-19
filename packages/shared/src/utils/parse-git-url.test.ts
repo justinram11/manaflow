@@ -120,4 +120,48 @@ describe("parseGitUrl", () => {
     const result = parseGitUrl("  git@github.com:owner/repo.git  ");
     expect(result?.fullName).toBe("owner/repo");
   });
+
+  it("parses a #ref fragment off an HTTPS URL", () => {
+    const result = parseGitUrl("https://github.com/owner/repo.git#develop");
+    expect(result).toEqual({
+      owner: "owner",
+      repo: "repo",
+      fullName: "owner/repo",
+      cloneUrl: "https://github.com/owner/repo.git",
+      ref: "develop",
+    });
+  });
+
+  it("parses a #ref fragment off an SSH URL", () => {
+    const result = parseGitUrl("git@gitlab.com:org/lib.git#main");
+    expect(result).toEqual({
+      owner: "org",
+      repo: "lib",
+      fullName: "org/lib",
+      cloneUrl: "git@gitlab.com:org/lib.git",
+      ref: "main",
+    });
+  });
+
+  it("parses a #ref fragment off owner/repo shorthand", () => {
+    const result = parseGitUrl("owner/repo#feature/x");
+    expect(result).toEqual({
+      owner: "owner",
+      repo: "repo",
+      fullName: "owner/repo",
+      cloneUrl: "https://github.com/owner/repo.git",
+      ref: "feature/x",
+    });
+  });
+
+  it("leaves ref undefined when no fragment is present", () => {
+    const result = parseGitUrl("https://github.com/owner/repo.git");
+    expect(result?.ref).toBeUndefined();
+  });
+
+  it("treats an empty fragment as no ref", () => {
+    const result = parseGitUrl("https://github.com/owner/repo.git#");
+    expect(result?.ref).toBeUndefined();
+    expect(result?.cloneUrl).toBe("https://github.com/owner/repo.git");
+  });
 });

@@ -17,6 +17,20 @@ interface HydrateConfig {
   selectedRepos: string[];
 }
 
+/**
+ * A repository entry parsed from a `selectedRepos` string.
+ *
+ * Each entry may be an HTTPS/SSH git URL or `owner/repo` GitHub shorthand, with
+ * an optional trailing `#branch` fragment. NOTE: this script is shipped to the
+ * sandbox as a standalone file and cannot import `@cmux/shared`, so the parsing
+ * here intentionally mirrors `parseGitUrl` / `parseRepoEntry` in that package.
+ */
+interface RepoEntry {
+  cloneUrl: string;
+  repoName: string;
+  branch?: string;
+}
+
 function log(message: string, level: "info" | "error" | "debug" = "info") {
   const prefix = `[hydrate-repo]`;
   const timestamp = new Date().toISOString();
@@ -98,6 +112,56 @@ function getConfig(): HydrateConfig {
   };
 }
 
+/**
+ * Parse a `selectedRepos` entry into a clone URL, repo name, and optional
+ * branch. Accepts HTTPS, SSH, and `owner/repo` shorthand, each optionally
+ * carrying a trailing `#branch` fragment. Returns null for unrecognized input.
+ */
+function parseRepoEntry(entry: string): RepoEntry | null {
+  const trimmed = entry.trim();
+  if (!trimmed) return null;
+
+  // Split off an optional `#branch` fragment.
+  let base = trimmed;
+  let branch: string | undefined;
+  const hashIndex = trimmed.indexOf("#");
+  if (hashIndex !== -1) {
+    base = trimmed.slice(0, hashIndex).trim();
+    const fragment = trimmed.slice(hashIndex + 1).trim();
+    branch = fragment.length > 0 ? fragment : undefined;
+  }
+  if (!base) return null;
+
+  // SSH: git@host:owner/repo(.git)? (supports nested groups)
+  const sshMatch = base.match(
+    /^git@[a-zA-Z0-9._-]+:([a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)*)\/([a-zA-Z0-9_.-]+?)(?:\.git)?$/
+  );
+  if (sshMatch) {
+    return { cloneUrl: base, repoName: sshMatch[2].replace(/\.git$/, ""), branch };
+  }
+
+  // HTTPS: https://host/owner/repo(.git)? (supports nested groups)
+  const httpsMatch = base.match(
+    /^https?:\/\/[a-zA-Z0-9._-]+\/([a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)*)\/([a-zA-Z0-9_.-]+?)(?:\.git)?(?:\/)?$/i
+  );
+  if (httpsMatch) {
+    return { cloneUrl: base, repoName: httpsMatch[2].replace(/\.git$/, ""), branch };
+  }
+
+  // Shorthand: owner/repo -> GitHub HTTPS
+  const simpleMatch = base.match(/^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)$/);
+  if (simpleMatch) {
+    const repoName = simpleMatch[2].replace(/\.git$/, "");
+    return {
+      cloneUrl: `https://github.com/${simpleMatch[1]}/${repoName}.git`,
+      repoName,
+      branch,
+    };
+  }
+
+  return null;
+}
+
 function ensureWorkspace(workspacePath: string) {
   log(`Ensuring workspace exists at ${workspacePath}`);
   exec(`mkdir -p "${workspacePath}"`);
@@ -164,10 +228,46 @@ function cloneRepository(config: HydrateConfig) {
   log("Repository cloned successfully");
 }
 
-function deriveRepoCloneUrl(repoFullName: string): string {
-  return `https://github.com/${repoFullName}.git`;
+/**
+ * Clone a repo into a target directory. When `branch` is set, clone that branch
+ * directly (so shallow clones fetch the right ref); fall back to a default
+ * clone if the branch does not exist on the remote.
+ */
+function cloneRepoInto(
+  cloneUrl: string,
+  targetPath: string,
+  depth: number,
+  branch?: string,
+): boolean {
+  if (branch) {
+    log(`Cloning ${cloneUrl} (branch ${branch}) into ${targetPath}`);
+    const branched = exec(
+      `git clone --depth ${depth} --branch "${branch}" "${cloneUrl}" "${targetPath}"`,
+      { throwOnError: false }
+    );
+    if (branched.exitCode === 0) {
+      return true;
+    }
+    log(
+      `Branch clone failed for ${cloneUrl}#${branch}, retrying on default branch: ${branched.stderr}`,
+      "debug"
+    );
+  } else {
+    log(`Cloning ${cloneUrl} into ${targetPath}`);
+  }
+
+  const result = exec(
+    `git clone --depth ${depth} "${cloneUrl}" "${targetPath}"`,
+    { throwOnError: false }
+  );
+  if (result.exitCode !== 0) {
+    log(`Clone failed for ${cloneUrl}: ${result.stderr}`, "error");
+    return false;
+  }
+  return true;
 }
 
+/** Enumerate immediate subdirectories of the workspace that are git repos. */
 function listWorkspaceRepos(workspacePath: string): Map<string, string> {
   const repos = new Map<string, string>();
 
@@ -200,109 +300,6 @@ function listWorkspaceRepos(workspacePath: string): Map<string, string> {
   return repos;
 }
 
-function cloneRepositoryInto(workspacePath: string, repoFullName: string, depth: number) {
-  const repoName = repoFullName.split("/").pop();
-  if (!repoName) {
-    throw new Error(`Invalid repository name: ${repoFullName}`);
-  }
-
-  log(`Cloning ${repoFullName} into /root/workspace/${repoName}`);
-  const cloneUrl = deriveRepoCloneUrl(repoFullName);
-  const cloneResult = exec(
-    `git clone --depth ${depth} "${cloneUrl}" "${join(workspacePath, repoName)}"`,
-    { throwOnError: false }
-  );
-
-  if (cloneResult.exitCode !== 0) {
-    throw new Error(`Failed to clone ${repoFullName}: ${cloneResult.stderr}`);
-  }
-}
-
-function hydrateSelectedRepos(config: HydrateConfig) {
-  const { workspacePath, selectedRepos, depth } = config;
-
-  if (selectedRepos.length === 0) {
-    return;
-  }
-
-  if (selectedRepos.length === 1) {
-    const repoFullName = selectedRepos[0];
-    const [owner, repo] = repoFullName.split("/");
-    if (!owner || !repo) {
-      throw new Error(`Invalid repository format: ${repoFullName}`);
-    }
-
-    const singleRepoConfig: HydrateConfig = {
-      ...config,
-      owner,
-      repo,
-      repoFull: repoFullName,
-      cloneUrl: deriveRepoCloneUrl(repoFullName),
-      maskedCloneUrl: deriveRepoCloneUrl(repoFullName),
-    };
-
-    const { hasGit, needsClear } = checkExistingRepo(workspacePath, owner, repo);
-    if (needsClear) {
-      clearWorkspace(workspacePath);
-    }
-
-    if (!hasGit || needsClear) {
-      cloneRepository(singleRepoConfig);
-    } else {
-      fetchUpdates(workspacePath);
-    }
-
-    if (config.baseBranch) {
-      checkoutBranch(workspacePath, config.baseBranch, config.newBranch);
-    }
-    return;
-  }
-
-  const selectedByName = new Map<string, string>();
-  for (const repoFullName of selectedRepos) {
-    const repoName = repoFullName.split("/").pop();
-    if (!repoName) {
-      throw new Error(`Invalid repository format: ${repoFullName}`);
-    }
-    if (selectedByName.has(repoName)) {
-      throw new Error(`Duplicate repository name in selection: ${repoName}`);
-    }
-    selectedByName.set(repoName, repoFullName);
-  }
-
-  const existingRepos = listWorkspaceRepos(workspacePath);
-  for (const [repoName, remoteUrl] of existingRepos.entries()) {
-    const selectedRepoFullName = selectedByName.get(repoName);
-    if (!selectedRepoFullName) {
-      log(`Removing stale repository ${repoName}`);
-      exec(`rm -rf "${join(workspacePath, repoName)}"`, { throwOnError: false });
-      continue;
-    }
-
-    if (remoteUrl && !remoteUrl.includes(selectedRepoFullName)) {
-      log(`Removing repository ${repoName} with mismatched remote ${remoteUrl}`);
-      exec(`rm -rf "${join(workspacePath, repoName)}"`, { throwOnError: false });
-      existingRepos.delete(repoName);
-    }
-  }
-
-  for (const repoFullName of selectedRepos) {
-    const repoName = repoFullName.split("/").pop();
-    if (!repoName) continue;
-
-    if (!existingRepos.has(repoName)) {
-      cloneRepositoryInto(workspacePath, repoFullName, depth);
-      continue;
-    }
-
-    const repoPath = join(workspacePath, repoName);
-    fetchUpdates(repoPath);
-    if (config.baseBranch) {
-      checkoutBranch(repoPath, config.baseBranch, "");
-    }
-  }
-}
-
 function fetchUpdates(workspacePath: string) {
   log("Fetching updates from remote");
 
@@ -315,6 +312,60 @@ function fetchUpdates(workspacePath: string) {
     log(`Fetch warning: ${stderr}`, "debug");
   } else {
     log("Fetched updates successfully");
+  }
+}
+
+/**
+ * Bring an existing repo onto `branch` at the latest remote tip. Works on
+ * shallow clones: fetches the branch explicitly, then force-sets the local
+ * branch to the fetched tip (equivalent to "pull latest").
+ */
+function syncRepoToBranch(repoPath: string, branch: string) {
+  log(`Syncing ${repoPath} to origin/${branch}`);
+
+  const fetch = exec(`git fetch origin "${branch}"`, {
+    cwd: repoPath,
+    throwOnError: false,
+  });
+  if (fetch.exitCode !== 0) {
+    log(`Could not fetch branch ${branch} in ${repoPath}: ${fetch.stderr}`, "error");
+    return;
+  }
+
+  const checkout = exec(`git checkout -B "${branch}" FETCH_HEAD`, {
+    cwd: repoPath,
+    throwOnError: false,
+  });
+  if (checkout.exitCode !== 0) {
+    log(`Could not checkout ${branch} in ${repoPath}: ${checkout.stderr}`, "error");
+  } else {
+    log(`Synced ${repoPath} to origin/${branch}`);
+  }
+}
+
+/** Pull the latest changes for an existing repo on its current branch. */
+function pullCurrentBranch(repoPath: string) {
+  fetchUpdates(repoPath);
+  const pull = exec(`git pull --ff-only`, { cwd: repoPath, throwOnError: false });
+  if (pull.exitCode === 0) {
+    log(`Pulled latest changes in ${repoPath}`);
+    return;
+  }
+  if (
+    pull.stderr.includes("divergent") ||
+    pull.stderr.includes("Not possible to fast-forward")
+  ) {
+    const { stdout: branch } = exec(`git rev-parse --abbrev-ref HEAD`, {
+      cwd: repoPath,
+      throwOnError: false,
+    });
+    const branchName = branch.trim();
+    if (branchName) {
+      log(`Divergent branches in ${repoPath}, resetting to origin/${branchName}`, "debug");
+      exec(`git reset --hard "origin/${branchName}"`, { cwd: repoPath, throwOnError: false });
+    }
+  } else {
+    log(`Could not pull latest changes in ${repoPath} (may be up to date)`, "debug");
   }
 }
 
@@ -377,6 +428,141 @@ function checkoutBranch(workspacePath: string, baseBranch: string, newBranch?: s
       log(`Switched to new branch: ${newBranch}`);
     } else {
       log(`Could not create branch ${newBranch}`, "error");
+    }
+  }
+}
+
+/**
+ * Hydrate the repositories listed in `selectedRepos`.
+ *
+ * - A single repo is cloned into the workspace root.
+ * - Multiple repos are each cloned into their own subdirectory.
+ *
+ * Each entry may be any git URL (HTTPS/SSH) or `owner/repo` shorthand, with an
+ * optional `#branch` fragment. When a branch is given it is checked out and
+ * kept at the latest remote tip on every hydration.
+ */
+function hydrateSelectedRepos(config: HydrateConfig) {
+  const { workspacePath, selectedRepos, depth } = config;
+
+  if (selectedRepos.length === 0) {
+    return;
+  }
+
+  const entries: RepoEntry[] = [];
+  for (const raw of selectedRepos) {
+    const parsed = parseRepoEntry(raw);
+    if (!parsed) {
+      log(`Skipping unrecognized repository entry: ${raw}`, "error");
+      continue;
+    }
+    entries.push(parsed);
+  }
+
+  if (entries.length === 0) {
+    return;
+  }
+
+  // Single repo -> clone into the workspace root.
+  if (entries.length === 1) {
+    const entry = entries[0];
+    const gitPath = join(workspacePath, ".git");
+    const hasGit = existsSync(gitPath);
+
+    let needsClear = false;
+    if (hasGit) {
+      const remote = exec(`git remote get-url origin`, {
+        cwd: workspacePath,
+        throwOnError: false,
+      });
+      const remoteUrl = remote.stdout.trim();
+      if (remote.exitCode === 0 && remoteUrl && remoteUrl !== entry.cloneUrl) {
+        log(`Workspace remote ${remoteUrl} does not match ${entry.cloneUrl}, re-cloning`);
+        needsClear = true;
+      }
+    }
+
+    if (needsClear) {
+      clearWorkspace(workspacePath);
+    }
+
+    if (!hasGit || needsClear) {
+      if (!cloneRepoInto(entry.cloneUrl, workspacePath, depth, entry.branch)) {
+        throw new Error(`Failed to clone repository: ${entry.cloneUrl}`);
+      }
+      if (entry.branch) {
+        // The clone landed on `branch`; still apply any requested new branch.
+        checkoutBranch(workspacePath, entry.branch, config.newBranch);
+      } else if (config.newBranch) {
+        exec(`git switch -C "${config.newBranch}"`, {
+          cwd: workspacePath,
+          throwOnError: false,
+        });
+      }
+    } else if (entry.branch) {
+      syncRepoToBranch(workspacePath, entry.branch);
+      if (config.newBranch) {
+        exec(`git switch -C "${config.newBranch}"`, {
+          cwd: workspacePath,
+          throwOnError: false,
+        });
+      }
+    } else {
+      pullCurrentBranch(workspacePath);
+    }
+    return;
+  }
+
+  // Multiple repos -> each into its own subdirectory.
+  // Resolve a unique directory name per repo (custom URLs from different hosts
+  // can collide on the bare repo name, e.g. gitlab a/api vs github b/api).
+  const usedDirs = new Set<string>();
+  const planned: Array<{ entry: RepoEntry; dirName: string }> = [];
+  for (const entry of entries) {
+    let dirName = entry.repoName;
+    let suffix = 2;
+    while (usedDirs.has(dirName)) {
+      dirName = `${entry.repoName}-${suffix}`;
+      suffix += 1;
+    }
+    usedDirs.add(dirName);
+    planned.push({ entry, dirName });
+  }
+
+  // Remove subdirectories that are no longer part of the selection.
+  const existingRepos = listWorkspaceRepos(workspacePath);
+  for (const [repoName] of existingRepos.entries()) {
+    if (!usedDirs.has(repoName)) {
+      log(`Removing stale repository ${repoName}`);
+      exec(`rm -rf "${join(workspacePath, repoName)}"`, { throwOnError: false });
+    }
+  }
+
+  for (const { entry, dirName } of planned) {
+    const repoPath = join(workspacePath, dirName);
+    const existingRemote = existingRepos.get(dirName);
+
+    // Re-clone if missing or the remote no longer matches.
+    if (!existsSync(join(repoPath, ".git"))) {
+      if (!cloneRepoInto(entry.cloneUrl, repoPath, depth, entry.branch)) {
+        log(`Skipping ${entry.cloneUrl}: clone failed`, "error");
+      }
+      continue;
+    }
+    if (existingRemote && existingRemote !== entry.cloneUrl) {
+      log(`Repository ${dirName} remote changed (${existingRemote} -> ${entry.cloneUrl}), re-cloning`);
+      exec(`rm -rf "${repoPath}"`, { throwOnError: false });
+      if (!cloneRepoInto(entry.cloneUrl, repoPath, depth, entry.branch)) {
+        log(`Skipping ${entry.cloneUrl}: clone failed`, "error");
+      }
+      continue;
+    }
+
+    // Existing repo with a matching remote -> refresh to the latest tip.
+    if (entry.branch) {
+      syncRepoToBranch(repoPath, entry.branch);
+    } else {
+      pullCurrentBranch(repoPath);
     }
   }
 }

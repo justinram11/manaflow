@@ -3,7 +3,6 @@ import {
   startVm,
   waitForGuest,
   getVmIp,
-  startVncProxy,
   copyFileToVm,
 } from "./tart-vm";
 import { dirname, resolve } from "node:path";
@@ -33,11 +32,6 @@ export interface AllocationInfo {
   accessTokenCreatedAt?: number;
   tartVmName: string;
   tartVmIp?: string;
-  vncPort?: number;
-  /** Host reachable from the Mac (e.g. Linux host's Tailscale IP) */
-  workspaceHost?: string;
-  /** Map of container port → host port for proxying (e.g. { 3000: 43000 }) */
-  workspacePorts?: Record<number, number>;
 }
 
 const allocations = new Map<string, AllocationInfo>();
@@ -199,12 +193,8 @@ export async function setupAllocation(params: {
   // 1. Ensure the shared VM is running
   ensureSharedVm();
 
-  // 2. Get VM IP and start VNC proxy on the host
+  // 2. Get VM IP for SSH-based operations
   const vmIp = getVmIp(vmName);
-  let vncPort: number | undefined;
-  if (vmIp) {
-    vncPort = startVncProxy(vmName, vmIp);
-  }
 
   // 3. Copy SimulatorInput.swift into the VM (idempotent)
   try {
@@ -249,7 +239,6 @@ export async function setupAllocation(params: {
     simulatorRuntime,
     tartVmName: vmName,
     tartVmIp: vmIp ?? undefined,
-    vncPort,
   };
 
   // Apply any pending rsync info that arrived before allocation was set up
@@ -259,15 +248,6 @@ export async function setupAllocation(params: {
     info.rsyncSecret = pending.rsyncSecret;
     pendingRsyncInfo.delete(allocationId);
   }
-
-  // Apply any pending workspace info
-  const pendingWs = pendingWorkspaceInfo.get(allocationId);
-  if (pendingWs) {
-    info.workspaceHost = pendingWs.workspaceHost;
-    info.workspacePorts = pendingWs.workspacePorts;
-    pendingWorkspaceInfo.delete(allocationId);
-  }
-
   allocations.set(allocationId, info);
   return info;
 }
@@ -321,7 +301,7 @@ export function bootSimulator(allocationId: string): string | undefined {
 
   try {
     execInVm(info.tartVmName, `xcrun simctl boot "${info.simulatorUdid}" 2>/dev/null || true`);
-    // Open Simulator.app inside the VM's GUI so it's visible via VNC
+    // Open Simulator.app inside the VM's GUI so the guest can be accessed directly.
     execInVm(info.tartVmName, `open -a Simulator --args -CurrentDeviceUDID "${info.simulatorUdid}"`);
     return info.simulatorUdid;
   } catch (error) {
@@ -331,7 +311,7 @@ export function bootSimulator(allocationId: string): string | undefined {
 }
 
 /**
- * Store rsync connection info for an allocation (called from connect_direct)
+ * Store rsync connection info for an allocation.
  */
 export function setRsyncInfo(allocationId: string, rsyncEndpoint: string, rsyncSecret: string): void {
   const info = allocations.get(allocationId);
@@ -345,19 +325,6 @@ export function setRsyncInfo(allocationId: string, rsyncEndpoint: string, rsyncS
 }
 
 const pendingRsyncInfo = new Map<string, { rsyncEndpoint: string; rsyncSecret: string }>();
-
-const pendingWorkspaceInfo = new Map<string, { workspaceHost: string; workspacePorts: Record<number, number> }>();
-
-export function setWorkspaceInfo(allocationId: string, workspaceHost: string, workspacePorts: Record<number, number>): void {
-  const info = allocations.get(allocationId);
-  if (!info) {
-    console.warn(`[workspace-manager] setWorkspaceInfo: no allocation found for ${allocationId}, will store when allocation is created`);
-    pendingWorkspaceInfo.set(allocationId, { workspaceHost, workspacePorts });
-    return;
-  }
-  info.workspaceHost = workspaceHost;
-  info.workspacePorts = workspacePorts;
-}
 
 export function setAllocationAccessToken(allocationId: string, accessToken: string): void {
   const info = allocations.get(allocationId);

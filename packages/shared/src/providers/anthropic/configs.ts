@@ -58,11 +58,29 @@ function createApplyClaudeApiKeys(): NonNullable<AgentConfig["applyApiKeys"]> {
   };
 }
 
+export const CLAUDE_OPUS_4_7_CONFIG: AgentConfig = {
+  name: "claude/opus-4.7",
+  command: "claude",
+  args: [
+    "--allow-dangerously-skip-permissions",
+    "--dangerously-skip-permissions",
+    "--model",
+    "claude-opus-4-7",
+    "--ide",
+    "$PROMPT",
+  ],
+  environment: getClaudeEnvironment,
+  checkRequirements: checkClaudeRequirements,
+  // User-configurable: OAuth token (preferred) or API key; falls back to platform proxy
+  apiKeys: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY],
+  applyApiKeys: createApplyClaudeApiKeys(),
+  completionDetector: startClaudeCompletionDetector,
+};
+
 export const CLAUDE_OPUS_4_6_CONFIG: AgentConfig = {
   name: "claude/opus-4.6",
-  command: "bunx",
+  command: "claude",
   args: [
-    "@anthropic-ai/claude-code@latest",
     "--allow-dangerously-skip-permissions",
     "--dangerously-skip-permissions",
     "--model",
@@ -80,9 +98,8 @@ export const CLAUDE_OPUS_4_6_CONFIG: AgentConfig = {
 
 export const CLAUDE_OPUS_4_5_CONFIG: AgentConfig = {
   name: "claude/opus-4.5",
-  command: "bunx",
+  command: "claude",
   args: [
-    "@anthropic-ai/claude-code@latest",
     "--allow-dangerously-skip-permissions",
     "--dangerously-skip-permissions",
     "--model",
@@ -100,9 +117,8 @@ export const CLAUDE_OPUS_4_5_CONFIG: AgentConfig = {
 
 export const CLAUDE_SONNET_4_5_CONFIG: AgentConfig = {
   name: "claude/sonnet-4.5",
-  command: "bunx",
+  command: "claude",
   args: [
-    "@anthropic-ai/claude-code@latest",
     "--allow-dangerously-skip-permissions",
     "--dangerously-skip-permissions",
     "--model",
@@ -120,9 +136,8 @@ export const CLAUDE_SONNET_4_5_CONFIG: AgentConfig = {
 
 export const CLAUDE_HAIKU_4_5_CONFIG: AgentConfig = {
   name: "claude/haiku-4.5",
-  command: "bunx",
+  command: "claude",
   args: [
-    "@anthropic-ai/claude-code@latest",
     "--allow-dangerously-skip-permissions",
     "--dangerously-skip-permissions",
     "--model",

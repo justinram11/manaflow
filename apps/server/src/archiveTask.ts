@@ -1,6 +1,6 @@
 import { getTaskRunsByTask } from "@cmux/db/queries/task-runs";
 import { releaseAllocation } from "@cmux/db/mutations/providers";
-import { getAllocationById } from "@cmux/db/queries/providers";
+import { getAllocationById, getById } from "@cmux/db/queries/providers";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { getDb } from "./utils/dbClient";
@@ -44,15 +44,39 @@ async function releaseIosAllocationForRun(run: unknown): Promise<void> {
 
   const allocationData =
     allocation.data && typeof allocation.data === "object" ? allocation.data : {};
-  const serverUrl = process.env.CMUX_SERVER_INTERNAL_URL ?? "http://localhost:9776";
+  const iosVmMcpUrl =
+    (typeof Reflect.get(Object(vscode), "iosVmMcpUrl") === "string"
+      ? Reflect.get(Object(vscode), "iosVmMcpUrl")
+      : undefined) ||
+    (() => {
+      const provider = getById(db, allocation.providerId);
+      const vmTailscaleHostname = provider?.metadata?.vmTailscaleHostname;
+      const vmMcpPort = provider?.metadata?.vmMcpPort;
+      if (typeof vmTailscaleHostname !== "string") {
+        return undefined;
+      }
+      const hostname = vmTailscaleHostname.trim();
+      if (!hostname) {
+        return undefined;
+      }
+      const port =
+        typeof vmMcpPort === "string" && vmMcpPort.trim().length > 0
+          ? vmMcpPort.trim()
+          : "4850";
+      return `http://${hostname}:${port}`;
+    })();
 
   try {
-    const cleanupRes = await fetch(
-      `${serverUrl}/internal/provider/${allocation.providerId}/cleanup-allocation`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+    if (!iosVmMcpUrl) {
+      throw new Error(`No VM MCP URL available for iOS provider ${allocation.providerId}`);
+    }
+    const cleanupRes = await fetch(`${iosVmMcpUrl}/jsonrpc`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "cleanup_allocation",
+        params: {
           allocationId,
           buildDir:
             typeof allocationData.buildDir === "string"
@@ -62,13 +86,14 @@ async function releaseIosAllocationForRun(run: unknown): Promise<void> {
             typeof allocationData.simulatorUdid === "string"
               ? allocationData.simulatorUdid
               : undefined,
-        }),
-      },
-    );
+        },
+        id: `vm-cleanup-${allocationId}`,
+      }),
+    });
     if (!cleanupRes.ok) {
       const errorText = await cleanupRes.text();
       throw new Error(
-        `cleanup-allocation failed for ${allocationId}: HTTP ${cleanupRes.status} ${errorText}`,
+        `VM cleanup_allocation failed for ${allocationId}: HTTP ${cleanupRes.status} ${errorText}`,
       );
     }
     serverLogger.info(

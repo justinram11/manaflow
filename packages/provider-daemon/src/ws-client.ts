@@ -1,6 +1,5 @@
 import WebSocket from "ws";
 import { execSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { hostname, platform, arch } from "node:os";
 import type { CapabilityRegistry } from "./capability-registry";
 import type { DaemonConfig, JsonRpcRequest } from "./types";
@@ -11,49 +10,6 @@ const HEALTH_CHECK_INTERVAL_MS = 15_000;
 // Resource handlers can block on synchronous build/sync commands. Allow the
 // websocket to stay up across those operations instead of self-reconnecting.
 const PONG_TIMEOUT_MS = 45 * 60 * 1000;
-
-function trimTrailingDot(value: string): string {
-  return value.endsWith(".") ? value.slice(0, -1) : value;
-}
-
-function getProviderBrowserBaseUrl(capabilities: string[]): string | null {
-  const configured = process.env.CMUX_PROVIDER_BROWSER_BASE_URL?.trim();
-  if (configured) {
-    return configured.endsWith("/") ? configured.slice(0, -1) : configured;
-  }
-
-  if (!capabilities.includes("resource:ios-simulator")) {
-    return null;
-  }
-
-  try {
-    const tailscaleBinary = [
-      process.env.CMUX_TAILSCALE_BINARY,
-      "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
-      "/opt/homebrew/bin/tailscale",
-      "tailscale",
-    ].find((candidate) => candidate && (candidate === "tailscale" || existsSync(candidate)));
-    if (!tailscaleBinary) {
-      return null;
-    }
-
-    const output = execSync(`"${tailscaleBinary}" status --json`, {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    const parsed = JSON.parse(output) as {
-      Self?: { DNSName?: string };
-    };
-    const dnsName = parsed.Self?.DNSName?.trim();
-    if (dnsName) {
-      return `https://${trimTrailingDot(dnsName)}`;
-    }
-  } catch {
-    // Ignore tailscale detection failures.
-  }
-
-  return null;
-}
 
 function getAdvertisedMaxConcurrentSlots(
   capabilities: string[],
@@ -318,13 +274,10 @@ export class WsClient {
     } catch {
       // Ignore
     }
-    const browserBaseUrl = getProviderBrowserBaseUrl(capabilities);
-    if (browserBaseUrl) {
-      metadata.browserBaseUrl = browserBaseUrl;
-      metadata.iosIngressPort = process.env.CMUX_IOS_INGRESS_PORT ?? "4848";
-      // Report the Tart VM's Tailscale hostname for direct MCP access
+    if (capabilities.includes("resource:ios-simulator")) {
       const vmName = process.env.CMUX_TART_BASE_IMAGE ?? "cmux-ios-dev";
-      metadata.vmTailscaleHostname = `cmux-tart-${vmName}`;
+      metadata.vmTailscaleHostname =
+        process.env.CMUX_TART_VM_TAILSCALE_HOSTNAME?.trim() || `cmux-tart-${vmName}`;
       metadata.vmMcpPort = process.env.CMUX_VM_MCP_PORT ?? "4850";
     }
     info.metadata = metadata;

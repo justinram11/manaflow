@@ -723,7 +723,7 @@ function TaskDetailPage() {
     }
     const hasSimulatorView =
       Boolean(selectedRun.vscode.iosResourceAllocationId) ||
-      Boolean(selectedRun.vscode.iosProviderBrowserBaseUrl);
+      Boolean(selectedRun.vscode.iosVmMcpUrl);
     if (!hasSimulatorView) {
       return null;
     }

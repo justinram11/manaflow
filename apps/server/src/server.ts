@@ -6,7 +6,7 @@ import { GitDiffManager } from "./gitDiff";
 
 import { setupSocketHandlers } from "./socket-handlers";
 import { createSocketIOTransport } from "./transports/socketio-transport";
-import { setupProviderWS, sendJsonRpcRequest, sendSetupAllocation, sendCleanupAllocation } from "./provider-ws";
+import { setupProviderWS, sendJsonRpcRequest } from "./provider-ws";
 import { getDb, getUserId } from "./utils/dbClient";
 import { dockerLogger, serverLogger } from "./utils/fileLogger";
 import { DockerVSCodeInstance } from "./vscode/DockerVSCodeInstance";
@@ -257,10 +257,8 @@ export async function startServer({
 
 /**
  * Handle internal API requests from the www app for provider communication.
- * Routes:
+ * Route:
  *   POST /internal/provider/:providerId/json-rpc   — generic JSON-RPC forwarder
- *   POST /internal/provider/:providerId/setup-allocation
- *   POST /internal/provider/:providerId/cleanup-allocation
  */
 async function handleInternalProviderRequest(
   url: URL,
@@ -306,47 +304,24 @@ async function handleInternalProviderRequest(
   res.setHeader("Content-Type", "application/json");
 
   try {
-    switch (action) {
-      case "json-rpc": {
-        const request = parsed.request as Record<string, unknown>;
-        const result = await sendJsonRpcRequest(providerId, {
-          jsonrpc: "2.0",
-          method: request.method as string,
-          params: {
-            ...request.params as Record<string, unknown> ?? {},
-            ...(parsed.allocationId ? { _allocationId: parsed.allocationId } : {}),
-          },
-          id: request.id as string | number,
-        });
-        res.statusCode = 200;
-        res.end(JSON.stringify(result));
-        break;
-      }
-      case "setup-allocation": {
-        const result = await sendSetupAllocation(providerId, {
-          allocationId: parsed.allocationId as string,
-          buildDir: parsed.buildDir as string,
-          simulatorDeviceType: parsed.simulatorDeviceType as string,
-          simulatorRuntime: parsed.simulatorRuntime as string,
-        });
-        res.statusCode = 200;
-        res.end(JSON.stringify(result));
-        break;
-      }
-      case "cleanup-allocation": {
-        const result = await sendCleanupAllocation(providerId, {
-          allocationId: parsed.allocationId as string,
-          buildDir: parsed.buildDir as string | undefined,
-          simulatorUdid: parsed.simulatorUdid as string | undefined,
-        });
-        res.statusCode = 200;
-        res.end(JSON.stringify(result));
-        break;
-      }
-      default:
-        res.statusCode = 404;
-        res.end(JSON.stringify({ error: `Unknown action: ${action}` }));
+    if (action !== "json-rpc") {
+      res.statusCode = 404;
+      res.end(JSON.stringify({ error: `Unknown action: ${action}` }));
+      return;
     }
+
+    const request = parsed.request as Record<string, unknown>;
+    const result = await sendJsonRpcRequest(providerId, {
+      jsonrpc: "2.0",
+      method: request.method as string,
+      params: {
+        ...(request.params as Record<string, unknown> | undefined ?? {}),
+        ...(parsed.allocationId ? { _allocationId: parsed.allocationId } : {}),
+      },
+      id: request.id as string | number,
+    });
+    res.statusCode = 200;
+    res.end(JSON.stringify(result));
   } catch (error) {
     console.error(`Internal provider error (${action}):`, error);
     res.statusCode = 502;

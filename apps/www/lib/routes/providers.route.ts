@@ -18,8 +18,6 @@ import {
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { createHash, randomBytes } from "node:crypto";
 
-const CMUX_SERVER_URL = process.env.CMUX_SERVER_INTERNAL_URL ?? "http://localhost:9776";
-
 export const providersRouter = new OpenAPIHono();
 
 const ErrorResponse = z
@@ -97,6 +95,58 @@ const AllocateBody = z
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+
+function getIosProviderVmMcpUrl(provider: {
+  metadata?: Record<string, unknown> | null;
+}): string | undefined {
+  const vmTailscaleHostname = provider.metadata?.vmTailscaleHostname;
+  const vmMcpPort = provider.metadata?.vmMcpPort;
+  if (typeof vmTailscaleHostname !== "string") {
+    return undefined;
+  }
+
+  const hostname = vmTailscaleHostname.trim();
+  if (!hostname) {
+    return undefined;
+  }
+
+  const port =
+    typeof vmMcpPort === "string" && vmMcpPort.trim().length > 0
+      ? vmMcpPort.trim()
+      : "4850";
+  return `http://${hostname}:${port}`;
+}
+
+async function callIosVmJsonRpc(
+  iosVmMcpUrl: string,
+  method: string,
+  params: Record<string, unknown>,
+  id: string,
+): Promise<Record<string, unknown>> {
+  const response = await fetch(`${iosVmMcpUrl}/jsonrpc`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      method,
+      params,
+      id,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+
+  const payload = await response.json() as {
+    result?: Record<string, unknown>;
+    error?: { message?: string };
+  };
+  if (payload.error) {
+    throw new Error(payload.error.message ?? `VM MCP ${method} failed`);
+  }
+  return payload.result ?? {};
 }
 
 // POST /providers/register - Register new provider
@@ -408,30 +458,41 @@ providersRouter.openapi(
       data: body.data,
     });
 
-    // For resource allocations, notify the daemon to set up the workspace
+    // For resource allocations, set up the workspace directly in the VM MCP server.
     if (body.type === "resource" && body.data) {
       try {
         const buildDir = body.data.buildDir ?? `/tmp/cmux-builds/${allocationId}`;
-        const setupRes = await fetch(
-          `${CMUX_SERVER_URL}/internal/provider/${id}/setup-allocation`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              allocationId,
-              buildDir,
-              simulatorDeviceType: body.data.simulatorDeviceType ?? "iPhone 16 Pro",
-              simulatorRuntime: body.data.simulatorRuntime ?? "com.apple.CoreSimulator.SimRuntime.iOS-18-6",
-            }),
-          },
-        );
-        if (!setupRes.ok) {
-          console.error("Failed to setup allocation on daemon:", await setupRes.text());
+        const iosVmMcpUrl = getIosProviderVmMcpUrl(provider);
+        if (!iosVmMcpUrl) {
+          console.error(`Failed to derive VM MCP URL for provider ${provider.id}`);
         } else {
           const setupPayload = z.object({
             buildDir: z.string().optional(),
             simulatorUdid: z.string().optional(),
-          }).parse(await setupRes.json());
+          }).parse(
+            await callIosVmJsonRpc(
+              iosVmMcpUrl,
+              "setup_allocation",
+              {
+                allocationId,
+                buildDir,
+                simulatorDeviceType: body.data.simulatorDeviceType ?? "iPhone 16 Pro",
+                simulatorRuntime:
+                  body.data.simulatorRuntime ?? "com.apple.CoreSimulator.SimRuntime.iOS-18-6",
+                ...(typeof body.data.directToken === "string"
+                  ? { accessToken: body.data.directToken }
+                  : {}),
+                ...(typeof body.data.rsyncEndpoint === "string" &&
+                typeof body.data.rsyncSecret === "string"
+                  ? {
+                      rsyncEndpoint: body.data.rsyncEndpoint,
+                      rsyncSecret: body.data.rsyncSecret,
+                    }
+                  : {}),
+              },
+              `vm-setup-${allocationId}`,
+            ),
+          );
           updateAllocationData(db, allocationId, {
             buildDir: setupPayload.buildDir ?? buildDir,
             ...(setupPayload.simulatorUdid
@@ -440,7 +501,7 @@ providersRouter.openapi(
           });
         }
       } catch (error) {
-        console.error("Failed to reach server for allocation setup:", error);
+        console.error("Failed to set up allocation in VM:", error);
       }
     }
 
@@ -487,24 +548,26 @@ providersRouter.openapi(
 
     releaseAllocation(db, allocationId);
 
-    // Notify daemon to clean up
+    // Notify the VM MCP server to clean up
     if (allocation.type === "resource" && allocation.data) {
       try {
         const data = allocation.data as Record<string, unknown>;
-        await fetch(
-          `${CMUX_SERVER_URL}/internal/provider/${allocation.providerId}/cleanup-allocation`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
+        const provider = getById(db, allocation.providerId);
+        const iosVmMcpUrl = provider ? getIosProviderVmMcpUrl(provider) : undefined;
+        if (iosVmMcpUrl) {
+          await callIosVmJsonRpc(
+            iosVmMcpUrl,
+            "cleanup_allocation",
+            {
               allocationId,
               buildDir: data.buildDir,
               simulatorUdid: data.simulatorUdid,
-            }),
-          },
-        );
+            },
+            `vm-cleanup-${allocationId}`,
+          );
+        }
       } catch (error) {
-        console.error("Failed to notify cleanup:", error);
+        console.error("Failed to notify VM cleanup:", error);
       }
     }
 

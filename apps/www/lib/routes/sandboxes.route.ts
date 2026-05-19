@@ -66,6 +66,8 @@ import {
 import { sendProviderRequest } from "@/lib/utils/provider-client";
 import {
   getAvailableOnlineByCapability,
+  getAllocationById,
+  getById,
   getOnlineByCapability,
   isProviderAtCapacity,
   listActiveAllocationsByProvider,
@@ -75,7 +77,6 @@ import {
   releaseAllocation,
   updateAllocationData,
 } from "@cmux/db/mutations/providers";
-import { getAllocationById } from "@cmux/db/queries/providers";
 import type { AuthFile } from "@cmux/shared/worker-schemas";
 import * as crypto from "node:crypto";
 import { dirname } from "node:path";
@@ -423,6 +424,10 @@ const StartSandboxBody = z
     branch: z.string().optional(),
     newBranch: z.string().optional(),
     depth: z.number().optional().default(1),
+    // Repos to hydrate when not starting from a saved environment (e.g. the
+    // environment-configure build VM). Each entry is a git URL or owner/repo
+    // shorthand, optionally with a `#branch` suffix.
+    selectedRepos: z.array(z.string()).optional(),
     displays: z.array(z.enum(["android"])).optional(),
     // Explicit resource provider IDs to allocate (e.g., iOS simulator providers)
     resourceProviderIds: z.array(z.string()).optional(),
@@ -638,6 +643,13 @@ sandboxesRouter.openapi(
           console.warn("[sandboxes.start] Failed to look up environment provider:", lookupErr);
         }
       }
+      // When provisioning without a saved environment (e.g. the environment
+      // configure build VM), accept an explicit repo list from the request.
+      if (environmentSelectedRepos.length === 0 && body.selectedRepos?.length) {
+        environmentSelectedRepos = body.selectedRepos.filter(
+          (repo) => repo.trim().length > 0,
+        );
+      }
       // If incus provider selected but no providerId yet, or the resolved provider is offline, find an online one
       if (resolvedProvider === "incus") {
         const onlineProviders = getOnlineByCapability(db, body.teamSlugOrId, "compute:incus");
@@ -662,7 +674,10 @@ sandboxesRouter.openapi(
 
         const dockerResult = await startDockerSandbox({
           ttlSeconds: body.ttlSeconds ?? 3600,
-          metadata: body.metadata,
+          metadata: {
+            ...(body.metadata || {}),
+            ...(body.taskRunId ? { taskRunId: body.taskRunId } : {}),
+          },
         });
 
         // Wait for VSCode server to be ready
@@ -926,7 +941,10 @@ sandboxesRouter.openapi(
           providerId: resolvedProviderId,
           snapshotId: body.snapshotId ?? environmentSnapshotId,
           ttlSeconds: 24 * 60 * 60, // 24 hours for local Incus provider
-          metadata: body.metadata,
+          metadata: {
+            ...(body.metadata || {}),
+            ...(body.taskRunId ? { taskRunId: body.taskRunId } : {}),
+          },
           displays: body.displays,
           wantsIos: selectedIosProviders.length > 0,
         });
@@ -1149,7 +1167,8 @@ sandboxesRouter.openapi(
                   console.error(`[sandboxes.start] tailscaled start failed: ${startRes.stderr}`);
                 }
                 const upRes = await incusInstance.exec(
-                  `tailscale up --authkey=${tailscaleAuthKey} --hostname=${tsHostname} --accept-routes --accept-dns`,
+                  // Keep Incus bridge DNS for general internet resolution.
+                  `tailscale up --authkey=${tailscaleAuthKey} --hostname=${tsHostname} --accept-routes --accept-dns=false`,
                 );
                 if (upRes.exit_code === 0) {
                   console.log(`[sandboxes.start] Container ${incusContainerId} joined tailnet as ${tsHostname}`);
@@ -1375,7 +1394,10 @@ sandboxesRouter.openapi(
           region: body.awsRegion,
           instanceType: body.awsInstanceType,
           ttlSeconds: body.ttlSeconds ?? 3600,
-          metadata: body.metadata,
+          metadata: {
+            ...(body.metadata || {}),
+            ...(body.taskRunId ? { taskRunId: body.taskRunId } : {}),
+          },
         });
 
         // Wait for VSCode server to be ready over Tailscale

@@ -9,7 +9,6 @@
     "./capture-manager": "./src/capture-manager.ts",
     "./mcp-handler": "./src/mcp-handler.ts",
     "./workspace-manager": "./src/workspace-manager.ts",
-    "./ingress-server": "./src/ingress-server.ts",
     "./tart-vm": "./src/tart-vm.ts"
   },
   "scripts": {

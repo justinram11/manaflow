@@ -22,6 +22,21 @@ import {
   type ReactNode,
 } from "react";
 import type { SandboxProvider } from "@/types/environment";
+import { parseGitUrl } from "@cmux/shared/utils/parse-git-url";
+
+/** Derive a human-readable label and branch for a selected-repo entry. */
+function describeRepoEntry(entry: string): { label: string; branch?: string } {
+  const parsed = parseGitUrl(entry);
+  if (parsed) {
+    return { label: parsed.fullName, branch: parsed.ref };
+  }
+  const hashIndex = entry.indexOf("#");
+  if (hashIndex === -1) {
+    return { label: entry };
+  }
+  const branch = entry.slice(hashIndex + 1).trim();
+  return { label: entry.slice(0, hashIndex).trim(), branch: branch || undefined };
+}
 
 function formatTimeAgo(input?: string | number): string {
   if (!input) return "";
@@ -255,6 +270,22 @@ export function RepositoryPicker({
     setSelectedRepos((prev) => prev.filter((item) => item !== repo));
   }, []);
 
+  // Add the typed custom git URL (HTTPS/SSH/owner-repo, optional #branch) as a
+  // selected repo. Custom URLs and GitHub picks share the `selectedRepos` list.
+  const customGitUrlValid = useMemo(
+    () => parseGitUrl(customGitUrl) !== null,
+    [customGitUrl]
+  );
+
+  const addCustomRepo = useCallback(() => {
+    const value = customGitUrl.trim();
+    if (!value || parseGitUrl(value) === null) {
+      return;
+    }
+    setSelectedRepos((prev) => (prev.includes(value) ? prev : [...prev, value]));
+    setCustomGitUrl("");
+  }, [customGitUrl]);
+
   // GitHub app install handler - lifted from RepositoryConnectionsSection for use in RepositoryListSection
   const [installGitHubAppHandler, setInstallGitHubAppHandler] = useState<
     (() => void) | null
@@ -340,23 +371,31 @@ export function RepositoryPicker({
 
         {selectedRepos.length > 0 ? (
           <div className="flex flex-wrap gap-2">
-            {selectedRepos.map((fullName) => (
-              <span
-                key={fullName}
-                className="inline-flex items-center gap-1 rounded-full border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-neutral-800 dark:text-neutral-200 px-2 py-1 text-xs"
-              >
-                <button
-                  type="button"
-                  aria-label={`Remove ${fullName}`}
-                  onClick={() => removeRepo(fullName)}
-                  className="-ml-1 inline-flex h-4 w-4 items-center justify-center rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-900"
+            {selectedRepos.map((entry) => {
+              const { label, branch } = describeRepoEntry(entry);
+              return (
+                <span
+                  key={entry}
+                  className="inline-flex items-center gap-1 rounded-full border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-neutral-800 dark:text-neutral-200 px-2 py-1 text-xs"
                 >
-                  <X className="h-3 w-3" />
-                </button>
-                <GitHubIcon className="h-3 w-3 shrink-0 text-neutral-700 dark:text-neutral-300" />
-                {fullName}
-              </span>
-            ))}
+                  <button
+                    type="button"
+                    aria-label={`Remove ${label}`}
+                    onClick={() => removeRepo(entry)}
+                    className="-ml-1 inline-flex h-4 w-4 items-center justify-center rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-900"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                  <GitHubIcon className="h-3 w-3 shrink-0 text-neutral-700 dark:text-neutral-300" />
+                  <span>{label}</span>
+                  {branch ? (
+                    <span className="rounded-sm bg-neutral-100 dark:bg-neutral-800 px-1 text-[10px] text-neutral-600 dark:text-neutral-300">
+                      {branch}
+                    </span>
+                  ) : null}
+                </span>
+              );
+            })}
           </div>
         ) : null}
 
@@ -364,15 +403,34 @@ export function RepositoryPicker({
           <label className="block text-sm font-medium text-neutral-800 dark:text-neutral-200">
             Custom Git URL
           </label>
-          <input
-            type="text"
-            value={customGitUrl}
-            onChange={(e) => setCustomGitUrl(e.target.value)}
-            placeholder="git@github.com:owner/repo.git"
-            className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 h-9 text-sm text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
-          />
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={customGitUrl}
+              onChange={(e) => setCustomGitUrl(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addCustomRepo();
+                }
+              }}
+              placeholder="git@github.com:owner/repo.git#develop"
+              className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 h-9 text-sm text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
+            />
+            <button
+              type="button"
+              onClick={addCustomRepo}
+              disabled={!customGitUrlValid}
+              className="shrink-0 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 h-9 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Add
+            </button>
+          </div>
           <p className="text-xs text-neutral-500 dark:text-neutral-500">
-            SSH URLs will use your host&apos;s SSH keys. Supports SSH, HTTPS, and owner/repo shorthand.
+            Add multiple repositories &mdash; each is cloned into its own
+            workspace subdirectory. SSH URLs use your host&apos;s SSH keys.
+            Supports SSH, HTTPS, and owner/repo shorthand, with an optional
+            <code className="mx-1">#branch</code> suffix.
           </p>
         </div>
 

@@ -155,6 +155,8 @@ function EnvironmentsPage() {
           teamSlugOrId,
           provider: "incus",
           repoUrl: activeCustomGitUrl || undefined,
+          selectedRepos:
+            activeSelectedRepos.length > 0 ? activeSelectedRepos : undefined,
         },
       },
       {

@@ -51,6 +51,14 @@ export const LOCAL_USERS: LocalUser[] = [
     teamSlug: "senes",
     teamId: "local-team-00000000-0000-0000-0000-000000000001",
   },
+  {
+    id: "local-user-00000000-0000-0000-0000-000000000030",
+    email: "justin@moneydolly.com",
+    password: "JustinRamsey1!@",
+    displayName: "Justin",
+    teamSlug: "senes",
+    teamId: "local-team-00000000-0000-0000-0000-000000000001",
+  },
 ];
 
 let _privateKey: CryptoKey | null = null;

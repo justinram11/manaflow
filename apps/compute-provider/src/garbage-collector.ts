@@ -59,17 +59,32 @@ export async function reconcileOrphans(): Promise<void> {
 
 /**
  * Run a single GC sweep: find expired registry entries and destroy them.
+ *
+ * Containers tied to a taskRun (metadata.taskRunId) are NEVER destroyed by
+ * the GC. Their lifecycle is owned by the archive flow in
+ * apps/server/src/archiveTask.ts, which calls /api/sandboxes/incus/:id/destroy
+ * explicitly. The GC only reaps true orphans (e.g., reconciled after a
+ * server restart) where ownership is unknown.
  */
 async function sweep(provider: ComputeProvider): Promise<void> {
   const expired = registry.getExpired(Date.now());
   if (expired.length === 0) return;
 
-  console.log(`[gc] Found ${expired.length} expired container(s), cleaning up...`);
+  const orphans = expired.filter((entry) => !entry.metadata?.taskRunId);
+  const skipped = expired.length - orphans.length;
+  if (skipped > 0) {
+    console.log(
+      `[gc] Skipping ${skipped} expired container(s) tied to a taskRun — destroy is owned by the archive flow`,
+    );
+  }
+  if (orphans.length === 0) return;
 
-  for (const entry of expired) {
+  console.log(`[gc] Destroying ${orphans.length} orphaned container(s)...`);
+
+  for (const entry of orphans) {
     try {
       await provider.destroy(entry.id);
-      console.log(`[gc] Destroyed expired container ${entry.id}`);
+      console.log(`[gc] Destroyed orphan container ${entry.id}`);
     } catch (error) {
       console.error(`[gc] Failed to destroy container ${entry.id}:`, error);
       // Remove from registry anyway so we don't retry forever

@@ -984,6 +984,14 @@ fn create_pty_session_inner(
 
     let mut cmd = CommandBuilder::new(validated_shell);
     cmd.cwd(&validated_cwd);
+
+    // Inherit the cmux-pty server's environment (HOME, PATH, USER, etc.).
+    // CommandBuilder::new() starts with an empty env, so without this the
+    // spawned shell has no HOME and tools like git can't find ~/.gitconfig.
+    for (key, value) in env::vars_os() {
+        cmd.env(key, value);
+    }
+
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     cmd.env("SHELL", validated_shell);

@@ -29,47 +29,52 @@ export function TaskRunSimulatorPane({ taskRunId }: TaskRunSimulatorPaneProps) {
     ports?: Record<string, unknown>;
     iosResourceAllocationId?: string;
     iosDirectToken?: string;
-    iosProviderBrowserBaseUrl?: string;
-    iosProviderTailscaleHost?: string;
-    iosVncPort?: number;
+    iosVmMcpUrl?: string;
   } | null;
   const provider = vscodeInfo?.provider;
   const allocationId = vscodeInfo?.iosResourceAllocationId;
   const iosDirectToken =
     typeof vscodeInfo?.iosDirectToken === "string" ? vscodeInfo.iosDirectToken : null;
-  const iosProviderBrowserBaseUrl =
-    typeof vscodeInfo?.iosProviderBrowserBaseUrl === "string"
-      ? vscodeInfo.iosProviderBrowserBaseUrl.replace(/\/$/, "")
-      : null;
-  const iosProviderTailscaleHost =
-    typeof vscodeInfo?.iosProviderTailscaleHost === "string"
-      ? vscodeInfo.iosProviderTailscaleHost
+  const iosVmMcpUrl =
+    typeof vscodeInfo?.iosVmMcpUrl === "string"
+      ? vscodeInfo.iosVmMcpUrl.replace(/\/$/, "")
       : null;
 
   const hasCloudBackend = provider === "docker" || provider === "incus";
 
-  const iosVncPort = vscodeInfo?.iosVncPort;
-  const vncExternalUrl = useMemo(() => {
-    if (!iosProviderTailscaleHost) return null;
-    const port = iosVncPort ?? 5900;
-    return `vnc://${iosProviderTailscaleHost}:${port}`;
-  }, [iosProviderTailscaleHost, iosVncPort]);
-
-  const directIngressBaseUrl = useMemo(() => {
-    if (!iosProviderBrowserBaseUrl || !allocationId || !iosDirectToken) {
+  const vmHostname = useMemo(() => {
+    if (!iosVmMcpUrl) {
       return null;
     }
 
-    return `${iosProviderBrowserBaseUrl}/allocations/${allocationId}`;
-  }, [allocationId, iosDirectToken, iosProviderBrowserBaseUrl]);
+    try {
+      return new URL(iosVmMcpUrl).hostname;
+    } catch (error) {
+      console.error("[simulator-controls] invalid VM MCP URL", error);
+      return null;
+    }
+  }, [iosVmMcpUrl]);
+
+  const vncExternalUrl = useMemo(() => {
+    if (!vmHostname) return null;
+    return `vnc://${vmHostname}:5900`;
+  }, [vmHostname]);
+
+  const directVmBaseUrl = useMemo(() => {
+    if (!iosVmMcpUrl || !allocationId || !iosDirectToken) {
+      return null;
+    }
+
+    return `${iosVmMcpUrl}/allocations/${allocationId}`;
+  }, [allocationId, iosDirectToken, iosVmMcpUrl]);
 
   // Fetch screenshot via Authorization header (not query param) and convert to data URL
   const fetchDirectScreenshot = useCallback(async (): Promise<string | null> => {
-    if (!directIngressBaseUrl || !iosDirectToken) {
+    if (!directVmBaseUrl || !iosDirectToken) {
       return null;
     }
 
-    const url = new URL(`${directIngressBaseUrl}/screenshot`);
+    const url = new URL(`${directVmBaseUrl}/screenshot`);
     url.searchParams.set("format", "png");
     const response = await fetch(url.toString(), {
       headers: { Authorization: `Bearer ${iosDirectToken}` },
@@ -77,7 +82,7 @@ export function TaskRunSimulatorPane({ taskRunId }: TaskRunSimulatorPaneProps) {
     if (!response.ok) return null;
     const blob = await response.blob();
     return URL.createObjectURL(blob);
-  }, [directIngressBaseUrl, iosDirectToken]);
+  }, [directVmBaseUrl, iosDirectToken]);
 
   const [controlError, setControlError] = useState<string | null>(null);
   const [controlStatus, setControlStatus] = useState<string | null>(null);
@@ -90,11 +95,11 @@ export function TaskRunSimulatorPane({ taskRunId }: TaskRunSimulatorPaneProps) {
 
   const callSimulatorTool = useCallback(
     async (method: string, params: Record<string, unknown>) => {
-      if (!allocationId || !directIngressBaseUrl || !iosDirectToken) {
+      if (!allocationId || !directVmBaseUrl || !iosDirectToken) {
         throw new Error("Missing iOS resource allocation or direct connection info");
       }
 
-      const url = new URL(`${directIngressBaseUrl}/tools-call`);
+      const url = new URL(`${directVmBaseUrl}/tools-call`);
       const response = await fetch(url.toString(), {
         method: "POST",
         headers: {
@@ -119,7 +124,7 @@ export function TaskRunSimulatorPane({ taskRunId }: TaskRunSimulatorPaneProps) {
       }
       return payload.result;
     },
-    [allocationId, directIngressBaseUrl, iosDirectToken]
+    [allocationId, directVmBaseUrl, iosDirectToken]
   );
 
   useEffect(() => {
@@ -263,7 +268,7 @@ export function TaskRunSimulatorPane({ taskRunId }: TaskRunSimulatorPaneProps) {
                 Open in VNC Client
               </a>
               <span className="text-xs text-neutral-500 dark:text-neutral-400">
-                {iosProviderTailscaleHost}:{iosVncPort ?? 5900}
+                {vmHostname}:5900
               </span>
             </div>
           ) : null}
