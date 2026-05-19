@@ -20,6 +20,7 @@ export async function getClaudeEnvironment(
   const { readFile } = await import("node:fs/promises");
   const { homedir } = await import("node:os");
   const { Buffer } = await import("node:buffer");
+  const { randomBytes } = await import("node:crypto");
   // const execAsync = promisify(exec);
 
   const files: EnvironmentResult["files"] = [];
@@ -72,6 +73,19 @@ export async function getClaudeEnvironment(
       hasCompletedOnboarding: true,
       bypassPermissionsModeAccepted: true,
       hasAcknowledgedCostThreshold: true,
+      // Claude Code treats a config lacking these "existing install" markers
+      // as a brand-new install and rebuilds ~/.claude.json from scratch on
+      // first launch — discarding hasCompletedOnboarding and
+      // projects[].hasTrustDialogAccepted, which re-shows the theme picker and
+      // folder-trust dialog. Seeding them makes Claude Code run an
+      // incremental, field-preserving migration instead. The migrationVersion
+      // only needs to be recent enough to avoid the from-scratch rebuild; if
+      // Claude Code expects a newer version it migrates forward and preserves
+      // these fields.
+      migrationVersion: 13,
+      firstStartTime: new Date().toISOString(),
+      userID: randomBytes(32).toString("hex"),
+      numStartups: 5,
     };
 
     // Write to ~/.claude.json (the canonical location Claude Code checks)
