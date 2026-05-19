@@ -1288,6 +1288,21 @@ sandboxesRouter.openapi(
           }
         }
 
+        // Apply Claude auth (OAuth token env vars + onboarding flags)
+        // synchronously BEFORE returning. apps/server spawns the coding agent
+        // once this route responds; if Claude auth were left in background
+        // provisioning it would race the agent — Claude Code starts
+        // unauthenticated and without onboarding flags, then rewrites
+        // ~/.claude.json, producing spurious sign-in / theme prompts.
+        try {
+          await injectClaudeAuth(incusInstance, await apiKeysPromise);
+        } catch (error) {
+          console.error(
+            `[sandboxes.start] Failed to inject Claude auth (incus); continuing...`,
+            error,
+          );
+        }
+
         // Fire-and-forget: background provisioning (env vars, git config, repo clone, scripts)
         (async () => {
           try {
@@ -1435,12 +1450,8 @@ sandboxesRouter.openapi(
                     );
                   })
                 : Promise.resolve(),
-              injectClaudeAuth(incusInstance, incusApiKeys).catch((error) => {
-                console.log(
-                  `[sandboxes.start] Failed to inject Claude auth; continuing...`,
-                  error,
-                );
-              }),
+              // injectClaudeAuth runs synchronously before the route returns
+              // (see above) so it wins the race against agent spawn.
               injectAwsCredentials(incusInstance, incusApiKeys).catch((error) => {
                 console.log(
                   `[sandboxes.start] Failed to inject AWS credentials (incus); continuing...`,
