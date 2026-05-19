@@ -68,6 +68,16 @@ export GOOGLE_DEFAULT_CLIENT_SECRET="cmux-local"
 
 mkdir -p "${USER_DATA_DIR}"
 
+# Chrome refuses to start if SingletonLock points at a different host or a
+# stale PID — which happens when the user-data-dir was captured in an env
+# snapshot from another container, or when a previous chrome was killed
+# without cleanup. The lock, socket, and cookie are recreated on each
+# launch, so removing them up front is safe and self-heals every start.
+rm -f \
+  "${USER_DATA_DIR}/SingletonLock" \
+  "${USER_DATA_DIR}/SingletonSocket" \
+  "${USER_DATA_DIR}/SingletonCookie"
+
 CHROME_FLAGS=(
   --no-sandbox
   --disable-dev-shm-usage
