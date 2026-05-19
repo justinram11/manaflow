@@ -76,6 +76,7 @@
     "packages/www-openapi-client",
     "packages/provider-daemon",
     "packages/mac-resource-provider",
+    "packages/incus-resource-provider",
     "scripts"
   ],
   "dependencies": {

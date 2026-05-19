@@ -280,6 +280,12 @@ export class WsClient {
         process.env.CMUX_TART_VM_TAILSCALE_HOSTNAME?.trim() || `cmux-tart-${vmName}`;
       metadata.vmMcpPort = process.env.CMUX_VM_MCP_PORT ?? "4850";
     }
+    if (capabilities.includes("resource:android-emulator")) {
+      // The Android provider launches a fresh container per allocation, so the
+      // VM MCP hostname is allocation-specific (returned from android.setup).
+      // Only the in-container MCP port is static metadata here.
+      metadata.androidVmMcpPort = process.env.CMUX_ANDROID_VM_MCP_PORT ?? "4860";
+    }
     info.metadata = metadata;
 
     return info;

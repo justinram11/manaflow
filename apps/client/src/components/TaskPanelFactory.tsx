@@ -17,6 +17,7 @@ import type { PanelType } from "@/lib/panel-config";
 import { PANEL_LABELS } from "@/lib/panel-config";
 import type { PersistentIframeStatus } from "@/components/persistent-iframe";
 import { TaskRunSimulatorPane } from "@/components/TaskRunSimulatorPane";
+import { TaskRunAndroidPane } from "@/components/TaskRunAndroidPane";
 import type { DbTask } from "@cmux/www-openapi-client";
 import type { TaskRunWithChildren } from "@/types/task";
 import type { TaskRunChatPaneProps } from "./TaskRunChatPane";
@@ -193,6 +194,8 @@ interface PanelFactoryProps {
   TASK_RUN_IFRAME_SANDBOX?: string;
   // Simulator panel props
   simulatorRunId?: string | null;
+  // Android emulator panel props
+  androidRunId?: string | null;
   // Git diff panel props
   teamSlugOrId?: string;
   taskId?: string;
@@ -643,11 +646,12 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
     case "simulator": {
       const {
         simulatorRunId,
+        androidRunId,
         selectedRun,
         WorkspaceLoadingIndicator,
       } = props;
 
-      const hasSimulatorView = Boolean(simulatorRunId);
+      const hasSimulatorView = Boolean(simulatorRunId) || Boolean(androidRunId);
       const showSimLoader = Boolean(selectedRun) && !hasSimulatorView;
 
       return panelWrapper(
@@ -656,6 +660,8 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
         <div className={clsx("relative flex flex-col flex-1 min-h-0 overflow-hidden", isExpanded && "h-full")}>
           {simulatorRunId ? (
             <TaskRunSimulatorPane taskRunId={simulatorRunId} />
+          ) : androidRunId ? (
+            <TaskRunAndroidPane taskRunId={androidRunId} />
           ) : showSimLoader && WorkspaceLoadingIndicator ? (
             <div className="flex h-full items-center justify-center">
               <WorkspaceLoadingIndicator variant="browser" status="loading" />
@@ -664,10 +670,11 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
             <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-neutral-500 dark:text-neutral-400">
               <Smartphone className="size-8 text-neutral-300 dark:text-neutral-600" />
               <div className="text-sm font-medium text-neutral-600 dark:text-neutral-200">
-                iOS Simulator
+                Mobile Simulator
               </div>
               <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                The simulator panel will show when an iOS simulator is running.
+                The simulator panel will show when an iOS simulator or Android
+                emulator is running.
               </p>
             </div>
           )}
@@ -735,6 +742,7 @@ export const RenderPanel = React.memo(RenderPanelComponent, (prevProps, nextProp
   // For simulator panel, check URL changes
   if (prevProps.type === "simulator") {
     if (prevProps.simulatorRunId !== nextProps.simulatorRunId ||
+      prevProps.androidRunId !== nextProps.androidRunId ||
       prevProps.selectedRun?.id !== nextProps.selectedRun?.id) {
       return false;
     }

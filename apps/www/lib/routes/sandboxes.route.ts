@@ -133,6 +133,42 @@ async function cleanupIosVmAllocation(params: {
   }
 }
 
+/**
+ * Build the in-container MCP URL for an Android emulator allocation.
+ *
+ * Unlike iOS (where the VM is shared and its hostname is static provider
+ * metadata), each Android allocation gets a fresh container with its own
+ * Tailscale hostname, returned from the `android.setup` provider RPC.
+ */
+function getAndroidVmMcpUrl(params: {
+  tailscaleHostname?: string | null;
+  containerIp?: string | null;
+  provider: { metadata?: Record<string, unknown> | null };
+}): string | undefined {
+  const port =
+    typeof params.provider.metadata?.androidVmMcpPort === "string" &&
+    params.provider.metadata.androidVmMcpPort.trim().length > 0
+      ? params.provider.metadata.androidVmMcpPort.trim()
+      : "4860";
+  const host =
+    (typeof params.tailscaleHostname === "string" && params.tailscaleHostname.trim()) ||
+    (typeof params.containerIp === "string" && params.containerIp.trim()) ||
+    null;
+  if (!host) {
+    return undefined;
+  }
+  return `http://${host}:${port}`;
+}
+
+async function cleanupAndroidAllocation(params: {
+  providerId: string;
+  allocationId: string;
+}): Promise<void> {
+  await sendProviderRequest(params.providerId, "android.cleanup", {
+    allocationId: params.allocationId,
+  });
+}
+
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
@@ -1079,6 +1115,108 @@ sandboxesRouter.openapi(
           }
         }
 
+        // --- Android emulator resource provider allocation ---
+        // Mirrors the iOS block, but the host daemon launches a fresh
+        // cmux-sandbox-android Incus container per allocation via the
+        // `android.setup` RPC, then the backend talks to the in-container
+        // MCP server over HTTP+bearer.
+        const selectedAndroidProviders = body.resourceProviderIds?.length
+          ? getAvailableOnlineByCapability(
+              db,
+              body.teamSlugOrId,
+              "resource:android-emulator",
+            ).filter((provider: { id: string }) =>
+              body.resourceProviderIds?.includes(provider.id),
+            )
+          : [];
+
+        let androidResourceAllocationId: string | undefined;
+        let androidDirectToken: string | undefined;
+        let androidVmMcpUrl: string | undefined;
+        if (body.taskRunId && selectedAndroidProviders.length > 0) {
+          try {
+            const androidProvider = selectedAndroidProviders[0];
+            if (androidProvider) {
+              androidDirectToken = crypto.randomBytes(32).toString("hex");
+              const { id: allocId } = createAllocation(db, {
+                providerId: androidProvider.id,
+                taskRunId: body.taskRunId,
+                teamSlugOrId: body.teamSlugOrId,
+                userId: user.id,
+                type: "resource",
+                data: { directToken: androidDirectToken },
+              });
+              androidResourceAllocationId = allocId;
+              console.log(
+                `[sandboxes.start] Created Android allocation ${allocId} on provider ${androidProvider.id}`,
+              );
+
+              const teamSettingsForAndroid = getTeamSettings(db, body.teamSlugOrId);
+              const androidProviderRef = androidProvider;
+              const androidTokenForSetup = androidDirectToken;
+
+              // Fire-and-forget: launch the container + boot the emulator. The
+              // android.setup RPC blocks until the container's MCP server is
+              // reachable, so this runs in the background.
+              (async () => {
+                const AndroidSetupResult = z.object({
+                  containerName: z.string().optional(),
+                  containerIp: z.string().optional(),
+                  tailscaleHostname: z.string().optional(),
+                  status: z.string().optional(),
+                });
+                try {
+                  const setupResult = AndroidSetupResult.parse(
+                    (await sendProviderRequest(
+                      androidProviderRef.id,
+                      "android.setup",
+                      {
+                        allocationId: allocId,
+                        accessToken: androidTokenForSetup,
+                        ...(teamSettingsForAndroid?.tailscaleAuthKey
+                          ? { tailscaleAuthKey: teamSettingsForAndroid.tailscaleAuthKey }
+                          : {}),
+                      },
+                    )) ?? {},
+                  );
+                  const vmMcpUrl = getAndroidVmMcpUrl({
+                    tailscaleHostname: setupResult.tailscaleHostname,
+                    containerIp: setupResult.containerIp,
+                    provider: androidProviderRef,
+                  });
+                  updateAllocationData(db, allocId, {
+                    containerName: setupResult.containerName,
+                    containerIp: setupResult.containerIp,
+                    tailscaleHostname: setupResult.tailscaleHostname,
+                    ...(vmMcpUrl ? { androidVmMcpUrl: vmMcpUrl } : {}),
+                  });
+                  // Persist the resolved MCP URL onto the task run so the
+                  // client can drive the emulator directly.
+                  if (vmMcpUrl && body.taskRunId) {
+                    const freshRun = getTaskRunById(db, body.taskRunId);
+                    const freshVscode =
+                      (freshRun?.vscode as Record<string, unknown> | undefined) ?? {};
+                    updateTaskRunVSCode(db, body.taskRunId, {
+                      ...freshVscode,
+                      androidVmMcpUrl: vmMcpUrl,
+                    });
+                  }
+                  console.log(
+                    `[sandboxes.start] Android allocation ${allocId} setup complete (MCP: ${vmMcpUrl ?? "unknown"})`,
+                  );
+                } catch (error) {
+                  console.error(
+                    `[sandboxes.start] Android allocation ${allocId} setup failed:`,
+                    error,
+                  );
+                }
+              })();
+            }
+          } catch (error) {
+            console.error("[sandboxes.start] Failed to create Android allocation:", error);
+          }
+        }
+
         // When Tailscale is configured, use the container's MagicDNS hostname
         // with standard internal ports instead of host-mapped ports. The container
         // will join the tailnet in the background, and these URLs will be directly
@@ -1131,6 +1269,13 @@ sandboxesRouter.openapi(
                     iosResourceAllocationId,
                     iosDirectToken,
                     ...(iosVmMcpUrl ? { iosVmMcpUrl } : {}),
+                  }
+                : {}),
+              ...(androidResourceAllocationId
+                ? {
+                    androidResourceAllocationId,
+                    androidDirectToken,
+                    ...(androidVmMcpUrl ? { androidVmMcpUrl } : {}),
                   }
                 : {}),
             });
@@ -3526,8 +3671,29 @@ sandboxesRouter.openapi(
             console.log(`[sandboxes.incus] Released iOS allocation ${allocId} for container ${id}`);
           }
         }
+
+        // Clean up Android emulator resource allocation if one exists.
+        if (vscodeData?.androidResourceAllocationId) {
+          const androidAllocId = vscodeData.androidResourceAllocationId as string;
+          const androidAllocation = getAllocationById(db, androidAllocId);
+          if (androidAllocation && androidAllocation.status === "active") {
+            releaseAllocation(db, androidAllocId);
+            cleanupAndroidAllocation({
+              providerId: androidAllocation.providerId,
+              allocationId: androidAllocId,
+            }).catch((error) => {
+              console.error(
+                "[sandboxes.incus] Failed to clean up Android allocation container:",
+                error,
+              );
+            });
+            console.log(
+              `[sandboxes.incus] Released Android allocation ${androidAllocId} for container ${id}`,
+            );
+          }
+        }
       } catch (error) {
-        console.error("[sandboxes.incus] Failed to clean up iOS allocation:", error);
+        console.error("[sandboxes.incus] Failed to clean up iOS/Android allocation:", error);
       }
 
       const instance = incusVmRegistry.get(id);

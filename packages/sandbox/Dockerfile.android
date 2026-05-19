@@ -1,0 +1,125 @@
+# syntax=docker/dockerfile:1.7-labs
+#
+# cmux-sandbox-android — Android emulator resource provider image.
+#
+# Built FROM the base cmux-sandbox image. Adds:
+#   - OpenJDK 17
+#   - Android cmdline-tools, platform-tools, emulator
+#   - system-images;android-35;google_apis;x86_64
+#   - An AVD named "cmux-android"
+#   - Xvfb / TigerVNC / websockify for VNC streaming of the emulator display
+#   - The in-container vm-android-mcp-server (HTTP + bearer MCP)
+#
+# The emulator requires /dev/kvm passed through to the container at launch.
+#
+# Build:
+#   docker build -t cmux-sandbox-android -f packages/sandbox/Dockerfile.android .
+# Then import into Incus as alias `cmux-sandbox-android`:
+#   bash scripts/setup-incus-android.sh
+
+ARG BASE_IMAGE=cmux-sandbox:latest
+FROM ${BASE_IMAGE}
+
+ENV ANDROID_SDK_ROOT=/opt/android-sdk \
+    ANDROID_HOME=/opt/android-sdk \
+    ANDROID_AVD_HOME=/root/.android/avd \
+    JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 \
+    DEBIAN_FRONTEND=noninteractive
+
+# Versions are pinned so rebuilds are reproducible.
+ARG ANDROID_CMDLINE_TOOLS_VERSION=11076708
+ARG ANDROID_PLATFORM=android-35
+ARG ANDROID_SYSTEM_IMAGE="system-images;android-35;google_apis;x86_64"
+ARG ANDROID_AVD_NAME=cmux-android
+
+# --- System packages: JDK + display stack ---------------------------------
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+      openjdk-17-jdk-headless \
+      xvfb \
+      websockify \
+      libpulse0 \
+      libgl1 \
+      libnss3 \
+      libxcursor1 \
+      libxi6 \
+      libxtst6 \
+      qemu-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- Android SDK: cmdline-tools, platform-tools, emulator, system image ----
+RUN set -eux; \
+    mkdir -p "${ANDROID_SDK_ROOT}/cmdline-tools"; \
+    cd /tmp; \
+    wget -q "https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_CMDLINE_TOOLS_VERSION}_latest.zip" -O cmdline-tools.zip; \
+    unzip -q cmdline-tools.zip -d "${ANDROID_SDK_ROOT}/cmdline-tools"; \
+    mv "${ANDROID_SDK_ROOT}/cmdline-tools/cmdline-tools" "${ANDROID_SDK_ROOT}/cmdline-tools/latest"; \
+    rm cmdline-tools.zip
+
+ENV PATH="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${ANDROID_SDK_ROOT}/platform-tools:${ANDROID_SDK_ROOT}/emulator:${PATH}"
+
+RUN set -eu; \
+    (yes 2>/dev/null | sdkmanager --licenses >/dev/null) || true; \
+    sdkmanager --install \
+      "platform-tools" \
+      "emulator" \
+      "platforms;${ANDROID_PLATFORM}" \
+      "${ANDROID_SYSTEM_IMAGE}"
+
+# --- Create the AVD --------------------------------------------------------
+RUN set -eux; \
+    mkdir -p "${ANDROID_AVD_HOME}"; \
+    echo "no" | avdmanager create avd \
+      --name "${ANDROID_AVD_NAME}" \
+      --package "${ANDROID_SYSTEM_IMAGE}" \
+      --device "pixel_6" \
+      --force; \
+    printf 'hw.lcd.density=420\nhw.keyboard=yes\nhw.gpu.enabled=yes\nhw.gpu.mode=swiftshader_indirect\ndisk.dataPartition.size=6G\n' \
+      >> "${ANDROID_AVD_HOME}/${ANDROID_AVD_NAME}.avd/config.ini"
+
+# --- VNC display stack for the emulator ------------------------------------
+# The emulator renders into Xvfb display :2; TigerVNC bridges it on :5902;
+# websockify exposes a noVNC-compatible endpoint on :39384.
+COPY --link configs/systemd/cmux-android-xvfb.service /etc/systemd/system/cmux-android-xvfb.service
+COPY --link configs/systemd/cmux-android-tigervnc.service /etc/systemd/system/cmux-android-tigervnc.service
+COPY --link configs/systemd/cmux-android-vnc-proxy.service /etc/systemd/system/cmux-android-vnc-proxy.service
+
+RUN printf '#!/bin/sh\nexec /usr/bin/websockify --web=/usr/share/novnc "${CMUX_VNC_PROXY_PORT:-39384}" "127.0.0.1:${CMUX_VNC_TARGET_PORT:-5902}"\n' \
+      > /usr/local/lib/cmux/cmux-vnc-proxy && \
+    chmod +x /usr/local/lib/cmux/cmux-vnc-proxy
+
+# --- vm-android-mcp-server -------------------------------------------------
+# Bundle the in-container MCP server source. It is started per-allocation by
+# the host-side incus-resource-provider.
+COPY --link packages/vm-android-mcp-server /opt/cmux/vm-android-mcp-server
+
+RUN printf '[Unit]\n\
+Description=Cmux Android in-VM MCP server\n\
+After=network.target\n\
+\n\
+[Service]\n\
+Type=simple\n\
+Environment=CMUX_VM_MCP_PORT=4860\n\
+Environment=ANDROID_SDK_ROOT=%s\n\
+Environment=ANDROID_HOME=%s\n\
+Environment=ANDROID_AVD_HOME=%s\n\
+Environment=PATH=%s/cmdline-tools/latest/bin:%s/platform-tools:%s/emulator:/usr/local/bin:/usr/bin:/bin\n\
+ExecStart=/usr/local/bin/bun run /opt/cmux/vm-android-mcp-server/src/server.ts\n\
+Restart=always\n\
+RestartSec=3\n\
+StandardOutput=append:/var/log/cmux/android-mcp.log\n\
+StandardError=append:/var/log/cmux/android-mcp.log\n\
+\n\
+[Install]\n\
+WantedBy=multi-user.target\n' \
+      "${ANDROID_SDK_ROOT}" "${ANDROID_HOME}" "${ANDROID_AVD_HOME}" \
+      "${ANDROID_SDK_ROOT}" "${ANDROID_SDK_ROOT}" "${ANDROID_SDK_ROOT}" \
+      > /etc/systemd/system/cmux-android-mcp.service && \
+    mkdir -p /etc/systemd/system/multi-user.target.wants /var/log/cmux && \
+    ln -sf /etc/systemd/system/cmux-android-mcp.service \
+      /etc/systemd/system/multi-user.target.wants/cmux-android-mcp.service
+
+EXPOSE 4860 39384
+
+LABEL org.cmux.image="cmux-sandbox-android"

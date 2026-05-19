@@ -730,6 +730,19 @@ function TaskDetailPage() {
     return selectedRunId;
   }, [selectedRun, selectedRunId]);
 
+  const androidRunId = useMemo(() => {
+    if (!selectedRunId || !selectedRun?.vscode) {
+      return null;
+    }
+    const hasAndroidView =
+      Boolean(selectedRun.vscode.androidResourceAllocationId) ||
+      Boolean(selectedRun.vscode.androidVmMcpUrl);
+    if (!hasAndroidView) {
+      return null;
+    }
+    return selectedRunId;
+  }, [selectedRun, selectedRunId]);
+
   const handleBrowserStatusChange = useCallback(
     (_status: PersistentIframeStatus) => {
       // Browser previews now use direct websocket VNC instead of a persistent iframe.
@@ -984,6 +997,7 @@ function TaskDetailPage() {
       teamSlugOrId,
       taskId,
       simulatorRunId,
+      androidRunId,
     }),
     [
       task,
@@ -1014,6 +1028,7 @@ function TaskDetailPage() {
       teamSlugOrId,
       taskId,
       simulatorRunId,
+      androidRunId,
     ]
   );
 

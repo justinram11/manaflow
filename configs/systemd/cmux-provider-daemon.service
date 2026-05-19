@@ -1,0 +1,38 @@
+[Unit]
+Description=Cmux provider daemon (compute:incus + resource:android-emulator)
+Documentation=https://github.com/manaflow-ai/cmux
+After=network-online.target incus.service
+Wants=network-online.target
+
+# This is a host-level systemd unit for the workstation that hosts Incus + KVM.
+# It runs the provider daemon which advertises the compute:incus and
+# resource:android-emulator capabilities, launching a fresh
+# cmux-sandbox-android container per Android allocation.
+#
+# Install (as the user that owns the cmux checkout, e.g. justin):
+#   1. Register a provider token in the cmux Settings UI (see Phase 7 docs in
+#      the PR description) and note the registrationToken.
+#   2. Create /etc/cmux/provider-daemon.env with:
+#        CMUX_SERVER_URL=https://<your-cmux-server>
+#        CMUX_PROVIDER_TOKEN=<registrationToken>
+#        # optional:
+#        # CMUX_ANDROID_INCUS_IMAGE=cmux-sandbox-android
+#        # CMUX_ANDROID_VM_MCP_PORT=4860
+#   3. Adjust User= / WorkingDirectory= below to match your environment.
+#   4. sudo cp configs/systemd/cmux-provider-daemon.service \
+#        /etc/systemd/system/cmux-provider-daemon.service
+#   5. sudo systemctl daemon-reload && sudo systemctl enable --now cmux-provider-daemon
+
+[Service]
+Type=simple
+User=justin
+WorkingDirectory=/home/justin/git/manaflow/packages/provider-daemon
+EnvironmentFile=/etc/cmux/provider-daemon.env
+ExecStart=/usr/local/bin/bun run src/index.ts
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

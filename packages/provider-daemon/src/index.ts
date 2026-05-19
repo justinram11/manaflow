@@ -3,6 +3,10 @@ import { CapabilityRegistry } from "./capability-registry";
 import { WsClient } from "./ws-client";
 import { detectIncus, createComputeIncusHandler } from "./capabilities/compute-incus/index";
 import { detectTart, createResourceIosHandler } from "./capabilities/resource-ios/index";
+import {
+  detectAndroidIncus,
+  createResourceAndroidHandler,
+} from "./capabilities/resource-android/index";
 
 async function main() {
   console.log("cmux provider daemon starting...");
@@ -14,9 +18,10 @@ async function main() {
   // Detect capabilities
   const registry = new CapabilityRegistry();
 
-  const [hasIncus, hasTart] = await Promise.all([
+  const [hasIncus, hasTart, hasAndroidIncus] = await Promise.all([
     detectIncus(),
     detectTart(),
+    detectAndroidIncus(),
   ]);
 
   if (hasIncus) {
@@ -25,6 +30,10 @@ async function main() {
 
   if (hasTart) {
     registry.register(createResourceIosHandler());
+  }
+
+  if (hasAndroidIncus) {
+    registry.register(createResourceAndroidHandler());
   }
 
   const capabilities = registry.getCapabilities();

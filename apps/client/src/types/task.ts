@@ -90,6 +90,9 @@ export interface TaskRunWithChildren {
     iosResourceAllocationId?: string;
     iosDirectToken?: string;
     iosVmMcpUrl?: string;
+    androidResourceAllocationId?: string;
+    androidDirectToken?: string;
+    androidVmMcpUrl?: string;
     startedAt?: number;
     stoppedAt?: number;
     lastAccessedAt?: number;

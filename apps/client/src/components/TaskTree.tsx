@@ -2104,7 +2104,9 @@ function TaskRunDetails({
   );
   const hasSimulatorView =
     Boolean(run.vscode?.iosResourceAllocationId) ||
-    Boolean(run.vscode?.iosVmMcpUrl);
+    Boolean(run.vscode?.iosVmMcpUrl) ||
+    Boolean(run.vscode?.androidResourceAllocationId) ||
+    Boolean(run.vscode?.androidVmMcpUrl);
 
   return (
     <Fragment>

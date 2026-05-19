@@ -1,0 +1,22 @@
+{
+  "name": "@cmux/incus-resource-provider",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./incus": "./src/incus.ts",
+    "./workspace-manager": "./src/workspace-manager.ts"
+  },
+  "scripts": {
+    "typecheck": "bunx tsgo --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.11",
+    "typescript": "^5.9.3"
+  }
+}
