@@ -48,19 +48,34 @@ export async function getClaudeEnvironment(
           allowedTools: [],
           history: [],
           mcpContextUris: [],
-          mcpServers: ctx.iosResourceAllocationId
-            ? {
-                ios: {
-                  command: "node",
-                  args: ["/root/lifecycle/mcp/ios-vm-proxy.mjs"],
-                  env: {
-                    CMUX_VM_MCP_URL: ctx.iosVmMcpUrl ?? "",
-                    CMUX_IOS_ALLOCATION_ID: ctx.iosResourceAllocationId,
-                    CMUX_IOS_DIRECT_TOKEN: ctx.iosDirectToken ?? "",
+          mcpServers: {
+            ...(ctx.iosResourceAllocationId
+              ? {
+                  ios: {
+                    command: "node",
+                    args: ["/root/lifecycle/mcp/ios-vm-proxy.mjs"],
+                    env: {
+                      CMUX_VM_MCP_URL: ctx.iosVmMcpUrl ?? "",
+                      CMUX_IOS_ALLOCATION_ID: ctx.iosResourceAllocationId,
+                      CMUX_IOS_DIRECT_TOKEN: ctx.iosDirectToken ?? "",
+                    },
                   },
-                },
-              }
-            : {},
+                }
+              : {}),
+            ...(ctx.androidResourceAllocationId
+              ? {
+                  android: {
+                    command: "node",
+                    args: ["/root/lifecycle/mcp/android-vm-proxy.mjs"],
+                    env: {
+                      CMUX_VM_MCP_URL: ctx.androidVmMcpUrl ?? "",
+                      CMUX_ANDROID_ALLOCATION_ID: ctx.androidResourceAllocationId,
+                      CMUX_ANDROID_DIRECT_TOKEN: ctx.androidDirectToken ?? "",
+                    },
+                  },
+                }
+              : {}),
+          },
           enabledMcpjsonServers: [],
           disabledMcpjsonServers: [],
           hasTrustDialogAccepted: true,
@@ -203,12 +218,35 @@ export async function getClaudeEnvironment(
     }
   }
 
+  // Add Android resource MCP proxy if allocation is present
+  if (ctx.androidResourceAllocationId) {
+    const { readFileSync } = await import("node:fs");
+    const { resolve, dirname } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+
+    try {
+      const proxyScriptPath = resolve(
+        dirname(fileURLToPath(import.meta.url)),
+        "../mcp/android-vm-proxy.mjs",
+      );
+      const proxyScript = readFileSync(proxyScriptPath, "utf-8");
+
+      files.push({
+        destinationPath: "/root/lifecycle/mcp/android-vm-proxy.mjs",
+        contentBase64: Buffer.from(proxyScript).toString("base64"),
+        mode: "755",
+      });
+    } catch (error) {
+      console.error("Failed to read Android VM proxy script:", error);
+    }
+  }
+
   // Ensure directories exist
   startupCommands.unshift("mkdir -p ~/.claude");
   // Symlink ~/.claude.json → ~/.claude/.claude.json so Claude Code finds it
   startupCommands.push("ln -sf ~/.claude/.claude.json ~/.claude.json");
   startupCommands.push(`mkdir -p ${claudeLifecycleDir}`);
-  if (ctx.iosResourceAllocationId) {
+  if (ctx.iosResourceAllocationId || ctx.androidResourceAllocationId) {
     startupCommands.push("mkdir -p /root/lifecycle/mcp");
   }
   startupCommands.push(`mkdir -p ${claudeSecretsDir}`);

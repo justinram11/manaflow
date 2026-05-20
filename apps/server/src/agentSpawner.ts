@@ -554,10 +554,14 @@ export async function spawnAgent(
 
     // Use environment property if available
     if (agent.environment) {
-      // Read iosResourceAllocationId, iosDirectToken, and iosVmMcpUrl from task run vscode data (set during sandbox start)
+      // Read iOS/Android resource allocation IDs/tokens/MCP URLs from task run
+      // vscode data (set during sandbox start)
       let iosResourceAllocationId: string | undefined;
       let iosDirectToken: string | undefined;
       let iosVmMcpUrl: string | undefined;
+      let androidResourceAllocationId: string | undefined;
+      let androidDirectToken: string | undefined;
+      let androidVmMcpUrl: string | undefined;
       if (taskRunId) {
         try {
           const taskRunData = getTaskRunById(db, taskRunId);
@@ -570,6 +574,15 @@ export async function spawnAgent(
           }
           if (vscodeData?.iosVmMcpUrl) {
             iosVmMcpUrl = vscodeData.iosVmMcpUrl as string;
+          }
+          if (vscodeData?.androidResourceAllocationId) {
+            androidResourceAllocationId = vscodeData.androidResourceAllocationId as string;
+          }
+          if (vscodeData?.androidDirectToken) {
+            androidDirectToken = vscodeData.androidDirectToken as string;
+          }
+          if (vscodeData?.androidVmMcpUrl) {
+            androidVmMcpUrl = vscodeData.androidVmMcpUrl as string;
           }
         } catch (error) {
           serverLogger.error("[AgentSpawner] Failed to read task run vscode data:", error);
@@ -585,6 +598,9 @@ export async function spawnAgent(
         iosResourceAllocationId,
         iosDirectToken,
         iosVmMcpUrl,
+        androidResourceAllocationId,
+        androidDirectToken,
+        androidVmMcpUrl,
       });
       envVars = {
         ...envVars,
@@ -829,15 +845,39 @@ export async function spawnAgent(
       };
     }
 
-    // Re-check for iOS allocation created during sandbox start (race condition fix:
-    // agent.environment() runs before vscodeInstance.start(), but iOS allocation is
-    // created during sandbox start, so iosResourceAllocationId is undefined on first pass)
+    // Re-check for iOS / Android allocation created during sandbox start (race
+    // condition fix: agent.environment() runs before vscodeInstance.start(),
+    // but resource allocations are created during sandbox start, so allocation
+    // IDs are undefined on the first pass)
     if (agent.environment && taskRunId) {
       try {
-        const freshTaskRun = getTaskRunById(db, taskRunId);
-        const freshVscode = freshTaskRun?.vscode as
-          | Record<string, unknown>
-          | undefined;
+        // The allocation ID and direct token land synchronously when the
+        // sandbox starts, but the VM MCP URL is populated later by the
+        // fire-and-forget android.setup / ios setup callback. Poll briefly
+        // so the agent's claude.json gets the correct CMUX_VM_MCP_URL —
+        // otherwise the MCP proxy registers with an empty URL and the agent
+        // can't reach the tools.
+        const POLL_TIMEOUT_MS = 90_000;
+        const POLL_INTERVAL_MS = 1_000;
+        const pollDeadline = Date.now() + POLL_TIMEOUT_MS;
+        let freshVscode: Record<string, unknown> | undefined;
+        while (Date.now() < pollDeadline) {
+          const freshRun = getTaskRunById(db, taskRunId);
+          freshVscode = freshRun?.vscode as Record<string, unknown> | undefined;
+          const hasIos = Boolean(freshVscode?.iosResourceAllocationId);
+          const hasAndroid = Boolean(freshVscode?.androidResourceAllocationId);
+          if (!hasIos && !hasAndroid) {
+            // No resource allocation requested — nothing to wait for
+            break;
+          }
+          const iosReady = !hasIos || Boolean(freshVscode?.iosVmMcpUrl);
+          const androidReady = !hasAndroid || Boolean(freshVscode?.androidVmMcpUrl);
+          if (iosReady && androidReady) {
+            break;
+          }
+          await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+        }
+
         const freshIosAllocId = freshVscode?.iosResourceAllocationId as
           | string
           | undefined;
@@ -847,12 +887,21 @@ export async function spawnAgent(
         const freshIosVmMcpUrl = freshVscode?.iosVmMcpUrl as
           | string
           | undefined;
+        const freshAndroidAllocId = freshVscode?.androidResourceAllocationId as
+          | string
+          | undefined;
+        const freshAndroidToken = freshVscode?.androidDirectToken as
+          | string
+          | undefined;
+        const freshAndroidVmMcpUrl = freshVscode?.androidVmMcpUrl as
+          | string
+          | undefined;
 
-        if (freshIosAllocId) {
+        if (freshIosAllocId || freshAndroidAllocId) {
           serverLogger.info(
-            `[AgentSpawner] iOS allocation detected post-start, re-generating environment for ${agent.name}`
+            `[AgentSpawner] Resource allocation detected post-start (ios=${!!freshIosAllocId} android=${!!freshAndroidAllocId}), re-generating environment for ${agent.name}`
           );
-          const iosEnvResult = await agent.environment({
+          const refreshedEnvResult = await agent.environment({
             taskRunId,
             prompt: processedTaskDescription,
             taskRunJwt,
@@ -861,10 +910,13 @@ export async function spawnAgent(
             iosResourceAllocationId: freshIosAllocId,
             iosDirectToken: freshIosToken,
             iosVmMcpUrl: freshIosVmMcpUrl,
+            androidResourceAllocationId: freshAndroidAllocId,
+            androidDirectToken: freshAndroidToken,
+            androidVmMcpUrl: freshAndroidVmMcpUrl,
           });
-          // Merge iOS-enriched files into existing authFiles by destinationPath
+          // Merge enriched files into existing authFiles by destinationPath
           // (preserves files added by applyApiKeys and editorSettings)
-          for (const newFile of iosEnvResult.files) {
+          for (const newFile of refreshedEnvResult.files) {
             const existingIdx = authFiles.findIndex(
               (f) => f.destinationPath === newFile.destinationPath
             );
@@ -874,20 +926,20 @@ export async function spawnAgent(
               authFiles.push(newFile);
             }
           }
-          Object.assign(envVars, iosEnvResult.env);
-          if (iosEnvResult.startupCommands) {
-            startupCommands = iosEnvResult.startupCommands;
+          Object.assign(envVars, refreshedEnvResult.env);
+          if (refreshedEnvResult.startupCommands) {
+            startupCommands = refreshedEnvResult.startupCommands;
           }
-          if (iosEnvResult.postStartCommands) {
-            postStartCommands = iosEnvResult.postStartCommands;
+          if (refreshedEnvResult.postStartCommands) {
+            postStartCommands = refreshedEnvResult.postStartCommands;
           }
-          if (iosEnvResult.unsetEnv) {
-            unsetEnvVars = iosEnvResult.unsetEnv;
+          if (refreshedEnvResult.unsetEnv) {
+            unsetEnvVars = refreshedEnvResult.unsetEnv;
           }
         }
       } catch (error) {
         serverLogger.error(
-          "[AgentSpawner] Failed to re-generate environment with iOS allocation:",
+          "[AgentSpawner] Failed to re-generate environment with resource allocation:",
           error
         );
       }

@@ -34,4 +34,8 @@ export type EnvironmentContext = {
   iosDirectToken?: string;
   /** Direct HTTP URL to the in-VM MCP server (e.g. http://cmux-tart-cmux-ios-dev:4850) */
   iosVmMcpUrl?: string;
+  androidResourceAllocationId?: string;
+  androidDirectToken?: string;
+  /** Direct HTTP URL to the in-VM Android MCP server (e.g. http://cmux-android-<alloc>:4860) */
+  androidVmMcpUrl?: string;
 };
