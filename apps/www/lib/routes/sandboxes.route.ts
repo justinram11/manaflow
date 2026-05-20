@@ -1251,6 +1251,19 @@ sandboxesRouter.openapi(
                     `[sandboxes.start] Android allocation ${allocId} setup failed:`,
                     error,
                   );
+                  // Release the allocation so the provider's slot is freed
+                  // immediately. Otherwise stale "active" rows pile up and
+                  // silently push the provider to maxConcurrentSlots, after
+                  // which getAvailableOnlineByCapability returns nothing and
+                  // future android requests skip allocation with no log.
+                  try {
+                    releaseAllocation(db, allocId);
+                  } catch (releaseError) {
+                    console.error(
+                      `[sandboxes.start] Failed to release failed Android allocation ${allocId}:`,
+                      releaseError,
+                    );
+                  }
                 }
               })();
             }

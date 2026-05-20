@@ -28,8 +28,12 @@ export interface AndroidAllocationInfo {
 const allocations = new Map<string, AndroidAllocationInfo>();
 
 function containerNameFor(allocationId: string): string {
-  // Incus container names must be DNS-safe and <= 63 chars.
-  const safeId = allocationId.replace(/[^a-zA-Z0-9-]/g, "-").slice(0, 24);
+  // Incus container names must be DNS-safe, <= 63 chars, and must not end
+  // with '-' (which UUID slices commonly do, e.g. "7786e596-d659-4714-a512-").
+  const safeId = allocationId
+    .replace(/[^a-zA-Z0-9-]/g, "-")
+    .slice(0, 24)
+    .replace(/-+$/, "");
   return `cmux-android-${safeId}`;
 }
 
@@ -86,10 +90,14 @@ export async function setupAllocation(params: {
     if (params.tailscaleAuthKey) {
       try {
         info.tailscaleHostname = containerName;
+        // tailscaled is disabled by default in the cmux-sandbox-android image
+        // (parity with the workspace image). Enable + start it before
+        // `tailscale up`, otherwise the CLI errors with "failed to connect
+        // to local tailscaled" and the container never joins the tailnet.
         await incusExec(containerName, [
           "bash",
           "-lc",
-          `tailscale up --authkey='${params.tailscaleAuthKey}' --hostname='${containerName}' --accept-dns=true || true`,
+          `systemctl enable --now tailscaled && tailscale up --authkey='${params.tailscaleAuthKey}' --hostname='${containerName}' --accept-dns=true || true`,
         ], { timeout: 60_000 });
       } catch (tsError) {
         console.error(`[incus-resource] Tailscale up failed for ${containerName}:`, tsError);
@@ -106,11 +114,11 @@ export async function setupAllocation(params: {
     });
 
     // Start the Android display services so VNC streaming works.
+    // Xtigervnc serves as both X server and VNC bridge — no Xvfb dependency.
     try {
       await incusExec(containerName, [
         "systemctl",
         "start",
-        "cmux-android-xvfb.service",
         "cmux-android-tigervnc.service",
         "cmux-android-vnc-proxy.service",
       ]);
