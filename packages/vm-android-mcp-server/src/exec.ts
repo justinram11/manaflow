@@ -12,9 +12,16 @@ export function exec(
   // systemd doesn't set HOME for non-login services, but `flutter pub get`,
   // gradle, and git rely on HOME for caches + config. Force it to /root
   // unless the caller overrode it.
+  //
+  // ANDROID_HOME / ANDROID_SDK_ROOT are set in the systemd unit but get
+  // dropped when bun spawns subprocesses without explicit env inheritance;
+  // re-assert them so `flutter build apk` finds the SDK.
   const env = {
     HOME: "/root",
     PUB_CACHE: "/opt/flutter/.pub-cache",
+    ANDROID_HOME: "/opt/android-sdk",
+    ANDROID_SDK_ROOT: "/opt/android-sdk",
+    ANDROID_AVD_HOME: "/root/.android/avd",
     ...process.env,
     ...(opts?.env ?? {}),
   };
