@@ -56,11 +56,32 @@ const androidBuildFlutter: ToolHandler = async (params, allocationId) => {
   // runs under a systemd unit with a hard-coded PATH that doesn't include it.
   // Use absolute paths so the build works regardless of how PATH is set.
   const flutter = process.env.CMUX_FLUTTER_BIN ?? "/opt/flutter/bin/flutter";
+  const dart = process.env.CMUX_DART_BIN ?? "/opt/flutter/bin/dart";
+
+  // Auto-detect projects that use code generation (freezed / json_serializable
+  // / drift / hive). Without build_runner, `flutter build apk` errors out at
+  // dart compilation with "getter X isn't defined" on the *.g.dart accessors.
+  // `runBuildRunner: false` opts out; pass it for projects where you've
+  // already run build_runner and want to skip the cache-warming run.
+  const skipBuildRunner = params.runBuildRunner === false;
+  let needsBuildRunner = false;
+  if (!skipBuildRunner) {
+    try {
+      const pubspec = exec(`cat "${projectDir}/pubspec.yaml"`).toString();
+      needsBuildRunner = /\bbuild_runner\s*:/i.test(pubspec);
+    } catch {
+      /* ignore */
+    }
+  }
+
   const cmd = [
     `cd "${projectDir}"`,
     // `flutter pub get` is fast when already cached; rerun on every sync so
     // newly added deps land before the build.
     `${flutter} pub get`,
+    ...(needsBuildRunner
+      ? [`${dart} run build_runner build --delete-conflicting-outputs`]
+      : []),
     `${flutter} build apk --${buildMode}${flavorArg} ${dartDefineArgs}`.trim(),
   ].join(" && ");
 
@@ -114,6 +135,10 @@ export const buildTools: Array<{ definition: ToolDefinition; handler: ToolHandle
             type: "object",
             description: "Key/value pairs passed as --dart-define=KEY=VALUE. Use this to inject e.g. API_BASE_URL.",
             additionalProperties: { type: "string" },
+          },
+          runBuildRunner: {
+            type: "boolean",
+            description: "Run `dart run build_runner build --delete-conflicting-outputs` before the flutter build. Auto-enabled when pubspec.yaml declares a build_runner dependency.",
           },
         },
       },
