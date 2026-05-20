@@ -1212,6 +1212,16 @@ sandboxesRouter.openapi(
               // allocated, the workspace's rsyncd was configured with
               // iosDirectToken — use that as android's rsync secret too.
               const androidRsyncSecret = iosDirectToken ?? androidTokenForSetup;
+              // Forward the user's gitlab/github PATs so `flutter pub get`
+              // inside the android container can fetch private git deps
+              // declared in the app's pubspec.yaml. The same apiKeysPromise
+              // is read by the workspace block above for the same purpose.
+              const androidApiKeys = await apiKeysPromise;
+              const androidGitlabPat = androidApiKeys.GITLAB_PAT || undefined;
+              const androidGithubPat =
+                (await githubAccessTokenPromise).githubAccessToken ||
+                androidApiKeys.GITHUB_PAT ||
+                undefined;
 
               // Fire-and-forget: launch the container + boot the emulator. The
               // android.setup RPC blocks until the container's MCP server is
@@ -1237,6 +1247,8 @@ sandboxesRouter.openapi(
                         workspaceHost: androidWorkspaceHost,
                         rsyncEndpoint: `rsync://cmux@${androidWorkspaceHost}:39376/workspace`,
                         rsyncSecret: androidRsyncSecret,
+                        ...(androidGitlabPat ? { gitlabPat: androidGitlabPat } : {}),
+                        ...(androidGithubPat ? { githubPat: androidGithubPat } : {}),
                       },
                     )) ?? {},
                   );

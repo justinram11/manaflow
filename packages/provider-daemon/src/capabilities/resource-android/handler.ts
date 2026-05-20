@@ -22,6 +22,8 @@ const SetupParams = z.object({
   workspaceHost: z.string().optional(),
   rsyncEndpoint: z.string().optional(),
   rsyncSecret: z.string().optional(),
+  gitlabPat: z.string().optional(),
+  githubPat: z.string().optional(),
 });
 
 const CleanupParams = z.object({
@@ -50,6 +52,8 @@ export function createResourceAndroidHandler(): CapabilityHandler {
               workspaceHost: params.workspaceHost,
               rsyncEndpoint: params.rsyncEndpoint,
               rsyncSecret: params.rsyncSecret,
+              gitlabPat: params.gitlabPat,
+              githubPat: params.githubPat,
             });
             return {
               jsonrpc: "2.0",

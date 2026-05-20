@@ -67,6 +67,14 @@ export async function setupAllocation(params: {
    *  `android_sync_code` to pull workspace source into the build dir. */
   rsyncEndpoint?: string;
   rsyncSecret?: string;
+  /** GitLab PAT — used by `flutter pub get` when the project's pubspec
+   *  references private gitlab git deps. We configure both a credential
+   *  helper (for `https://gitlab.com/...` URLs) AND `url.insteadOf` rewrites
+   *  so that `ssh://git@gitlab.com/...` and `git@gitlab.com:...` URLs are
+   *  transparently fetched over HTTPS with the PAT. */
+  gitlabPat?: string;
+  /** GitHub PAT — same idea, for github.com private deps. */
+  githubPat?: string;
 }): Promise<AndroidAllocationInfo> {
   const { allocationId, accessToken } = params;
 
@@ -124,6 +132,14 @@ export async function setupAllocation(params: {
         console.error(`[incus-resource] Tailscale up failed for ${containerName}:`, tsError);
       }
     }
+
+    // Inject git credentials BEFORE the MCP server starts processing tool
+    // calls, so the first android_build_flutter request that triggers
+    // `flutter pub get` (which clones git deps) authenticates correctly.
+    await configureGitForBuild(containerName, {
+      gitlabPat: params.gitlabPat,
+      githubPat: params.githubPat,
+    });
 
     // The MCP server starts via the cmux-android-mcp.service systemd unit.
     // Boot the allocation inside it once the server is reachable.
@@ -194,6 +210,58 @@ export function getAllocation(allocationId: string): AndroidAllocationInfo | und
 
 export function getAllAllocations(): AndroidAllocationInfo[] {
   return Array.from(allocations.values());
+}
+
+/**
+ * Append git credential + url.insteadOf config to the container's
+ * `/root/.gitconfig` so `flutter pub get` can fetch private git dependencies
+ * over HTTPS using the user's PAT, even when pubspec.yaml declares the
+ * dep with an ssh:// URL.
+ */
+async function configureGitForBuild(
+  containerName: string,
+  opts: { gitlabPat?: string; githubPat?: string },
+): Promise<void> {
+  if (!opts.gitlabPat && !opts.githubPat) {
+    return;
+  }
+  const sections: string[] = [];
+  if (opts.gitlabPat) {
+    sections.push(
+      `[credential "https://gitlab.com"]`,
+      `\thelper = !f() { echo password=${opts.gitlabPat}; }; f`,
+      `\tusername = oauth2`,
+      `[url "https://oauth2:${opts.gitlabPat}@gitlab.com/"]`,
+      `\tinsteadOf = ssh://git@gitlab.com/`,
+      `[url "https://oauth2:${opts.gitlabPat}@gitlab.com/"]`,
+      `\tinsteadOf = git@gitlab.com:`,
+    );
+  }
+  if (opts.githubPat) {
+    sections.push(
+      `[credential "https://github.com"]`,
+      `\thelper = !f() { echo password=${opts.githubPat}; }; f`,
+      `\tusername = x-access-token`,
+      `[url "https://x-access-token:${opts.githubPat}@github.com/"]`,
+      `\tinsteadOf = ssh://git@github.com/`,
+      `[url "https://x-access-token:${opts.githubPat}@github.com/"]`,
+      `\tinsteadOf = git@github.com:`,
+    );
+  }
+  const content = sections.join("\n") + "\n";
+  const b64 = Buffer.from(content).toString("base64");
+  try {
+    await incusExec(containerName, [
+      "bash",
+      "-lc",
+      `umask 077 && touch /root/.gitconfig && echo '${b64}' | base64 -d >> /root/.gitconfig && chmod 600 /root/.gitconfig`,
+    ]);
+  } catch (error) {
+    console.error(
+      `[incus-resource] Failed to inject git credentials into ${containerName}:`,
+      error,
+    );
+  }
 }
 
 /** Wait until the in-container MCP server answers /health. */
