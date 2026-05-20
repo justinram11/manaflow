@@ -14,6 +14,10 @@ describe("vm-android-mcp-server tool registry", () => {
       "android_text",
       "android_key",
       "android_logcat",
+      "android_sync_code",
+      "android_build_flutter",
+      "android_proxy_workspace_port",
+      "android_workspace_info",
     ];
     for (const name of expected) {
       expect(names).toContain(name);

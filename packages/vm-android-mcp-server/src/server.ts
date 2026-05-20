@@ -135,6 +135,9 @@ async function handleJsonRpc(msg: JsonRpcRequest): Promise<JsonRpcResponse> {
           allocationId: params?.allocationId as string,
           buildDir: params?.buildDir as string,
           avdName: params?.avdName as string | undefined,
+          workspaceHost: params?.workspaceHost as string | undefined,
+          rsyncEndpoint: params?.rsyncEndpoint as string | undefined,
+          rsyncSecret: params?.rsyncSecret as string | undefined,
         });
 
         if (params?.accessToken) {

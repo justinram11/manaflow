@@ -2,6 +2,9 @@ import { deviceTools } from "./device";
 import { appTools } from "./app";
 import { interactionTools } from "./interaction";
 import { logTools } from "./logs";
+import { syncTools } from "./sync";
+import { buildTools } from "./build";
+import { networkTools } from "./network";
 
 export interface ToolDefinition {
   name: string;
@@ -31,6 +34,9 @@ registerTools(deviceTools);
 registerTools(appTools);
 registerTools(interactionTools);
 registerTools(logTools);
+registerTools(syncTools);
+registerTools(buildTools);
+registerTools(networkTools);
 
 export function getToolDefinitions(): ToolDefinition[] {
   return Array.from(registry.values()).map((t) => t.definition);

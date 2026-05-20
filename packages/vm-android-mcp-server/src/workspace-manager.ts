@@ -17,6 +17,13 @@ export interface AndroidAllocationInfo {
   emulatorBooted: boolean;
   accessToken?: string;
   accessTokenCreatedAt?: number;
+  /** Workspace container's tailscale hostname. The emulator reaches the
+   *  workspace's api2 server at this host (proxied via socat → 10.0.2.2). */
+  workspaceHost?: string;
+  /** rsync endpoint exposed by the workspace's rsyncd. */
+  rsyncEndpoint?: string;
+  /** rsync secret matching the workspace's rsyncd.secrets. */
+  rsyncSecret?: string;
 }
 
 const allocations = new Map<string, AndroidAllocationInfo>();
@@ -121,6 +128,9 @@ export function setupAllocation(params: {
   allocationId: string;
   buildDir: string;
   avdName?: string;
+  workspaceHost?: string;
+  rsyncEndpoint?: string;
+  rsyncSecret?: string;
 }): AndroidAllocationInfo {
   const { allocationId, buildDir } = params;
 
@@ -129,6 +139,9 @@ export function setupAllocation(params: {
     if (existing.buildDir !== buildDir) {
       existing.buildDir = buildDir;
     }
+    if (params.workspaceHost) existing.workspaceHost = params.workspaceHost;
+    if (params.rsyncEndpoint) existing.rsyncEndpoint = params.rsyncEndpoint;
+    if (params.rsyncSecret) existing.rsyncSecret = params.rsyncSecret;
     return existing;
   }
 
@@ -148,6 +161,9 @@ export function setupAllocation(params: {
     avdName: params.avdName ?? AVD_NAME,
     deviceSerial: EMULATOR_SERIAL,
     emulatorBooted: false,
+    workspaceHost: params.workspaceHost,
+    rsyncEndpoint: params.rsyncEndpoint,
+    rsyncSecret: params.rsyncSecret,
   };
 
   allocations.set(allocationId, info);
