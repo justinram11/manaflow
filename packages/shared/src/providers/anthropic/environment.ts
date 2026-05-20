@@ -191,31 +191,39 @@ export async function getClaudeEnvironment(
       console.error("Failed to read iOS VM proxy script:", error);
     }
 
-    // Start rsyncd so the VM can pull workspace files via rsync
-    if (ctx.iosDirectToken) {
-      const rsyncdConf = [
-        "[workspace]",
-        "path = /root/workspace",
-        "read only = yes",
-        "list = no",
-        "auth users = cmux",
-        "secrets file = /etc/cmux/rsyncd.secrets",
-      ].join("\n");
+  }
 
-      files.push({
-        destinationPath: "/etc/cmux/rsyncd.conf",
-        contentBase64: Buffer.from(rsyncdConf).toString("base64"),
-        mode: "644",
-      });
+  // Install workspace rsyncd if ANY resource provider (iOS or Android)
+  // needs to pull source. Uses whichever direct token is present; if both
+  // iOS and Android are allocated, they must share the same token (the
+  // backend wires iOS's token to both setup calls).
+  const rsyncdToken = ctx.iosDirectToken ?? ctx.androidDirectToken;
+  if ((ctx.iosResourceAllocationId || ctx.androidResourceAllocationId) && rsyncdToken) {
+    const rsyncdConf = [
+      "[workspace]",
+      "path = /root/workspace",
+      "read only = yes",
+      "list = no",
+      "auth users = cmux",
+      "secrets file = /etc/cmux/rsyncd.secrets",
+    ].join("\n");
 
-      startupCommands.push("mkdir -p /etc/cmux");
-      startupCommands.push(
-        `echo 'cmux:${ctx.iosDirectToken}' > /etc/cmux/rsyncd.secrets && chmod 600 /etc/cmux/rsyncd.secrets`,
-      );
-      startupCommands.push(
-        "rsync --daemon --config=/etc/cmux/rsyncd.conf --port=39376 && echo '[CMUX] rsyncd started on port 39376'",
-      );
-    }
+    files.push({
+      destinationPath: "/etc/cmux/rsyncd.conf",
+      contentBase64: Buffer.from(rsyncdConf).toString("base64"),
+      mode: "644",
+    });
+
+    startupCommands.push("mkdir -p /etc/cmux");
+    startupCommands.push(
+      `echo 'cmux:${rsyncdToken}' > /etc/cmux/rsyncd.secrets && chmod 600 /etc/cmux/rsyncd.secrets`,
+    );
+    startupCommands.push(
+      "pkill -f 'rsync --daemon.*--config=/etc/cmux/rsyncd.conf' || true",
+    );
+    startupCommands.push(
+      "rsync --daemon --config=/etc/cmux/rsyncd.conf --port=39376 && echo '[CMUX] rsyncd started on port 39376'",
+    );
   }
 
   // Add Android resource MCP proxy if allocation is present

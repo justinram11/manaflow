@@ -19,6 +19,9 @@ const SetupParams = z.object({
   allocationId: z.string().min(1),
   accessToken: z.string().min(1),
   tailscaleAuthKey: z.string().optional(),
+  workspaceHost: z.string().optional(),
+  rsyncEndpoint: z.string().optional(),
+  rsyncSecret: z.string().optional(),
 });
 
 const CleanupParams = z.object({
@@ -44,6 +47,9 @@ export function createResourceAndroidHandler(): CapabilityHandler {
               allocationId: params.allocationId,
               accessToken: params.accessToken,
               tailscaleAuthKey: params.tailscaleAuthKey,
+              workspaceHost: params.workspaceHost,
+              rsyncEndpoint: params.rsyncEndpoint,
+              rsyncSecret: params.rsyncSecret,
             });
             return {
               jsonrpc: "2.0",

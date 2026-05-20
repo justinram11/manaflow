@@ -23,6 +23,14 @@ export interface AndroidAllocationInfo {
   status: "launching" | "ready" | "failed" | "released";
   accessToken?: string;
   createdAt: number;
+  /** Workspace container's tailscale hostname — used as the default target for
+   *  android_proxy_workspace_port / api2 networking. */
+  workspaceHost?: string;
+  /** rsync endpoint into the workspace container's /root/workspace share,
+   *  used by android_sync_code. */
+  rsyncEndpoint?: string;
+  /** rsync password (matches workspace's rsyncd.secrets). */
+  rsyncSecret?: string;
 }
 
 const allocations = new Map<string, AndroidAllocationInfo>();
@@ -49,6 +57,16 @@ export async function setupAllocation(params: {
   allocationId: string;
   accessToken: string;
   tailscaleAuthKey?: string;
+  /** Workspace's tailscale hostname (e.g. `cmux-1779253422373-egl80q`). The
+   *  in-container MCP server uses this as the default target for
+   *  `android_proxy_workspace_port` and exposes it via
+   *  `android_workspace_info`. */
+  workspaceHost?: string;
+  /** rsync endpoint exposed by the workspace container's rsyncd (e.g.
+   *  `rsync://cmux@<workspace-host>:39376/workspace`). Used by
+   *  `android_sync_code` to pull workspace source into the build dir. */
+  rsyncEndpoint?: string;
+  rsyncSecret?: string;
 }): Promise<AndroidAllocationInfo> {
   const { allocationId, accessToken } = params;
 
@@ -64,6 +82,9 @@ export async function setupAllocation(params: {
     status: "launching",
     accessToken,
     createdAt: Date.now(),
+    workspaceHost: params.workspaceHost,
+    rsyncEndpoint: params.rsyncEndpoint,
+    rsyncSecret: params.rsyncSecret,
   };
   allocations.set(allocationId, info);
 
@@ -111,6 +132,11 @@ export async function setupAllocation(params: {
       allocationId,
       buildDir: `/tmp/cmux-builds/${allocationId}`,
       accessToken,
+      ...(params.workspaceHost ? { workspaceHost: params.workspaceHost } : {}),
+      ...(params.rsyncEndpoint
+        ? { rsyncEndpoint: params.rsyncEndpoint }
+        : {}),
+      ...(params.rsyncSecret ? { rsyncSecret: params.rsyncSecret } : {}),
     });
 
     // Start the Android display services so VNC streaming works.

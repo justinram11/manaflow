@@ -194,10 +194,15 @@ async function writeAuthFilesToSandbox(
   }
 }
 
-async function installIosWorkspaceRsyncd(
+/**
+ * Install + supervise rsyncd inside the workspace container so a resource
+ * provider VM/container can pull the workspace source via rsync. Called for
+ * both iOS and Android allocations — they share the same secret/port.
+ */
+async function installWorkspaceRsyncd(
   instance: RemoteIncusSandboxInstance,
   opts: {
-    iosDirectToken: string;
+    directToken: string;
   },
 ): Promise<void> {
   const rsyncdConf = [
@@ -219,7 +224,7 @@ async function installIosWorkspaceRsyncd(
 
   const commands = [
     "mkdir -p /etc/cmux",
-    `echo ${shellQuote(`cmux:${opts.iosDirectToken}`)} > /etc/cmux/rsyncd.secrets && chmod 600 /etc/cmux/rsyncd.secrets`,
+    `echo ${shellQuote(`cmux:${opts.directToken}`)} > /etc/cmux/rsyncd.secrets && chmod 600 /etc/cmux/rsyncd.secrets`,
     "pkill -f 'rsync --daemon.*--config=/etc/cmux/rsyncd.conf' || true",
     "pkill -f 'cmux-rsyncd-supervisor' || true",
     `nohup bash -c 'exec -a cmux-rsyncd-supervisor bash -c '"'"'while true; do rsync --daemon --no-detach --config=/etc/cmux/rsyncd.conf --port=39376 2>>/tmp/rsyncd.log; echo "[$(date)] rsyncd exited, restarting..." >>/tmp/rsyncd.log; sleep 1; done'"'"'' >/dev/null 2>&1 < /dev/null &`,
@@ -232,7 +237,7 @@ async function installIosWorkspaceRsyncd(
       (result.exit_code === 0 || result.exit_code === 1 || result.exit_code === 143);
     if (result.exit_code !== 0 && !isExpectedPkillExit) {
       throw new Error(
-        `Failed to run iOS sidecar command ${command}: ${result.stderr || result.stdout}`,
+        `Failed to run workspace rsyncd command ${command}: ${result.stderr || result.stdout}`,
       );
     }
   }
@@ -1196,6 +1201,17 @@ sandboxesRouter.openapi(
               const teamSettingsForAndroid = getTeamSettings(db, body.teamSlugOrId);
               const androidProviderRef = androidProvider;
               const androidTokenForSetup = androidDirectToken;
+              // Workspace's tailscale hostname (same derivation as elsewhere
+              // in this file). The android container reaches the workspace
+              // via this name once both have joined the tailnet.
+              const androidWorkspaceHost = incusContainerId.replace(
+                /[^a-zA-Z0-9-]/g,
+                "-",
+              );
+              // rsyncd in the workspace uses a SINGLE secret. If iOS is also
+              // allocated, the workspace's rsyncd was configured with
+              // iosDirectToken — use that as android's rsync secret too.
+              const androidRsyncSecret = iosDirectToken ?? androidTokenForSetup;
 
               // Fire-and-forget: launch the container + boot the emulator. The
               // android.setup RPC blocks until the container's MCP server is
@@ -1218,6 +1234,9 @@ sandboxesRouter.openapi(
                         ...(teamSettingsForAndroid?.tailscaleAuthKey
                           ? { tailscaleAuthKey: teamSettingsForAndroid.tailscaleAuthKey }
                           : {}),
+                        workspaceHost: androidWorkspaceHost,
+                        rsyncEndpoint: `rsync://cmux@${androidWorkspaceHost}:39376/workspace`,
+                        rsyncSecret: androidRsyncSecret,
                       },
                     )) ?? {},
                   );
@@ -1515,12 +1534,17 @@ sandboxesRouter.openapi(
               }),
             ]);
 
+            // Install workspace rsyncd for any resource allocation that needs
+            // to pull workspace source (iOS, Android, or both). The rsyncd
+            // uses ONE secret per workspace; we use whichever direct token
+            // is present (iOS and Android allocations get separate ones).
+            const rsyncdToken = iosDirectToken ?? androidDirectToken;
             if (
-              iosResourceAllocationId &&
-              iosDirectToken
+              (iosResourceAllocationId || androidResourceAllocationId) &&
+              rsyncdToken
             ) {
-              await installIosWorkspaceRsyncd(incusInstance, {
-                iosDirectToken,
+              await installWorkspaceRsyncd(incusInstance, {
+                directToken: rsyncdToken,
               });
             }
 
