@@ -256,11 +256,13 @@ export async function incusSnapshotCopy(
   snapshotName: string,
   newContainer: string,
 ): Promise<void> {
-  const copyResult = await incusCommand([
-    "copy",
-    `${source}/${snapshotName}`,
-    newContainer,
-  ]);
+  // Snapshot copies are large filesystem clones; the default 120s timeout
+  // races snapshot restore on cold disks and leaves a half-created container
+  // behind that subsequent retries can't reuse. Bump to 10 minutes.
+  const copyResult = await incusCommand(
+    ["copy", `${source}/${snapshotName}`, newContainer],
+    { timeout: 600_000 },
+  );
   if (copyResult.exitCode !== 0) {
     throw new Error(
       `Failed to copy snapshot ${source}/${snapshotName} to ${newContainer}: ${copyResult.stderr}`,
