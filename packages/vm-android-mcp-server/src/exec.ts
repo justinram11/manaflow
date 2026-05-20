@@ -16,6 +16,11 @@ export function exec(
   // ANDROID_HOME / ANDROID_SDK_ROOT are set in the systemd unit but get
   // dropped when bun spawns subprocesses without explicit env inheritance;
   // re-assert them so `flutter build apk` finds the SDK.
+  //
+  // The fvm wrapper at /root/.pub-cache/bin/fvm execs `dart`, which must
+  // be on PATH. Prepend /opt/flutter/bin and /root/.pub-cache/bin so
+  // android_build_flutter can run fvm without explicit PATH munging.
+  const inheritedPath = process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin";
   const env = {
     HOME: "/root",
     PUB_CACHE: "/opt/flutter/.pub-cache",
@@ -23,6 +28,7 @@ export function exec(
     ANDROID_SDK_ROOT: "/opt/android-sdk",
     ANDROID_AVD_HOME: "/root/.android/avd",
     ...process.env,
+    PATH: `/opt/flutter/bin:/root/.pub-cache/bin:${inheritedPath}`,
     ...(opts?.env ?? {}),
   };
   const result = execSync(cmd, {

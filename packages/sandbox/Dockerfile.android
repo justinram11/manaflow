@@ -120,7 +120,12 @@ RUN set -eux; \
     dart pub global activate fvm 2>&1 | tail -5; \
     fvm config --cache-path /root/fvm >/dev/null 2>&1 || true; \
     for v in ${FVM_PRECACHE_VERSIONS}; do \
-      fvm install "${v}" --no-setup 2>&1 | tail -3 || true; \
+      fvm install "${v}" 2>&1 | tail -3 || true; \
+      # Trigger the version's `flutter --version` so the matching dart-sdk
+      # is downloaded into the install at image-build time. Otherwise the
+      # first runtime use of that Flutter spends ~30s pulling dart-sdk.
+      /root/fvm/versions/"${v}"/bin/flutter --version 2>&1 | tail -3 || true; \
+      /root/fvm/versions/"${v}"/bin/flutter precache --android --no-ios --no-linux --no-windows --no-macos --no-web --no-fuchsia 2>&1 | tail -3 || true; \
     done; \
     fvm list 2>&1 | tail -5 || true
 
