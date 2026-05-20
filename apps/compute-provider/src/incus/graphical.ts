@@ -129,7 +129,6 @@ export async function enableSimulatorDisplays(
   const result = await incusContainerExec(containerName, [
     "systemctl",
     "start",
-    "cmux-android-xvfb.service",
     "cmux-android-tigervnc.service",
     "cmux-android-vnc-proxy.service",
   ]);

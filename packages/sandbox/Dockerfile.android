@@ -79,11 +79,18 @@ RUN set -eux; \
       >> "${ANDROID_AVD_HOME}/${ANDROID_AVD_NAME}.avd/config.ini"
 
 # --- VNC display stack for the emulator ------------------------------------
-# The emulator renders into Xvfb display :2; TigerVNC bridges it on :5902;
-# websockify exposes a noVNC-compatible endpoint on :39384.
-COPY --link configs/systemd/cmux-android-xvfb.service /etc/systemd/system/cmux-android-xvfb.service
+# Xtigervnc IS the X server (no separate Xvfb): it provides display :2 AND
+# serves it over VNC on port 5902. websockify then bridges 5902 → 39384 for
+# the in-browser noVNC client. The emulator is launched with DISPLAY=:2 so
+# it renders directly into Xtigervnc's framebuffer.
 COPY --link configs/systemd/cmux-android-tigervnc.service /etc/systemd/system/cmux-android-tigervnc.service
 COPY --link configs/systemd/cmux-android-vnc-proxy.service /etc/systemd/system/cmux-android-vnc-proxy.service
+
+# Tailscale is enabled by default so the host backend and the workspace
+# container can reach the Android container's MCP server + VNC stream via
+# MagicDNS. The actual `tailscale up --authkey=...` runs at launch time
+# via the incus-resource-provider; we just need tailscaled itself running.
+RUN systemctl enable tailscaled.service
 
 RUN printf '#!/bin/sh\nexec /usr/bin/websockify --web=/usr/share/novnc "${CMUX_VNC_PROXY_PORT:-39384}" "127.0.0.1:${CMUX_VNC_TARGET_PORT:-5902}"\n' \
       > /usr/local/lib/cmux/cmux-vnc-proxy && \

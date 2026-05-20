@@ -32,14 +32,14 @@ export function adb(args: string, opts?: { timeout?: number; maxBuffer?: number 
 }
 
 /**
- * Ensure the Xvfb display the emulator renders into exists. The display is
- * provided by the cmux-android-xvfb.service systemd unit; we start it (and the
- * VNC bridge) here so the emulator always has a display to attach to.
+ * Ensure the X display the emulator renders into exists. Xtigervnc is the
+ * X server itself (no separate Xvfb) — it provides display :2 AND serves it
+ * over VNC on port 5902. websockify bridges 5902 → 39384 for noVNC.
  */
 function ensureDisplay(): void {
   try {
     exec(
-      "systemctl start cmux-android-xvfb.service cmux-android-tigervnc.service cmux-android-vnc-proxy.service",
+      "systemctl start cmux-android-tigervnc.service cmux-android-vnc-proxy.service",
       { timeout: 30_000 },
     );
   } catch (error) {
