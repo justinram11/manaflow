@@ -94,7 +94,7 @@ RUN set -eux; \
     chown -R root:root /opt/flutter; \
     git config --global --add safe.directory /opt/flutter
 
-ENV PATH="${FLUTTER_HOME}/bin:${PATH}"
+ENV PATH="${FLUTTER_HOME}/bin:/root/.pub-cache/bin:${PATH}"
 
 # Pre-accept Android licenses for flutter, run `flutter --version` to
 # initialize, and pre-cache android artifacts so the first build is fast.
@@ -103,6 +103,26 @@ RUN set -eu; \
     flutter config --no-analytics >/dev/null 2>&1 || true; \
     flutter --version || true; \
     flutter precache --android --no-ios --no-linux --no-windows --no-macos --no-web --no-fuchsia || true
+
+# --- FVM (Flutter Version Manager) ----------------------------------------
+# Real-world flutter apps pin to specific SDK versions because changes like
+# `IconData` becoming `final` in 3.40+ break older packages (e.g.
+# font_awesome_flutter 10.7.0). fvm lets each project use its own pinned
+# Flutter version. android_build_flutter auto-detects .fvmrc /
+# .fvm/fvm_config.json / android/local.properties references and runs
+# `fvm flutter` / `fvm dart` instead of the system /opt/flutter.
+#
+# Pre-cache Flutter 3.38.4 (the version moneydolly-app pins) so the
+# first build doesn't spend ~5 minutes downloading. Other versions
+# download on demand at allocation time.
+ARG FVM_PRECACHE_VERSIONS=3.38.4
+RUN set -eux; \
+    dart pub global activate fvm 2>&1 | tail -5; \
+    fvm config --cache-path /root/fvm >/dev/null 2>&1 || true; \
+    for v in ${FVM_PRECACHE_VERSIONS}; do \
+      fvm install "${v}" --no-setup 2>&1 | tail -3 || true; \
+    done; \
+    fvm list 2>&1 | tail -5 || true
 
 # --- Create the AVD --------------------------------------------------------
 RUN set -eux; \
@@ -148,7 +168,7 @@ Environment=CMUX_VM_MCP_PORT=4860\n\
 Environment=ANDROID_SDK_ROOT=%s\n\
 Environment=ANDROID_HOME=%s\n\
 Environment=ANDROID_AVD_HOME=%s\n\
-Environment=PATH=%s/cmdline-tools/latest/bin:%s/platform-tools:%s/emulator:/opt/flutter/bin:/usr/local/bin:/usr/bin:/bin\n\
+Environment=PATH=%s/cmdline-tools/latest/bin:%s/platform-tools:%s/emulator:/opt/flutter/bin:/root/.pub-cache/bin:/usr/local/bin:/usr/bin:/bin\n\
 ExecStart=/usr/local/bin/bun run /opt/cmux/vm-android-mcp-server/src/server.ts\n\
 Restart=always\n\
 RestartSec=3\n\

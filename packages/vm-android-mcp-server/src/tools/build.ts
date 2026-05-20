@@ -18,6 +18,46 @@ function findFlutterProjectDir(buildDir: string): string | null {
   }
 }
 
+/**
+ * Detect whether the project pins a specific Flutter version. Looks at
+ * .fvmrc (modern), .fvm/fvm_config.json (legacy), then falls back to
+ * parsing android/local.properties for a flutter.sdk path that lives
+ * inside an fvm/versions/<X.Y.Z>/ directory (common when the user runs
+ * `fvm use X.Y.Z` locally but doesn't commit .fvmrc).
+ */
+function detectFlutterVersion(projectDir: string): string | null {
+  try {
+    const content = exec(`cat "${projectDir}/.fvmrc" 2>/dev/null`).trim();
+    if (content) {
+      const parsed = JSON.parse(content) as { flutter?: string };
+      if (parsed.flutter) return parsed.flutter;
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    const content = exec(
+      `cat "${projectDir}/.fvm/fvm_config.json" 2>/dev/null`,
+    ).trim();
+    if (content) {
+      const parsed = JSON.parse(content) as { flutterSdkVersion?: string };
+      if (parsed.flutterSdkVersion) return parsed.flutterSdkVersion;
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    const content = exec(
+      `cat "${projectDir}/android/local.properties" 2>/dev/null`,
+    );
+    const match = content.match(/flutter\.sdk=.*?\/fvm\/versions\/([^/\s]+)/);
+    if (match) return match[1];
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 /** Locate the most-recently-built APK in <projectDir>/build/app/outputs. */
 function findBuiltApk(projectDir: string): string | null {
   try {
@@ -52,11 +92,24 @@ const androidBuildFlutter: ToolHandler = async (params, allocationId) => {
     .join(" ");
 
   const flavorArg = flavor ? ` --flavor "${flavor}"` : "";
+
+  // If the project pins a Flutter version (via .fvmrc, .fvm/fvm_config.json,
+  // or an fvm path in android/local.properties), use `fvm flutter` so the
+  // build uses the project's pinned SDK rather than the image's default
+  // /opt/flutter. fvm downloads versions on demand; 3.38.4 is pre-cached
+  // in the image. `flutterVersion` param overrides detection.
+  const detectedFlutterVersion =
+    (params.flutterVersion as string | undefined) ?? detectFlutterVersion(projectDir);
+  const useFvm = Boolean(detectedFlutterVersion);
   // /opt/flutter/bin is added to PATH by the image, but the in-VM MCP server
   // runs under a systemd unit with a hard-coded PATH that doesn't include it.
   // Use absolute paths so the build works regardless of how PATH is set.
-  const flutter = process.env.CMUX_FLUTTER_BIN ?? "/opt/flutter/bin/flutter";
-  const dart = process.env.CMUX_DART_BIN ?? "/opt/flutter/bin/dart";
+  const flutter = useFvm
+    ? "/root/.pub-cache/bin/fvm flutter"
+    : process.env.CMUX_FLUTTER_BIN ?? "/opt/flutter/bin/flutter";
+  const dart = useFvm
+    ? "/root/.pub-cache/bin/fvm dart"
+    : process.env.CMUX_DART_BIN ?? "/opt/flutter/bin/dart";
 
   // Auto-detect projects that use code generation (freezed / json_serializable
   // / drift / hive). Without build_runner, `flutter build apk` errors out at
@@ -74,8 +127,19 @@ const androidBuildFlutter: ToolHandler = async (params, allocationId) => {
     }
   }
 
+  // When using fvm, ensure the pinned version is installed locally and
+  // pinned for this project (writes .fvmrc if missing). Idempotent: fvm
+  // skips if the version is already cached.
+  const fvmSetupCmds = useFvm
+    ? [
+        `/root/.pub-cache/bin/fvm install ${detectedFlutterVersion} --no-setup`,
+        `/root/.pub-cache/bin/fvm use ${detectedFlutterVersion} --force`,
+      ]
+    : [];
+
   const cmd = [
     `cd "${projectDir}"`,
+    ...fvmSetupCmds,
     // `flutter pub get` is fast when already cached; rerun on every sync so
     // newly added deps land before the build.
     `${flutter} pub get`,
@@ -139,6 +203,10 @@ export const buildTools: Array<{ definition: ToolDefinition; handler: ToolHandle
           runBuildRunner: {
             type: "boolean",
             description: "Run `dart run build_runner build --delete-conflicting-outputs` before the flutter build. Auto-enabled when pubspec.yaml declares a build_runner dependency.",
+          },
+          flutterVersion: {
+            type: "string",
+            description: "Pin a Flutter version via fvm (e.g. \"3.38.4\"). If omitted, auto-detected from .fvmrc / .fvm/fvm_config.json / android/local.properties; falls back to the image's default flutter when nothing pins.",
           },
         },
       },
