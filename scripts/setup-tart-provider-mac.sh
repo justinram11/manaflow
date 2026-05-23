@@ -315,8 +315,8 @@ install_tart_launch_agent() {
 EOF
 
   launchctl bootout "${launchd_domain}" "${HOST_TART_PLIST}" >/dev/null 2>&1 || true
-  launchctl bootstrap "${launchd_domain}" "${HOST_TART_PLIST}"
   launchctl enable "${launchd_domain}/com.cmux.tart-cmux-ios-dev"
+  launchctl bootstrap "${launchd_domain}" "${HOST_TART_PLIST}"
 }
 
 start_tart_vm() {
@@ -389,7 +389,14 @@ import sys
 
 package_path = pathlib.Path(sys.argv[1])
 package_data = json.loads(package_path.read_text())
-package_data["dependencies"]["@cmux/mac-resource-provider"] = "file:../mac-resource-provider"
+deps = package_data.get("dependencies", {})
+# Repoint the mac-resource-provider workspace dep to the sibling bundle dir.
+deps["@cmux/mac-resource-provider"] = "file:../mac-resource-provider"
+# Drop the incus-resource-provider workspace dep — it's Linux-only and isn't
+# part of this bundle. The android capability handler is lazily imported, so
+# the daemon doesn't reference incus-resource-provider on macOS hosts.
+deps.pop("@cmux/incus-resource-provider", None)
+package_data["dependencies"] = deps
 package_path.write_text(json.dumps(package_data, indent=2) + "\n")
 PY
 }
@@ -574,6 +581,59 @@ PLIST
 
   echo "==> Tailscale joined as ${ts_hostname}"
   ssh -o StrictHostKeyChecking=no "admin@${vm_ip}" '/bin/sh -lc "tailscale status --peers=false"'
+
+  install_tailscale_mtu_daemon_in_vm "${vm_ip}"
+}
+
+# Tailscale's path MTU between this Tart VM and remote Linux peers (workspace
+# containers on Tailscale) silently caps below the default tun MTU of 1280.
+# Bulk rsync hangs with `rsync: poll: hangup on receiver`. We keep the tun MTU
+# pinned at 1000 via a tiny daemon that watches for the tailscale utun and
+# resets MTU whenever it changes (e.g. tailscaled restart picks a new utunN).
+install_tailscale_mtu_daemon_in_vm() {
+  local vm_ip="$1"
+  echo "==> Installing cmux-tailscale-mtu daemon in VM (pin tun MTU to 1000)"
+  ssh -o StrictHostKeyChecking=no "admin@${vm_ip}" '/bin/sh -lc "
+    sudo tee /usr/local/bin/cmux-tailscale-mtu.sh > /dev/null <<\"EOF\"
+#!/bin/bash
+# Holds the tailscale utun interface at MTU 1000 so bulk rsync over the tailnet
+# doesnt stall on path-MTU mismatches against Linux peers.
+prev=
+while true; do
+  iface=\$(ifconfig 2>/dev/null | awk \"/^utun/{i=\\\$1; sub(\\\":\\\",\\\"\\\",i)} /inet 100\\\\./{print i; exit}\")
+  if [ -n \"\$iface\" ] && [ \"\$iface\" != \"\$prev\" ]; then
+    ifconfig \"\$iface\" mtu 1000 && echo \"[cmux-tailscale-mtu] set \$iface MTU=1000\"
+    prev=\$iface
+  fi
+  sleep 5
+done
+EOF
+    sudo chmod 755 /usr/local/bin/cmux-tailscale-mtu.sh
+    sudo tee /Library/LaunchDaemons/com.cmux.tailscale-mtu.plist > /dev/null <<PLIST
+<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
+<plist version=\"1.0\">
+<dict>
+  <key>Label</key>
+  <string>com.cmux.tailscale-mtu</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/cmux-tailscale-mtu.sh</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/var/log/cmux-tailscale-mtu.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/cmux-tailscale-mtu.log</string>
+</dict>
+</plist>
+PLIST
+    sudo launchctl bootout system/com.cmux.tailscale-mtu 2>/dev/null || true
+    sudo launchctl bootstrap system /Library/LaunchDaemons/com.cmux.tailscale-mtu.plist
+  "'
 }
 
 echo "==> Host: $(scutil --get ComputerName 2>/dev/null || hostname)"

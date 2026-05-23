@@ -145,6 +145,12 @@ const iosBuildAndRun: ToolHandler = async (params, allocationId) => {
       }
 
       if (appPath) {
+        // Ensure simulator is booted before install/launch. xcodebuild's
+        // -destination prepares the sim for the build but doesn't always leave
+        // it booted, and `simctl install` against a Shutdown sim fails with
+        // CoreSimulator code=405 ("Unable to lookup in current state: Shutdown").
+        exec(`xcrun simctl boot "${alloc.simulatorUdid}" 2>/dev/null || true`);
+        exec(`xcrun simctl bootstatus "${alloc.simulatorUdid}" -b`);
         exec(`xcrun simctl install "${alloc.simulatorUdid}" "${appPath}"`);
 
         // Get bundle ID from Info.plist

@@ -33,7 +33,9 @@ async function main() {
   }
 
   if (hasAndroidIncus) {
-    registry.register(createResourceAndroidHandler());
+    // Lazy-resolved: the handler module imports `@cmux/incus-resource-provider`,
+    // which is Linux-only. On macOS hosts this branch is never taken.
+    registry.register(await createResourceAndroidHandler());
   }
 
   const capabilities = registry.getCapabilities();

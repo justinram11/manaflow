@@ -1418,6 +1418,13 @@ sandboxesRouter.openapi(
                 );
                 if (upRes.exit_code === 0) {
                   console.log(`[sandboxes.start] Container ${incusContainerId} joined tailnet as ${tsHostname}`);
+                  // Path MTU between this container and Tart VM iOS peers is
+                  // broken at the default 1280 — bulk rsync hangs with
+                  // `poll: hangup on receiver`. Lower the tun MTU to 1000 to
+                  // stay safely under the actual path limit.
+                  await incusInstance.exec(
+                    "ip link set tailscale0 mtu 1000 2>/dev/null || true",
+                  );
                 } else {
                   console.error(`[sandboxes.start] tailscale up failed: ${upRes.stderr}`);
                 }
