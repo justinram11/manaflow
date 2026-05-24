@@ -2,6 +2,11 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { exec } from "./exec";
+import {
+  getStatePath,
+  loadPersistedAllocations,
+  savePersistedAllocations,
+} from "./persistence";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SIMULATOR_INPUT_SOURCE_PATH = resolve(__dirname, "./SimulatorInput.swift");
@@ -20,6 +25,24 @@ export interface AllocationInfo {
 }
 
 const allocations = new Map<string, AllocationInfo>();
+
+// Hydrate from disk so allocations survive LaunchAgent restarts. Without this,
+// every KeepAlive-triggered restart drops in-memory state and tool calls fail
+// with "Allocation not found" until the cmux task run is restarted.
+for (const info of loadPersistedAllocations<AllocationInfo>()) {
+  if (info?.allocationId) {
+    allocations.set(info.allocationId, info);
+  }
+}
+if (allocations.size > 0) {
+  console.log(
+    `[workspace-manager] Restored ${allocations.size} allocation(s) from ${getStatePath()}`,
+  );
+}
+
+function persistAllocations(): void {
+  savePersistedAllocations(Array.from(allocations.values()));
+}
 
 function ensureSimulatorInputHelper(): void {
   try {
@@ -151,6 +174,7 @@ export function setupAllocation(params: {
   if (existing) {
     if (existing.buildDir !== buildDir) {
       existing.buildDir = buildDir;
+      persistAllocations();
     }
     return existing;
   }
@@ -200,6 +224,7 @@ export function setupAllocation(params: {
   }
 
   allocations.set(allocationId, info);
+  persistAllocations();
   return info;
 }
 
@@ -230,6 +255,7 @@ export function cleanupAllocation(params: {
   }
 
   allocations.delete(allocationId);
+  persistAllocations();
 }
 
 export function getAllocation(allocationId: string): AllocationInfo | undefined {
@@ -269,6 +295,7 @@ export function setRsyncInfo(allocationId: string, rsyncEndpoint: string, rsyncS
   }
   info.rsyncEndpoint = rsyncEndpoint;
   info.rsyncSecret = rsyncSecret;
+  persistAllocations();
 }
 
 const pendingRsyncInfo = new Map<string, { rsyncEndpoint: string; rsyncSecret: string }>();
@@ -283,4 +310,5 @@ export function setAllocationAccessToken(allocationId: string, accessToken: stri
   }
   info.accessToken = accessToken;
   info.accessTokenCreatedAt = Date.now();
+  persistAllocations();
 }

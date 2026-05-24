@@ -1,5 +1,10 @@
 import { spawn } from "node:child_process";
 import { exec } from "./exec";
+import {
+  getStatePath,
+  loadPersistedAllocations,
+  savePersistedAllocations,
+} from "./persistence";
 
 /** The AVD baked into the cmux-sandbox-android image. */
 const AVD_NAME = process.env.CMUX_ANDROID_AVD_NAME ?? "cmux-android";
@@ -27,6 +32,24 @@ export interface AndroidAllocationInfo {
 }
 
 const allocations = new Map<string, AndroidAllocationInfo>();
+
+// Hydrate from disk so allocations survive systemd/launchd restarts of the
+// MCP server. Without this, every restart drops state and tool calls fail
+// with "Allocation not found" until the cmux task run is restarted.
+for (const info of loadPersistedAllocations<AndroidAllocationInfo>()) {
+  if (info?.allocationId) {
+    allocations.set(info.allocationId, info);
+  }
+}
+if (allocations.size > 0) {
+  console.log(
+    `[android-workspace] Restored ${allocations.size} allocation(s) from ${getStatePath()}`,
+  );
+}
+
+function persistAllocations(): void {
+  savePersistedAllocations(Array.from(allocations.values()));
+}
 
 /** Whether the emulator process has been started in this container. */
 let emulatorProcessStarted = false;
@@ -136,12 +159,24 @@ export function setupAllocation(params: {
 
   const existing = allocations.get(allocationId);
   if (existing) {
+    let mutated = false;
     if (existing.buildDir !== buildDir) {
       existing.buildDir = buildDir;
+      mutated = true;
     }
-    if (params.workspaceHost) existing.workspaceHost = params.workspaceHost;
-    if (params.rsyncEndpoint) existing.rsyncEndpoint = params.rsyncEndpoint;
-    if (params.rsyncSecret) existing.rsyncSecret = params.rsyncSecret;
+    if (params.workspaceHost && params.workspaceHost !== existing.workspaceHost) {
+      existing.workspaceHost = params.workspaceHost;
+      mutated = true;
+    }
+    if (params.rsyncEndpoint && params.rsyncEndpoint !== existing.rsyncEndpoint) {
+      existing.rsyncEndpoint = params.rsyncEndpoint;
+      mutated = true;
+    }
+    if (params.rsyncSecret && params.rsyncSecret !== existing.rsyncSecret) {
+      existing.rsyncSecret = params.rsyncSecret;
+      mutated = true;
+    }
+    if (mutated) persistAllocations();
     return existing;
   }
 
@@ -167,6 +202,7 @@ export function setupAllocation(params: {
   };
 
   allocations.set(allocationId, info);
+  persistAllocations();
   return info;
 }
 
@@ -188,6 +224,7 @@ export function cleanupAllocation(params: {
   // The container itself is destroyed per-allocation by the host provider, so
   // we do not need to shut the emulator down here.
   allocations.delete(allocationId);
+  persistAllocations();
 }
 
 export function getAllocation(allocationId: string): AndroidAllocationInfo | undefined {
@@ -211,7 +248,10 @@ export function ensureBooted(allocationId: string): boolean {
   }
   startEmulator();
   const booted = waitForBoot();
-  info.emulatorBooted = booted;
+  if (info.emulatorBooted !== booted) {
+    info.emulatorBooted = booted;
+    persistAllocations();
+  }
   return booted;
 }
 
@@ -225,4 +265,5 @@ export function setAllocationAccessToken(allocationId: string, accessToken: stri
   }
   info.accessToken = accessToken;
   info.accessTokenCreatedAt = Date.now();
+  persistAllocations();
 }
